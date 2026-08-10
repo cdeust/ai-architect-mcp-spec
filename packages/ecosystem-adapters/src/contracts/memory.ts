@@ -39,7 +39,7 @@ export type RecalledMemory = z.infer<typeof RecalledMemorySchema>;
  * on 2026-06-10 — they byte-duplicated every memory on the wire (measured:
  * 815KB response for 15 memories, 50% pure duplication).
  *
- * The transform preserves prd-spec-generator's internal `{results, total}`
+ * The transform preserves this project's internal `{results, total}`
  * shape so downstream consumers (production-dispatcher, section-generation)
  * stay untouched.
  */

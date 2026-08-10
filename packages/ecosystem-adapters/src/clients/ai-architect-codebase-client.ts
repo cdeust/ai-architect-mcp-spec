@@ -1,7 +1,7 @@
 /**
  * Typed client for the ai-architect-mcp-codebase MCP.
  *
- * One method per pipeline stage we need from prd-spec-generator. Tool names
+ * One method per pipeline stage this project needs from ai-architect-mcp-codebase. Tool names
  * are canonical — see /Users/cdeust/Developments/anthropic/ai-architect-mcp-codebase/NOTES.md.
  *
  * We do NOT reimplement any pipeline logic; we type the requests and parse
@@ -51,13 +51,13 @@ const HealthResponseSchema = z.object({
   version: z.string().optional(),
 });
 
-export interface AutomatisedPipelineClientConfig
+export interface AiArchitectCodebaseClientConfig
   extends Omit<StdioMcpClientConfig, "serverName"> {}
 
-export class AutomatisedPipelineClient {
+export class AiArchitectCodebaseClient {
   private readonly client: StdioMcpClient;
 
-  constructor(config: AutomatisedPipelineClientConfig) {
+  constructor(config: AiArchitectCodebaseClientConfig) {
     this.client = new StdioMcpClient({
       ...config,
       serverName: "ai-architect",

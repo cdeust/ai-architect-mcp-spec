@@ -29,7 +29,7 @@ export type IndexCodebaseRequest = z.infer<typeof IndexCodebaseRequestSchema>;
 
 /**
  * source: live binary returns `graph_path` (not `graph_id`); see live-integration
- * test in packages/ecosystem-adapters/src/__tests__/automatised-pipeline.integration.test.ts.
+ * test in packages/ecosystem-adapters/src/__tests__/ai-architect-codebase.integration.test.ts.
  */
 export const IndexCodebaseResponseSchema = z.object({
   graph_path: z.string(),
@@ -221,7 +221,7 @@ const GRAPH_STATS_BUDGET_CHARS = 10_000; // 0.10 × 100,000
  * community / process entry serializes to ~200 chars minimum (fqn + file +
  * a few numeric fields).
  *   source: measured 2026-06-10 on the ai-architect-mcp-codebase integration
- *   fixture (packages/ecosystem-adapters/src/__tests__/automatised-pipeline.integration.test.ts)
+ *   fixture (packages/ecosystem-adapters/src/__tests__/ai-architect-codebase.integration.test.ts)
  *   — smallest entry observed was 187 chars compact-JSON; rounded up to 200.
  * Element cap = floor(array_budget / 200). The element cap and the char cap
  * are BOTH enforced (.max() on count, plus the serialized-length refine):
