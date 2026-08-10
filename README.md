@@ -14,7 +14,7 @@ pointer to the canonical entry rather than left active and frozen.
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/TypeScript-7.0+-3178c6.svg" alt="TypeScript 7.0+">
   <img src="https://img.shields.io/badge/Node-20.x_·_22.x-339933.svg" alt="Node 20/22">
-  <img src="https://img.shields.io/badge/Tests-1504_passing-brightgreen" alt="1504 passing">
+  <img src="https://img.shields.io/badge/Tests-1506_passing-brightgreen" alt="1506 passing">
   <img src="https://img.shields.io/badge/Packages-10-orange" alt="10 packages">
   <img src="https://img.shields.io/badge/MCP_Tools-17-8A2BE2" alt="17 MCP tools">
   <img src="https://img.shields.io/badge/Validators-Hard_Output_Rules-red" alt="Hard Output Rules">
@@ -44,7 +44,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 **AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
 
-**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1504 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
+**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1506 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
 ---
 
@@ -179,7 +179,7 @@ cd ai-architect-mcp-spec
 pnpm install --frozen-lockfile
 pnpm build      # builds all 9 buildable packages via tsc
 pnpm bundle     # produces the standalone mcp-server/index.js
-pnpm test       # 1504 tests (vitest workspace, all packages; the
+pnpm test       # 1506 tests (vitest workspace, all packages; the
                 # ai-architect-mcp-codebase wire contract is pinned
                 # unconditionally — see docs/INTEGRATION-TESTING.md)
 ```

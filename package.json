@@ -3,7 +3,7 @@
   "version": "0.7.0",
   "private": true,
   "license": "MIT",
-  "description": "Cross-platform PRD verifier and host-driven generator with deterministic structural rules, calibrated multi-judge verification, and full audit lineage. 17 MCP tools, 1504 tests.",
+  "description": "Cross-platform PRD verifier and host-driven generator with deterministic structural rules, calibrated multi-judge verification, and full audit lineage. 17 MCP tools, 1506 tests.",
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 build",
     "bundle": "esbuild packages/mcp-server/dist/index.js --bundle --platform=node --target=node20 --format=esm --external:better-sqlite3 --outfile=mcp-server/index.js && node scripts/stamp-bundle-version.mjs && chmod +x mcp-server/index.js",
