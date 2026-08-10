@@ -92,7 +92,10 @@ test("canonical distribution identity is shared by every host plugin", () => {
   assert.equal(server.packages[0].version, pkg.version);
   assert.match(server.packages[0].identifier, /\/ai-architect-mcp-spec\.mcpb$/);
   assertOptionalReleasedChecksum(server.packages[0].fileSha256);
-  assert.match(fullSkill, /^---\nname: ai-architect-mcp-spec\nversion: 0\.7\.0\n/);
+  assert.match(
+    fullSkill,
+    new RegExp(`^---\\nname: ai-architect-mcp-spec\\nversion: ${pkg.version.replaceAll(".", "\\.")}\\n`),
+  );
   assert.doesNotMatch(fullSkill, /name: prd-spec-generator/);
   assert.equal(fullSkillPackage.name, "@ai-architect-mcp-spec/skill");
   for (const path of [
