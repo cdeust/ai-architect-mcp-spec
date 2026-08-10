@@ -103,8 +103,9 @@ sent back rather than merged with a follow-up promise.
   - `verification`: invariant tests on consensus distribution.
   - `orchestration`: per-handler injection tests + smoke harness for full runs.
   - `benchmark`: KPI gate tests + golden-fixture HOR scoring.
-  - `ecosystem-adapters`: live integration test gated by `AIPRD_PIPELINE_BIN`
-    (see `docs/INTEGRATION-TESTING.md`).
+  - `ecosystem-adapters`: unconditional schema-contract pin against the
+    live `ai-architect-mcp-codebase` wire shapes (see
+    `docs/INTEGRATION-TESTING.md`).
 
 ---
 

@@ -1,47 +1,55 @@
 # Integration testing
 
-The `pnpm test` suite is hermetic by default — 258 tests run in ~1 second
-with no network access, no filesystem dependencies beyond the workspace,
-and no external processes. **Two integration tests are deliberately skipped
-unless you opt in.** This document explains how to run them.
+The `pnpm test` suite is hermetic by default — no network access, no
+filesystem dependencies beyond the workspace, and no external processes.
+This document explains how the MCP protocol contract with each ecosystem
+service is verified, and how a live Cortex round-trip (not yet wired)
+would be added.
 
 ---
 
-## Why integration tests are gated
+## Why the protocol contract needs its own tests
 
 The MCP protocol is a contract between this project and three other
 ecosystem services (`ai-architect-mcp-codebase`, `Cortex`, `zetetic-team-subagents`).
-Mocked tests prove the protocol matches what THIS project expects; they
-do not prove the live counterparties send what THIS project expects.
+Mocked unit tests prove the protocol matches what THIS project expects;
+they do not, by themselves, prove a live counterparty sends what this
+project expects.
 
-The integration tests close that gap by spawning a real binary or
-connecting to a real service and round-tripping at least one canonical
-tool call. They run when you explicitly point the test runner at the
-real dependency.
+## `ai-architect-mcp-codebase` schema-contract test
 
----
+**File:** `packages/ecosystem-adapters/src/__tests__/ai-architect-codebase.integration.test.ts`
 
-## Live `ai-architect-mcp-codebase` test
-
-**File:** `packages/ecosystem-adapters/src/__tests__/automatised-pipeline.integration.test.ts`
+**Status:** unconditional — runs in every `pnpm test`, no env var or live
+binary required. It replaced an earlier version of this file that spawned
+the real Rust binary and skipped in CI whenever it was absent (skipping is
+equivalent to never running, so the earlier version proved nothing in CI).
 
 **What it proves:**
 
-- The protocol contract claimed in `handleInputAnalysis` (sends
-  `{ path, output_dir, language }`, expects `{ graph_path, ... }` back)
-  matches what the live Rust MCP returns.
-- The stdio transport (`StdioMcpClient`) connects, calls a tool, and
-  parses a real response without crashing.
+- `IndexCodebaseRequestSchema` accepts the request shape
+  `handleInputAnalysis` constructs.
+- `IndexCodebaseResponseSchema` parses the live server's
+  `{ graph_path, symbols_indexed, files_parsed, duration_ms }` shape, and
+  rejects a response missing `graph_path` loudly (a future server-side
+  rename must not silently pass).
+- `AiArchitectCodebaseClient.indexCodebase` delegates to the stdio
+  transport's `callTool` with the validated request.
 
-**What it does NOT prove:**
+**What it does NOT prove (consciously deferred):**
 
+- That the live Rust server actually emits the schema-conformant shape
+  today. The schema is the contract; if the server drifts, this test keeps
+  passing while production breaks. Mitigation: the schema is paired with a
+  source comment in `contracts/codebase.ts` naming the live binary as the
+  source of truth, verified against it at authoring time.
 - Performance, memory, or behaviour at scale.
-- Failure-mode handling (only the happy path is exercised).
-- Any tool other than `index_codebase` + `health_check`.
+- Failure-mode handling beyond malformed/missing `graph_path`.
+- Any tool other than `index_codebase`.
 
-### Setup
-
-Build the Rust binary from the companion repo:
+If you need to prove the live binary itself still matches the pinned
+schema, build it from the companion repo and drive `index_codebase`
+manually over stdio:
 
 ```bash
 git clone https://github.com/cdeust/ai-architect-mcp-codebase.git
@@ -50,46 +58,6 @@ cargo build --release
 # First build: ~5 minutes (compiles LadybugDB C++ core).
 # Resulting binary: target/release/ai-architect-mcp-codebase
 ```
-
-### Run
-
-```bash
-cd /path/to/prd-spec-generator
-AIPRD_PIPELINE_BIN=/absolute/path/to/ai-architect-mcp-codebase/target/release/ai-architect-mcp-codebase \
-  pnpm test
-```
-
-**Optional override:** `AIPRD_PIPELINE_FIXTURE=/path/to/some/codebase` to
-index a different directory. Defaults to this repo's own
-`packages/core/src` (small, real, parseable by the pipeline's tree-sitter
-extractors).
-
-### Expected output
-
-When `AIPRD_PIPELINE_BIN` points to a valid binary:
-
-```
-✓ live ai-architect-mcp-codebase integration > health_check returns a non-empty status
-✓ live ai-architect-mcp-codebase integration > index_codebase returns a graph_path
-```
-
-When the env var is missing or the binary doesn't exist:
-
-```
-↓ live ai-architect-mcp-codebase integration (skipped)
-```
-
-The skip is deliberate. `vitest`'s `describe.skipIf` predicate evaluates
-at test-collection time, so unset → skipped, not failed.
-
-### Failure modes
-
-| Symptom | Likely cause |
-|---|---|
-| `Error: connect ECONNREFUSED` | Binary started but exited before stdio handshake. Check binary's stderr. |
-| `Error: tool not found: index_codebase` | Binary version predates Stage-3a tool implementation. Build a newer release tag. |
-| `Error: cannot parse response as JSON` | The pipeline emitted non-JSON-RPC traffic on stdout (typically a panic or log line). File a bug against ai-architect-mcp-codebase. |
-| Test hangs > 30s | The pipeline is stuck on a large-codebase index. Set `AIPRD_PIPELINE_FIXTURE` to a smaller directory. |
 
 ---
 
@@ -109,7 +77,7 @@ If you want to prove the Cortex contract end-to-end:
 
 1. Install Cortex per its README (`claude plugin install cortex` +
    `cortex-doctor` to verify).
-2. Run the prd-spec-generator MCP server with Cortex registered in your
+2. Run the ai-architect-mcp-spec MCP server with Cortex registered in your
    `.mcp.json`.
 3. Drive a real `/generate-prd` session — the section-generation step
    calls `cortex.recall` for each section. Inspect the returned
@@ -124,25 +92,32 @@ follow-up item; PRs welcome.
 
 ## CI policy
 
-**Hermetic suite (always runs):** `pnpm test` — 258 tests + 2 integration
-skipped. Mandatory pass on every PR.
+**Hermetic suite (always runs):** `pnpm test` — the full vitest workspace,
+including the `ai-architect-mcp-codebase` schema-contract test above.
+Mandatory pass on every PR; no live binary or env var required.
 
-**Integration suite (opt-in):** the `AIPRD_PIPELINE_BIN`-gated test.
-Currently NOT run in CI because:
+**Live-binary round-trip:** not run in CI today. Standing up the Rust
+binary (~5 minutes cold, LadybugDB C++ core compile) in CI for marginal
+additional coverage over the schema-contract test hasn't been justified.
+Run it manually per the previous section when you need to prove the live
+binary itself, not just the pinned schema.
 
-- The Rust binary build is ~5 minutes cold (LadybugDB C++ core compile).
-- The dependency lives in a separate repo on a different release cadence.
-
-**Roadmap:** add a separate `integration.yml` workflow that runs nightly
-against the latest `ai-architect-mcp-codebase` release tag. Tracked as
-follow-up. PRs welcome.
+**Roadmap:** add a separate `integration.yml` workflow that runs the live
+binary round-trip nightly against the latest `ai-architect-mcp-codebase`
+release tag. Tracked as follow-up. PRs welcome.
 
 ---
 
 ## Adding a new integration test
 
-The pattern is `describe.skipIf(!SHOULD_RUN)` where `SHOULD_RUN` derives
-from an env var pointing to the real dependency. Keep these conventions:
+Prefer an **unconditional schema-contract pin** (see the
+`ai-architect-mcp-codebase` test above) over a `describe.skipIf`-gated live
+test: a skipped test that never runs in CI proves nothing, and a schema
+pin still fails loudly the moment the wire contract drifts.
+
+If the contract genuinely cannot be pinned without a live dependency (as
+with the planned Cortex test), gate it behind an env var and keep these
+conventions:
 
 - **Skip by default.** Never let an integration test fail when the
   dependency isn't installed. The hermetic suite is the contract for
@@ -153,6 +128,6 @@ from an env var pointing to the real dependency. Keep these conventions:
   default test input. Don't depend on absolute paths outside the repo.
 - **Time-bound the test.** Cap each `it` at a generous-but-finite
   timeout (10–60s). Hung tests block the whole suite.
-- **Document failure modes.** Add a table like the one above. Operators
-  diagnosing failures need to distinguish "my setup is wrong" from
-  "the upstream contract changed."
+- **Document failure modes.** Add a table describing likely causes.
+  Operators diagnosing failures need to distinguish "my setup is wrong"
+  from "the upstream contract changed."
