@@ -94,11 +94,14 @@ const AFFECTED_SYMBOLS_BLOCK_PATTERN = new RegExp(
  *                elements are dropped, not the whole array).
  *
  * source: ai-architect-mcp-codebase stages/stage-6.md §4.2, "Contract
- * location" (line 129): "The prd-spec-generator already outputs multiple
- * JSON files; we require one named `stage-5.affected_symbols.json` alongside
- * the main PRD. If absent, stage 6 degrades to regex-only mode with a
- * `contract_missing: true` warning at the top of the report (informational,
- * not fail)."
+ * location" (line 129 at commit 512d683186b3295a4bac6f24f4f7333f9637d811 —
+ * pinned because stage-6.md is a live spec under active rename to
+ * ai-architect-mcp-spec; the "prd-spec-generator" name below is this pinned
+ * revision's, not necessarily the doc's current name): "The prd-spec-generator
+ * already outputs multiple JSON files; we require one named
+ * `stage-5.affected_symbols.json` alongside the main PRD. If absent, stage 6
+ * degrades to regex-only mode with a `contract_missing: true` warning at the
+ * top of the report (informational, not fail)."
  *
  * Inference from that contract (not stated verbatim in the doc): since the
  * regex fallback activates only when the sidecar file is ABSENT, exporting
