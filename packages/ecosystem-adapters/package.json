@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@prd-gen/core": "workspace:*",
     "@prd-gen/verification": "workspace:*",
     "zod": "^4.4.3"
