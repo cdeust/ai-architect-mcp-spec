@@ -8,6 +8,25 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Every release opened a pull request that could never merge.** The
+  `release` job committed the built `.mcpb`'s checksum into `server.json` on
+  a branch and opened a PR against protected `main` to land it. That PR was
+  always authored by `github-actions[bot]` using the default `GITHUB_TOKEN`,
+  and GitHub deliberately does not trigger `pull_request` workflows —
+  including `ci.yml`, which supplies all four required status checks — for
+  events created by that token (a recursion guard). The PR therefore reported
+  zero checks and sat permanently blocked; `#82` (`v0.8.0`) was the one open
+  at the time this was fixed. Evidence check before removing it: nothing
+  reads `packages[0].fileSha256` from the *committed* `server.json` —
+  `scripts/check-distribution-identity.mjs` treats the field as optional, and
+  the `publish_registry` job (added for `v0.8.0`) already builds and verifies
+  its own runtime copy (`server.runtime.json`) independently of this PR. The
+  `.github/workflows/release.yml` step that opened the PR is removed; the
+  local checksum patch-and-verify (`scripts/release/verify-mcpb-checksum.mjs`)
+  stays as a pre-publish sanity check but no longer commits anywhere. `#82`
+  closed without merging — its content never had a reader in the committed
+  file.
+
 - **The release workflow never told the MCP Registry about a release.**
   `scripts/publish-mcp-registry.sh` existed as a manual runbook but no
   workflow called it, so `registry.modelcontextprotocol.io` kept serving

@@ -9,9 +9,20 @@ name: Release
 #   * attests build provenance for the .mcpb and the SBOM (Sigstore; verify
 #     with `gh attestation verify <file> --repo cdeust/ai-architect-mcp-spec`);
 #   * generates a CycloneDX SBOM from pnpm-lock.yaml covering the workspace;
-#   * VERIFIES server.json's fileSha256 equals the built .mcpb before it is
-#     committed/published — closing the #23 defect class in the pipeline, not
-#     just its instance (scripts/release/verify-mcpb-checksum.mjs);
+#   * VERIFIES a locally-patched copy of server.json's fileSha256 equals the
+#     built .mcpb before publishing — closing the #23 defect class in the
+#     pipeline, not just its instance (scripts/release/verify-mcpb-checksum.mjs).
+#     This copy is never committed: fileSha256 is optional in the committed
+#     server.json (scripts/check-distribution-identity.mjs tolerates its
+#     absence) because nothing reads it there — the registry publish below
+#     builds its own verified runtime copy instead. An earlier revision
+#     opened a PR to commit this patch onto protected main; that PR could
+#     never merge (its author is `github-actions[bot]`, and GitHub does not
+#     trigger `pull_request` workflows — hence the required status checks —
+#     for events authored by the default `GITHUB_TOKEN`, a recursion guard),
+#     so every release produced one permanently blocked PR. Removed
+#     2026-08-10 once the evidence showed the committed value had no reader;
+#     see PR #82's closure for the record of that decision.
 #   * pins every third-party action to a commit SHA;
 #   * publishes server.json to the official MCP Registry
 #     (registry.modelcontextprotocol.io) after the GitHub Release is public
@@ -48,8 +59,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # create the release, upload assets, push checksum branch
-      pull-requests: write  # open the protected-main checksum update PR
+      contents: write       # create the release, upload assets
       id-token: write       # OIDC token Sigstore exchanges for a signing cert
       attestations: write   # record the build-provenance statement on the repo
 
@@ -162,59 +172,33 @@ jobs:
             ai-architect-mcp-spec.mcpb
             ai-architect-mcp-spec.cdx.json
 
-      - name: Patch server.json with the real .mcpb checksum
+      - name: Patch a local copy of server.json with the real .mcpb checksum
         run: |
           set -euo pipefail
-          # INVARIANT: fileSha256 is intentionally absent before release
-          # because the real checksum only exists after this job builds the
-          # .mcpb above. Add it here and commit the single-file change on a
-          # dedicated branch in the next step; this closes the loop for the
-          # current tag without bypassing protected main (#23). This commit
-          # is the durable audit record of what was built — the
-          # `publish_registry` job below does NOT wait for it to merge (main
-          # is protected and requires human review); it independently
-          # downloads and re-verifies the public release asset before
-          # publishing, so registry publication is never blocked on this PR.
+          # This copy exists only on the runner, purely so the next step can
+          # assert the patch logic and the checksum agree — it is never
+          # committed and never pushed. The committed server.json omits
+          # fileSha256 permanently: nothing reads it there (the field is
+          # optional per scripts/check-distribution-identity.mjs), and the
+          # registry publish job builds its own independently-verified
+          # runtime copy (see the `publish_registry` job below) rather than
+          # trusting this one.
           jq --arg sha "${MCPB_SHA256}" '.packages[0].fileSha256 = $sha' server.json > server.json.tmp
           mv server.json.tmp server.json
           jq empty server.json
-          echo "Patched fileSha256: $(jq -r '.packages[0].fileSha256' server.json)"
+          echo "Locally patched fileSha256: $(jq -r '.packages[0].fileSha256' server.json)"
 
       # Close the #23 defect class in the pipeline (issue #29 criterion 4): the
       # value we are about to publish MUST equal the artifact we built. This
       # recomputes the .mcpb digest and rejects any mismatch (exit 1) before
-      # server.json is committed or the registry sees it. The same assertion is
-      # unit-tested in scripts/release/verify-mcpb-checksum.test.mjs.
-      - name: Verify server.json checksum matches the built .mcpb
+      # the registry sees it — defense in depth alongside the independent
+      # re-verification `publish_registry` performs on the public release
+      # asset. The same assertion is unit-tested in
+      # scripts/release/verify-mcpb-checksum.test.mjs.
+      - name: Verify the local server.json copy's checksum matches the built .mcpb
         run: |
           node scripts/release/verify-mcpb-checksum.mjs \
             ai-architect-mcp-spec.mcpb server.json
-
-      - name: Open protected-main PR for patched server.json
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- server.json; then
-            echo "server.json already carries the correct checksum; nothing to commit."
-            exit 0
-          fi
-          CHECKSUM_BRANCH="release/${GITHUB_REF_NAME}-server-json"
-          if git ls-remote --exit-code --heads origin "${CHECKSUM_BRANCH}" >/dev/null 2>&1; then
-            echo "::error::Checksum branch ${CHECKSUM_BRANCH} already exists; inspect its PR before rerunning."
-            exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git switch -c "${CHECKSUM_BRANCH}"
-          git add server.json
-          git commit -m "chore(release): patch server.json sha256 for ${GITHUB_REF_NAME}"
-          git push origin "HEAD:refs/heads/${CHECKSUM_BRANCH}"
-          gh pr create \
-            --base main \
-            --head "${CHECKSUM_BRANCH}" \
-            --title "chore(release): patch server.json sha256 for ${GITHUB_REF_NAME}" \
-            --body "Automated checksum update for the verified canonical MCPB built by release run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Merge this PR before publishing ${GITHUB_REF_NAME} to the MCP Registry. SHA-256: \`${MCPB_SHA256}\`."
 
       - name: Extract release notes from CHANGELOG
         id: changelog
@@ -262,14 +246,14 @@ jobs:
     # job ever told it about any tag after v0.5.0.
     #
     # fileSha256 is a build artifact property (the digest of the zipped
-    # .mcpb bundle) that the `release` job's committed server.json carries
-    # only after its checksum PR is reviewed and merged (main is protected).
-    # This job does not wait on that merge — it downloads the PUBLIC release
-    # asset, re-verifies its checksum and provenance attestation itself, and
-    # patches a RUNTIME copy of server.json with the digest it just
-    # independently confirmed. The committed server.json (still missing
-    # fileSha256 for this tag until the checksum PR merges) is never
-    # rewritten by this job; it remains the durable audit record.
+    # .mcpb bundle). The committed server.json never carries it — the field
+    # is optional there (scripts/check-distribution-identity.mjs) and no
+    # consumer reads it from the committed file, so there is nothing to wait
+    # on or merge. This job downloads the PUBLIC release asset, re-verifies
+    # its checksum and provenance attestation itself, and patches a RUNTIME
+    # copy of server.json (server.runtime.json) with the digest it just
+    # independently confirmed. The committed server.json is never rewritten
+    # by any job.
     name: Publish server.json to the MCP Registry
     needs: [release]
     if: |
