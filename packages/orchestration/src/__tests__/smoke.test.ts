@@ -213,7 +213,15 @@ describe("end-to-end smoke run", () => {
     // not stubbed with placeholder text, and the omission is recorded in
     // 00-run-notes.md instead. implementation_gate additionally writes
     // 10-verification-report.md before asking the implementation decision.
-    // Total: 01,02,03,04,05,07(jira) + 00-run-notes + 10-verification-report = 8.
+    // The smoke harness's simulated technical_specification content carries
+    // no affected-symbols block, so extraction runs and finds zero claims —
+    // per the zero-claims contract (ai-architect-mcp-codebase
+    // stages/stage-6.md §4.2, "Zero-claims case — not the same as absent",
+    // pinned at commit 92216cd90f8f26cb15348675fc6556b8293edfc1) that MUST
+    // still produce stage-5.affected_symbols.json (empty arrays), not omit
+    // it — the section ran; only "the section never ran" omits the sidecar.
+    // Total: 01,02,03,04,05,07(jira) + 00-run-notes + 10-verification-report
+    // + stage-5.affected_symbols.json = 9.
     const seed = newPipelineState({
       run_id: "smoke_file_count",
       feature_description: "build a feature for OAuth login",
@@ -232,12 +240,13 @@ describe("end-to-end smoke run", () => {
         "07-jira-tickets.md",
         "00-run-notes.md",
         "10-verification-report.md",
+        "stage-5.affected_symbols.json",
       ]),
     );
     expect(paths).not.toContain("06-deployment.md");
     expect(paths).not.toContain("08-source-code.md");
     expect(paths).not.toContain("09-test-code.md");
-    expect(result.finalState.written_files.length).toBe(8);
+    expect(result.finalState.written_files.length).toBe(9);
   });
 
   it("loop terminates within the safety cap", () => {
