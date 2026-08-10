@@ -192,7 +192,8 @@ describe("plugin-scoped MCP tool prefixes", () => {
     // ...and against the malformed ai-architect-mcp-codebase spelling (underscores,
     // no server key) that this gate found in docs/EXAMPLES.md when introduced.
     expect(KNOWN_MCP_PREFIXES.has("mcp__plugin_automatised_pipeline__")).toBe(false); // mcp-prefix-allow-legacy
-    // ...and the former publication identity, whose plugin half changed in 0.7.0.
+    // ...and the former publication identity, whose plugin half changed in 0.8.0
+    // (0.7.0 moved only the Registry entry and primary bundle; see CHANGELOG).
     expect(KNOWN_MCP_PREFIXES.has("mcp__plugin_prd-spec-generator_prd-gen__")).toBe(false); // mcp-prefix-allow-legacy
   });
 });
