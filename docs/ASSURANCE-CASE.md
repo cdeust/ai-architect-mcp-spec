@@ -8,7 +8,7 @@ where the argument stops.
 
 ## What this software is, in threat terms
 
-`prd-spec-generator` is a **local MCP server**. A host (Claude Code or another
+`ai-architect-mcp-spec` is a **local MCP server**. A host (Claude Code or another
 MCP client) starts it over stdio and drives a stateless reducer that turns a
 feature description into PRD sections. It makes **no network calls of its own**
 and collects **no telemetry**.

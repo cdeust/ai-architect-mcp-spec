@@ -179,8 +179,9 @@ cd ai-architect-mcp-spec
 pnpm install --frozen-lockfile
 pnpm build      # builds all 9 buildable packages via tsc
 pnpm bundle     # produces the standalone mcp-server/index.js
-pnpm test       # 1504 tests (vitest workspace, all packages; live MCP
-                # integration env-gated by AIPRD_PIPELINE_BIN)
+pnpm test       # 1504 tests (vitest workspace, all packages; the
+                # ai-architect-mcp-codebase wire contract is pinned
+                # unconditionally — see docs/INTEGRATION-TESTING.md)
 ```
 
 `pnpm verify` runs all of the above (install + build + bundle + test) —
@@ -424,7 +425,7 @@ orchestration     ← stateless reducer, 20 step handlers, runner
                     │  step(state, result?) → next_state, action
                     │  emit_message coalescing; canned-dispatcher utility
                     ▼
-ecosystem-adapters← StdioMcpClient, AutomatisedPipelineClient, CortexClient
+ecosystem-adapters← StdioMcpClient, AiArchitectCodebaseClient, CortexClient
                     │  the only package allowed to do I/O
                     ▼
 mcp-server        ← composition root; 17 tools registered;
@@ -479,8 +480,8 @@ A cross-audit found and fixed two layer violations:
               ┌──────────────────────────────────┼──────────────────────────────────┐
               ▼                                  ▼                                  ▼
    ┌───────────────────┐              ┌────────────────────┐              ┌───────────────────┐
-   │   automatised-    │   graph_path │   prd-spec-        │  recall      │      Cortex       │
-   │   pipeline        │ ───────────► │   generator        │ ◄─────────── │   (memory engine) │
+   │   ai-architect-   │   graph_path │   ai-architect-    │  recall      │      Cortex       │
+   │   mcp-codebase    │ ───────────► │   mcp-spec         │ ◄─────────── │   (memory engine) │
    │   (Rust MCP)      │              │   (TS MCP)         │              │   (Python MCP)    │
    │                   │   symbols    │                    │  excerpts    │                   │
    │   read-only       │ ◄──────────► │   stateless        │ ───────────► │   thermodynamic   │
@@ -580,7 +581,7 @@ packages/
 ├── meta-prompting/        Prompt builders (clarification / draft / jira)
 ├── strategy/              Thinking-strategy selector
 ├── orchestration/         Stateless reducer · 20 step handlers · runner · canned-dispatcher
-├── ecosystem-adapters/    StdioMcpClient · AutomatisedPipelineClient · CortexClient
+├── ecosystem-adapters/    StdioMcpClient · AiArchitectCodebaseClient · CortexClient
 ├── mcp-server/            Composition root · 17 MCP tools registered
 ├── benchmark/             Pipeline KPI measurement · golden-fixture HOR scoring
 │   └── calibration/       ReliabilityRepository · KM survival ·

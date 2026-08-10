@@ -1,7 +1,7 @@
 /**
  * Typed client for the Cortex MCP.
  *
- * One method per Cortex tool we need from prd-spec-generator. Cortex owns
+ * One method per Cortex tool this project needs. Cortex owns
  * persistent memory; we never store anything ourselves.
  *
  * Tool names match the cortex MCP plugin (callable as raw `recall`, `remember`,

@@ -93,11 +93,22 @@ const AFFECTED_SYMBOLS_BLOCK_PATTERN = new RegExp(
  *                element is checked independently via safeParse; invalid
  *                elements are dropped, not the whole array).
  *
- * source: ai-architect-mcp-codebase stages/stage-6.md §4.2 — "if no claim is
- * parsed, prd-spec-generator must not export the sidecar" (an empty sidecar
- * would defeat stage 6's regex fallback, which activates only when the file
- * is ABSENT). Callers must check `affected_symbols.length > 0` before
- * exporting — this function does not decide export policy, only extraction.
+ * source: ai-architect-mcp-codebase stages/stage-6.md §4.2, "Contract
+ * location" (line 129 at commit 512d683186b3295a4bac6f24f4f7333f9637d811 —
+ * pinned because stage-6.md is a live spec under active rename to
+ * ai-architect-mcp-spec; the "prd-spec-generator" name below is this pinned
+ * revision's, not necessarily the doc's current name): "The prd-spec-generator
+ * already outputs multiple JSON files; we require one named
+ * `stage-5.affected_symbols.json` alongside the main PRD. If absent, stage 6
+ * degrades to regex-only mode with a `contract_missing: true` warning at the
+ * top of the report (informational, not fail)."
+ *
+ * Inference from that contract (not stated verbatim in the doc): since the
+ * regex fallback activates only when the sidecar file is ABSENT, exporting
+ * an empty sidecar would suppress the fallback without providing any claims
+ * to validate against — worse than not exporting at all. Callers must
+ * therefore check `affected_symbols.length > 0` before exporting; this
+ * function does not decide export policy, only extraction.
  */
 export function parseAffectedSymbolsBlock(
   content: string,

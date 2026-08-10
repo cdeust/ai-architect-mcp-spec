@@ -11,9 +11,9 @@ export {
 
 // Clients
 export {
-  AutomatisedPipelineClient,
-  type AutomatisedPipelineClientConfig,
-} from "./clients/automatised-pipeline-client.js";
+  AiArchitectCodebaseClient,
+  type AiArchitectCodebaseClientConfig,
+} from "./clients/ai-architect-codebase-client.js";
 
 export {
   CortexClient,

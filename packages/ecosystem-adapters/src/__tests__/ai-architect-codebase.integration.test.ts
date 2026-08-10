@@ -16,7 +16,7 @@
  *   ✓ The schema rejects malformed responses LOUDLY (Curie A3 — drift
  *     guard: a future server-side rename of `graph_path` must NOT silently
  *     pass).
- *   ✓ The `AutomatisedPipelineClient.indexCodebase` method delegates to the
+ *   ✓ The `AiArchitectCodebaseClient.indexCodebase` method delegates to the
  *     stdio transport's `callTool` with the validated request.
  *
  * What this does NOT prove (consciously deferred, can only be verified
@@ -33,7 +33,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { AutomatisedPipelineClient } from "../index.js";
+import { AiArchitectCodebaseClient } from "../index.js";
 import {
   IndexCodebaseRequestSchema,
   IndexCodebaseResponseSchema,
@@ -45,7 +45,7 @@ describe("ai-architect-mcp-codebase MCP — request/response schema contract", (
     // section-generation handler. A future field rename here would break
     // the call site in handleInputAnalysis.
     const validated = IndexCodebaseRequestSchema.parse({
-      path: "/Users/cdeust/Developments/prd-spec-generator/packages/core/src",
+      path: "/Users/cdeust/Developments/ai-architect-mcp-spec/packages/core/src",
       output_dir: "/tmp/prd-gen-pipeline-test",
       language: "auto",
     });
@@ -98,9 +98,9 @@ describe("ai-architect-mcp-codebase MCP — request/response schema contract", (
   });
 });
 
-describe("AutomatisedPipelineClient — delegation to stdio transport", () => {
+describe("AiArchitectCodebaseClient — delegation to stdio transport", () => {
   it("indexCodebase validates the request and delegates callTool to the underlying client", async () => {
-    // Stub the StdioMcpClient at the AutomatisedPipelineClient instance.
+    // Stub the StdioMcpClient at the AiArchitectCodebaseClient instance.
     // We inject a fake `client` field via Object.assign because the real
     // class encapsulates the transport — this verifies the public method
     // contract (validate request → callTool → parse response) without
@@ -112,7 +112,7 @@ describe("AutomatisedPipelineClient — delegation to stdio transport", () => {
 
     // Build the client without connecting (constructor only sets up the
     // transport object; no IO until connect() is called).
-    const client = new AutomatisedPipelineClient({
+    const client = new AiArchitectCodebaseClient({
       command: "/nonexistent",
       args: [],
     });
@@ -148,7 +148,7 @@ describe("AutomatisedPipelineClient — delegation to stdio transport", () => {
     const fakeCallTool = vi.fn().mockResolvedValue({
       graph_id: "should-have-been-graph_path",
     });
-    const client = new AutomatisedPipelineClient({
+    const client = new AiArchitectCodebaseClient({
       command: "/nonexistent",
       args: [],
     });
