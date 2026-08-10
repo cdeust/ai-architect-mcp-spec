@@ -6,6 +6,83 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-10 — canonical identity completed, cross-repo contract fixes
+
+> The `[0.7.0]` section below was silently rewritten in place by the commit
+> that produced most of this release (`a883cec`, #71), attributing this
+> release's own not-yet-shipped identity completion to the already-tagged
+> `v0.7.0` — whose immutable GitHub Release body still carries the original
+> wording. Restored verbatim here; the corrected, actually-new text moves to
+> this section, where an upgrader reading release notes will actually see it.
+
+### Changed
+
+- **BREAKING: the `prd-spec-generator` plugin identity and release alias are
+  gone.** `v0.7.0` kept the product and Claude/Codex/Gemini plugins under the
+  `prd-spec-generator` name while only the MCP Registry entry and primary
+  bundle moved to `ai-architect-mcp-spec`; this release finishes the
+  migration started there. The product, full-pipeline skill,
+  Claude/Codex/Gemini plugins, MCPB asset, and Registry entry are now all
+  `ai-architect-mcp-spec`; no `prd-spec-generator` plugin or `.mcpb` release
+  alias is retained. **Existing callers must replace the
+  `prd-spec-generator:generate-prd` skill qualifier with
+  `ai-architect-mcp-spec:generate-prd`**, and anyone depending on the
+  `prd-spec-generator.mcpb` release asset must switch to
+  `ai-architect-mcp-spec.mcpb` — `release.yml` no longer publishes the legacy
+  alias or its checksum. The internal `@prd-gen/*` workspace packages,
+  `PRD_GEN_*` environment variables, `.prd-gen` data directory, and `prd-gen`
+  MCP server/tool namespace remain stable protocol and storage identifiers;
+  none of them was ever a published plugin or marketplace identity, so none
+  of them changes here. (#71)
+
+- **BREAKING: the affected-symbols sidecar is now emitted (with empty
+  arrays) whenever `technical_specification` ran and found zero claims,
+  instead of being omitted.** A docs-only or infra-only PRD that legitimately
+  produces no code-level claims was previously indistinguishable, by file
+  presence alone, from "extraction never ran." `ai-architect-mcp-codebase`
+  `stages/stage-6.md` keys its regex-fallback decision on the sidecar
+  *file's* absence, not on an empty payload — a consumer relying on the old
+  omit-when-empty behavior to detect "extraction didn't run" will now see the
+  file present with empty arrays for a zero-claims PRD. The
+  `technical_specification` prompt was also corrected to always emit the
+  affected-symbols block, since the previous prompt instructed the model to
+  omit it when nothing was touched, masking the zero-claims signal at the
+  source. Source: `ai-architect-mcp-codebase` `stages/stage-6.md`, "Zero-claims
+  case — not the same as absent" (§4.2), pinned at commit
+  `92216cd90f8f26cb15348675fc6556b8293edfc1`. (#80)
+
+- **`ecosystem-adapters`' upstream client is renamed
+  `AutomatisedPipelineClient` → `AiArchitectCodebaseClient`**, matching the
+  upstream server's own rename (`automatised-pipeline` →
+  `ai-architect-mcp-codebase`), with its config type and source file renamed
+  to match. The class is exported from `@prd-gen/ecosystem-adapters`, but
+  that workspace package is `"private": true` and has never been published —
+  it has no consumer outside this repo, so the rename is not breaking for any
+  external caller. Self-referential doc comments that still called this
+  project `prd-spec-generator` (its own former name) were also corrected.
+  (#78, closes #75)
+
+- `@modelcontextprotocol/sdk` 1.29.0 → 1.30.0; `mcp-server/index.js` rebuilt
+  from source against the updated types. Existing test suites pass
+  unmodified. (#79)
+
+### Fixed
+
+- **The codebase-intelligence tool prefix pointed at a revoked plugin
+  spelling.** `ai-architect-mcp-codebase` renamed its server key to
+  `ai-architect` (canonical since its own v0.9.0), so the correct prefix is
+  `mcp__plugin_ai-architect-mcp-codebase_ai-architect__`. This repo still
+  named the pre-rename spelling in `SKILL.md`, `EXAMPLES.md`, and
+  `preflight.ts`'s remediation text; the host silently drops calls to an
+  unresolvable tool name rather than raising, so `call_pipeline_tool`
+  returned nothing and the pipeline continued as if the call had succeeded.
+  `mcp-tool-prefixes.test.ts`'s hand-copied allowlist carried the same dead
+  spelling, so the gate that should have caught this would have rejected the
+  fix; the allowlist moved in the same commit as the two call sites it
+  guards. A stale `cortex@cortex-plugins` reference in the same remediation
+  text (that plugin renamed to `hypermnesia-mcp` in v4.15.0) was corrected
+  alongside it rather than left as the next silent failure. (#73)
+
 ### Security
 
 - Raise `fast-uri` to 3.1.5, the first patched version for
@@ -14,22 +91,24 @@ adheres to [Semantic Versioning](https://semver.org/).
   GHSA-8j4g-w8fx-2239, and rebuild the committed MCP bundle. A production-tree
   `pnpm audit` reports zero remaining vulnerabilities after both updates.
 
+### Docs
+
+- Add `CLAUDE.md` wiring this repo into the global zetetic agent rules
+  (`~/.claude/rules/model-behavior.md`, `coding-standards.md`). (#76)
+
 ## [0.7.0] — 2026-08-03 — portable verifier and canonical distribution identity
 
 ### Added
 
-- **Canonical distribution identity.** The product, full-pipeline skill,
-  Claude/Codex/Gemini plugins, MCPB asset, and official MCP Registry entry are
-  `ai-architect-mcp-spec` at version 0.7.0. Repository-facing branding and URLs
-  move to **AI Architect MCP Spec** at `cdeust/ai-architect-mcp-spec`; no
-  `prd-spec-generator` plugin or release alias is retained. Existing callers
-  must replace the `prd-spec-generator:generate-prd` qualifier with
-  `ai-architect-mcp-spec:generate-prd`. The internal `@prd-gen/*` workspace
-  packages, `PRD_GEN_*` environment variables, `.prd-gen` data directory, and
-  `prd-gen` MCP server/tool namespace remain stable protocol and storage
-  identifiers; none is a published plugin or marketplace identity. The release
-  procedure deprecates all versions of the former Registry entry only after the
-  new canonical entry is active.
+- **Canonical distribution identity.** The product and Claude/Codex/Gemini
+  plugins remain `prd-spec-generator`, while the official MCP Registry entry
+  and primary portable bundle become `ai-architect-mcp-spec` at version 0.7.0.
+  Repository-facing branding and URLs move to **AI Architect MCP Spec** at
+  `cdeust/ai-architect-mcp-spec`.
+  Releases retain `prd-spec-generator.mcpb` as a byte-identical compatibility
+  asset, and the existing `prd-gen` server/tool namespace remains unchanged.
+  The release procedure deprecates all versions of the former Registry entry
+  only after the new canonical entry is active.
 
 - **Portable Spec Verifier for Codex and Gemini CLI.** Both host manifests now
   launch the same opt-in `verifier` profile, which advertises and accepts only
