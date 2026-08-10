@@ -40085,15 +40085,18 @@ var PipelineStateSchema = external_exports.object({
   verification_plan: VerificationPlanSnapshotSchema.nullable().default(null),
   /**
    * Path to the `stage-5.affected_symbols.json` sidecar written by
-   * file-export.ts, when the technical_specification section asserted ≥1
-   * symbol-level claim. Set in file-export at the file-set-complete
-   * transition; read by self-check to pass `affected_symbols_path` to
-   * `validate_prd_against_graph`. Null when no claims were parsed (the
-   * sidecar is then never exported — see file-export.ts module doc) or when
-   * file_export has not yet run.
+   * file-export.ts, when the technical_specification section ran and
+   * produced content (extraction ran — regardless of how many claims it
+   * found; empty arrays are a valid, written zero-claims document). Set in
+   * file-export at the file-set-complete transition; read by self-check to
+   * pass `affected_symbols_path` to `validate_prd_against_graph`. Null when
+   * the technical_specification section never ran (see file-export.ts
+   * module doc) or when file_export has not yet run.
    *
    * source: AP validate_prd_against_graph contract, `affected_symbols_path`
-   * argument (ai-architect-mcp-codebase stages/stage-6.md §4.2 / §6.1).
+   * argument (ai-architect-mcp-codebase stages/stage-6.md §4.2/§6.1,
+   * "Zero-claims case — not the same as absent"), pinned at commit
+   * 92216cd90f8f26cb15348675fc6556b8293edfc1.
    */
   affected_symbols_path: external_exports.string().nullable().default(null),
   /**
@@ -40818,10 +40821,10 @@ function renderAffectedSymbolsInstruction(sectionType) {
     return "";
   return [
     `<affected_symbols_instruction>`,
-    `After the section body above, if this feature modifies, adds, removes, or`,
-    `renames any existing codebase symbol, append EXACTLY ONE block in this`,
-    `exact form (this is the ONLY place fenced JSON is permitted in this`,
-    `section \u2014 do not use JSON/fences anywhere else):`,
+    `After the section body above, append EXACTLY ONE block in this exact`,
+    `form (this is the ONLY place fenced JSON is permitted in this section \u2014`,
+    `do not use JSON/fences anywhere else). This block is REQUIRED in every`,
+    `technical_specification section, with no exception:`,
     "",
     AFFECTED_SYMBOLS_MARKER,
     "```json",
@@ -40839,7 +40842,7 @@ function renderAffectedSymbolsInstruction(sectionType) {
     `Rules for this block:`,
     `  - qualified_name MUST be "<file_path>::<symbol_name>" (e.g. "src/main.rs::handle_tool_call"), matching a REAL symbol from <codebase_grounding> when grounding is present. Entries without qualified_name are ignored downstream.`,
     `  - scope_claims is optional; omit the key entirely if there is nothing to claim.`,
-    `  - If nothing in this feature touches an existing symbol, omit this entire block (marker and fence both) \u2014 do not emit an empty affected_symbols array.`,
+    `  - If nothing in this feature modifies, adds, removes, or renames any existing codebase symbol (e.g. a purely conceptual/greenfield spec, or a docs-only/infra-only change), emit the block anyway with "affected_symbols": [] \u2014 do NOT omit the block. An omitted block is read downstream as "extraction did not run," a different state from "ran and found nothing," and routes this PRD through a low-precision fallback instead of correctly reporting zero claims.`,
     `</affected_symbols_instruction>`
   ].join("\n");
 }
@@ -42242,8 +42245,11 @@ function jiraContent(state) {
   const last = [...state.sections].reverse().find((s) => s.section_type === "jira_tickets" && s.content);
   return last?.content?.trim() ?? "";
 }
+function technicalSpecSection(state) {
+  return state.sections.find((s) => s.section_type === "technical_specification" && s.content) ?? null;
+}
 function affectedSymbolsForState(state) {
-  const techSpec = state.sections.find((s) => s.section_type === "technical_specification" && s.content);
+  const techSpec = technicalSpecSection(state);
   return techSpec ? parseAffectedSymbolsBlock(techSpec.content) : { affected_symbols: [], scope_claims: [] };
 }
 var COMPANION_FILES = [
@@ -42306,9 +42312,9 @@ function companionAndJiraFiles(state, base, skipped) {
   return files;
 }
 function affectedSymbolsFile(state, base) {
-  const affected = affectedSymbolsForState(state);
-  if (affected.affected_symbols.length === 0)
+  if (!technicalSpecSection(state))
     return null;
+  const affected = affectedSymbolsForState(state);
   return {
     path: `${base}/${AFFECTED_SYMBOLS_FILENAME}`,
     content: () => JSON.stringify(affected, null, 2)
