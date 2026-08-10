@@ -292,11 +292,61 @@ describe("file_export handler — stage-5.affected_symbols.json sidecar", () => 
     }
   });
 
-  it("does NOT emit a sidecar when the section carries no affected_symbols block", () => {
-    const { written } = drainFileExport(stateAtFileExport()); // only "overview"
+  it("does NOT emit a sidecar when technical_specification never ran at all (the true 'absent' state — extraction did not run)", () => {
+    const { written } = drainFileExport(stateAtFileExport()); // only "overview"; no technical_specification section exists
     expect(
       written.some((p) => p.endsWith("stage-5.affected_symbols.json")),
     ).toBe(false);
+  });
+
+  // Root-cause regression coverage (ai-architect-mcp-codebase stages/stage-6.md
+  // §4.2, "Zero-claims case — not the same as absent", pinned at commit
+  // 92216cd90f8f26cb15348675fc6556b8293edfc1): a PRD whose
+  // technical_specification section RAN and legitimately found zero
+  // code-level claims (docs-only/infra-only change) MUST still get the
+  // sidecar written, with empty arrays — never treated the same as "the
+  // section never ran". Before the fix, `affectedSymbolsFile` returned null
+  // whenever `affected_symbols.length === 0`, indistinguishable from the
+  // section never having run.
+  it("emits the sidecar with EMPTY arrays (not null/omitted) when technical_specification ran and explicitly asserted zero claims", () => {
+    const ZERO_CLAIMS_BLOCK = [
+      "## Technical Specification",
+      "",
+      "This PRD only updates documentation; no code symbols are touched.",
+      "",
+      "<!-- AFFECTED_SYMBOLS_JSON -->",
+      "```json",
+      JSON.stringify({ affected_symbols: [], scope_claims: [] }),
+      "```",
+    ].join("\n");
+    const s: PipelineState = {
+      ...stateWithTechSpec(ZERO_CLAIMS_BLOCK),
+      written_files: [
+        "prd-output/test_exp/01-prd.md",
+        "prd-output/test_exp/00-run-notes.md",
+      ],
+    };
+    const out = step({ state: s });
+    expect(out.action.kind).toBe("write_file");
+    if (out.action.kind === "write_file") {
+      expect(out.action.path).toBe(
+        "prd-output/test_exp/stage-5.affected_symbols.json",
+      );
+      expect(JSON.parse(out.action.content)).toEqual({
+        affected_symbols: [],
+        scope_claims: [],
+      });
+    }
+  });
+
+  it("emits the sidecar with EMPTY arrays even when the model omits the affected-symbols block entirely, as long as technical_specification ran and produced content", () => {
+    const NO_BLOCK_CONTENT = [
+      "## Technical Specification",
+      "",
+      "This PRD only updates documentation; no code symbols are touched.",
+    ].join("\n");
+    const { written } = drainFileExport(stateWithTechSpec(NO_BLOCK_CONTENT));
+    expect(written).toContain("prd-output/test_exp/stage-5.affected_symbols.json");
   });
 
   it("records affected_symbols_path in state once the sidecar is written", () => {
