@@ -6,17 +6,16 @@
     "url": "https://github.com/cdeust/ai-architect-mcp-spec",
     "source": "github"
   },
-  "version": "0.7.0",
+  "version": "0.8.0",
   "websiteUrl": "https://ai-architect.tools",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/cdeust/ai-architect-mcp-spec/releases/download/v0.7.0/ai-architect-mcp-spec.mcpb",
-      "version": "0.7.0",
+      "identifier": "https://github.com/cdeust/ai-architect-mcp-spec/releases/download/v0.8.0/ai-architect-mcp-spec.mcpb",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
-      },
-      "fileSha256": "6dcf5096089e80dadaeec78743f562ecc6d3a3a5349e7e377275ffa50f20dec7"
+      }
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: ai-architect-mcp-spec
-version: 0.7.0
+version: 0.8.0
 description: Action-driven PRD generation. The MCP server runs a stateless 20-step pipeline reducer (11 PRD-generation steps + 9 opt-in implementation steps behind a human gate); the host (Claude Code) executes each substantive action and feeds the result back via submit_action_result, looping until done. Multi-judge verification combines genius reasoning patterns with zetetic team subagents. Grounded in the ai-architect ecosystem (ai-architect-mcp-codebase MCP, Cortex MCP, zetetic-team-subagents).
 dependencies: node>=20
 prd_contexts: proposal, feature, bug, incident, poc, mvp, release, cicd
@@ -24,7 +24,7 @@ ecosystem:
   - genius reasoning patterns — liskov, dijkstra, fermi, popper, ...
 ---
 
-# AI Architect MCP Spec (v0.7.0) — Dispatcher Protocol
+# AI Architect MCP Spec (v0.8.0) — Dispatcher Protocol
 
 You (the host) drive a loop:
 

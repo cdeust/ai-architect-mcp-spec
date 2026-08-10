@@ -1,7 +1,7 @@
 {
   "name": "ai-architect-mcp-spec",
   "description": "Stateless reducer that turns a feature description into a 9-file PRD. Multi-judge verification with weighted-average + Bayesian consensus, calibrated against externally-grounded oracles (schema/math/code/spec). Closed loop: per-judge Bayesian reliability calibration, Kaplan-Meier retry budgets, Clopper-Pearson KPI gates, mechanically-sealed held-out partitions, paired-bootstrap cross-arm comparisons. Deterministic Hard Output Rules validation. 17 MCP tools, 1506 tests.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": {
     "name": "Clement Deust",
     "email": "admin@ai-architect.tools"

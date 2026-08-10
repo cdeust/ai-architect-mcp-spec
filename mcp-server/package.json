@@ -1,6 +1,6 @@
 {
   "name": "@prd-gen/mcp-server-bundle",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Self-contained ESM bundle of the ai-architect-mcp-spec MCP server. Built by `pnpm bundle` from the workspace TypeScript source. `bin/ensure-deps.sh` provisions the externalised runtime deps below on first launch, then runs index.js via `node`.",
   "type": "module",
   "main": "./index.js",

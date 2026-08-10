@@ -1,6 +1,6 @@
 {
   "name": "ai-architect-mcp-spec",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Deterministic PRD structure verification with two MCP tools and shared audit skills.",
   "mcpServers": {
     "prd-spec-verifier": {

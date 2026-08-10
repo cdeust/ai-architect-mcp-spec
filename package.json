@@ -1,6 +1,6 @@
 {
   "name": "ai-architect-mcp-spec",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "license": "MIT",
   "description": "Cross-platform PRD verifier and host-driven generator with deterministic structural rules, calibrated multi-judge verification, and full audit lineage. 17 MCP tools, 1506 tests.",

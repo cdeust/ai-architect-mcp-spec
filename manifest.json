@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ai-architect-mcp-spec",
   "display_name": "AI Architect MCP Spec — Verified PRD Generator",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "description": "Cross-platform PRD verifier and host-driven 9-file generator — deterministic rules, multi-judge consensus, 17 MCP tools.",
   "long_description": "Cross-platform PRD verification for Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts, plus a host-driven 9-file generator with closed-loop reliability calibration, multi-judge verification against externally-grounded oracles, and mechanically-sealed falsifier protocols. The portable verifier exposes two deterministic tools; orchestration-capable hosts can drive the full 17-tool pipeline. 1506 tests, full audit lineage, no telemetry.",

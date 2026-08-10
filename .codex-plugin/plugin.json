@@ -1,6 +1,6 @@
 {
   "name": "ai-architect-mcp-spec",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Deterministic PRD structure verification for Codex, backed by AI Architect MCP Spec.",
   "author": {
     "name": "Clement Deust",
