@@ -5,10 +5,13 @@
 </p>
 
 **AI Architect MCP Spec** is published as `ai-architect-mcp-spec` across its
-Claude Code, Codex, Gemini, MCPB, PyPI/npm, and MCP Registry surfaces.
-After 0.7.0 is published under the new identity, the former
-`io.github.cdeust/prd-spec-generator` Registry versions are deprecated with a
-pointer to the canonical entry rather than left active and frozen.
+Claude Code, Codex, Gemini, MCPB, PyPI/npm, and MCP Registry surfaces. `0.7.0`
+moved the MCP Registry entry and primary bundle to the new identity while
+keeping the Claude/Codex/Gemini plugins under `prd-spec-generator`; `0.8.0`
+completed the migration — no `prd-spec-generator` plugin or release alias is
+retained anywhere. The former `io.github.cdeust/prd-spec-generator` Registry
+versions are deprecated with a pointer to the canonical entry rather than
+left active and frozen.
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
