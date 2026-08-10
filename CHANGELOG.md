@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release workflow never told the MCP Registry about a release.**
+  `scripts/publish-mcp-registry.sh` existed as a manual runbook but no
+  workflow called it, so `registry.modelcontextprotocol.io` kept serving
+  `0.7.0` for `io.github.cdeust/ai-architect-mcp-spec` after `v0.8.0` was
+  tagged, tested, and released. Added a `publish_registry` job to
+  `.github/workflows/release.yml` (needs the `release` job; `workflow_dispatch`
+  recovery path for tags whose registry publish is missing) that downloads
+  and re-verifies the public `.mcpb` release asset (checksum + provenance
+  attestation), publishes `server.json` to the registry via
+  `mcp-publisher login github-oidc` (no stored credential), and fails the job
+  if a follow-up query against the registry's own API disagrees with what
+  was published. Removed `scripts/publish-mcp-registry.sh`, which this job
+  supersedes.
+
 ## [0.8.0] — 2026-08-10 — canonical identity completed, cross-repo contract fixes
 
 > The `[0.7.0]` section below was silently rewritten in place by the commit
