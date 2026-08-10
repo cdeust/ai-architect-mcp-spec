@@ -187,15 +187,18 @@ export const PipelineStateSchema = z.object({
   verification_plan: VerificationPlanSnapshotSchema.nullable().default(null),
   /**
    * Path to the `stage-5.affected_symbols.json` sidecar written by
-   * file-export.ts, when the technical_specification section asserted ≥1
-   * symbol-level claim. Set in file-export at the file-set-complete
-   * transition; read by self-check to pass `affected_symbols_path` to
-   * `validate_prd_against_graph`. Null when no claims were parsed (the
-   * sidecar is then never exported — see file-export.ts module doc) or when
-   * file_export has not yet run.
+   * file-export.ts, when the technical_specification section ran and
+   * produced content (extraction ran — regardless of how many claims it
+   * found; empty arrays are a valid, written zero-claims document). Set in
+   * file-export at the file-set-complete transition; read by self-check to
+   * pass `affected_symbols_path` to `validate_prd_against_graph`. Null when
+   * the technical_specification section never ran (see file-export.ts
+   * module doc) or when file_export has not yet run.
    *
    * source: AP validate_prd_against_graph contract, `affected_symbols_path`
-   * argument (ai-architect-mcp-codebase stages/stage-6.md §4.2 / §6.1).
+   * argument (ai-architect-mcp-codebase stages/stage-6.md §4.2/§6.1,
+   * "Zero-claims case — not the same as absent"), pinned at commit
+   * 92216cd90f8f26cb15348675fc6556b8293edfc1.
    */
   affected_symbols_path: z.string().nullable().default(null),
   /**

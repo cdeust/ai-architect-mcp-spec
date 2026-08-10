@@ -19,13 +19,22 @@
  * files were one-line "_No ... section._" placeholders the user discovered
  * only after delivery.
  *
- * The affected-symbols sidecar is conditional (not always emitted):
- * ai-architect-mcp-codebase stage 6 treats an ABSENT
- * `stage-5.affected_symbols.json` as "fall back to regex extraction" and a
- * PRESENT-BUT-EMPTY one as "the PRD asserts zero claims" — the latter would
- * wrongly suppress the regex fallback. So the sidecar is written only when
- * parseAffectedSymbolsBlock found ≥1 claim.
- * source: ai-architect-mcp-codebase stages/stage-6.md §4.2.
+ * The affected-symbols sidecar's presence, not its claim count, is the
+ * signal ai-architect-mcp-codebase stage 6 reads: an ABSENT
+ * `stage-5.affected_symbols.json` means "the generator's structured-
+ * extraction step did not run at all" and triggers the §4.3 regex fallback;
+ * a PRESENT sidecar — even with empty `affected_symbols`/`scope_claims`
+ * arrays — means "extraction ran and found nothing" (a docs-only or
+ * infra-only PRD) and must suppress the fallback. These are different
+ * states and conflating them silently routes a legitimate zero-claims PRD
+ * through the low-precision regex path. So the sidecar is written whenever
+ * the technical_specification section produced content (extraction ran),
+ * regardless of how many claims parseAffectedSymbolsBlock found in it; it
+ * is omitted only when that section never ran (not scheduled / failed /
+ * skipped).
+ * source: ai-architect-mcp-codebase stages/stage-6.md, "Zero-claims case —
+ * not the same as absent" (§4.2), pinned at commit
+ * 92216cd90f8f26cb15348675fc6556b8293edfc1.
  */
 
 import type { StepHandler } from "../runner.js";
@@ -148,17 +157,34 @@ function jiraContent(state: PipelineState): string {
 }
 
 /**
+ * precondition:  none.
+ * postcondition: returns the technical_specification section when it ran
+ *                and produced content; null otherwise. This is the sole
+ *                signal for "did the generator's structured-extraction step
+ *                run at all" — distinct from whether that section's own
+ *                affected-symbols block was non-empty (see module doc).
+ */
+function technicalSpecSection(
+  state: PipelineState,
+): PipelineState["sections"][number] | null {
+  return (
+    state.sections.find(
+      (s) => s.section_type === "technical_specification" && s.content,
+    ) ?? null
+  );
+}
+
+/**
  * Extract affected-symbol claims from the technical_specification section.
  * Claims come exclusively from the LLM's own "Affected Symbols" block (see
  * @prd-gen/meta-prompting section-prompts.ts) — never from
  * `state.codebase_grounding`, which would validate the graph against itself.
  *
- * source: ai-architect-mcp-codebase stages/stage-6.md §4.2.
+ * source: ai-architect-mcp-codebase stages/stage-6.md §4.2, pinned at commit
+ * 92216cd90f8f26cb15348675fc6556b8293edfc1.
  */
 function affectedSymbolsForState(state: PipelineState): AffectedSymbolsDocument {
-  const techSpec = state.sections.find(
-    (s) => s.section_type === "technical_specification" && s.content,
-  );
+  const techSpec = technicalSpecSection(state);
   return techSpec
     ? parseAffectedSymbolsBlock(techSpec.content!)
     : { affected_symbols: [], scope_claims: [] };
@@ -253,13 +279,19 @@ function companionAndJiraFiles(
 
 /**
  * precondition:  none.
- * postcondition: returns the affected-symbols sidecar file when ≥1 claim was
- *                parsed; null otherwise (see module doc — a present-but-
- *                empty sidecar would wrongly suppress AP's regex fallback).
+ * postcondition: returns the affected-symbols sidecar file whenever the
+ *                technical_specification section ran and produced content
+ *                (extraction ran), carrying whatever
+ *                parseAffectedSymbolsBlock extracted — including empty
+ *                `affected_symbols`/`scope_claims` arrays for a genuine
+ *                zero-claims (docs-only/infra-only) PRD. Returns null only
+ *                when that section never ran (see module doc — the file's
+ *                ABSENCE, not an empty payload, is the codebase-graph
+ *                stage's signal to fall back to regex extraction).
  */
 function affectedSymbolsFile(state: PipelineState, base: string): PrdFile | null {
+  if (!technicalSpecSection(state)) return null;
   const affected = affectedSymbolsForState(state);
-  if (affected.affected_symbols.length === 0) return null;
   return {
     path: `${base}/${AFFECTED_SYMBOLS_FILENAME}`,
     content: () => JSON.stringify(affected, null, 2),

@@ -323,26 +323,32 @@ function renderGroundingBlock(
  * ("no JSON, no fences") — it is appended AFTER the section body, marked
  * unambiguously, and stripped from the human-readable PRD before assembly
  * (see @prd-gen/core stripAffectedSymbolsBlock, applied in
- * orchestration/file-export.ts joinSections). Omitting the block entirely is
- * valid when the section introduces no symbol-level changes (e.g. a purely
- * conceptual/greenfield technical spec) — parseAffectedSymbolsBlock treats an
- * absent block as "no claims," and file-export skips the sidecar in that
- * case rather than emitting an empty one (an empty sidecar would wrongly
- * suppress stage 6's regex fallback, which activates only when the file is
- * ABSENT).
+ * orchestration/file-export.ts joinSections). The block is REQUIRED, never
+ * optional: when the section introduces no symbol-level changes (e.g. a
+ * purely conceptual/greenfield technical spec, or a docs-only/infra-only
+ * PRD) the model still emits the block, with `affected_symbols: []`. This
+ * is because file-export.ts's export policy keys on whether the
+ * technical_specification section ran at all, not on whether the model's
+ * block was non-empty — an omitted block is indistinguishable downstream
+ * from "extraction never ran," which is a different, ABSENT-sidecar state
+ * that wrongly triggers stage 6's low-precision regex fallback. An empty
+ * `affected_symbols` array, in contrast, is exported as a genuine
+ * zero-claims sidecar and correctly suppresses that fallback.
  *
- * source: ai-architect-mcp-codebase stages/stage-6.md §4.2 contract; parser
- * verified against src/prd_validator.rs::parse_structured_claims (JSON, not
- * the doc's illustrative YAML) — see affected-symbols.ts module doc.
+ * source: ai-architect-mcp-codebase stages/stage-6.md, "Zero-claims case —
+ * not the same as absent" (§4.2), pinned at commit
+ * 92216cd90f8f26cb15348675fc6556b8293edfc1; parser verified against
+ * src/prd_validator.rs::parse_structured_claims (JSON, not the doc's
+ * illustrative YAML) — see affected-symbols.ts module doc.
  */
 function renderAffectedSymbolsInstruction(sectionType: SectionType): string {
   if (sectionType !== "technical_specification") return "";
   return [
     `<affected_symbols_instruction>`,
-    `After the section body above, if this feature modifies, adds, removes, or`,
-    `renames any existing codebase symbol, append EXACTLY ONE block in this`,
-    `exact form (this is the ONLY place fenced JSON is permitted in this`,
-    `section — do not use JSON/fences anywhere else):`,
+    `After the section body above, append EXACTLY ONE block in this exact`,
+    `form (this is the ONLY place fenced JSON is permitted in this section —`,
+    `do not use JSON/fences anywhere else). This block is REQUIRED in every`,
+    `technical_specification section, with no exception:`,
     "",
     AFFECTED_SYMBOLS_MARKER,
     "```json",
@@ -360,7 +366,7 @@ function renderAffectedSymbolsInstruction(sectionType: SectionType): string {
     `Rules for this block:`,
     `  - qualified_name MUST be "<file_path>::<symbol_name>" (e.g. "src/main.rs::handle_tool_call"), matching a REAL symbol from <codebase_grounding> when grounding is present. Entries without qualified_name are ignored downstream.`,
     `  - scope_claims is optional; omit the key entirely if there is nothing to claim.`,
-    `  - If nothing in this feature touches an existing symbol, omit this entire block (marker and fence both) — do not emit an empty affected_symbols array.`,
+    `  - If nothing in this feature modifies, adds, removes, or renames any existing codebase symbol (e.g. a purely conceptual/greenfield spec, or a docs-only/infra-only change), emit the block anyway with "affected_symbols": [] — do NOT omit the block. An omitted block is read downstream as "extraction did not run," a different state from "ran and found nothing," and routes this PRD through a low-precision fallback instead of correctly reporting zero claims.`,
     `</affected_symbols_instruction>`,
   ].join("\n");
 }

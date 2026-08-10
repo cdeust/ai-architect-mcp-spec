@@ -103,11 +103,16 @@ const AFFECTED_SYMBOLS_BLOCK_PATTERN = new RegExp(
  * degrades to regex-only mode with a `contract_missing: true` warning at the
  * top of the report (informational, not fail)."
  *
- * Inference from that contract (not stated verbatim in the doc): since the
- * regex fallback activates only when the sidecar file is ABSENT, exporting
- * an empty sidecar would suppress the fallback without providing any claims
- * to validate against — worse than not exporting at all. Callers must
- * therefore check `affected_symbols.length > 0` before exporting; this
+ * §4.2's "Zero-claims case — not the same as absent" paragraph (same doc,
+ * pinned at commit 92216cd90f8f26cb15348675fc6556b8293edfc1) makes the
+ * corollary explicit, correcting an earlier inference this comment used to
+ * draw: an empty result here — whether from a genuinely empty
+ * affected_symbols array or the marker being absent — is a valid "no
+ * claims" document. Stage 6's regex fallback is keyed on the SIDECAR FILE'S
+ * absence, never on this document being empty. Callers decide whether to
+ * write the sidecar based on whether the technical_specification section
+ * ran at all (see orchestration/file-export.ts's `technicalSpecSection` /
+ * `affectedSymbolsFile`), NOT on this function's return value — this
  * function does not decide export policy, only extraction.
  */
 export function parseAffectedSymbolsBlock(
