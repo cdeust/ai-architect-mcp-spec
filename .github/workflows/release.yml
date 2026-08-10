@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10
 
@@ -135,7 +135,7 @@ jobs:
           shasum -a 256 ai-architect-mcp-spec.cdx.json | awk '{print $1}' > ai-architect-mcp-spec.cdx.json.sha256
 
       - name: Attest build provenance (.mcpb + SBOM)
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             ai-architect-mcp-spec.mcpb
