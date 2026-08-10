@@ -365,19 +365,71 @@ jobs:
       - name: Authenticate to the MCP Registry via GitHub OIDC
         run: ./mcp-publisher login github-oidc
 
+      # A "cannot publish duplicate version" 400 means the registry already
+      # has this exact version — the desired end state for the
+      # workflow_dispatch recovery path (this job's header: v0.8.0 built and
+      # released cleanly while the registry kept serving v0.7.0 because no
+      # job ever told it, until re-run via workflow_dispatch). On the normal
+      # push-tag path the same error means something is wrong: this job runs
+      # once per tag (needs: [release]), so an existing entry there is
+      # unexpected and must still fail loudly. The verify step below still
+      # runs after a swallowed duplicate and independently confirms the
+      # registry serves this version before the job can pass — this branch
+      # narrows *which* mcp-publisher exit codes are treated as non-fatal, it
+      # never widens what "passing" means.
       - name: Publish server.json to the MCP Registry
-        run: ./mcp-publisher publish server.runtime.json
+        run: |
+          set +e
+          OUTPUT=$(./mcp-publisher publish server.runtime.json 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -ne 0 ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "$OUTPUT" | grep -qi "duplicate version"; then
+              echo "::notice::mcp-publisher reports ${{ steps.resolve.outputs.tag }} already published (workflow_dispatch recovery path) — treating as a candidate success, pending independent registry verification below."
+            else
+              echo "::error::mcp-publisher publish failed (exit ${STATUS})"
+              exit "$STATUS"
+            fi
+          fi
 
-      # A green `mcp-publisher publish` is not proof. Query the registry's
-      # own API and fail the job if it disagrees with what was published.
+      # A green `mcp-publisher publish` (or a swallowed duplicate-version
+      # error above) is not proof. Query the registry's own API and fail the
+      # job if it disagrees with what was published.
+      #
+      # Bounded retry, not zero-tolerance: the registry API sits behind a
+      # CDN cache in front of all public read endpoints (modelcontextprotocol/
+      # registry docs/design/tech-architecture.md, "CDN Layer"), so a read
+      # immediately after publish can observe a stale, pre-publish entry.
+      # Measured on cortex-viz's v3.1.1 release (2026-08-09), which hit this
+      # same zero-tolerance check: publish completed at 16:48:46 UTC and a
+      # read one second later, 16:48:47, still returned the prior version —
+      # an empirical floor of >1s of staleness. No SLA for the cache TTL is
+      # published, so the bound below is a stated engineering assumption,
+      # not a measured constant: 12 attempts x 5s = 60s, an order of
+      # magnitude above the observed 1s staleness, meant to absorb ordinary
+      # CDN propagation without masking a genuine publish failure. It still
+      # fails — this is a timeout, not an unbounded retry-until-pass — when
+      # the registry never converges, which is exactly the case this check
+      # exists to catch.
       - name: Verify the registry now serves the published version
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           VERSION=$(jq -r '.version' server.runtime.json)
-          ACTUAL=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec" \
-            | python3 -c "import json, sys; d = json.load(sys.stdin); latest = next(s for s in d['servers'] if s['server']['name'] == 'io.github.cdeust/ai-architect-mcp-spec' and s['_meta']['io.modelcontextprotocol.registry/official']['isLatest']); print(latest['server']['version'])")
-          echo "Registry reports latest version: ${ACTUAL} (expected ${VERSION})"
-          if [ "$ACTUAL" != "$VERSION" ]; then
-            echo "::error::MCP Registry serves ${ACTUAL}, expected ${VERSION} after publish"
-            exit 1
-          fi
+          MAX_ATTEMPTS=12
+          SLEEP_SECONDS=5
+          ACTUAL=""
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            ACTUAL=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec" \
+              | python3 -c "import json, sys; d = json.load(sys.stdin); latest = next(s for s in d['servers'] if s['server']['name'] == 'io.github.cdeust/ai-architect-mcp-spec' and s['_meta']['io.modelcontextprotocol.registry/official']['isLatest']); print(latest['server']['version'])")
+            echo "Attempt ${attempt}/${MAX_ATTEMPTS}: registry reports latest version ${ACTUAL} (expected ${VERSION})"
+            if [ "$ACTUAL" = "$VERSION" ]; then
+              echo "Registry converged to ${VERSION} on attempt ${attempt}."
+              exit 0
+            fi
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "::error::MCP Registry still serves ${ACTUAL}, expected ${VERSION} after ${MAX_ATTEMPTS} attempts (~$((MAX_ATTEMPTS * SLEEP_SECONDS))s). This is a non-convergence failure, not a propagation delay."
+          exit 1
