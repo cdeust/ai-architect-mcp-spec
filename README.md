@@ -4,15 +4,6 @@
   <img src="assets/banner.svg" alt="AI Architect MCP Spec — verified PRDs for agentic delivery pipelines" width="100%"/>
 </p>
 
-**AI Architect MCP Spec** is published as `ai-architect-mcp-spec` across its
-Claude Code, Codex, Gemini, MCPB, PyPI/npm, and MCP Registry surfaces. `0.7.0`
-moved the MCP Registry entry and primary bundle to the new identity while
-keeping the Claude/Codex/Gemini plugins under `prd-spec-generator`; `0.8.0`
-completed the migration — no `prd-spec-generator` plugin or release alias is
-retained anywhere. The former `io.github.cdeust/prd-spec-generator` Registry
-versions are deprecated with a pointer to the canonical entry rather than
-left active and frozen.
-
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/TypeScript-7.0+-3178c6.svg" alt="TypeScript 7.0+">
@@ -26,8 +17,9 @@ left active and frozen.
 </p>
 
 <p align="center">
-  <strong>Cross-platform PRD verification for Codex, Gemini CLI, Claude Code, CI, and any stdio MCP host.</strong><br>
-  The deterministic two-tool verifier travels everywhere; the full 9-file generation pipeline remains available to orchestration-capable hosts.
+  <strong>Catch a hallucinated spec before it becomes code.</strong><br>
+  It checks that every symbol exists, every acceptance criterion traces to a requirement, and no performance claim passes without a measurement — deterministically, with no model in the checking loop.<br>
+  <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
 </p>
 
 <p align="center">
@@ -35,10 +27,7 @@ left active and frozen.
 </p>
 
 <p align="center">
-  <strong>Companion projects:</strong><br>
-  <a href="https://github.com/cdeust/Cortex">Cortex</a> — persistent memory that injects past decisions into every PRD<br>
-  <a href="https://github.com/cdeust/zetetic-team-subagents">zetetic-team-subagents</a> — 97 genius reasoning patterns that judge each claim<br>
-  <a href="https://github.com/cdeust/ai-architect-mcp-codebase">ai-architect-mcp-codebase</a> — the codebase intelligence layer this generator consumes upstream
+  <sub>One of three MCP servers that each run standalone — memory, code graph, spec verification. <a href="#how-it-composes-with-the-rest-of-the-ecosystem">How they compose ↓</a></sub>
 </p>
 
 ---
@@ -46,6 +35,26 @@ left active and frozen.
 Every AI agent that drafts a PRD eventually invents a function that doesn't exist, claims latency it can't measure, or writes acceptance criteria that don't tie back to the requirements they're supposed to test. The output sounds confident. It is not actionable. The next stage in the pipeline — code generation, ticket import, sprint planning — silently inherits the hallucination, ships it, and pays for it later.
 
 **AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
+
+### What you get
+
+- **A spec that survives contact with code.** Symbols are cross-checked against the real codebase graph, so a PRD cannot reference a function that was renamed last week.
+- **Traceability that is actually checked.** Every acceptance criterion must tie back to a requirement; numbering gaps are caught, not assumed away.
+- **No PASS without a measurement.** The verdict taxonomy *refuses* to pass a latency, throughput, fps or storage claim — it returns SPEC-COMPLETE or NEEDS-RUNTIME instead of a confident guess.
+- **A guard against agreeable judges.** A panel that agrees 100% of the time over 5+ claims raises `distribution_suspicious` rather than being read as consensus.
+- **It works where you work.** The deterministic verifier travels to Codex, Gemini CLI, Claude Code and CI; the full generation pipeline runs on hosts that can execute its orchestration actions.
+
+### Sovereign verification, eco-responsible by intent
+
+**Sovereign is what it is today.** The server is a stateless reducer — `step(state, result?) → next_state, action`. It emits actions; your host executes them. It runs on your machine, and it never phones home for a verdict.
+
+**Eco-responsible is what we're aiming at.** This one's lever is different from its siblings': it is *avoided rework*. A hallucinated PRD is inherited by code generation, ticket import and sprint planning before anyone notices — and every stage that consumed it has to be redone. The spec stage is the cheapest place in the pipeline to catch that, and three design choices keep the catching itself cheap:
+
+- **The checks run no model.** Hard Output Rules and cross-section traceability are deterministic; finding a broken FR-AC link costs zero inference.
+- **Sections fail before they are finished.** Each is validated before the host ever sees it, instead of being generated in full and then discarded.
+- **Retry budgets are derived, not guessed.** `MAX_ATTEMPTS` comes from Kaplan-Meier survival math, and `map_failure_to_retrieval` sends a *corrective* query before a retry — a retry that reuses the context that just failed is waste with a receipt.
+
+As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
 
 **10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1506 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
@@ -101,6 +110,8 @@ map_failure_to_retrieval(violations[])
 ---
 
 ## Getting started
+
+<sub><strong>A note on naming.</strong> This is published as <code>ai-architect-mcp-spec</code> across its Claude Code, Codex, Gemini, MCPB, PyPI/npm and MCP Registry surfaces. <code>0.7.0</code> moved the Registry entry and primary bundle to that identity; <code>0.8.0</code> completed the migration, so no <code>prd-spec-generator</code> plugin or release alias is retained anywhere. The former <code>io.github.cdeust/prd-spec-generator</code> Registry versions are deprecated with a pointer to the canonical entry rather than left active and frozen.</sub>
 
 ### Install (marketplace — recommended)
 
