@@ -4,9 +4,6 @@ PRD generation and verification MCP (prd-gen). Node.js host-driven pipeline runn
 
 Global rules are imported, not restated:
 
-@~/.claude/rules/model-behavior.md
-@~/.claude/rules/coding-standards.md
-
 ## Repo-specific constraints
 
 - The tools are a strongly ordered pipeline: start_pipeline then submit_action_result until done; calling them out of order does not error, it leaves the run in a wrong state.
