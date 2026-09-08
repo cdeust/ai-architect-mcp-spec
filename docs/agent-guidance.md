@@ -19,4 +19,6 @@ PRD generation and verification MCP (prd-gen). Node.js host-driven pipeline runn
 
 ## Etiquette
 
-Conventional commits, staged file-by-file. One PR per concern. Do not merge your own PR without the owner's go-ahead.
+Conventional commits, staged file-by-file. One PR per concern. A pull request merges when
+CI is green and a review verdict is posted on it; the owner does not gate merges by hand.
+CI is the authority: it exists to catch regressions and enforce the engineering standards.
