@@ -29,7 +29,7 @@
     "@prd-gen/validation": "workspace:*",
     "ajv": "^8.17.1",
     "mathjs": "^15.2.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
