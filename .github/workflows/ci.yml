@@ -27,6 +27,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Dispatched by rebundle-push.yml on a Dependabot branch it just pushed to.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -216,10 +216,12 @@ jobs:
             echo "No CHANGELOG entry found for $VERSION; using tag message" > release-notes.md
           fi
           # Append SHA256 to release notes for auditability
-          echo "" >> release-notes.md
-          echo "### Canonical .mcpb bundle" >> release-notes.md
-          echo "Artifact: \`ai-architect-mcp-spec.mcpb\`" >> release-notes.md
-          echo "SHA-256: \`${MCPB_SHA256}\`" >> release-notes.md
+          {
+            echo ""
+            echo "### Canonical .mcpb bundle"
+            echo "Artifact: \`ai-architect-mcp-spec.mcpb\`"
+            echo "SHA-256: \`${MCPB_SHA256}\`"
+          } >> release-notes.md
 
       - name: Create GitHub Release (with .mcpb artifact + SBOM)
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
