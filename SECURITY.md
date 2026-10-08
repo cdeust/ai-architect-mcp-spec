@@ -66,7 +66,7 @@ control now exists, not because the alert was silenced:
 
 | check | control |
 |---|---|
-| `VulnerabilitiesID` | 39 advisories → 0, with `pnpm.auditConfig.ignoreGhsas` emptied. Floors in `pnpm.overrides` are each advisory's `first_patched_version`. |
+| `VulnerabilitiesID` | 39 advisories → 0, with `auditConfig.ignoreGhsas` (pnpm-workspace.yaml) emptied. Floors in `overrides` (pnpm-workspace.yaml) are each advisory's `first_patched_version`. |
 | `PinnedDependenciesID` | `bin/ensure-deps.sh` runs `npm ci` against a committed `mcp-server/package-lock.json`, verifying integrity hashes on the user's machine. |
 | `TokenPermissionsID` | every workflow declares top-level `permissions:`. |
 | `DependencyUpdateToolID` | `.github/dependabot.yml`, covering `npm` **and** `github-actions` (SHA pins do not age out on their own). |

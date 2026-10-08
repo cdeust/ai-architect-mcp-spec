@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Every Dependabot npm PR failed `pnpm install --frozen-lockfile`.** The
+  security floors lived in `package.json#pnpm.overrides`; pnpm 11 (the
+  default in Dependabot's updater image) no longer reads the `pnpm` field of
+  `package.json`, so it regenerated `pnpm-lock.yaml` without its `overrides:`
+  block and CI died with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` (PRs #105-#108).
+  `overrides`, `onlyBuiltDependencies` and `auditConfig` now live in
+  `pnpm-workspace.yaml`. pnpm 10 (CI) and pnpm 11 both read `overrides` there;
+  pnpm 11 removed `onlyBuiltDependencies` in favour of `allowBuilds` and
+  deprecates `auditConfig.ignoreGhsas` in favour of `audit.ignore`.
+- **`pnpm audit --prod --audit-level high` failed on `main` itself.** Two
+  advisories published after the last green run: GHSA-6qxp-vccf-f47h
+  (`@modelcontextprotocol/sdk` < 1.31.0, high) and GHSA-jqcg-44mw-7w3h
+  (`proxy-addr` < 2.0.8 via `express`, critical). The SDK floor is now
+  `^1.31.0` in both packages that declare it, `proxy-addr` gets an override
+  floor of `^2.0.8` (express declares `~2.0.7` / `^2.0.7`, both satisfied), and
+  `mcp-server/index.js` is re-bundled.
 - **Every release opened a pull request that could never merge.** The
   `release` job committed the built `.mcpb`'s checksum into `server.json` on
   a branch and opened a PR against protected `main` to land it. That PR was

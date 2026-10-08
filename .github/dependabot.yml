@@ -2,7 +2,9 @@
 #
 # Two ecosystems, because the repo pins in two places and both go stale:
 #   - npm            the pnpm workspace (root + packages/*), where the
-#                    security floors in package.json#pnpm.overrides live
+#                    security floors in pnpm-workspace.yaml#overrides live
+#                    (floors are raised by hand to an advisory's patched
+#                    version; Dependabot proposes lockfile and manifest bumps)
 #   - github-actions every `uses:` in .github/workflows is pinned by commit
 #                    SHA (Scorecard PinnedDependenciesID), and a SHA pin never
 #                    ages out on its own — without this, pinning trades a
