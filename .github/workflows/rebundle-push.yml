@@ -68,7 +68,7 @@ jobs:
             exit 1
           fi
           git apply --index --binary --include='mcp-server/*' "$patch"
-          if git diff --cached --name-only | grep -qv '^mcp-server/'; then
+          if git diff --cached --no-renames --name-only | grep -qv '^mcp-server/'; then
             echo "::error::Patch touched a path outside mcp-server/."
             exit 1
           fi
