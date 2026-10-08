@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Every Dependabot npm PR failed `pnpm install --frozen-lockfile`.** The
+  security floors lived in `package.json#pnpm.overrides`; pnpm 11 (what
+  Dependabot's updater resolves with) no longer reads the `pnpm` field of
+  `package.json`, so it regenerated `pnpm-lock.yaml` without its `overrides:`
+  block and CI died with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` (PRs #105-#108).
+  `overrides`, `onlyBuiltDependencies` and `auditConfig` now live in
+  `pnpm-workspace.yaml`, which pnpm 10 (CI) and pnpm 11 both read.
 - **Every release opened a pull request that could never merge.** The
   `release` job committed the built `.mcpb`'s checksum into `server.json` on
   a branch and opened a PR against protected `main` to land it. That PR was
