@@ -14,7 +14,7 @@
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@prd-gen/core": "workspace:*",
     "@prd-gen/verification": "workspace:*",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
