@@ -1,9 +1,10 @@
 # pnpm settings live here, not in package.json#pnpm: pnpm 11 no longer reads
 # the `pnpm` field of package.json (reproduced: `pnpm@11 install --lockfile-only`
 # on the previous layout deleted the lockfile's `overrides:` block), and
-# Dependabot's updater runs a pnpm 11 resolver, so every Dependabot PR shipped a
-# lockfile without the overrides and failed `pnpm install --frozen-lockfile`
-# with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. pnpm 10 (CI) reads this file too.
+# Dependabot's updater image ships pnpm 11 by default (dependabot-core
+# npm_and_yarn/Dockerfile, PNPM_VERSION=11.25.0); its PRs shipped a lockfile
+# without the overrides and failed `pnpm install --frozen-lockfile` with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. pnpm 10 (CI) reads this file too.
 packages:
   - "packages/*"
 
