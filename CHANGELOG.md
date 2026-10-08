@@ -14,7 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   `package.json`, so it regenerated `pnpm-lock.yaml` without its `overrides:`
   block and CI died with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` (PRs #105-#108).
   `overrides`, `onlyBuiltDependencies` and `auditConfig` now live in
-  `pnpm-workspace.yaml`, which pnpm 10 (CI) and pnpm 11 both read.
+  `pnpm-workspace.yaml`. pnpm 10 (CI) and pnpm 11 both read `overrides` there;
+  pnpm 11 removed `onlyBuiltDependencies` in favour of `allowBuilds` and
+  deprecates `auditConfig.ignoreGhsas` in favour of `audit.ignore`.
 - **`pnpm audit --prod --audit-level high` failed on `main` itself.** Two
   advisories published after the last green run: GHSA-6qxp-vccf-f47h
   (`@modelcontextprotocol/sdk` < 1.31.0, high) and GHSA-jqcg-44mw-7w3h
