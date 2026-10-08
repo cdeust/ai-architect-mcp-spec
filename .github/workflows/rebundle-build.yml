@@ -1,0 +1,53 @@
+name: Rebundle Dependabot (build)
+
+# Builds mcp-server/ for a Dependabot npm PR and uploads the diff as a patch.
+# Untrusted code runs here, under `pull_request`: Dependabot-triggered runs get
+# a read-only token and no secrets. Nothing is pushed from this workflow; the
+# privileged half is rebundle-push.yml, which never executes PR code.
+# source: https://docs.github.com/en/actions/reference/security/secure-use
+# source: https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: bundle patch
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'dependabot/npm_and_yarn/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          # source: same pin as ci.yml (pnpm 10).
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # No cache: a cache written from PR code is read by later runs.
+          node-version: 20.x
+
+      - name: Install, build, bundle
+        run: pnpm install --frozen-lockfile && pnpm build && pnpm bundle
+
+      - name: Diff of mcp-server/
+        run: git diff --binary -- mcp-server/ > "$RUNNER_TEMP/rebundle.patch"
+
+      - name: Upload patch
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rebundle-patch
+          path: ${{ runner.temp }}/rebundle.patch
+          if-no-files-found: error

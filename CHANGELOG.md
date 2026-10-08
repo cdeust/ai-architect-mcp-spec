@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Dependabot npm PRs never reached their tests.** Any bump that changes
+  the bundled dependency graph fails the `mcp-server/` freshness step, which
+  runs before the tests. `rebundle-build.yml` (`pull_request`, read-only token)
+  now rebuilds `mcp-server/` for `dependabot/npm_and_yarn/**` PRs and uploads
+  the diff; `rebundle-push.yml` (`workflow_run`, runs no PR code) applies it,
+  restricted to `mcp-server/`, commits it to the PR branch and dispatches
+  `ci.yml` and `codeql.yml` on the new head, because a `GITHUB_TOKEN` push
+  triggers no workflow. The freshness step stays as is for every other author.
+  `ci.yml` and `codeql.yml` gain `workflow_dispatch`.
+- **`fast-uri` override floor raised to `^3.1.8`**, the first patched version
+  of GHSA-hrr3-gc8f-f4qj (SECURITY.md: floors equal `first_patched_version`);
+  the lockfile and `mcp-server/index.js` follow. `release.yml` no longer
+  trips actionlint's SC2129.
 - **Every Dependabot npm PR failed `pnpm install --frozen-lockfile`.** The
   security floors lived in `package.json#pnpm.overrides`; pnpm 11 (the
   default in Dependabot's updater image) no longer reads the `pnpm` field of

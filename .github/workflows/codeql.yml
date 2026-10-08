@@ -16,6 +16,7 @@ on:
     branches: [main]
   schedule:
     - cron: "0 5 * * 1"   # Mondays 05:00 UTC
+  workflow_dispatch:       # rebundle-push.yml, after it pushes to a Dependabot branch
 
 permissions:
   contents: read
