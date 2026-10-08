@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Dependabot lockfiles downgraded `@modelcontextprotocol/sdk` 1.32.1 to
+  1.32.0 (PRs #105, #106).** Since July 2026 Dependabot applies a default
+  3-day cooldown to version updates and passes it to pnpm as
+  `--config.minimum-release-age=4320` for the lockfile run, which re-resolves
+  every lockfile entry younger than the window to an older version. sdk 1.32.1
+  (published 2026-10-05T11:45Z) was 33 minutes inside the window when those
+  PRs were regenerated at 10-08T11:12Z. `.github/dependabot.yml` now sets
+  `cooldown.default-days: 1`, the smallest value the schema accepts (pnpm 11's
+  own built-in window). A version younger than that, committed to main by hand,
+  is still downgraded in a lockfile Dependabot regenerates before it ages;
+  `@dependabot recreate` is the remedy.
 - **Every Dependabot npm PR failed `pnpm install --frozen-lockfile`.** The
   security floors lived in `package.json#pnpm.overrides`; pnpm 11 (the
   default in Dependabot's updater image) no longer reads the `pnpm` field of

@@ -20,6 +20,19 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Dependabot applies a default 3-day cooldown to version updates and hands
+    # it to pnpm as --config.minimum-release-age=4320, which re-resolves every
+    # lockfile entry younger than the window to an older version (sdk 1.32.1
+    # -> 1.32.0 in #105/#106). source: GitHub docs, dependabot-options-
+    # reference#cooldown; dependabot-core updater/lib/dependabot/job.rb
+    # DEFAULT_COOLDOWN_DAYS = 3. 1 is the schema minimum (SchemaStore
+    # dependabot-2.0.json) and pnpm 11's own built-in window.
+    cooldown:
+      # A pnpm-workspace.yaml minimumReleaseAge cannot lower this: dependabot-
+      # core's Helpers.higher_release_age_gate only ever raises the gate.
+      # Residual: a version committed by hand younger than this is still
+      # downgraded until it ages; `@dependabot recreate` then. See CHANGELOG.
+      default-days: 1
     ignore:
       # better-sqlite3 13.x declares `engines.node: ">=22"`, and this project
       # declares `>=20.0.0` and tests 20.x in CI. Proposing 13 produces a PR
