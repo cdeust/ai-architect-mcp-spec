@@ -43285,7 +43285,7 @@ function validateCrossReferences(sections) {
   };
 }
 
-// node_modules/.pnpm/js-yaml@5.4.2/node_modules/js-yaml/dist/js-yaml.mjs
+// node_modules/.pnpm/js-yaml@5.4.3/node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -98128,7 +98128,7 @@ export {
 /*! Bundled license information:
 
 js-yaml/dist/js-yaml.mjs:
-  (*! js-yaml 5.4.2 https://github.com/nodeca/js-yaml @license MIT *)
+  (*! js-yaml 5.4.3 https://github.com/nodeca/js-yaml @license MIT *)
 
 decimal.js/decimal.mjs:
   (*!
