@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "python_version": "",
+  "node_version": "22",
+  "rust_toolchain": "",
+  "linux_packages": [],
+  "postgres": false,
+  "auxiliary_python_versions": [],
+  "uv_version": "",
+  "pnpm_version": "10",
+  "claude_version": "",
+  "categories": {
+    "unit": "bash .github/ci/run.sh unit",
+    "regression": "bash .github/ci/run.sh regression",
+    "e2e": "bash .github/ci/run.sh e2e",
+    "environment": "bash .github/ci/run.sh environment",
+    "installation": "bash .github/ci/run.sh installation"
+  },
+  "version_source": "package.json:version",
+  "tag_prefix": "v",
+  "release_workflows": ["release.yml"],
+  "environment_runners": [],
+  "source_sha": "50d2f3893900b50e96baa0de9b8173260391e7a2",
+  "setup_sources": [
+    ".github/workflows/ci.yml",
+    "pnpm-lock.yaml"
+  ],
+  "evidence": "README.md"
+}

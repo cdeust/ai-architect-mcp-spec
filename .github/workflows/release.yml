@@ -1,37 +1,6 @@
+# source: cdeust/ai-architect-mcp-spec@50d2f3893900b50e96baa0de9b8173260391e7a2 .github/workflows/release.yml
+# Existing artifact build, signing and publication commands retained.
 name: Release
-
-# Supply-chain hardening (issue #29). This repo's distributed artifact is the
-# `.mcpb` bundle attached to the GitHub Release and referenced by server.json
-# in the MCP registry; the marketplace consumes the git tree. All workspace
-# packages are `private: true` and NOTHING is published to npm, so npm
-# provenance (issue #29 criterion 2) has no artifact to attest — see the
-# per-job notes. What this workflow now does:
-#   * attests build provenance for the .mcpb and the SBOM (Sigstore; verify
-#     with `gh attestation verify <file> --repo cdeust/ai-architect-mcp-spec`);
-#   * generates a CycloneDX SBOM from pnpm-lock.yaml covering the workspace;
-#   * VERIFIES a locally-patched copy of server.json's fileSha256 equals the
-#     built .mcpb before publishing — closing the #23 defect class in the
-#     pipeline, not just its instance (scripts/release/verify-mcpb-checksum.mjs).
-#     This copy is never committed: fileSha256 is optional in the committed
-#     server.json (scripts/check-distribution-identity.mjs tolerates its
-#     absence) because nothing reads it there — the registry publish below
-#     builds its own verified runtime copy instead. An earlier revision
-#     opened a PR to commit this patch onto protected main; that PR could
-#     never merge (its author is `github-actions[bot]`, and GitHub does not
-#     trigger `pull_request` workflows — hence the required status checks —
-#     for events authored by the default `GITHUB_TOKEN`, a recursion guard),
-#     so every release produced one permanently blocked PR. Removed
-#     2026-08-10 once the evidence showed the committed value had no reader;
-#     see PR #82's closure for the record of that decision.
-#   * pins every third-party action to a commit SHA;
-#   * publishes server.json to the official MCP Registry
-#     (registry.modelcontextprotocol.io) after the GitHub Release is public
-#     (job `publish_registry`, needs: release) — closing the gap where every
-#     prior tag from v0.5.0 through v0.8.0 built and released the .mcpb but
-#     never told the registry, which kept serving v0.7.0 while the release
-#     itself moved on. scripts/publish-mcp-registry.sh, the manual runbook
-#     this job supersedes, is removed in the same change (dead docs are how
-#     the drift went unnoticed for four tags).
 
 on:
   push:
@@ -41,13 +10,9 @@ on:
     inputs:
       tag:
         description: >-
-          Recovery path only: republish an existing tag's server.json to the
-          MCP Registry without rebuilding anything (e.g. v0.8.0). The GitHub
-          Release for that tag must already be public with the .mcpb asset
-          attached. Required for workflow_dispatch — there is no default,
-          because guessing which tag to publish is the failure mode this job
-          exists to remove.
-        required: true
+          Tag-ref dispatch builds and publishes that tag. Dispatch from a
+          branch with this input only repairs its existing registry entry.
+        required: false
         type: string
 
 permissions:
@@ -56,7 +21,7 @@ permissions:
 jobs:
   release:
     name: Build, test, and publish release
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write       # create the release, upload assets
@@ -97,8 +62,6 @@ jobs:
 
       - name: Verify mcp-server bundle is current
         run: |
-          # Rebuild the bundle and fail if the committed version diverges
-          # from the rebuilt one (catches "I forgot to commit dist/" PRs).
           if [ -d packages/mcp-server/dist ]; then
             git diff --exit-code packages/mcp-server/dist/ \
               || (echo "::error::mcp-server bundle out of date — run 'pnpm build' and commit"; exit 1)
@@ -107,20 +70,11 @@ jobs:
       - name: Verify the numbers the docs advertise are still true
         run: |
           set -euo pipefail
-          # The test count is quoted in six user-facing places, including the
-          # marketplace descriptions a prospective user reads. It went stale
-          # twice in one working session (877 while the suite was 962, then 962
-          # while it was 1496), so it is checked where it matters: at publish.
           pnpm check:docs
 
       - name: Assemble .mcpb staging directory
         run: |
           set -euo pipefail
-          # Shared with the `mcpb smoke` job in ci.yml, deliberately. This step
-          # used to inline the staging, so the tree that ships was assembled
-          # only during a tag release and never started — which is how a .mcpb
-          # whose declared command dies on `Cannot find module 'ajv'` reached
-          # users past a green suite.
           STAGE_DIR="$(mktemp -d)/ai-architect-mcp-spec-mcpb"
           bash scripts/release/stage-mcpb.sh "${STAGE_DIR}"
           echo "STAGE_DIR=${STAGE_DIR}" >> "$GITHUB_ENV"
@@ -128,9 +82,6 @@ jobs:
       - name: Smoke-test the staged bundle before packing it
         run: |
           set -euo pipefail
-          # Speaks MCP to the staged tree using the command manifest.json
-          # declares. A release stops here rather than shipping a server that
-          # cannot start.
           bash scripts/release/smoke-mcpb.sh
 
       - name: Pack .mcpb bundle
@@ -138,14 +89,12 @@ jobs:
           set -euo pipefail
           OUTFILE="${GITHUB_WORKSPACE}/ai-architect-mcp-spec.mcpb"
 
-          # Use @anthropic-ai/mcpb if available, else zip
           if npx -y --yes @anthropic-ai/mcpb@latest pack --help >/dev/null 2>&1; then
             npx -y @anthropic-ai/mcpb@latest pack "${STAGE_DIR}" "${OUTFILE}"
           else
             (cd "${STAGE_DIR}" && zip -r "${OUTFILE}" .)
           fi
 
-          # Compute SHA-256 checksum
           shasum -a 256 "${OUTFILE}" | awk '{print $1}' > "${OUTFILE}.sha256"
           echo "SHA256: $(cat "${OUTFILE}.sha256")"
           echo "MCPB_SHA256=$(cat "${OUTFILE}.sha256")" >> "$GITHUB_ENV"
@@ -153,12 +102,6 @@ jobs:
       - name: Generate CycloneDX SBOM from pnpm-lock.yaml
         run: |
           set -euo pipefail
-          # cdxgen reads pnpm-lock.yaml directly and walks the workspace, so
-          # "what is actually in this bundle" — a genuinely hard question for a
-          # bundled npm artifact (issue #29) — is answerable. Pinned by version;
-          # this is an npm package, not a GitHub Action, so the SHA-pin rule
-          # (criterion 8) does not apply, but the version is fixed so the run is
-          # reproducible. FETCH_LICENSE stays off to keep the job network-light.
           npx -y @cyclonedx/cdxgen@12.8.2 -t pnpm --spec-version 1.5 \
             -o ai-architect-mcp-spec.cdx.json
           node -e "JSON.parse(require('fs').readFileSync('ai-architect-mcp-spec.cdx.json','utf8'))"
@@ -175,26 +118,11 @@ jobs:
       - name: Patch a local copy of server.json with the real .mcpb checksum
         run: |
           set -euo pipefail
-          # This copy exists only on the runner, purely so the next step can
-          # assert the patch logic and the checksum agree — it is never
-          # committed and never pushed. The committed server.json omits
-          # fileSha256 permanently: nothing reads it there (the field is
-          # optional per scripts/check-distribution-identity.mjs), and the
-          # registry publish job builds its own independently-verified
-          # runtime copy (see the `publish_registry` job below) rather than
-          # trusting this one.
           jq --arg sha "${MCPB_SHA256}" '.packages[0].fileSha256 = $sha' server.json > server.json.tmp
           mv server.json.tmp server.json
           jq empty server.json
           echo "Locally patched fileSha256: $(jq -r '.packages[0].fileSha256' server.json)"
 
-      # Close the #23 defect class in the pipeline (issue #29 criterion 4): the
-      # value we are about to publish MUST equal the artifact we built. This
-      # recomputes the .mcpb digest and rejects any mismatch (exit 1) before
-      # the registry sees it — defense in depth alongside the independent
-      # re-verification `publish_registry` performs on the public release
-      # asset. The same assertion is unit-tested in
-      # scripts/release/verify-mcpb-checksum.test.mjs.
       - name: Verify the local server.json copy's checksum matches the built .mcpb
         run: |
           node scripts/release/verify-mcpb-checksum.mjs \
@@ -204,7 +132,6 @@ jobs:
         id: changelog
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Pull the section between [VERSION] and the next [section] heading
           awk -v ver="$VERSION" '
             /^## \[/ {
               if (in_section) exit
@@ -215,7 +142,6 @@ jobs:
           if [ ! -s release-notes.md ]; then
             echo "No CHANGELOG entry found for $VERSION; using tag message" > release-notes.md
           fi
-          # Append SHA256 to release notes for auditability
           {
             echo ""
             echo "### Canonical .mcpb bundle"
@@ -238,50 +164,33 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish_registry:
-    # Publishes server.json to the official MCP Registry
-    # (registry.modelcontextprotocol.io) after the GitHub Release is public
-    # with its .mcpb attached (needs: release), so it can never point the
-    # registry at an artifact that does not exist yet. Also runs on
-    # workflow_dispatch as a recovery path — the case that produced the
-    # actual gap this job closes: v0.8.0 built, tested, and released cleanly
-    # (release job green) while the registry kept serving v0.7.0, because no
-    # job ever told it about any tag after v0.5.0.
-    #
-    # fileSha256 is a build artifact property (the digest of the zipped
-    # .mcpb bundle). The committed server.json never carries it — the field
-    # is optional there (scripts/check-distribution-identity.mjs) and no
-    # consumer reads it from the committed file, so there is nothing to wait
-    # on or merge. This job downloads the PUBLIC release asset, re-verifies
-    # its checksum and provenance attestation itself, and patches a RUNTIME
-    # copy of server.json (server.runtime.json) with the digest it just
-    # independently confirmed. The committed server.json is never rewritten
-    # by any job.
     name: Publish server.json to the MCP Registry
     needs: [release]
     if: |
       always() &&
-      (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
+      (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write   # OIDC token the MCP Registry exchanges for a publish credential
     steps:
-      # Fail loudly rather than silently skip: workflow_dispatch without an
-      # explicit tag would otherwise publish whatever ref happened to be
-      # selected in the UI, which is exactly the kind of unattended drift
-      # this job exists to close.
       - name: Resolve target tag
         id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF_TYPE: ${{ github.ref_type }}
+          INPUT_TAG: ${{ inputs.tag }}
+          TAG_REF: ${{ github.ref_name }}
         run: |
           set -euxo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$TARGET_REF_TYPE" != "tag" ]; then
+            TAG="$INPUT_TAG"
             if [ -z "$TAG" ]; then
               echo "::error::workflow_dispatch requires a 'tag' input (e.g. v0.8.0) — refusing to guess which release to publish."
               exit 1
             fi
           else
-            TAG="${{ github.ref_name }}"
+            TAG="$TAG_REF"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -304,12 +213,6 @@ jobs:
             *) echo "::error::server.json packages[0].identifier ($IDENTIFIER) does not reference tag $TAG" >&2; exit 1 ;;
           esac
 
-      # The exact defect this job exists to prevent runs in both directions:
-      # a registry entry must never point at a release asset that does not
-      # exist or is not yet public. Download from the public release (the
-      # `release` job already made it non-draft), verify its checksum against
-      # the companion .sha256 asset and its provenance attestation, then use
-      # THAT digest — never a value taken on trust from the committed file.
       - name: Download and verify the public .mcpb asset
         id: mcpb
         env:
@@ -329,15 +232,6 @@ jobs:
             --source-ref "refs/tags/$TAG"
           echo "digest=$ACTUAL" >> "$GITHUB_OUTPUT"
 
-      # mcp-publisher has no first-party GitHub Action wrapper, so it is
-      # fetched as a release binary and checksum-verified against the
-      # registry project's own published checksum — the same supply-chain
-      # discipline the pinned Actions above get via commit SHA, applied to a
-      # raw binary download. Bump both MCP_PUBLISHER_VERSION and the SHA-256
-      # together from https://github.com/modelcontextprotocol/registry/releases;
-      # this exact pair was independently re-downloaded and re-hashed against
-      # upstream on 2026-08-10, not copied on faith from the other repos that
-      # use it.
       - name: Install mcp-publisher (checksum-verified)
         env:
           MCP_PUBLISHER_VERSION: v1.8.1
@@ -349,36 +243,14 @@ jobs:
           tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
           chmod +x mcp-publisher
 
-      # Patch a RUNTIME copy — the committed server.json is left untouched by
-      # this job (see the job header comment for why).
       - name: Patch fileSha256 into a runtime copy of server.json
         env:
           DIGEST: ${{ steps.mcpb.outputs.digest }}
         run: jq --arg sha "$DIGEST" '.packages[0].fileSha256 = $sha' server.json > server.runtime.json
 
-      # No secret: `mcp-publisher login github-oidc` exchanges this job's
-      # GitHub Actions OIDC token for a registry credential scoped to
-      # io.github.cdeust/*, using only the id-token: write permission above —
-      # the same no-long-lived-credential posture as the Sigstore attestation
-      # step in the `release` job.
-      # Source: modelcontextprotocol/registry docs/reference/cli/commands.md
-      # ("GitHub OIDC (CI/CD)") and docs/modelcontextprotocol-io/github-actions.mdx
-      # ("OIDC authentication (recommended)"), verified 2026-08-10.
       - name: Authenticate to the MCP Registry via GitHub OIDC
         run: ./mcp-publisher login github-oidc
 
-      # A "cannot publish duplicate version" 400 means the registry already
-      # has this exact version — the desired end state for the
-      # workflow_dispatch recovery path (this job's header: v0.8.0 built and
-      # released cleanly while the registry kept serving v0.7.0 because no
-      # job ever told it, until re-run via workflow_dispatch). On the normal
-      # push-tag path the same error means something is wrong: this job runs
-      # once per tag (needs: [release]), so an existing entry there is
-      # unexpected and must still fail loudly. The verify step below still
-      # runs after a swallowed duplicate and independently confirms the
-      # registry serves this version before the job can pass — this branch
-      # narrows *which* mcp-publisher exit codes are treated as non-fatal, it
-      # never widens what "passing" means.
       - name: Publish server.json to the MCP Registry
         run: |
           set +e
@@ -395,25 +267,6 @@ jobs:
             fi
           fi
 
-      # A green `mcp-publisher publish` (or a swallowed duplicate-version
-      # error above) is not proof. Query the registry's own API and fail the
-      # job if it disagrees with what was published.
-      #
-      # Bounded retry, not zero-tolerance: the registry API sits behind a
-      # CDN cache in front of all public read endpoints (modelcontextprotocol/
-      # registry docs/design/tech-architecture.md, "CDN Layer"), so a read
-      # immediately after publish can observe a stale, pre-publish entry.
-      # Measured on cortex-viz's v3.1.1 release (2026-08-09), which hit this
-      # same zero-tolerance check: publish completed at 16:48:46 UTC and a
-      # read one second later, 16:48:47, still returned the prior version —
-      # an empirical floor of >1s of staleness. No SLA for the cache TTL is
-      # published, so the bound below is a stated engineering assumption,
-      # not a measured constant: 12 attempts x 5s = 60s, an order of
-      # magnitude above the observed 1s staleness, meant to absorb ordinary
-      # CDN propagation without masking a genuine publish failure. It still
-      # fails — this is a timeout, not an unbounded retry-until-pass — when
-      # the registry never converges, which is exactly the case this check
-      # exists to catch.
       - name: Verify the registry now serves the published version
         run: |
           set -euo pipefail
