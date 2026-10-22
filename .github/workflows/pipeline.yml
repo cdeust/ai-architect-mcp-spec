@@ -25,6 +25,7 @@ concurrency:
 
 env:
   # The Claude Code CLI the environment and install legs run with (Cortex's measured pin).
+  # GH_TOKEN on the test jobs: the runner's gh is unauthenticated without it.
   CLAUDE_CODE_VERSION: "2.1.296"
 
 jobs:
@@ -87,6 +88,8 @@ jobs:
     needs: contract
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -128,6 +131,8 @@ jobs:
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the regression command
@@ -138,6 +143,8 @@ jobs:
     needs: regression
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the e2e command
@@ -156,6 +163,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       CI_OS: ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-latest' && 'macos' || 'windows' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -181,6 +189,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       CI_OS: ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-latest' && 'macos' || 'windows' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -295,29 +304,44 @@ jobs:
           claude_args: '--allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(python3:*),Bash(pytest:*),Bash(uv:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(cargo:*),Bash(bash:*)"'
 
   # Arms the squash auto-merge when the five test jobs passed on this commit
-  # and review did not fail (a skip by design does not block). GitHub merges
-  # once the required check is green.
+  # and review did not fail (a skip by design does not block). Always runs on
+  # a same-repo, non-draft pull request and FAILS explicitly otherwise: a
+  # skipped required check counts as satisfied for GitHub (measured on
+  # claude-mods #38 and session-optimizer #73, auto-merged on a red run).
   merge:
     name: merge
     needs: [unit, regression, e2e, environment, install, review]
     if: >-
       always()
       && github.event_name == 'pull_request'
-      && needs.review.result != 'failure'
-      && needs.unit.result == 'success'
-      && needs.regression.result == 'success'
-      && needs.e2e.result == 'success'
-      && needs.environment.result == 'success'
-      && needs.install.result == 'success'
+      && !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ssh-key: ${{ secrets.RELEASE_TAG_SSH_KEY }}
+      - name: Refuse unless the five test jobs succeeded and review did not fail
+        env:
+          UNIT: ${{ needs.unit.result }}
+          REGRESSION: ${{ needs.regression.result }}
+          E2E: ${{ needs.e2e.result }}
+          ENVIRONMENT: ${{ needs.environment.result }}
+          INSTALL: ${{ needs.install.result }}
+          REVIEW: ${{ needs.review.result }}
+        run: |
+          red=""
+          for job in UNIT REGRESSION E2E ENVIRONMENT INSTALL; do
+            if [ "${!job}" != "success" ]; then red="$red $job=${!job}"; fi
+          done
+          if [ "$REVIEW" = "failure" ]; then red="$red REVIEW=failure"; fi
+          if [ -n "$red" ]; then
+            echo "::error::merge refused:$red"
+            echo "## Merge: refused ($red)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "## Merge: armed (unit, regression, e2e, environment, install green; review $REVIEW)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Arm the squash auto-merge
         env:
