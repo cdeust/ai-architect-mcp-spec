@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The `@claude` mention workflow (`.github/workflows/claude.yml`) checks out full history and can run git, gh and the test runners.
 - **Dependabot npm PRs never reached their tests.** Any bump that changes
   the bundled dependency graph fails the `mcp-server/` freshness step, which
   runs before the tests. `rebundle-build.yml` (`pull_request`, read-only token)
