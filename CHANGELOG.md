@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The single CI pipeline, run by the Claude bot.** `.github/workflows/pipeline.yml`
+  runs contract, unit (90 % of lines from `coverage.xml`), regression, e2e,
+  environment and install (ubuntu, macOS, Windows, bare runner plus the pinned
+  Claude Code CLI), then the bot's review and fix, then the squash auto-merge;
+  a release tag on push to main. The commands live in `ci.json`;
+  `scripts/check-health-stdio.sh` is the environment test (`check_health` over
+  stdio through `bin/ensure-deps.sh`). The existing workflows are untouched.
+  Red on day one: line coverage is 81.79 % (measured 2026-10-22).
+
 ### Security
 
 - The Claude Code PR review no longer checks out PR code in a privileged workflow (CodeQL `actions/untrusted-checkout/high`, `actions/untrusted-checkout-toctou/high`): the review job moves to `.github/workflows/claude-review.yml`, triggered by `pull_request` only, and `.github/workflows/claude.yml` keeps only the `@claude` job on its comment, review and issue triggers, with no PR head checkout.
