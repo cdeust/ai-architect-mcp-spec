@@ -14,7 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   Claude Code CLI), then the bot's review and fix, then the squash auto-merge;
   a release tag on push to main. The commands live in `ci.json`;
   `scripts/check-health-stdio.sh` is the environment test (`check_health` over
-  stdio through `bin/ensure-deps.sh`). The existing workflows are untouched.
+  stdio through `bin/ensure-deps.sh`). `claude-review.yml` is retired (the
+  pipeline's review job replaces it); the other workflows are untouched.
   Red on day one: line coverage is 81.79 % (measured 2026-10-22).
 
 ### Security
