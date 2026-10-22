@@ -25,6 +25,7 @@ concurrency:
 
 env:
   # The Claude Code CLI the environment and install legs run with (Cortex's measured pin).
+  # GH_TOKEN on the test jobs: the runner's gh is unauthenticated without it.
   CLAUDE_CODE_VERSION: "2.1.296"
 
 jobs:
@@ -87,6 +88,8 @@ jobs:
     needs: contract
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -128,6 +131,8 @@ jobs:
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the regression command
@@ -138,6 +143,8 @@ jobs:
     needs: regression
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the e2e command
@@ -156,6 +163,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       CI_OS: ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-latest' && 'macos' || 'windows' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -181,6 +189,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       CI_OS: ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-latest' && 'macos' || 'windows' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
