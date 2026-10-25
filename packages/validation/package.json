@@ -13,7 +13,7 @@
   "dependencies": {
     "@prd-gen/core": "workspace:*",
     "js-yaml": "^5.4.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.0",
