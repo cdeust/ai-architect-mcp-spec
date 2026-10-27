@@ -1,7 +1,7 @@
 {
   "unit": "npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build && pnpm test:coverage --coverage.reporter=cobertura --coverage.reporter=text-summary && cp coverage/cobertura-coverage.xml coverage.xml",
   "regression": "npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build && pnpm test:perf",
-  "e2e": "npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build && pnpm run test:portable",
+  "e2e": "npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build && pnpm bundle && pnpm run test:portable && pnpm run test:portable:runtime && bash scripts/release/smoke-mcpb.sh",
   "environment": "bash scripts/check-health-stdio.sh \"$PWD\"",
   "install": "claude plugin marketplace add \"$PWD\" && claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace && root=\"$(claude plugin list --json | jq -r '.[] | select(.id | startswith(\"ai-architect-mcp-spec@\")) | .installPath')\" && test -n \"$root\" && bash scripts/check-health-stdio.sh \"$root\""
 }

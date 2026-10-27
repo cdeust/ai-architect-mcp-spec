@@ -17,7 +17,7 @@ export default defineConfig({
       "./packages/strategy/vitest.config.ts",
       "./packages/validation/vitest.config.ts",
       "./packages/verification/vitest.config.ts",
-      "./scripts/release/vitest.config.ts",
+      "./scripts/release/vitest.config.mts",
     ],
 
     // Statement coverage is a gate, not a dashboard: `pnpm test:coverage`

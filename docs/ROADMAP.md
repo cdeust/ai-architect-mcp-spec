@@ -61,7 +61,7 @@ Gold criteria that a single-maintainer project can meet, taken from the badge pr
 
 - `copyright_per_file`, `license_per_file`: per-file copyright and SPDX headers.
 - `test_statement_coverage90` and `test_branch_coverage80`: the coverage gate in
-  `vitest.config.ts` is currently set at 80% statements (the silver floor) with no branch gate.
+  `vitest.config.mts` is currently set at 80% statements (the silver floor) with no branch gate.
   Measured on 2026-07-27: 81.14% statements, 74.06% branches. Gold needs 90% and 80%
   respectively, so both are real work, not a threshold edit. Enforced as gates that fail the
   run, never as numbers printed for decoration.
