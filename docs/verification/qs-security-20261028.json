@@ -1,0 +1,80 @@
+{
+  "base": "41d1c345c8abe4dc3f5fe8e81bf5021c6ee1311f",
+  "advisory": "GHSA-6pq8-jhm2-2vcw",
+  "upstream_fix": "a952e7519338ef0cfb25694a2988848f93333727",
+  "old_qs": "6.16.0",
+  "patched_qs": "6.16.1",
+  "parent_resolution": [
+    "@modelcontextprotocol/sdk1.32.1 -> express5.2.1 -> qs6.16.1",
+    "express5.2.1 -> body-parser2.4.0 -> qs6.16.1"
+  ],
+  "red_before": {
+    "failed": 6,
+    "passed_controls": 2,
+    "observed": "four real-parent library TypeErrors; two test-created HTTP handlers return500"
+  },
+  "validation": {
+    "full_vitest_passed": 1598,
+    "release_passed": 17,
+    "perf_passed": 5,
+    "python_passed": 114,
+    "portable_passed": 5,
+    "portable_runtime": [
+      "codex",
+      "gemini-cli"
+    ],
+    "build": "PASS",
+    "bundle": "PASS, byte-identical to HEAD",
+    "identity": "PASS",
+    "source_craft": "PASS, zero warnings"
+  },
+  "production_audit_before": {
+    "info": 0,
+    "low": 0,
+    "moderate": 1,
+    "high": 0,
+    "critical": 0
+  },
+  "production_audit_after": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0
+  },
+  "docs_check": {
+    "status": "FAIL",
+    "actual_tests": 1598,
+    "existing_claim": 1506,
+    "unchanged_files": [
+      "README.md",
+      "package.json",
+      "manifest.json",
+      ".claude-plugin/marketplace.json",
+      ".claude-plugin/plugin.json",
+      ".bestpractices.json"
+    ],
+    "owner_direction": "Report honestly; preserve historical docs; do not disable the check or expand this PR."
+  },
+  "scope": "Actual parent-resolved qs module PoC plus separately identified test-only loopback HTTP harness; product entry uses stdio, no exposed product HTTP route is claimed.",
+  "canonical_common_fix": {
+    "pr": "https://github.com/cdeust/zetetic-team-subagents/pull/204",
+    "commit": "3ba69e01c5a04c128ab7c49e89beb7e2bf48048a"
+  },
+  "toolchain": {
+    "version": "v22.23.4",
+    "archive": "node-v22.23.4-darwin-arm64.tar.gz",
+    "sha256": "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428",
+    "url": "https://nodejs.org/dist/v22.23.4/node-v22.23.4-darwin-arm64.tar.gz"
+  },
+  "node_binary_sha256": "2cc28a1880d0774616959f2210ee739bffa6ac695c887e8988a496a21271f6c0",
+  "pnpm_version": "10.34.5",
+  "bundle_sha256": "efb1b44b57534ee8d19d7d642f7a4d67930e0046ac9ac369f06529cb28d4108b",
+  "sha256": {
+    "pnpm-workspace.yaml": "4132f8758dfb0339d05c5071c2a8342262e5689ace072d1242cbf319d6194e64",
+    "pnpm-lock.yaml": "dd194942cc0fa7366be05272fa6a49253f3f3df996c50034f4c64e10d5d9c20b",
+    "scripts/release/qs-security.test.mjs": "0d8712502a6b6155903d68746c46c344ae88ed86a90cd728300544226d646a4b",
+    "scripts/ci_codex_review_reconcile.py": "a1e484a9e674f51971ecbaca87d99ca6dda94da2aa69569c513efedfa0077d16",
+    "scripts/tests/test_ci_codex_review_gate_groups.py": "93e81fb2b1fb42c9f3c3aa820dbaf6b01278146cb7965cfb86d38452bca9f2d6"
+  }
+}
