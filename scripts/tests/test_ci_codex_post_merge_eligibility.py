@@ -85,19 +85,22 @@ def named(rows, name):
 class GitHub:
     """The REST calls `resolve` makes, answered from memory; records the merge."""
 
-    def __init__(self, rows, source=None):
+    def __init__(self, rows, source=None, labels=(), title=None):
         self.source = source or run()
         self.rows = rows
         self.merged = False
         self.puts = []
+        self.labels = [{"name": name} for name in labels]
+        self.title = title or "ci: the review job is not a required job to merge"
+        self.label_calls = []
 
     def pull(self):
         return {
             "number": 168,
             "state": "open",
             "draft": False,
-            "title": "ci: the review job is not a required job to merge",
-            "labels": [],
+            "title": self.title,
+            "labels": copy.deepcopy(self.labels),
             "merged": self.merged,
             "merge_commit_sha": MERGED if self.merged else None,
             "head": {"sha": SHA, "repo": {"full_name": REPO}},
@@ -114,6 +117,8 @@ class GitHub:
             self.puts.append(body)
             self.merged = True
             return {"merged": True, "sha": MERGED}
+        if path.startswith(f"{prefix}/issues/168/labels"):
+            self.label_calls.append((method, path))
         raise AssertionError(f"unexpected GitHub call {method} {path}")
 
     def records(self, path, key=None):
@@ -184,6 +189,37 @@ class TestsAndMergeAreRequired(unittest.TestCase):
                 missing = f"{category} (windows-latest)"
                 names = [job for job in (*REQUIRED, "review") if job != missing]
                 self.assert_refused(GitHub(jobs(names=names)), f"exact {category} matrix")
+
+
+class ReviewHoldsAreNotRead(unittest.TestCase):
+    """zetetic-team-subagents #233 (adaptation review-holds-not-read): the resolver
+    merges through `hold` and `autopilot:hold` without touching labels; only a
+    `do-not-merge` label or a "do not merge" title holds the merge."""
+
+    def test_review_hold_labels_merge_without_label_mutation(self):
+        for labels in (("hold",), ("autopilot:hold",), ("hold", "autopilot:hold")):
+            with self.subTest(labels=labels):
+                api = GitHub(jobs(), labels=labels)
+                result = resolve(api)
+                self.assertEqual(result["tested_sha"], MERGED)
+                self.assertEqual(api.puts, [{"sha": SHA, "merge_method": "squash"}])
+                self.assertEqual(api.label_calls, [])
+                self.assertEqual([label["name"] for label in api.labels], list(labels))
+
+    def test_do_not_merge_label_holds_the_merge(self):
+        for labels in (("do-not-merge",), ("hold", "Do-Not-Merge")):
+            with self.subTest(labels=labels):
+                api = GitHub(jobs(), labels=labels)
+                with self.assertRaisesRegex(PostMergeError, "PR label holds merge"):
+                    resolve(api)
+                self.assertEqual(api.puts, [])
+                self.assertEqual(api.label_calls, [])
+
+    def test_do_not_merge_title_holds_the_merge(self):
+        api = GitHub(jobs(), title="ci: DO NOT MERGE until the owner signs off")
+        with self.assertRaisesRegex(PostMergeError, "PR title holds merge"):
+            resolve(api)
+        self.assertEqual(api.puts, [])
 
 
 class Attempts(unittest.TestCase):
