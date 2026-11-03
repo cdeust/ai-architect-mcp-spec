@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "@prd-gen/core": "workspace:*",
-    "js-yaml": "^5.4.3",
+    "js-yaml": "^5.5.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.0",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "fast-check": "^4.10.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
