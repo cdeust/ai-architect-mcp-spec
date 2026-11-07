@@ -23,11 +23,13 @@ export const KnownSymbolsSchema = z
   .max(MAX_KNOWN_SYMBOLS)
   .optional()
   .describe(
-    "Optional symbol names from the host's code graph (plain, or qualified with ., :: or #; a trailing signature such as (email:) is ignored). " +
-      "When given, the report gains `symbolExistence`: the code symbols named in inline code spans " +
-      "that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
-      "Only code-shaped spans are checked: calls on a bare name or an upper-case receiver, ::/# paths, " +
-      "Upper.member; language built-ins, markdown anchors and file names are skipped. [] means an empty graph: " +
+    "Optional symbol names from the host's code graph (plain, or qualified with ., :: or #; a signature such as (email:), " +
+      "generic arguments and trailing ?/! are ignored). When given, the report gains `symbolExistence` " +
+      "{checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced " +
+      "blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
+      "Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: " +
+      "lower-case receivers, JS built-ins, std:: paths, # after a non-mixed-case word (anchors), file names. " +
+      "[] means an empty graph: " +
       "omit the field when the graph lookup failed.",
   );
 

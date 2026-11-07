@@ -15,14 +15,15 @@
  *  - A span counts as a symbol reference only when it is code-shaped beyond
  *    doubt: a call (`parseConfig()`, `UserService.create(id)`), a `::` or
  *    `#` qualified path (`Billing::Invoice`, `User#save` — a `#` owner must be
- *    PascalCase, so `README#install` is an anchor), or a dotted path
+ *    mixed-case, so `README#install` is an anchor), or a dotted path
  *    starting with an upper-case segment (`UserService.create`) whose last
  *    segment is not a file extension (`README.md` is a file, not a symbol).
  *    A bare word in backticks (`user_id`) is ambiguous — a field, a config
  *    key, a column — and is not read.
  *  - A dotted reference needs an upper-case first segment: a lower-case
  *    receiver (`user.save()`) is a local or runtime object. JS built-ins
- *    (`JSON.parse()`, `fetch()`) and Rust `std::` paths are not read.
+ *    (`JSON.parse()`, `fetch()`) and `std::` paths are not read; a Rust
+ *    relative root (`crate::`, `self::`, `super::`, `Self::`) is dropped.
  *  - A reference is resolved when its segment path is a suffix of a known
  *    symbol's path or the other way round, so `create()` resolves against a
  *    graph entry `UserService.create`; `Order.create` does not. A bare graph
@@ -115,8 +116,21 @@ const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "parseInt", "parseFloat", "require", "structuredClone",
 ]);
 
-/** Roots of a `::` path that name a language's standard library (Rust). */
-const STD_ROOTS: ReadonlySet<string> = new Set(["std", "core", "alloc"]);
+/**
+ * Roots of a `::` path that name a standard library: `std` in Rust and C++.
+ * Rust's `core`/`alloc` are not listed, because `core` is also a common C++
+ * project namespace (`core::Engine`); a Rust `core::` path is reported
+ * (PR #174 review r4501862020).
+ */
+const STD_ROOTS: ReadonlySet<string> = new Set(["std"]);
+
+/**
+ * Rust relative roots: they name the current module, type or crate, not a
+ * symbol, so they are dropped and the rest of the path is checked
+ * (`crate::config::load` → `config::load`, which resolves by suffix against
+ * `my_crate::config::load`; `Self::new` → `new`).
+ */
+const RELATIVE_ROOTS: ReadonlySet<string> = new Set(["Self", "self", "super", "crate"]);
 
 /**
  * The owner of a `#` path: a PascalCase class name (`User#save`). An all-caps
@@ -149,7 +163,12 @@ export function symbolFromSpan(span: string): string | null {
   if (isCall && !balancedParens(match[3])) return null;
   const path = match[1];
   const parts = segments(path);
-  if (path.includes("::")) return STD_ROOTS.has(parts[0]) ? null : path;
+  if (path.includes("::")) {
+    if (STD_ROOTS.has(parts[0])) return null;
+    if (!RELATIVE_ROOTS.has(parts[0])) return path;
+    const rest = path.slice(path.indexOf("::") + 2);
+    return rest.length > 0 ? rest : null;
+  }
   if (path.includes("#")) {
     return PASCAL_OWNER.test(path.slice(0, path.indexOf("#"))) ? path : null;
   }

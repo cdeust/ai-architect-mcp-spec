@@ -168,7 +168,7 @@ describe("checkSymbolExistence — PR #174 review fixes", () => {
     ["a run with trailing text does not close", ["```", "``` x", "`in()`", "```", "`out()`"]],
     ["an indented fence of up to 3 spaces counts", ["   ```", "`in()`", "   ```", "`out()`"]],
     ["a fence nested in a list item counts (r4501809320)", ["- Proposed code:", "    ```ts", "    `in()`", "    ```", "`out()`"]],
-    ["a fence on a list-marker line counts", ["1. ```ts", "`in()`", "   ```", "`out()`"]],
+    ["a fence on a list-marker line counts", ["1. ```ts", "   `in()`", "   ```", "`out()`"]],
   ])("fence rules: %s", (_name, lines) => {
     expect(checkSymbolExistence(lines.join("\n"), []).unresolvedSymbols.map((u) => u.symbol))
       .toEqual(["out"]);
@@ -231,7 +231,7 @@ describe("checkSymbolExistence — third review round", () => {
     ["URLParser#parse", "URLParser#parse"],
     ["Error::NotFound", "Error::NotFound"],
     ["String#to_slug", "String#to_slug"],
-    ["crate::billing::charge()", "crate::billing::charge"],
+    ["billing::charge()", "billing::charge"],
   ])("still reads %s: built-ins only cover `.` paths and bare calls (r4501822515)", (span, symbol) => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
@@ -306,6 +306,39 @@ describe("checkSymbolExistence — fifth review round", () => {
       "Real<T<U>>.find?!",
     ];
     expect(checkSymbolExistence("`Deep.run()` and `Real.find()` and `a()`", graph).unresolvedSymbols)
+      .toEqual([]);
+  });
+});
+
+describe("checkSymbolExistence — sixth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it("ends an unclosed quoted fence with its blockquote (r4501862077)", () => {
+    expect(syms("> ```ts\n> `in()`\n\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    expect(syms("> ```ts\n> `in()`\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+  });
+
+  it("ends an unclosed list-item fence with its list item", () => {
+    expect(syms("- ```ts\n  `in()`\n\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    expect(syms("- ```ts\n  `in()`\n\n  `still.in()`\n  ```\n`out()`")).toEqual(["out"]);
+  });
+
+  it("keeps a top-level fence open across less-indented lines", () => {
+    expect(syms("   ```\n`in()`\n\n`in2()`")).toEqual([]);
+  });
+
+  it.each([
+    ["Self::new()", "new"],
+    ["self::helpers::fmt()", "helpers::fmt"],
+    ["super::Config::load()", "Config::load"],
+    ["crate::config::load()", "config::load"],
+    ["core::Engine::start()", "core::Engine::start"],
+  ])("drops a Rust relative root from %s (r4501862020)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("resolves a crate-relative path against a crate-qualified graph entry", () => {
+    expect(checkSymbolExistence("`crate::config::load()`", ["my_crate::config::load"]).unresolvedSymbols)
       .toEqual([]);
   });
 });

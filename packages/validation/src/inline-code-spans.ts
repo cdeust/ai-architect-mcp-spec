@@ -52,27 +52,88 @@ function blocks(text: string): string[] {
   return out;
 }
 
+const QUOTE_PREFIX = /^(?:\s*>)*/;
+const IS_QUOTED = /^\s*>/;
+
+interface OpenFence {
+  readonly marker: string;
+  /** Opened inside a blockquote: ends with the first unquoted line. */
+  readonly quoted: boolean;
+  /**
+   * Content column of the list item holding the fence (see containerColumn).
+   * Above 0, the item ends at the first non-blank line indented less.
+   */
+  readonly column: number;
+}
+
+/**
+ * The container column of a fence line: the content column of a list item
+ * when the line carries a list marker, the indentation when it is 4 or more
+ * (a fence nested in a list item's content), else 0 — a top-level fence
+ * indented up to 3 spaces does not constrain its content lines.
+ */
+function containerColumn(unquoted: string, rest: string): number {
+  const indent = unquoted.length - unquoted.trimStart().length;
+  const prefix = unquoted.length - rest.length;
+  if (prefix > indent) return prefix;
+  return indent >= 4 ? indent : 0;
+}
+
+function openFence(line: string): OpenFence | null {
+  const unquoted = line.replace(QUOTE_PREFIX, "");
+  const rest = line.replace(CONTAINER_PREFIX, "");
+  const open = FENCE.exec(rest);
+  if (!open) return null;
+  return {
+    marker: open[1],
+    quoted: IS_QUOTED.test(line),
+    column: containerColumn(unquoted, rest),
+  };
+}
+
+/** Whether `line` closes `fence` explicitly. */
+function closes(fence: OpenFence, line: string): boolean {
+  const rest = line.replace(CONTAINER_PREFIX, "").trim();
+  const run = FENCE.exec(rest);
+  return run !== null && rest === run[1] && run[1][0] === fence.marker[0]
+    && run[1].length >= fence.marker.length;
+}
+
+/**
+ * Whether `line` lies outside the container `fence` was opened in, which
+ * ends the fenced block without a closing fence (CommonMark 5.1, 5.2; PR
+ * #174 review r4501862077).
+ */
+function leavesContainer(fence: OpenFence, line: string): boolean {
+  if (fence.quoted && !IS_QUOTED.test(line)) return true;
+  if (fence.column === 0) return false;
+  const unquoted = line.replace(QUOTE_PREFIX, "");
+  if (unquoted.trim() === "") return false;
+  const indent = unquoted.length - unquoted.trimStart().length;
+  return indent < fence.column;
+}
+
 /**
  * `content` with every fenced code block removed, by a single line scan. A
  * fence closes on a line holding only at least as many of the same fence
- * characters; an unclosed fence runs to the end, as in CommonMark. A removed
- * block leaves a blank line, so it also ends the paragraph around it.
+ * characters, or when its container (quote, list item) ends; an unclosed
+ * top-level fence runs to the end, as in CommonMark. A removed block leaves
+ * a blank line, so it also ends the paragraph around it.
  */
 function stripFencedBlocks(content: string): string {
   const kept: string[] = [];
-  let fence: string | null = null;
+  let fence: OpenFence | null = null;
   for (const line of content.replace(/\r\n?/g, "\n").split("\n")) {
-    const rest = line.replace(CONTAINER_PREFIX, "");
-    const open = FENCE.exec(rest);
-    if (fence === null) {
-      if (open) {
-        fence = open[1];
-        kept.push("");
-      } else kept.push(line);
-    } else if (open && open[1][0] === fence[0] && open[1].length >= fence.length
-      && rest.trim() === open[1]) {
+    if (fence !== null) {
+      if (closes(fence, line)) {
+        fence = null;
+        continue;
+      }
+      if (!leavesContainer(fence, line)) continue;
       fence = null;
     }
+    fence = openFence(line);
+    kept.push(fence === null ? line : "");
   }
   return kept.join("\n");
 }
