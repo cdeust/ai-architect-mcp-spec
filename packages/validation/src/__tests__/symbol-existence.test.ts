@@ -164,11 +164,11 @@ describe("checkSymbolExistence — PR #174 review fixes", () => {
   it.each([
     ["a longer closing fence closes", ["```", "`in()`", "`````", "`out()`"]],
     ["a tilde fence closes only on tildes", ["~~~", "```", "`in()`", "~~~", "`out()`"]],
-    ["a shorter run does not close", ["````", "```", "`in()`", "````", "`out()`"]],
+    ["a shorter run does not close", ["````", "```", "", "`in()`", "````", "`out()`"]],
     ["a run with trailing text does not close", ["```", "``` x", "`in()`", "```", "`out()`"]],
-    ["an indented fence of up to 3 spaces counts", ["   ```", "`in()`", "   ```", "`out()`"]],
-    ["a fence nested in a list item counts (r4501809320)", ["- Proposed code:", "    ```ts", "    `in()`", "    ```", "`out()`"]],
-    ["a fence on a list-marker line counts", ["1. ```ts", "   `in()`", "   ```", "`out()`"]],
+    ["an indented fence of up to 3 spaces counts", ["   ```", "", "`in()`", "   ```", "`out()`"]],
+    ["a fence nested in a list item counts (r4501809320)", ["- Proposed code:", "    ```ts", "", "    `in()`", "    ```", "`out()`"]],
+    ["a fence on a list-marker line counts", ["1. ```ts", "", "   `in()`", "   ```", "`out()`"]],
   ])("fence rules: %s", (_name, lines) => {
     expect(checkSymbolExistence(lines.join("\n"), []).unresolvedSymbols.map((u) => u.symbol))
       .toEqual(["out"]);
@@ -238,7 +238,9 @@ describe("checkSymbolExistence — third review round", () => {
 
   it("strips generics and optional markers from graph entries (r4501822704)", () => {
     expect(syms("`decode()`, `Parser.init()`, `Repo.find()`",
-      ["decode<T>(from:)", "Parser.init?(data:)", "Repo<User>.find", "Map<K, Set<V>>.get"])).toEqual([]);
+      ["decode<T>(from:)", "Parser.init?(data:)", "Repo<User>.find", "Store<K, Set<V>>.get"])).toEqual([]);
+    expect(checkSymbolExistence("`Store.get()`", ["Store<K, Set<V>>.get"]).checkedSymbols).toBe(1);
+    expect(syms("`Store.get()`", ["Store<K, Set<V>>.get"])).toEqual([]);
   });
 
   it("checks a reference against every graph entry sharing its last segment (r4501819785)", () => {
@@ -257,8 +259,8 @@ describe("checkSymbolExistence — fourth review round", () => {
   const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
 
   it("skips a fence inside a blockquote (r4501828721)", () => {
-    expect(syms("> ```ts\n> const x = `newHelper()`;\n> ```\n`Ghost.run()`")).toEqual(["Ghost.run"]);
-    expect(syms("> - ```\n>   `inside()`\n>   ```\n`out()`")).toEqual(["out"]);
+    expect(syms("> ```ts\n>\n> const x = `newHelper()`;\n> ```\n`Ghost.run()`")).toEqual(["Ghost.run"]);
+    expect(syms("> - ~~~\n>   `inside()`\n>   ~~~\n`out()`")).toEqual(["out"]);
   });
 
   it("keeps single backticks inside a multi-line double-backtick span literal (r4501828724)", () => {
@@ -340,5 +342,44 @@ describe("checkSymbolExistence — sixth review round", () => {
   it("resolves a crate-relative path against a crate-qualified graph entry", () => {
     expect(checkSymbolExistence("`crate::config::load()`", ["my_crate::config::load"]).unresolvedSymbols)
       .toEqual([]);
+  });
+});
+
+describe("checkSymbolExistence — seventh review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    "> ~~~\n> `in()`\n> ~~~\n`out()`",
+    "- ~~~\n  `in()`\n  ~~~\n`out()`",
+    "~~~\n`in()`\n~~~\n`out()`",
+  ])("fence detection is what hides the fenced span in %j (r4501863214)", (prd) => {
+    expect(syms(prd)).toEqual(["out"]);
+  });
+
+  it.each([
+    ["-```ts\n`a()`", ["a"]],
+    ["> ```Ghost.run()``` here", ["Ghost.run"]],
+    ["1234567890. ```ts\n`a()`", ["a"]],
+  ])("does not read %j as a fence opener", (prd, expected) => {
+    expect(syms(prd)).toEqual(expected);
+  });
+
+  it("does not close a top-level fence on a quoted or list-marker fence line (r4501863973)", () => {
+    expect(syms("```md\n> ```\n- ```\n`in()`\n```\n`out()`")).toEqual(["out"]);
+  });
+
+  it("ends a heading or table-row block after its line (r4501867831)", () => {
+    expect(syms("# API `stray\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    expect(syms("| a `stray |\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+  });
+
+  it.each([
+    ["Parser::new(Cow<'a, str>)", "Parser::new"],
+    ["Lexer::from(Ref<'_>)", "Lexer::from"],
+    ["Lexer::push(b'(')", "Lexer::push"],
+    ["Pattern.compile(r'(')", "Pattern.compile"],
+    ["Foo.run('a')", "Foo.run"],
+  ])("reads %s: lifetimes are text, prefixed literals are strings (r4501864237)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
   });
 });

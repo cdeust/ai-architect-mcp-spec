@@ -31,6 +31,8 @@ const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
 /** A line that starts a new block: list item, ATX heading, table row, quote. */
 const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\||>)/;
+/** A block that is always one line: an ATX heading or a table row. */
+const ONE_LINE_BLOCK = /^\s*(?:#{1,6}(?:\s|$)|\|)/;
 
 /** `text` split into blocks; the lines of one block are joined with `\n`. */
 function blocks(text: string): string[] {
@@ -47,12 +49,16 @@ function blocks(text: string): string[] {
     }
     if (BLOCK_START.test(line)) flush();
     current.push(line);
+    // A heading or table row also ends its block, so a stray backtick in it
+    // cannot pair with the next line (PR #174 review r4501867831).
+    if (ONE_LINE_BLOCK.test(line)) flush();
   }
   flush();
   return out;
 }
 
 const QUOTE_PREFIX = /^(?:\s*>)*/;
+const LIST_MARKER = /^\s*(?:[-*+]|\d{1,9}[.)])\s/;
 const IS_QUOTED = /^\s*>/;
 
 interface OpenFence {
@@ -91,8 +97,16 @@ function openFence(line: string): OpenFence | null {
   };
 }
 
-/** Whether `line` closes `fence` explicitly. */
+/**
+ * Whether `line` closes `fence` explicitly. The closer must sit in the
+ * fence's own container: inside a top-level fence that shows markdown, a
+ * `> ```` or `- ```` line is content, not a closer (PR #174 review
+ * r4501863973).
+ */
 function closes(fence: OpenFence, line: string): boolean {
+  if (!fence.quoted && IS_QUOTED.test(line)) return false;
+  const unquoted = line.replace(QUOTE_PREFIX, "");
+  if (fence.column === 0 && LIST_MARKER.test(unquoted)) return false;
   const rest = line.replace(CONTAINER_PREFIX, "").trim();
   const run = FENCE.exec(rest);
   return run !== null && rest === run[1] && run[1][0] === fence.marker[0]

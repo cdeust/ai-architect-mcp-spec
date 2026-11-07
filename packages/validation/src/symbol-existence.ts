@@ -73,28 +73,38 @@ const SYMBOL_SHAPE = new RegExp(
   `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`,
 );
 
+/** `'` used as text, not a string delimiter. */
+function isTextApostrophe(text: string, i: number): boolean {
+  const prev = text[i - 1] ?? "";
+  const next = text[i + 1] ?? "";
+  // An apostrophe inside a word: `don't`, `user's`.
+  if (/\w/.test(prev) && /\w/.test(next)) return true;
+  // A Rust lifetime: `'a` or `'_` followed by a non-`'`, as in `&'a str`,
+  // `Cow<'a, str>`, `Ref<'_>`; a char literal `'a'` stays a string.
+  const lifetime = /^'[A-Za-z_]\w*/.exec(text.slice(i));
+  return lifetime !== null && text[i + lifetime[0].length] !== "'";
+}
+
 /**
  * Whether the parentheses of an argument list balance, ignoring those inside
- * a quoted string (`run(")")`) and escaped quotes within it (PR #174 review
- * r4501809310). A `'` opens a string only after a non-word character, so an
- * apostrophe in prose (`notify(user's email)`, `run(don't)`) or a Rust
- * lifetime (`parse(&'a str)`) is plain text (PR #174 review r4501836587).
- * A string still open at the end is unbalanced.
+ * a quoted string (`run(")")`, `b'('`, `r'('`) and escaped quotes within it
+ * (PR #174 review r4501809310). An apostrophe inside a word or a Rust
+ * lifetime is text, not a delimiter (PR #174 reviews r4501836587,
+ * r4501864237). A string still open at the end is unbalanced.
  */
 function balancedParens(text: string): boolean {
   let depth = 0;
   let quote: string | null = null;
   let escaped = false;
-  let prev = "";
-  for (const ch of text) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
     if (quote !== null) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
       else if (ch === quote) quote = null;
-    } else if (ch === '"' || (ch === "'" && !/[\w&]/.test(prev))) quote = ch;
+    } else if (ch === '"' || (ch === "'" && !isTextApostrophe(text, i))) quote = ch;
     else if (ch === "(") depth += 1;
     else if (ch === ")" && --depth < 0) return false;
-    prev = ch;
   }
   return depth === 0 && quote === null;
 }

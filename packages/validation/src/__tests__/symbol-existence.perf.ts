@@ -79,6 +79,9 @@ describe("checkSymbolExistence — resolution growth", () => {
   });
 
   it("doubling a shared-last-segment graph and the references does not quadruple the time", () => {
+    // The workload must exercise resolution, not collapse to nothing.
+    const [prd, graph] = workload(2_000);
+    expect(checkSymbolExistence(prd, graph).unresolvedSymbols).toHaveLength(2_000);
     const ratio = growthRatio(2_000, 4_000);
     expect(ratio).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
