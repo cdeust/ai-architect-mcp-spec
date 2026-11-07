@@ -9,6 +9,12 @@ export {
 } from "./hard-output-rules/index.js";
 export { validateCrossReferences } from "./cross-ref-validator.js";
 export {
+  checkSymbolExistence,
+  symbolFromSpan,
+  type SymbolExistenceReport,
+  type UnresolvedSymbol,
+} from "./symbol-existence.js";
+export {
   AuditFlagEngine,
   type AuditFinding,
   type AuditFlagReport,

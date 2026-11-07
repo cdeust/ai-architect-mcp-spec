@@ -30,6 +30,7 @@ import { tryCreateEvidenceRepository, type EvidenceRepository } from "@prd-gen/c
 type EvidenceRepositoryLike = EvidenceRepository;
 
 import { validateSection, validateDocument } from "@prd-gen/validation";
+import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { registerBudgetTools } from "./budget-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
@@ -275,13 +276,14 @@ const toolValidateSection = server.tool(
     section_type: SectionTypeSchema.describe(
       "The type of PRD section being validated",
     ),
+    known_symbols: KnownSymbolsSchema,
   },
   { readOnlyHint: true },
-  async ({ content, section_type }) => {
+  async ({ content, section_type, known_symbols }) => {
     // section_type is already validated by SectionTypeSchema at the MCP
     // boundary above. No cast required (cross-audit code-reviewer H5,
     // Phase 3+4, 2026-04).
-    const report = validateSection(content, section_type);
+    const report = withSymbolCheck(validateSection(content, section_type), content, known_symbols);
     return {
       content: [
         { type: "text" as const, text: JSON.stringify(report, null, 2) },
@@ -307,10 +309,12 @@ const toolValidateDocument = server.tool(
         }),
       )
       .describe("Array of PRD sections to validate"),
+    known_symbols: KnownSymbolsSchema,
   },
   { readOnlyHint: true },
-  async ({ sections }) => {
-    const report = validateDocument(sections);
+  async ({ sections, known_symbols }) => {
+    const contents = sections.map((s) => s.content);
+    const report = withSymbolCheck(validateDocument(sections), contents, known_symbols);
     return {
       content: [
         { type: "text" as const, text: JSON.stringify(report, null, 2) },
