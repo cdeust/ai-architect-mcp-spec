@@ -648,3 +648,37 @@ describe("checkSymbolExistence — seventeenth review round", () => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
 });
+
+describe("checkSymbolExistence — eighteenth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["Parser.open('(') + Ghost.run(')')", null],
+    ["Bus.emit(\"(\") + Ghost.run(\")\")", null],
+    ["Foo.run(don't, ')')", "Foo.run"],
+    ["Foo.run(&'a str, ')')", "Foo.run"],
+    ["Lexer.push(&')')", "Lexer.push"],
+    ["Foo.run(')", "Foo.run"],
+    ["Parser::new(Cow<'a, str>)", "Parser::new"],
+    ["Foo.bind(x: &'a T + 'static)", "Foo.bind"],
+    ["Parser::new(Cow<'a, str>) and Lexer::new(Cow<'a, str>)", null],
+    ["Foo.run(x, 'a(')", "Foo.run"],
+    ["Lexer.is(c < ')')", "Lexer.is"],
+  ])("reads %s as %s (r4501956987)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it.each(["* * *", "_ _ _", "--", "    ---"])(
+    "ends a block at a %j break or underline line (r4501957522)",
+    (line) => {
+      expect(syms(`A \`stray\n${line}\nCalls \`Ghost.run()\`.`)).toEqual(["Ghost.run"]);
+    },
+  );
+});
+
+describe("checkSymbolExistence — nineteenth review round", () => {
+  it("keeps C++ operator-> apart from operator() (r4501962748)", () => {
+    expect(checkSymbolExistence("`Foo::operator()`", ["Foo::operator->()"]).unresolvedSymbols.map((u) => u.symbol))
+      .toEqual(["Foo::operator"]);
+  });
+});

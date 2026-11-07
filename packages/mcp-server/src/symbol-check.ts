@@ -23,7 +23,7 @@ export const KnownSymbolsSchema = z
   .max(MAX_KNOWN_SYMBOLS)
   .optional()
   .describe(
-    "Optional symbol names from the host's code graph (plain, or qualified with ., :: or #; a signature such as (email:), " +
+    "Optional symbol names from the host's code graph (plain, or qualified with ., ::, # or -> (read as .); a signature such as (email:), " +
       "generic arguments and trailing ?/! are ignored). When given, the report gains `symbolExistence` " +
       "{checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced " +
       "blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
