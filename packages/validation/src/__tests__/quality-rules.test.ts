@@ -107,6 +107,23 @@ describe("checkHonestVerificationVerdicts", () => {
     expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
   });
 
+  it("counts a mixed-case verdict written after a Verdict: label", () => {
+    const content = ["p95 <= 200", "", "Verdict: Pass"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
+  it("accepts a labelled mixed-case Spec-Complete next to a PASS", () => {
+    const content = ["p95 <= 200", "Verdict: Spec-Complete", "| T-1 | PASS |"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("does not count prose 'fail' as a verdict that cancels a PASS", () => {
+    const content = ["p95 <= 200", "Requests fail over to the replica.", "Verdict: PASS"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
   it("accepts a single NEEDS-RUNTIME verdict on a latency claim", () => {
     const content = ["p95 <= 200", "", "Verdict: NEEDS-RUNTIME"].join("\n");
     expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
