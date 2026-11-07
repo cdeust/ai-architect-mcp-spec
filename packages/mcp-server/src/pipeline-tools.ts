@@ -38,7 +38,6 @@ import {
   JudgeVerdictSchema,
   ClaimSchema,
   ExternalGroundingTypeSchema,
-  tryCreateEvidenceRepository,
   type EvidenceRepository,
   type Claim,
 } from "@prd-gen/core";
@@ -48,7 +47,7 @@ import {
   getMaxAttemptsForRun,
   MAX_ATTEMPTS_BASELINE,
 } from "@prd-gen/benchmark";
-import { resolveEvidenceDbPath } from "./evidence-db-path.js";
+import { getEvidenceRepo } from "./evidence-db-path.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
 import {
   boundFullStateResponse,
@@ -130,7 +129,7 @@ let _repo: EvidenceRepository | null | undefined = undefined;
 let _tracker: EffectivenessTracker | null = null;
 function getTracker(): EffectivenessTracker | null {
   if (_repo === undefined) {
-    _repo = tryCreateEvidenceRepository(resolveEvidenceDbPath());
+    _repo = getEvidenceRepo();
     if (_repo) _tracker = new EffectivenessTracker(_repo);
   }
   return _tracker;

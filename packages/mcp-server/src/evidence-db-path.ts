@@ -21,6 +21,7 @@
  *   server's working directory happens to be.
  */
 import { isAbsolute } from "node:path";
+import { tryCreateEvidenceRepository, type EvidenceRepository } from "@prd-gen/core";
 
 export const EVIDENCE_DB_ENV = "PRD_GEN_EVIDENCE_DB";
 
@@ -43,4 +44,25 @@ export function resolveEvidenceDbPath(
     return undefined;
   }
   return raw;
+}
+
+let _evidenceRepo: EvidenceRepository | null | undefined = undefined;
+
+/**
+ * The server's single evidence repository, opened lazily at the path
+ * `resolveEvidenceDbPath()` gives. `index.ts` (quality-history and
+ * strategy-effectiveness tools) and `pipeline-tools.ts` (strategy-execution
+ * drain, run-eviction cleanup) both use this handle, so they share one
+ * SQLite connection to one file instead of each opening its own with its
+ * own path resolution.
+ *
+ * precondition:  none.
+ * postcondition: returns the same instance on every call; `null` when
+ *   better-sqlite3 is unavailable or the database cannot be opened.
+ */
+export function getEvidenceRepo(): EvidenceRepository | null {
+  if (_evidenceRepo === undefined) {
+    _evidenceRepo = tryCreateEvidenceRepository(resolveEvidenceDbPath());
+  }
+  return _evidenceRepo;
 }
