@@ -35,5 +35,6 @@ describe("KnownSymbolsSchema", () => {
     expect(KnownSymbolsSchema.parse(undefined)).toBeUndefined();
     expect(KnownSymbolsSchema.parse(["A.b"])).toEqual(["A.b"]);
     expect(KnownSymbolsSchema.safeParse([1]).success).toBe(false);
+    expect(KnownSymbolsSchema.safeParse(["a".repeat(513)]).success).toBe(false);
   });
 });

@@ -10,8 +10,17 @@ import {
   type SymbolExistenceReport,
 } from "@prd-gen/validation";
 
+/**
+ * Bounds on the host-sent graph: generous for a real codebase, and they keep
+ * one call from holding the stdio server on an absurd input.
+ * source: provisional heuristic (PR #174 review r4501819785).
+ */
+const MAX_KNOWN_SYMBOLS = 200_000;
+const MAX_SYMBOL_LENGTH = 512;
+
 export const KnownSymbolsSchema = z
-  .array(z.string())
+  .array(z.string().max(MAX_SYMBOL_LENGTH))
+  .max(MAX_KNOWN_SYMBOLS)
   .optional()
   .describe(
     "Optional symbol names from the host's code graph (plain, or qualified with ., :: or #; a trailing signature such as (email:) is ignored). " +

@@ -9,30 +9,34 @@
  * comparison — pure string work, zero model calls.
  *
  * Policy, deliberately narrow:
- *  - Only inline code spans are read. Fenced blocks are skipped: they show
- *    proposed code, whose local identifiers are not claims about the
- *    existing codebase.
+ *  - Only inline code spans are read (see `inline-code-spans.ts`). Fenced
+ *    blocks are skipped: they show proposed code, whose local identifiers
+ *    are not claims about the existing codebase.
  *  - A span counts as a symbol reference only when it is code-shaped beyond
  *    doubt: a call (`parseConfig()`, `UserService.create(id)`), a `::` or
- *    `#` qualified path (`Billing::Invoice`, `User#save`), or a dotted path
+ *    `#` qualified path (`Billing::Invoice`, `User#save` — a `#` owner must be
+ *    PascalCase, so `README#install` is an anchor), or a dotted path
  *    starting with an upper-case segment (`UserService.create`) whose last
  *    segment is not a file extension (`README.md` is a file, not a symbol).
  *    A bare word in backticks (`user_id`) is ambiguous — a field, a config
  *    key, a column — and is not read.
  *  - A dotted reference needs an upper-case first segment: a lower-case
- *    receiver (`user.save()`) is a local or runtime object. Language
- *    built-ins (`JSON.parse()`, `fetch()`) are not read.
+ *    receiver (`user.save()`) is a local or runtime object. JS built-ins
+ *    (`JSON.parse()`, `fetch()`) and Rust `std::` paths are not read.
  *  - A reference is resolved when its segment path is a suffix of a known
  *    symbol's path or the other way round, so `create()` resolves against a
  *    graph entry `UserService.create`; `Order.create` does not. A bare graph
  *    entry resolves a qualified reference only when no qualified entry shares
- *    its last segment. Graph entries lose their signature (`f(x:)` → `f`).
+ *    its last segment. Graph entries lose their signature, generic arguments
+ *    and optional markers (`decode<T>(from:)` → `decode`).
  *
  * An unresolved symbol is either introduced by the PRD or fabricated; this
  * check cannot tell which, so it reports and does not score. Turning it into
  * a scored Hard Output Rule is a separate decision (it would move the frozen
  * calibration baselines).
  */
+
+import { inlineCodeSpans } from "./inline-code-spans.js";
 
 /** One referenced symbol that no supplied graph symbol resolves. */
 export interface UnresolvedSymbol {
@@ -57,18 +61,6 @@ export interface SymbolExistenceReport {
  * bounded input. source: provisional heuristic.
  */
 const MAX_SPAN_LENGTH = 200;
-
-/**
- * A fence line. A backtick fence's info string cannot contain a backtick
- * (CommonMark 4.5), so ```` ```Ghost.run()``` is new ```` is inline code, not
- * a fence that would swallow the rest of the section. Any indentation and an
- * optional list marker are accepted, because PRDs nest proposed-code fences
- * in list items (`- Proposed:` then an indented fence, or `1. ```ts`); the
- * scanner tracks no list container, so it cannot apply CommonMark's
- * container-relative 3-space limit (PR #174 review r4501809320).
- */
-const FENCE_OPEN = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?(`{3,}(?=[^`]*$)|~{3,})/;
-const BACKTICK_RUN = /`+/g;
 
 const IDENT = "[A-Za-z_$][\\w$]*";
 /**
@@ -102,43 +94,14 @@ function balancedParens(text: string): boolean {
 }
 
 /**
- * The inline code spans of one line, CommonMark style: a run of N backticks
- * opens a span that only the next run of exactly N backticks closes, so
- * `` `x` `` holds a literal backtick and cannot pair with a later span. An
- * opener with no closer is literal text. Linear: each run's closer is found
- * through a precomputed "next run of the same length" index.
- */
-function inlineSpans(line: string): string[] {
-  const runs = [...line.matchAll(BACKTICK_RUN)].map((m) => ({
-    start: m.index,
-    len: m[0].length,
-  }));
-  const nextSame = new Array<number>(runs.length).fill(-1);
-  const lastSeen = new Map<number, number>();
-  for (let i = runs.length - 1; i >= 0; i--) {
-    nextSame[i] = lastSeen.get(runs[i].len) ?? -1;
-    lastSeen.set(runs[i].len, i);
-  }
-  const spans: string[] = [];
-  let i = 0;
-  while (i < runs.length) {
-    const j = nextSame[i];
-    if (j === -1) {
-      i += 1;
-      continue;
-    }
-    spans.push(line.slice(runs[i].start + runs[i].len, runs[j].start));
-    i = j + 1;
-  }
-  return spans;
-}
-
-/**
  * Language built-ins a PRD names in passing (`JSON.parse()`, `fetch()`): no
  * project graph holds them, so reporting them would bury the fabricated
- * project symbol this check exists to find. Receivers and bare functions of
- * the ECMAScript / web / Node globals only.
- * source: provisional heuristic (PR #174 review r4501804248).
+ * project symbol this check exists to find. Applied to `.` paths and bare
+ * calls only — any such reference whose first segment is one of these names
+ * is skipped, so a project method on an owner with the same name
+ * (`Date.businessDays()`) is not checked. `::` and `#` paths (Rust, Ruby,
+ * C++) are not affected. JS/TS globals only.
+ * source: provisional heuristic (PR #174 reviews r4501804248, r4501822515).
  */
 const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "JSON", "Math", "Object", "Array", "Promise", "Number", "String", "Date",
@@ -147,35 +110,25 @@ const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "parseInt", "parseFloat", "require", "structuredClone",
 ]);
 
+/** Roots of a `::` path that name a language's standard library (Rust). */
+const STD_ROOTS: ReadonlySet<string> = new Set(["std", "core", "alloc"]);
+
+/**
+ * The owner of a `#` path: a PascalCase class name (`User#save`). An all-caps
+ * word (`README#install`), a lower-case word (`docs#setup`) or a file name
+ * (`CONTRIBUTING.md#setup`) before `#` is a markdown anchor, not a method.
+ */
+const PASCAL_OWNER = /^[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*$/;
+
 /** Last segments that make a dotted span a file name, not a member access. */
 const FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   "md", "txt", "json", "yaml", "yml", "toml", "xml", "html", "css", "csv",
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java",
-  "kt", "swift", "sh", "sql", "lock", "env", "cfg", "ini", "log", "pdf",
-  "png", "svg",
+  "kt", "kts", "swift", "sh", "sql", "lock", "env", "cfg", "ini", "log",
+  "pdf", "png", "svg", "plist", "cs", "config", "vue", "resolved",
+  "storyboard", "xib", "xcconfig", "gradle", "proto", "graphql", "c", "h",
+  "cpp", "hpp", "php", "dart", "scala",
 ]);
-
-/**
- * `content` with every fenced code block removed, by a single line scan (no
- * backtracking regex over the whole document). A fence closes on a line that
- * starts with at least as many of the same fence characters; an unclosed
- * fence runs to the end, as in CommonMark.
- */
-function stripFencedBlocks(content: string): string {
-  const kept: string[] = [];
-  let fence: string | null = null;
-  for (const line of content.split("\n")) {
-    const open = FENCE_OPEN.exec(line);
-    if (fence === null) {
-      if (open) fence = open[1];
-      else kept.push(line);
-    } else if (open && open[1][0] === fence[0] && open[1].length >= fence.length
-      && line.trim() === open[1]) {
-      fence = null;
-    }
-  }
-  return kept.join("\n");
-}
 
 function segments(path: string): string[] {
   return path.split(/\.|::|#/).filter((s) => s.length > 0);
@@ -187,12 +140,15 @@ export function symbolFromSpan(span: string): string | null {
   if (text.length === 0 || text.length > MAX_SPAN_LENGTH) return null;
   const match = SYMBOL_SHAPE.exec(text);
   if (match === null) return null;
-  const path = match[1];
-  const parts = segments(path);
-  if (BUILTIN_NAMES.has(parts[0])) return null;
-  if (path.includes("::") || path.includes("#")) return path;
   const isCall = match[2] !== undefined;
   if (isCall && !balancedParens(match[3])) return null;
+  const path = match[1];
+  const parts = segments(path);
+  if (path.includes("::")) return STD_ROOTS.has(parts[0]) ? null : path;
+  if (path.includes("#")) {
+    return PASCAL_OWNER.test(path.slice(0, path.indexOf("#"))) ? path : null;
+  }
+  if (BUILTIN_NAMES.has(parts[0])) return null;
   if (!path.includes(".")) return isCall ? path : null;
   // A lower-case receiver (`user.save()`, `this.handle()`, `console.log()`)
   // is a local variable or a runtime object, not a project symbol path.
@@ -202,38 +158,74 @@ export function symbolFromSpan(span: string): string | null {
     : null;
 }
 
+/** `T<U<V>>` → `T`: generic arguments removed, innermost first. */
+function stripGenerics(text: string): string {
+  let out = text;
+  for (let prev = ""; prev !== out; ) {
+    prev = out;
+    out = out.replace(/<[^<>]*>/g, "");
+  }
+  return out;
+}
+
 /**
- * A graph entry as segments, its signature removed so `parseConfig()` and
- * Swift's `UserService.create(email:)` compare as `parseConfig` and
- * `UserService.create` (PR #174 review r4501804140).
+ * A graph entry as segments, its decorations removed so it compares like a
+ * reference: the signature (`parseConfig()`, Swift `create(email:)`), generic
+ * arguments (`decode<T>`, `Repo<User>.find`) and optional markers
+ * (`init?(data:)`) (PR #174 reviews r4501804140, r4501822704).
  */
 function knownSegments(entry: string): string[] {
   const text = entry.trim();
-  const match = SYMBOL_SHAPE.exec(text);
   const paren = text.indexOf("(");
-  return segments(match ? match[1] : paren >= 0 ? text.slice(0, paren) : text);
+  const path = stripGenerics(paren >= 0 ? text.slice(0, paren) : text);
+  return segments(path)
+    .map((s) => s.replace(/[?!]+$/, ""))
+    .filter((s) => s.length > 0);
 }
 
-function isSuffix(shorter: readonly string[], longer: readonly string[]): boolean {
-  if (shorter.length > longer.length) return false;
-  const offset = longer.length - shorter.length;
-  return shorter.every((s, i) => s === longer[offset + i]);
+interface TrieNode {
+  readonly children: Map<string, TrieNode>;
+  /** A graph entry ends here. */
+  end: boolean;
+}
+
+/** Graph entries in a trie keyed on their segments, last segment first. */
+function suffixTrie(known: readonly (readonly string[])[]): TrieNode {
+  const root: TrieNode = { children: new Map(), end: false };
+  for (const parts of known) {
+    let node = root;
+    for (let k = parts.length - 1; k >= 0; k--) {
+      let next = node.children.get(parts[k]);
+      if (!next) {
+        next = { children: new Map(), end: false };
+        node.children.set(parts[k], next);
+      }
+      node = next;
+    }
+    node.end = true;
+  }
+  return root;
 }
 
 /**
- * Whether `ref` resolves against a bucket of graph entries sharing its last
- * segment. A bare graph entry (`create`) resolves a qualified reference
- * (`PaymentGateway.create`) only when the bucket has no qualified entry: once
- * the graph says which owners have a `create`, an unlisted owner is unresolved
- * (PR #174 review r4501804340).
+ * Whether `ref` resolves: its path is a suffix of a graph entry's path (the
+ * walk consumes the whole reference), or a graph entry's path is a suffix of
+ * it (an entry ends on the walk). O(segments of `ref`), whatever the graph
+ * size (PR #174 review r4501819785). A bare graph entry (`create`) resolves a
+ * qualified reference (`PaymentGateway.create`) only when no qualified entry
+ * shares its last segment: once the graph says which owners have a `create`,
+ * an unlisted owner is unresolved (PR #174 review r4501804340).
  */
-function resolvesIn(ref: readonly string[], bucket: readonly (readonly string[])[]): boolean {
-  const hasQualified = bucket.some((k) => k.length > 1);
-  return bucket.some((known) => {
-    if (isSuffix(ref, known)) return true;
-    if (known.length === 1 && ref.length > 1 && hasQualified) return false;
-    return isSuffix(known, ref);
-  });
+function resolves(root: TrieNode, ref: readonly string[]): boolean {
+  let node = root;
+  for (let k = ref.length - 1; k >= 0; k--) {
+    const next = node.children.get(ref[k]);
+    if (!next) return false;
+    node = next;
+    const bareWithOwners = k === ref.length - 1 && node.children.size > 0;
+    if (node.end && k > 0 && !bareWithOwners) return true;
+  }
+  return true;
 }
 
 /**
@@ -245,14 +237,12 @@ function referenceCounts(content: string | readonly string[]): Map<string, Unres
   const counts = new Map<string, UnresolvedSymbol>();
   const parts = typeof content === "string" ? [content] : content;
   for (const part of parts) {
-    for (const line of stripFencedBlocks(part).split("\n")) {
-      for (const span of inlineSpans(line)) {
-        const symbol = symbolFromSpan(span);
-        if (symbol === null) continue;
-        const key = segments(symbol).join(".");
-        const seen = counts.get(key);
-        counts.set(key, { symbol: seen?.symbol ?? symbol, occurrences: (seen?.occurrences ?? 0) + 1 });
-      }
+    for (const span of inlineCodeSpans(part)) {
+      const symbol = symbolFromSpan(span);
+      if (symbol === null) continue;
+      const key = segments(symbol).join(".");
+      const seen = counts.get(key);
+      counts.set(key, { symbol: seen?.symbol ?? symbol, occurrences: (seen?.occurrences ?? 0) + 1 });
     }
   }
   return counts;
@@ -274,26 +264,19 @@ export function checkSymbolExistence(
   for (const parts of knownSymbols.map(knownSegments)) {
     if (parts.length > 0) distinct.set(parts.join("."), parts);
   }
-  const known = [...distinct.values()];
-  const byLast = new Map<string, string[][]>();
-  for (const parts of known) {
-    const last = parts[parts.length - 1];
-    const bucket = byLast.get(last);
-    if (bucket) bucket.push(parts);
-    else byLast.set(last, [parts]);
-  }
+  const trie = suffixTrie([...distinct.values()]);
 
   const counts = referenceCounts(content);
   const unresolved: UnresolvedSymbol[] = [];
   for (const [key, entry] of counts) {
     const ref = key.split(".");
-    if (!resolvesIn(ref, byLast.get(ref[ref.length - 1]) ?? [])) unresolved.push(entry);
+    if (!resolves(trie, ref)) unresolved.push(entry);
   }
   unresolved.sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
 
   return {
     checkedSymbols: counts.size,
-    knownSymbols: known.length,
+    knownSymbols: distinct.size,
     unresolvedSymbols: unresolved,
   };
 }

@@ -196,3 +196,59 @@ describe("checkSymbolExistence — second review round", () => {
     expect(checkSymbolExistence("", ["A.b", "A::b", "A.b()", "c"]).knownSymbols).toBe(2);
   });
 });
+
+describe("checkSymbolExistence — third review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it("pairs a span hard-wrapped onto the next line (r4501818930, r4501822751)", () => {
+    expect(syms("See `foo\nbar` and `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    expect(syms("Call `Ghost.run(\nemail)`.")).toEqual(["Ghost.run"]);
+    expect(syms("Call `Ghost.run(\r\nemail)`.")).toEqual(["Ghost.run"]);
+  });
+
+  it("does not pair spans across a blank line", () => {
+    expect(syms("a `stray\n\nthen `Ghost.run()`")).toEqual(["Ghost.run"]);
+  });
+
+  it("an escaped backtick cannot open a span (r4501822759)", () => {
+    expect(syms("A \\` literal then `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    // A double backslash escapes itself: the backtick opens a span.
+    expect(syms("A \\\\`Ghost.run()` here")).toEqual(["Ghost.run"]);
+    // Inside a span a backslash is literal and does not stop the closer.
+    expect(syms("`Ghost.run(\\)` and `Other.go()`")).toEqual(["Ghost.run", "Other.go"]);
+  });
+
+  it.each([
+    "README#install", "docs#setup", "CONTRIBUTING.md#setup", "config#options",
+    "std::fs::read()", "A::b(x))", "Foo::bar(x) && baz(y)",
+    "Info.plist", "Program.cs", "Web.config", "App.vue", "Package.resolved",
+  ])("does not read %s as a symbol (r4501819269, r4501822252)", (span) => {
+    expect(symbolFromSpan(span)).toBeNull();
+  });
+
+  it.each([
+    ["URLParser#parse", "URLParser#parse"],
+    ["Error::NotFound", "Error::NotFound"],
+    ["String#to_slug", "String#to_slug"],
+    ["crate::billing::charge()", "crate::billing::charge"],
+  ])("still reads %s: built-ins only cover `.` paths and bare calls (r4501822515)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("strips generics and optional markers from graph entries (r4501822704)", () => {
+    expect(syms("`decode()`, `Parser.init()`, `Repo.find()`",
+      ["decode<T>(from:)", "Parser.init?(data:)", "Repo<User>.find", "Map<K, Set<V>>.get"])).toEqual([]);
+  });
+
+  it("checks a reference against every graph entry sharing its last segment (r4501819785)", () => {
+    expect(syms("`Invoice.create()` and `UserService.create()`", ["Order.create", "UserService.create"]))
+      .toEqual(["Invoice.create"]);
+  });
+
+  it("resolves through a qualified suffix deeper than one segment", () => {
+    expect(syms("`App.Service.create()`", ["Service.create", "Other.create"])).toEqual([]);
+    expect(syms("`App.Billing.create()`", ["Service.create", "Other.create"])).toEqual(["App.Billing.create"]);
+  });
+
+});
