@@ -322,7 +322,7 @@ const toolQualityHistory = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],
@@ -360,7 +360,7 @@ const toolStrategyEffectiveness = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],

@@ -44,9 +44,8 @@ try {
  * It activates: adaptive thresholds, effectiveness tracking, quality trends,
  * and refinement learning — all of which exist in the Swift code but are starved of data.
  *
- * Location: the `dbPath` argument; ~/.prd-gen/evidence.db when absent. The
- * mcp-server composition root passes `PRD_GEN_EVIDENCE_DB` when it is set
- * (packages/mcp-server/src/evidence-db-path.ts).
+ * Location: the caller's explicit `dbPath`; ~/.prd-gen/evidence.db when
+ * absent.
  */
 
 // ─── Retention constant (bounded-I/O Phase 3) ────────────────────────────────
@@ -123,7 +122,7 @@ export class EvidenceRepository {
     }
     const resolvedPath = dbPath ?? this.defaultDbPath();
     // dirname, not a split on "/": a Windows path (C:\\data\\evidence.db)
-    // has no "/", which made dir "" and mkdirSync throw (PR #175 review).
+    // has no "/", which made dir "" and mkdirSync throw.
     const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
