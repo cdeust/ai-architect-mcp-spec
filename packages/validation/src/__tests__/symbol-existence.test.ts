@@ -629,3 +629,22 @@ describe("checkSymbolExistence — sixteenth review round", () => {
       .toEqual([]);
   });
 });
+
+describe("checkSymbolExistence — seventeenth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it("closes a deeper-indented list fence on an indented closer (r4501951063)", () => {
+    expect(syms("- Step:\n\n    ```ts\n\n    `in()`\n  ```\nThen `Ghost.run()` is called.")).toEqual(["Ghost.run"]);
+  });
+
+  it.each([
+    ["Logger.info(prefix + 'started')", "Logger.info"],
+    ["Config.get(flag && 'default')", "Config.get"],
+    ["Lexer.is(c < 'a')", "Lexer.is"],
+    ["Foo.f(x < y, 'a')", "Foo.f"],
+    ["Foo.f(\"<\", 'a')", "Foo.f"],
+    ["Foo.run(x + ')')", "Foo.run"],
+  ])("reads %s (r4501950843, r4501951461)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+});

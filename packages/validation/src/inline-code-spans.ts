@@ -7,9 +7,11 @@
  *  - Fenced blocks are removed: they show proposed code.
  *  - Spans pair within a block, so a span hard-wrapped onto the next line is
  *    still one span; its line break reads as a space (CommonMark 6.1). A
- *    block ends at a blank line, before each list item, heading or table
- *    row, after each heading or table row, and where a quote is entered
- *    (at any depth) or left; consecutive quote lines form one paragraph (PR #174 reviews
+ *    block ends at a blank line or a quote line holding only `>` markers, at
+ *    a thematic break or setext underline (dropped), before each list item,
+ *    heading or table row, after each heading or table row, and where a
+ *    quote is entered (at any depth) or left; otherwise consecutive quote
+ *    lines form one paragraph (PR #174 reviews r4501917315, r4501932680) (PR #174 reviews
  *    r4501850253, r4501882138).
  *  - A run of N backticks opens a span that only the next run of exactly N
  *    backticks closes; an opener with no closer is literal text.
@@ -194,7 +196,11 @@ function stripFencedBlocks(content: string): string {
       // Leaving the container comes first: a fence line outside a list item
       // (column 0 after `1. ```ts`) ends the item and opens a new fence
       // rather than closing the item's fence (PR #174 review r4501920057).
-      if (leavesContainer(fence, line)) fence = null;
+      // An indented closer below a fence nested deeper than its list item
+      // (the column approximates the item's content column) still closes
+      // it rather than reopening (PR #174 review r4501951063).
+      const indented = line.length - line.trimStart().length > 0;
+      if (leavesContainer(fence, line) && !(indented && closes(fence, line))) fence = null;
       else {
         if (closes(fence, line)) fence = null;
         continue;

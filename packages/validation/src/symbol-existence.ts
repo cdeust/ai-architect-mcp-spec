@@ -170,7 +170,7 @@ const STD_ROOTS: ReadonlySet<string> = new Set(["std"]);
  * `my_crate::config::load`; `Self::new()` → `new`). All leading roots go
  * (`super::super::Config::load()` → `Config::load`), the rest is reported
  * joined with `::`, and a non-call left with one name (`Self::CONST`,
- * `crate::Foo`) or a path of roots only (`super::super()`) is not read.
+ * `crate::Foo`) or a path ending in a root (`super::super()`) is not read.
  */
 const RELATIVE_ROOTS: ReadonlySet<string> = new Set(["Self", "self", "super", "crate"]);
 
@@ -216,7 +216,8 @@ export function symbolFromSpan(span: string): string | null {
     // non-call (`Self::CONST`, `crate::Foo`) is as ambiguous as a bare word
     // in backticks and is not read (PR #174 review r4501895577).
     const rest = parts.slice(roots);
-    // Nothing but roots (`super::super()`, `crate::self`) names no symbol.
+    // A path ending in a root (`super::super()`, `crate::config::self`)
+    // names no symbol.
     if (RELATIVE_ROOTS.has(rest[rest.length - 1])) return null;
     return rest.length === 1 && !isCall ? null : rest.join("::");
   }
@@ -239,7 +240,8 @@ export function symbolFromSpan(span: string): string | null {
  * multiply the cost (PR #174 review r4501850098). A `(` inside generic
  * arguments (`Repo<(User, Error)>.find`, `Repo<() => User>.find`) is not the
  * signature, and the `>` of an arrow (`=>`, `->`) closes nothing (PR #174
- * review r4501917318). An unmatched `>` is dropped.
+ * review r4501917318). Every `>` is dropped; an unmatched `<` drops the rest
+ * of the entry.
  */
 function entryPath(text: string): string {
   let out = "";
