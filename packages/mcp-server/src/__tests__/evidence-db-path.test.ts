@@ -90,6 +90,27 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "reports a default-path failure on stderr too (the tools say \"see stderr\")",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "evidence-home-"));
+      dirs.push(dir);
+      const homeFile = join(dir, "home");
+      writeFileSync(homeFile, ""); // HOME is a regular file: ~/.prd-gen cannot exist
+      const savedHome = process.env.HOME;
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        process.env.HOME = homeFile;
+        expect(tryCreateEvidenceRepository()).toBeNull();
+        expect(err).toHaveBeenCalledOnce();
+        expect(String(err.mock.calls[0][0])).toContain(join(homeFile, ".prd-gen", "evidence.db"));
+      } finally {
+        process.env.HOME = savedHome;
+        err.mockRestore();
+      }
+    },
+  );
+
   it("the default warn of the resolver writes to stderr, not stdout", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -141,13 +162,17 @@ describe("evidence repository wiring", () => {
   });
 
   it("both composition roots take the repository from getEvidenceRepo()", () => {
-    for (const f of ["index.ts", "pipeline-tools.ts"]) {
+    // Exact call counts: one remaining call must not hide a removed one
+    // (index.ts: check_health, get_quality_history, get_strategy_effectiveness;
+    // pipeline-tools.ts: eviction prune, strategy-execution tracker).
+    const expected: Record<string, number> = { "index.ts": 3, "pipeline-tools.ts": 2 };
+    for (const f of Object.keys(expected)) {
       // Comments stripped first: a comment naming getEvidenceRepo() must not
       // satisfy this (review r4502015550).
       const code = readFileSync(join(SRC_DIR, f), "utf-8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/\/\/.*$/gm, "");
-      expect(code, f).toMatch(/getEvidenceRepo\(\)/);
+      expect(code.match(/getEvidenceRepo\(\)/g)?.length ?? 0, f).toBe(expected[f]);
     }
   });
 

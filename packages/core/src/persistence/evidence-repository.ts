@@ -470,18 +470,22 @@ export class EvidenceRepository {
 export function tryCreateEvidenceRepository(
   dbPath?: string,
 ): EvidenceRepository | null {
-  if (!Database) return null;
+  // Every failure is reported on stderr (never stdout, which carries the MCP
+  // JSON-RPC stream): the tools that need the repository answer "see stderr",
+  // so stderr must say why, for the default path as well as an explicit one.
+  const target = dbPath ?? join(homedir(), ".prd-gen", "evidence.db");
+  if (!Database) {
+    console.error(
+      `[prd-gen] evidence database at ${target} not opened; evidence storage is off: better-sqlite3 is not available`,
+    );
+    return null;
+  }
   try {
     return new EvidenceRepository(dbPath);
   } catch (err) {
-    // An explicit path is a user choice (PRD_GEN_EVIDENCE_DB): say why it
-    // could not be opened instead of silently turning evidence storage off.
-    // stderr only — stdout carries the MCP JSON-RPC stream.
-    if (dbPath !== undefined) {
-      console.error(
-        `[prd-gen] evidence database at ${dbPath} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    console.error(
+      `[prd-gen] evidence database at ${target} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
