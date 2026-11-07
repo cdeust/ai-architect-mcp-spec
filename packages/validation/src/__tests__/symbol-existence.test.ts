@@ -383,3 +383,12 @@ describe("checkSymbolExistence — seventh review round", () => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
 });
+
+describe("checkSymbolExistence — eighth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it("handles a quote nested in a list item (r4501881974)", () => {
+    expect(syms("- > ```ts\n  >\n  > `in()`\n  > ```\n- Calls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+    expect(syms("- > ```ts\n  >\n  > `in()`\n- Calls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+  });
+});

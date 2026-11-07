@@ -20,13 +20,13 @@
  * A fence line. A backtick fence's info string cannot contain a backtick
  * (CommonMark 4.5), so ```` ```Ghost.run()``` is new ```` is inline code, not
  * a fence that would swallow the rest of the section. The fence may follow a
- * container prefix — any indentation, blockquote markers and one list marker
- * — because PRDs nest proposed-code fences in list items and quotes
+ * container prefix — any indentation, blockquote and list markers in any
+ * order — because PRDs nest proposed-code fences in list items and quotes
  * (`- Proposed:` then an indented fence, `1. ```ts`, `> ```ts`). The scanner
  * tracks no container, so it cannot apply CommonMark's container-relative
  * 3-space limit (PR #174 reviews r4501809320, r4501828721).
  */
-const CONTAINER_PREFIX = /^(?:\s*>)*\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?/;
+const CONTAINER_PREFIX = /^(?:\s*(?:>|(?:[-*+]|\d{1,9}[.)])(?=\s)))*\s*/;
 const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
 /** A line that starts a new block: list item, ATX heading, table row, quote. */
@@ -59,7 +59,13 @@ function blocks(text: string): string[] {
 
 const QUOTE_PREFIX = /^(?:\s*>)*/;
 const LIST_MARKER = /^\s*(?:[-*+]|\d{1,9}[.)])\s/;
-const IS_QUOTED = /^\s*>/;
+/**
+ * Whether the line's container prefix holds a quote marker, in any order
+ * with list markers (`> - x`, `- > x`) (PR #174 review r4501881974).
+ */
+function isQuoted(line: string): boolean {
+  return (CONTAINER_PREFIX.exec(line)?.[0] ?? "").includes(">");
+}
 
 interface OpenFence {
   readonly marker: string;
@@ -92,8 +98,9 @@ function openFence(line: string): OpenFence | null {
   if (!open) return null;
   return {
     marker: open[1],
-    quoted: IS_QUOTED.test(line),
-    column: containerColumn(unquoted, rest),
+    quoted: isQuoted(line),
+    // A quoted fence ends with its quote; its column is not tracked.
+    column: isQuoted(line) ? 0 : containerColumn(unquoted, rest),
   };
 }
 
@@ -104,7 +111,7 @@ function openFence(line: string): OpenFence | null {
  * r4501863973).
  */
 function closes(fence: OpenFence, line: string): boolean {
-  if (!fence.quoted && IS_QUOTED.test(line)) return false;
+  if (!fence.quoted && isQuoted(line)) return false;
   const unquoted = line.replace(QUOTE_PREFIX, "");
   if (fence.column === 0 && LIST_MARKER.test(unquoted)) return false;
   const rest = line.replace(CONTAINER_PREFIX, "").trim();
@@ -119,7 +126,7 @@ function closes(fence: OpenFence, line: string): boolean {
  * #174 review r4501862077).
  */
 function leavesContainer(fence: OpenFence, line: string): boolean {
-  if (fence.quoted && !IS_QUOTED.test(line)) return true;
+  if (fence.quoted && !isQuoted(line)) return true;
   if (fence.column === 0) return false;
   const unquoted = line.replace(QUOTE_PREFIX, "");
   if (unquoted.trim() === "") return false;
