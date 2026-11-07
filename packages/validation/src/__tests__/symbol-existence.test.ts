@@ -531,3 +531,27 @@ describe("checkSymbolExistence — twelfth review round", () => {
     expect(symbolFromSpan(span)).toBeNull();
   });
 });
+
+describe("checkSymbolExistence — thirteenth review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["Lexer::new(cb: fn(&'a str), src: &'a str)", "Lexer::new"],
+    ["F.f(&'a T, h(&'a U))", "F.f"],
+  ])("reads %s: two lifetimes around a parenthesis (r4501928454)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("applies the owners rule only at depth 1 (r4501928652)", () => {
+    // `Service` is owned (by `Other.Service`, and kept because `Foo.Service`
+    // ends with it), but it sits at depth 2 of `App.Service.create`.
+    expect(syms("`App.Service.create()` `Foo.Service()`", ["Service.create", "Other.Service"]))
+      .toEqual(["Foo.Service"]);
+  });
+
+  it("counts a 3-segment entry as an owner", () => {
+    expect(syms("`PaymentGateway.create()`", ["App.UserService.create", "create"]))
+      .toEqual(["PaymentGateway.create"]);
+  });
+});

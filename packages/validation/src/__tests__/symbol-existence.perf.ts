@@ -5,9 +5,10 @@
  *
  * Worst case for a per-bucket scan: every graph entry shares the reference's
  * last segment, and every reference is unresolved, so doubling both the graph
- * and the reference count quadruples a scan (refs × bucket). The suffix trie
- * walks O(segments) per reference, so the same doubling only doubles the work
- * (building the trie plus the lookups).
+ * and the reference count quadruples a scan (refs × bucket). The current code
+ * builds a trie of the references and walks each graph entry through it once
+ * (O(segments) per entry, O(segments) per reference lookup), so the same
+ * doubling only doubles the work.
  */
 
 import { describe, expect, it } from "vitest";
@@ -19,8 +20,8 @@ const MIN_SAMPLE_MS = 0.5;
 /**
  * A quadratic worker lands near 4.0 per doubling, a linear one near 2.0.
  * source: the same ceiling and fastest-observation estimator as
- * regex-hardening.perf.ts; the trie measured 2.16–2.34 at 2k/4k references
- * (20k/40k graph entries), three runs of seven pairs, on this workspace.
+ * regex-hardening.perf.ts; measured 2.02–2.38 at 2k/4k references (20k/40k
+ * graph entries) with the reference-trie code, six runs of seven pairs.
  */
 const QUADRATIC_GROWTH_CEILING = 3.0;
 
@@ -52,9 +53,9 @@ function growthRatio(small: number, large: number, pairs = 7): number {
  * with the length squared (a pass per nesting level, an unanchored
  * `/[?!]+$/`) shows near 4x, and linear work near 2x (PR #174 review
  * r4501882470). Every entry shares the reference's last segment, so all of
- * them reach the trie. At depth 250 vs 500 (entries up to ~505 characters,
- * inside the 512 schema bound), measured three runs of five pairs: this code
- * 1.74–1.97; the previous multi-pass `stripGenerics` with an unanchored
+ * them walk the reference trie. At depth 250 vs 500 (entries up to ~505 characters,
+ * inside the 512 schema bound), measured runs of five pairs: the
+ * reference-trie code 1.58–2.30; the previous multi-pass `stripGenerics` with an unanchored
  * `/[?!]+$/` 3.42–3.59.
  */
 function pathological(depth: number): string[] {

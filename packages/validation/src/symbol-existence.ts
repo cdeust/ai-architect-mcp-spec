@@ -320,9 +320,10 @@ function referenceTrie(keys: Iterable<string>): RefNode {
  * Walk one graph entry down the reference trie, last segment first. Every
  * reference ending on the walk is a suffix of the entry; if the whole entry
  * is walked, the entry is a suffix of every longer reference through its
- * end. The trie holds only the references, so memory is bounded by the PRD,
- * not by the graph, and each entry costs O(its segments) (PR #174 reviews
- * r4501885091, r4501910687).
+ * end. The trie holds only the references, so its memory is bounded by the
+ * PRD, not by the graph, and each entry costs O(its segments) (PR #174
+ * reviews r4501885091, r4501910687). The only graph-sized state kept is the
+ * set of distinct entry paths, needed for the `knownSymbols` count.
  */
 function streamEntry(root: RefNode, parts: readonly string[]): void {
   let node = root;
@@ -330,6 +331,8 @@ function streamEntry(root: RefNode, parts: readonly string[]): void {
     const next = node.children.get(parts[k]);
     if (!next) return;
     node = next;
+    // Marking only reference ends is an optimisation: `coveredByEntry` is
+    // read only where a reference ends.
     if (node.refEnd) node.coveredByEntry = true;
   }
   node.entryEnd = true;
@@ -351,6 +354,8 @@ function resolves(root: RefNode, ref: readonly string[], owned: ReadonlySet<stri
     node = next;
     const depth = ref.length - k;
     const bareWithOwners = depth === 1 && owned.has(ref[k]);
+    // `k > 0` is an optimisation: at k = 0 the entry equals the reference,
+    // which `coveredByEntry` already records.
     if (node.entryEnd && k > 0 && !bareWithOwners) return true;
   }
   return node.coveredByEntry;
@@ -397,7 +402,11 @@ export function checkSymbolExistence(
     const parts = knownSegments(entry);
     if (parts.length === 0) continue;
     distinct.add(parts.join("."));
-    if (parts.length > 1) owned.add(parts[parts.length - 1]);
+    // `resolves` reads `owned` only for a reference's last segment, so only
+    // those are kept: bounded by the PRD, not the graph (PR #174 review
+    // r4501928836).
+    const last = parts[parts.length - 1];
+    if (parts.length > 1 && trie.children.has(last)) owned.add(last);
     streamEntry(trie, parts);
   }
   const unresolved: UnresolvedSymbol[] = [];
