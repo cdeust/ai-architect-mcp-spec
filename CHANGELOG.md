@@ -12,7 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- The `honest_verification_verdicts` rule flags a single PASS verdict on a performance claim: it required at least two all-PASS verdicts, and counted the English verb "pass" as a verdict because its pattern was case-insensitive (#118).
+- The `honest_verification_verdicts` rule flags a single PASS verdict on a performance claim: it required at least two all-PASS verdicts, and counted the English verb "pass" as a verdict because its pattern was case-insensitive; a verdict is now an upper-case token, or any casing after a `Verdict:` label (#118).
 - The `merge` job of `.github/workflows/pipeline.yml` sets `GH_REPO: ${{ github.repository }}` on its `gh pr merge` step: the job runs without a checkout, so gh could not infer the repository and failed with `fatal: not a git repository` after every stage was green (session-optimizer #65, run 39756969927, 2026-10-22).
 
 ### Added
