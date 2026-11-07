@@ -51,8 +51,8 @@ let _evidenceRepo: EvidenceRepository | null | undefined = undefined;
 
 /**
  * The server's single evidence repository, opened lazily at the path
- * `resolveEvidenceDbPath()` gives. `index.ts` (quality-history and
- * strategy-effectiveness tools) and `pipeline-tools.ts` (strategy-execution
+ * `resolveEvidenceDbPath()` gives. `index.ts` (check_health, quality-history
+ * and strategy-effectiveness tools) and `pipeline-tools.ts` (strategy-execution
  * drain, run-eviction cleanup) both use this handle, so they share one
  * SQLite connection to one file instead of each opening its own with its
  * own path resolution.

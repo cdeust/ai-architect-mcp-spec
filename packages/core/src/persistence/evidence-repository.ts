@@ -461,8 +461,9 @@ function defaultEvidenceDbPath(): string {
 }
 
 /**
- * Factory: try to construct an EvidenceRepository. Returns `null` if the
- * native better-sqlite3 module is not available. Composition roots
+ * Factory: try to construct an EvidenceRepository. Returns `null`, after
+ * writing the reason to stderr, when the native better-sqlite3 module is not
+ * available or the database cannot be opened. Composition roots
  * (e.g. mcp-server) should import this factory directly rather than
  * dynamically importing the module + casting through `unknown`.
  *

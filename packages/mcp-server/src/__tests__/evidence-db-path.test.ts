@@ -4,7 +4,7 @@
  * `~/.prd-gen/evidence.db`. The shipped configs do not set it.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -101,11 +101,15 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
       const err = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         process.env.HOME = homeFile;
+        // Guard: under a thread pool homedir() may not see the new HOME, and
+        // the call below would then open the real ~/.prd-gen.
+        expect(homedir()).toBe(homeFile);
         expect(tryCreateEvidenceRepository()).toBeNull();
         expect(err).toHaveBeenCalledOnce();
         expect(String(err.mock.calls[0][0])).toContain(join(homeFile, ".prd-gen", "evidence.db"));
       } finally {
-        process.env.HOME = savedHome;
+        if (savedHome === undefined) delete process.env.HOME;
+        else process.env.HOME = savedHome;
         err.mockRestore();
       }
     },
