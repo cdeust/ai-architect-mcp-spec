@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -62,17 +62,18 @@ describe("resolveEvidenceDbPath", () => {
 // Real better-sqlite3 end to end: the resolved path is where the database is
 // created. Skipped when the native module is unavailable (same contract as
 // packages/core evidence tests).
-const probePath = join(tmpdir(), `evidence-probe-${process.pid}-${Date.now()}.db`);
-const probe = tryCreateEvidenceRepository(probePath);
+// Private temp directories (mkdtempSync, mode 0700) throughout: no file is
+// created at a predictable name in the shared OS temp dir.
+const probeDir = mkdtempSync(join(tmpdir(), "evidence-probe-"));
+const probe = tryCreateEvidenceRepository(join(probeDir, "evidence.db"));
 probe?.close();
-for (const s of ["", "-wal", "-shm"]) rmSync(probePath + s, { force: true });
+rmSync(probeDir, { recursive: true, force: true });
 const sqliteAvailable = probe !== null;
 
 describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", () => {
   it("reports on stderr, not stdout, an explicit path it cannot open", () => {
-    const dir = join(tmpdir(), `evidence-blocked-${process.pid}-${Date.now()}`);
+    const dir = mkdtempSync(join(tmpdir(), "evidence-blocked-"));
     dirs.push(dir);
-    mkdirSync(dir, { recursive: true });
     const blocker = join(dir, "file");
     writeFileSync(blocker, "");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -103,7 +104,7 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
   });
 
   it("creates the database file at PRD_GEN_EVIDENCE_DB, not under ~/.prd-gen", () => {
-    const dir = join(tmpdir(), `evidence-env-${process.pid}-${Date.now()}`);
+    const dir = mkdtempSync(join(tmpdir(), "evidence-env-"));
     dirs.push(dir);
     const dbPath = join(dir, "nested", "evidence.db");
     const repo = tryCreateEvidenceRepository(
@@ -146,7 +147,7 @@ describe("evidence repository wiring", () => {
     "the running server creates the database at PRD_GEN_EVIDENCE_DB",
     async () => {
       expect(existsSync(SERVER_ENTRY), `build first: ${SERVER_ENTRY}`).toBe(true);
-      const dir = join(tmpdir(), `evidence-stdio-${process.pid}-${Date.now()}`);
+      const dir = mkdtempSync(join(tmpdir(), "evidence-stdio-"));
       dirs.push(dir);
       const dbPath = join(dir, "evidence.db");
       const env: Record<string, string> = {};
