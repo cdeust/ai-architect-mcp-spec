@@ -463,3 +463,26 @@ describe("checkSymbolExistence — tenth review round", () => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
 });
+
+describe("checkSymbolExistence — eleventh review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it("lets a new list item end the previous item's fence and open its own (r4501911127)", () => {
+    expect(syms("- ```ts\n\n  `in()`\n- ```\n\n  `in2()`\n  ```\n`out()`")).toEqual(["out"]);
+  });
+
+  it("resolves the same whether a graph entry is equal to, longer or shorter than the reference", () => {
+    const graph = ["App.Billing.Invoice.total", "Invoice.tax", "Store.get"];
+    expect(syms("`Billing.Invoice.total()` `Invoice.total()` `total()`", graph)).toEqual([]);
+    expect(syms("`X.Invoice.tax()` `Invoice.tax()`", graph)).toEqual([]);
+    expect(syms("`Store.get()` `Cache.Store.get()` `Other.get()`", graph)).toEqual(["Other.get"]);
+  });
+
+  it("keeps the owners rule when the bare entry comes before or after the qualified one", () => {
+    for (const graph of [["create", "UserService.create"], ["UserService.create", "create"]]) {
+      expect(syms("`PaymentGateway.create()` `App.UserService.create()` `create()`", graph))
+        .toEqual(["PaymentGateway.create"]);
+    }
+  });
+});

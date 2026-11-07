@@ -241,75 +241,78 @@ function knownSegments(entry: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-/**
- * The graph entries a reference can reach, cut to the depth a walk can go.
- * `resolves` only enters the bucket of a reference's last segment and never
- * walks deeper than the longest reference, so an entry with another last
- * segment, or the head of a longer entry, changes no result. Keeping at least
- * 2 segments preserves the "bare entry with owners" test at depth 1. The trie
- * is thus bounded by the references (at most MAX_SPAN_LENGTH characters
- * each), not by the graph size (PR #174 reviews r4501850098, r4501882299,
- * r4501885091).
- */
-function reachableEntries(
-  known: readonly string[][],
-  counts: ReadonlyMap<string, UnresolvedSymbol>,
-): string[][] {
-  const lastSegments = new Set<string>();
-  let depth = 2;
-  for (const key of counts.keys()) {
+/** A node of the reference trie: reference segments, last segment first. */
+interface RefNode {
+  readonly children: Map<string, RefNode>;
+  /** A reference ends here. */
+  refEnd: boolean;
+  /** A graph entry has this path as a suffix: the reference ending here resolves. */
+  coveredByEntry: boolean;
+  /** A graph entry's whole path ends here: longer references through here resolve. */
+  entryEnd: boolean;
+}
+
+function newRefNode(): RefNode {
+  return { children: new Map(), refEnd: false, coveredByEntry: false, entryEnd: false };
+}
+
+/** The references in a trie keyed on their segments, last segment first. */
+function referenceTrie(keys: Iterable<string>): RefNode {
+  const root = newRefNode();
+  for (const key of keys) {
     const ref = key.split(".");
-    lastSegments.add(ref[ref.length - 1]);
-    depth = Math.max(depth, ref.length);
-  }
-  return known
-    .filter((parts) => lastSegments.has(parts[parts.length - 1]))
-    .map((parts) => parts.slice(-depth));
-}
-
-interface TrieNode {
-  readonly children: Map<string, TrieNode>;
-  /** A graph entry ends here. */
-  end: boolean;
-}
-
-/** Graph entries in a trie keyed on their segments, last segment first. */
-function suffixTrie(known: readonly (readonly string[])[]): TrieNode {
-  const root: TrieNode = { children: new Map(), end: false };
-  for (const parts of known) {
     let node = root;
-    for (let k = parts.length - 1; k >= 0; k--) {
-      let next = node.children.get(parts[k]);
+    for (let k = ref.length - 1; k >= 0; k--) {
+      let next = node.children.get(ref[k]);
       if (!next) {
-        next = { children: new Map(), end: false };
-        node.children.set(parts[k], next);
+        next = newRefNode();
+        node.children.set(ref[k], next);
       }
       node = next;
     }
-    node.end = true;
+    node.refEnd = true;
   }
   return root;
 }
 
 /**
- * Whether `ref` resolves: its path is a suffix of a graph entry's path (the
- * walk consumes the whole reference), or a graph entry's path is a suffix of
- * it (an entry ends on the walk). O(segments of `ref`), whatever the graph
- * size (PR #174 review r4501819785). A bare graph entry (`create`) resolves a
- * qualified reference (`PaymentGateway.create`) only when no qualified entry
- * shares its last segment: once the graph says which owners have a `create`,
- * an unlisted owner is unresolved (PR #174 review r4501804340).
+ * Walk one graph entry down the reference trie, last segment first. Every
+ * reference ending on the walk is a suffix of the entry; if the whole entry
+ * is walked, the entry is a suffix of every longer reference through its
+ * end. The trie holds only the references, so memory is bounded by the PRD,
+ * not by the graph, and each entry costs O(its segments) (PR #174 reviews
+ * r4501885091, r4501910687).
  */
-function resolves(root: TrieNode, ref: readonly string[]): boolean {
+function streamEntry(root: RefNode, parts: readonly string[]): void {
+  let node = root;
+  for (let k = parts.length - 1; k >= 0; k--) {
+    const next = node.children.get(parts[k]);
+    if (!next) return;
+    node = next;
+    if (node.refEnd) node.coveredByEntry = true;
+  }
+  node.entryEnd = true;
+}
+
+/**
+ * Whether `ref` resolves after every graph entry was streamed: a graph entry
+ * has its path as a suffix, or a graph entry's path is a suffix of it. A bare
+ * graph entry (`create`) resolves a qualified reference
+ * (`PaymentGateway.create`) only when no qualified entry shares its last
+ * segment: once the graph says which owners have a `create`, an unlisted
+ * owner is unresolved (PR #174 review r4501804340).
+ */
+function resolves(root: RefNode, ref: readonly string[], owned: ReadonlySet<string>): boolean {
   let node = root;
   for (let k = ref.length - 1; k >= 0; k--) {
     const next = node.children.get(ref[k]);
-    if (!next) return false;
+    if (!next) return false; // unreachable: every reference is in the trie
     node = next;
-    const bareWithOwners = k === ref.length - 1 && node.children.size > 0;
-    if (node.end && k > 0 && !bareWithOwners) return true;
+    const depth = ref.length - k;
+    const bareWithOwners = depth === 1 && owned.has(ref[k]);
+    if (node.entryEnd && k > 0 && !bareWithOwners) return true;
   }
-  return true;
+  return node.coveredByEntry;
 }
 
 /**
@@ -344,16 +347,21 @@ export function checkSymbolExistence(
   content: string | readonly string[],
   knownSymbols: readonly string[],
 ): SymbolExistenceReport {
-  const distinct = new Map<string, string[]>();
-  for (const parts of knownSymbols.map(knownSegments)) {
-    if (parts.length > 0) distinct.set(parts.join("."), parts);
-  }
   const counts = referenceCounts(content);
-  const trie = suffixTrie(reachableEntries([...distinct.values()], counts));
+  const trie = referenceTrie(counts.keys());
+  const distinct = new Set<string>();
+  /** Last segments that some qualified graph entry ends with. */
+  const owned = new Set<string>();
+  for (const entry of knownSymbols) {
+    const parts = knownSegments(entry);
+    if (parts.length === 0) continue;
+    distinct.add(parts.join("."));
+    if (parts.length > 1) owned.add(parts[parts.length - 1]);
+    streamEntry(trie, parts);
+  }
   const unresolved: UnresolvedSymbol[] = [];
   for (const [key, entry] of counts) {
-    const ref = key.split(".");
-    if (!resolves(trie, ref)) unresolved.push(entry);
+    if (!resolves(trie, key.split("."), owned)) unresolved.push(entry);
   }
   unresolved.sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
 
