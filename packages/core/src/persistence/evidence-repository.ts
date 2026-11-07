@@ -44,7 +44,9 @@ try {
  * It activates: adaptive thresholds, effectiveness tracking, quality trends,
  * and refinement learning — all of which exist in the Swift code but are starved of data.
  *
- * Location: ~/.prd-gen/evidence.db
+ * Location: the `dbPath` argument; ~/.prd-gen/evidence.db when absent. The
+ * mcp-server composition root passes `PRD_GEN_EVIDENCE_DB` when it is set
+ * (packages/mcp-server/src/evidence-db-path.ts).
  */
 
 // ─── Retention constant (bounded-I/O Phase 3) ────────────────────────────────

@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The server honours `PRD_GEN_EVIDENCE_DB`: `.mcp.json` and `manifest.json` set it and PRIVACY.md documents it as the override, but both composition-root call sites opened the evidence repository with no path, so it always wrote `~/.prd-gen/evidence.db`. A blank value keeps the default; an unexpanded `${...}` placeholder or a relative path is ignored with a message on stderr (#121).
 - The `honest_verification_verdicts` rule flags a single PASS verdict on a performance claim: it required at least two all-PASS verdicts, and counted the English verb "pass" as a verdict because its pattern was case-insensitive; a verdict is now an upper-case token, or any casing after a `Verdict:` label (#118).
 - The `merge` job of `.github/workflows/pipeline.yml` sets `GH_REPO: ${{ github.repository }}` on its `gh pr merge` step: the job runs without a checkout, so gh could not infer the repository and failed with `fatal: not a git repository` after every stage was green (session-optimizer #65, run 39756969927, 2026-10-22).
 

@@ -20,6 +20,7 @@ import {
 } from "@prd-gen/core";
 
 import { tryCreateEvidenceRepository, type EvidenceRepository } from "@prd-gen/core";
+import { resolveEvidenceDbPath } from "./evidence-db-path.js";
 
 /**
  * Minimal structural alias for the optional better-sqlite3-backed evidence
@@ -133,7 +134,7 @@ server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
 let _evidenceRepo: EvidenceRepositoryLike | null | undefined = undefined;
 function getEvidenceRepo(): EvidenceRepositoryLike | null {
   if (_evidenceRepo === undefined) {
-    _evidenceRepo = tryCreateEvidenceRepository();
+    _evidenceRepo = tryCreateEvidenceRepository(resolveEvidenceDbPath());
   }
   return _evidenceRepo;
 }
