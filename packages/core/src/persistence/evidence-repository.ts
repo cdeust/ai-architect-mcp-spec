@@ -485,9 +485,8 @@ export function tryCreateEvidenceRepository(
   let target = dbPath ?? "~/.prd-gen/evidence.db";
   try {
     target = dbPath ?? defaultEvidenceDbPath();
-    if (!Database) {
-      throw new Error("better-sqlite3 is not available");
-    }
+    // A missing better-sqlite3 is reported by the constructor's own error,
+    // which carries the install hint.
     return new EvidenceRepository(target);
   } catch (err) {
     console.error(
