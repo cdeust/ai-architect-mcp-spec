@@ -441,7 +441,8 @@ describe("checkSymbolExistence — tenth review round", () => {
 
   it("still rejects a string that hides an unbalanced parenthesis", () => {
     expect(symbolFromSpan("Foo.run(')')")).toBe("Foo.run");
-    expect(symbolFromSpan("Foo.run(')'")).toBeNull();
+    // Reaches balancedParens and fails only because the string never closes.
+    expect(symbolFromSpan("Foo.run(')")).toBeNull();
   });
 
   it.each([
@@ -484,5 +485,49 @@ describe("checkSymbolExistence — eleventh review round", () => {
       expect(syms("`PaymentGateway.create()` `App.UserService.create()` `create()`", graph))
         .toEqual(["PaymentGateway.create"]);
     }
+  });
+});
+
+describe("checkSymbolExistence — twelfth review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["Foo.run(&'a str, 'c')", "Foo.run"],
+    ["Foo.run(&'a str, \"don't\")", "Foo.run"],
+    ["Foo.run(&'a str) + Bar.go(&'b str)", null],
+    ["Graph.walk(B's edges)", "Graph.walk"],
+    ["Lexer.scan(rb'abc')", "Lexer.scan"],
+    ["Lexer.scan(br'(')", "Lexer.scan"],
+    ["Fmt.show(f'{x}')", "Fmt.show"],
+    ["Text.of(u'(')", "Text.of"],
+    ["Song.play(rock'n'roll)", "Song.play"],
+  ])("decides a lifetime from what precedes the quote: %s (r4501919701)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it.each([
+    ["Repo<(User, Error)>.find", "`Repo.find()`"],
+    ["Repo<() => User>.find", "`Repo.find()`"],
+    ["Handler<(e: Event) => void>.dispatch", "`Handler.dispatch()`"],
+    ["Repo<T>.find(id: Id<T>) -> Option<T>", "`Repo.find()`"],
+  ])("finds the signature outside generic arguments in %s (r4501917318)", (entry, prd) => {
+    expect(syms(prd, [entry])).toEqual([]);
+  });
+
+  it("ends a quoted paragraph on a marker-only `>` line (r4501917315)", () => {
+    expect(syms("> A `stray\n>\n> Calls `Ghost.run()`.")).toEqual(["Ghost.run"]);
+  });
+
+  it.each([
+    ["an unquoted closer after a quoted fence leaves the quote", "> ```ts\n>\n> `in()`\n```\n`out()`", []],
+    ["a quoted closer, then a quoted line", "> ```ts\n>\n> `in()`\n> ```\n> `out()`", ["out"]],
+    ["a column-0 fence after a list-item fence opens a new fence", "1. ```ts\n\n   `in()`\n```\n`hidden()`", []],
+  ])("fence boundaries: %s (r4501919898, r4501920057)", (_name, prd, expected) => {
+    expect(syms(prd)).toEqual(expected);
+  });
+
+  it.each(["crate::self", "super::super()", "Self::self()"])("does not read %s: roots only", (span) => {
+    expect(symbolFromSpan(span)).toBeNull();
   });
 });

@@ -15,7 +15,7 @@
  *  - A span counts as a symbol reference only when it is code-shaped beyond
  *    doubt: a call (`parseConfig()`, `UserService.create(id)`), a `::` or
  *    `#` qualified path (`Billing::Invoice`, `User#save` — a `#` owner must be
- *    mixed-case, so `README#install` is an anchor), or a dotted path
+ *    PascalCase, so `README#install` is an anchor), or a dotted path
  *    starting with an upper-case segment (`UserService.create`) whose last
  *    segment is not a file extension (`README.md` is a file, not a symbol).
  *    A bare word in backticks (`user_id`) is ambiguous — a field, a config
@@ -73,20 +73,51 @@ const SYMBOL_SHAPE = new RegExp(
   `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`,
 );
 
+const LITERAL_PREFIXES: ReadonlySet<string> = new Set([
+  "b", "r", "u", "f", "rb", "br", "fr", "rf",
+]);
+
+/**
+ * The letters right before position `i` form a string-literal prefix
+ * (`b'`, `r'`, `rb'`, `f'`) standing alone, not the end of a word.
+ */
+function literalPrefixBefore(text: string, i: number): boolean {
+  let start = i;
+  while (start > 0 && /[A-Za-z]/.test(text[start - 1]) && i - start < 2) start -= 1;
+  if (start > 0 && /\w/.test(text[start - 1])) return false;
+  return LITERAL_PREFIXES.has(text.slice(start, i).toLowerCase());
+}
+
+/**
+ * A `'` in a Rust lifetime position: right after `&`, `<` or `+`, or after a
+ * `,` while a `<` is open (`&'a str`, `Cow<'a, str>`, `Foo<'a, 'b>`,
+ * `impl Fn() + 'static`), and followed by an identifier. Decided from what
+ * comes before the quote, never from quotes further on (PR #174 review
+ * r4501919701).
+ */
+function isLifetime(text: string, i: number): boolean {
+  if (!/[A-Za-z_]/.test(text[i + 1] ?? "")) return false;
+  let k = i - 1;
+  while (k >= 0 && text[k] === " ") k -= 1;
+  const before = text[k] ?? "";
+  if (before === "&" || before === "<" || before === "+") return true;
+  if (before !== ",") return false;
+  let angle = 0;
+  for (let j = 0; j < k; j++) {
+    if (text[j] === "<") angle += 1;
+    else if (text[j] === ">" && text[j - 1] !== "-" && text[j - 1] !== "=") angle -= 1;
+  }
+  return angle > 0;
+}
+
 /** `'` used as text, not a string delimiter. */
 function isTextApostrophe(text: string, i: number): boolean {
-  const prev = text[i - 1] ?? "";
-  const next = text[i + 1] ?? "";
-  // A one-letter literal prefix opens a string: `b'a'`, `r'abc'`, `b'('`.
-  if (/[bBrRuUfF]/.test(prev) && !/\w/.test(text[i - 2] ?? "")) return false;
+  // A literal prefix opens a string when a closing quote follows: `b'a'`,
+  // `r'abc'`, `rb'('`; `B's edges` has none and stays an apostrophe.
+  if (literalPrefixBefore(text, i) && text.includes("'", i + 1)) return false;
   // An apostrophe inside a word: `don't`, `user's`.
-  if (/\w/.test(prev) && /\w/.test(next)) return true;
-  // A Rust lifetime (`&'a str`, `Cow<'a, str>`, `Ref<'_>`, `+ 'static`): an
-  // identifier after the quote, and no later quote that could close it as a
-  // string — `'welcome back'` and `'a'` are strings (PR #174 review
-  // r4501894817).
-  const lifetime = /^'[A-Za-z_]\w*/.exec(text.slice(i));
-  return lifetime !== null && !text.includes("'", i + 1);
+  if (/\w/.test(text[i - 1] ?? "") && /\w/.test(text[i + 1] ?? "")) return true;
+  return isLifetime(text, i);
 }
 
 /**
@@ -143,15 +174,18 @@ const STD_ROOTS: ReadonlySet<string> = new Set(["std"]);
  * symbol, so they are dropped and the rest of the path is checked
  * (`crate::config::load` → `config::load`, which resolves by suffix against
  * `my_crate::config::load`; `Self::new()` → `new`). All leading roots go
- * (`super::super::x`), the rest is reported joined with `::`, and a non-call
- * left with one name (`Self::CONST`) is not read.
+ * (`super::super::Config::load()` → `Config::load`), the rest is reported
+ * joined with `::`, and a non-call left with one name (`Self::CONST`,
+ * `crate::Foo`) or a path of roots only (`super::super()`) is not read.
  */
 const RELATIVE_ROOTS: ReadonlySet<string> = new Set(["Self", "self", "super", "crate"]);
 
 /**
- * The owner of a `#` path: a PascalCase class name (`User#save`). An all-caps
- * word (`README#install`), a lower-case word (`docs#setup`) or a file name
- * (`CONTRIBUTING.md#setup`) before `#` is a markdown anchor, not a method.
+ * The owner of a `#` path: one PascalCase name — an upper-case first letter
+ * and at least one lower-case letter, no `.` (`User#save`, `URLParser#parse`).
+ * An all-caps word (`README#install`), a lower-case word (`docs#setup`), a
+ * dotted path or file name (`CONTRIBUTING.md#setup`) before `#` is read as a
+ * markdown anchor, not a method.
  */
 const PASCAL_OWNER = /^[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*$/;
 
@@ -188,6 +222,8 @@ export function symbolFromSpan(span: string): string | null {
     // non-call (`Self::CONST`, `crate::Foo`) is as ambiguous as a bare word
     // in backticks and is not read (PR #174 review r4501895577).
     const rest = parts.slice(roots);
+    // Nothing but roots (`super::super()`, `crate::self`) names no symbol.
+    if (RELATIVE_ROOTS.has(rest[rest.length - 1])) return null;
     return rest.length === 1 && !isCall ? null : rest.join("::");
   }
   if (path.includes("#")) {
@@ -204,17 +240,25 @@ export function symbolFromSpan(span: string): string | null {
 }
 
 /**
- * `T<U<V>>` → `T`: generic arguments removed in one pass with a depth
- * counter, so nesting depth does not multiply the cost (PR #174 review
- * r4501850098). An unmatched `>` is dropped.
+ * A graph entry's path: generic arguments removed and the text cut at the
+ * signature's `(`, in one pass with a depth counter, so nesting does not
+ * multiply the cost (PR #174 review r4501850098). A `(` inside generic
+ * arguments (`Repo<(User, Error)>.find`, `Repo<() => User>.find`) is not the
+ * signature, and the `>` of an arrow (`=>`, `->`) closes nothing (PR #174
+ * review r4501917318). An unmatched `>` is dropped.
  */
-function stripGenerics(text: string): string {
+function entryPath(text: string): string {
   let out = "";
   let depth = 0;
-  for (const ch of text) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
     if (ch === "<") depth += 1;
-    else if (ch === ">") depth = Math.max(0, depth - 1);
-    else if (depth === 0) out += ch;
+    else if (ch === ">") {
+      if (text[i - 1] !== "-" && text[i - 1] !== "=") depth = Math.max(0, depth - 1);
+    } else if (depth === 0) {
+      if (ch === "(") break;
+      out += ch;
+    }
   }
   return out;
 }
@@ -233,10 +277,7 @@ function trimOptionalMarkers(segment: string): string {
  * (`init?(data:)`) (PR #174 reviews r4501804140, r4501822704).
  */
 function knownSegments(entry: string): string[] {
-  const text = entry.trim();
-  const paren = text.indexOf("(");
-  const path = stripGenerics(paren >= 0 ? text.slice(0, paren) : text);
-  return segments(path)
+  return segments(entryPath(entry.trim()))
     .map(trimOptionalMarkers)
     .filter((s) => s.length > 0);
 }

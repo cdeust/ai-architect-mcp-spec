@@ -28,8 +28,9 @@ export const KnownSymbolsSchema = z
       "{checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced " +
       "blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
       "Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: " +
-      "lower-case receivers, JS built-ins, std:: paths, # after a non-mixed-case word (anchors), file names. " +
-      "Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked. " +
+      "lower-case receivers, JS built-ins, std:: paths, # after anything but one PascalCase name (anchors), file names. " +
+      "Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked; a non-call " +
+      "left with one name (Self::CONST, crate::Foo) is not checked. " +
       "[] means an empty graph: " +
       "omit the field when the graph lookup failed.",
   );

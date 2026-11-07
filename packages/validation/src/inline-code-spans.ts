@@ -24,8 +24,10 @@
  * container prefix — any indentation, blockquote and list markers in any
  * order — because PRDs nest proposed-code fences in list items and quotes
  * (`- Proposed:` then an indented fence, `1. ```ts`, `> ```ts`). The scanner
- * tracks no container, so it cannot apply CommonMark's container-relative
- * 3-space limit (PR #174 reviews r4501809320, r4501828721).
+ * tracks a fence's container (quote depth, list-item column) only to find
+ * where the fence ends, not to qualify its opener, so it does not apply
+ * CommonMark's container-relative 3-space limit (PR #174 reviews
+ * r4501809320, r4501828721, r4501920057).
  */
 const CONTAINER_PREFIX = /^(?:\s*(?:>|(?:[-*+]|\d{1,9}[.)])(?=\s)))*\s*/;
 const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
@@ -57,6 +59,13 @@ function blocks(text: string): string[] {
     // apply to the text after the markers.
     const quoted = QUOTE_MARKERS.test(line);
     const inner = quoted ? line.replace(QUOTE_MARKERS, "") : line;
+    // A marker-only `>` line is a blank line inside the quote: it ends the
+    // quoted paragraph (PR #174 review r4501917315).
+    if (inner.trim() === "") {
+      flush();
+      prevQuoted = quoted;
+      continue;
+    }
     if (quoted !== prevQuoted || BLOCK_START.test(inner)) flush();
     prevQuoted = quoted;
     current.push(inner);
@@ -83,8 +92,8 @@ function quoteDepth(line: string): number {
 interface OpenFence {
   readonly marker: string;
   /**
-   * Quote depth of the opener. Above 0 the fence ends with the first line of
-   * lesser depth, and only a line of the same depth can close it (PR #174
+   * Quote depth of the opener. Only a line of the same depth can close the
+   * fence; above 0, it also ends with the first line of lesser depth (PR #174
    * review r4501895058).
    */
   readonly depth: number;
@@ -164,12 +173,14 @@ function stripFencedBlocks(content: string): string {
   let fence: OpenFence | null = null;
   for (const line of content.replace(/\r\n?/g, "\n").split("\n")) {
     if (fence !== null) {
-      if (closes(fence, line)) {
-        fence = null;
+      // Leaving the container comes first: a fence line outside a list item
+      // (column 0 after `1. ```ts`) ends the item and opens a new fence
+      // rather than closing the item's fence (PR #174 review r4501920057).
+      if (leavesContainer(fence, line)) fence = null;
+      else {
+        if (closes(fence, line)) fence = null;
         continue;
       }
-      if (!leavesContainer(fence, line)) continue;
-      fence = null;
     }
     fence = openFence(line);
     kept.push(fence === null ? line : "");
