@@ -119,8 +119,14 @@ export function checkHonestVerificationVerdicts(
     /NFR-\d+|(?:p95|p99|latency|throughput|response\s+time)\s*(?:[:≤=]|<=?)\s*\d+/gi;
   if (!nfrPattern.test(content)) return [];
 
+  // Verdicts are canonical upper-case tokens. The pattern used to carry the
+  // `i` flag, which counted the English verb ("requests pass through the
+  // gateway") as a PASS verdict; with that noise in the count, the rule needed
+  // at least two verdicts before firing, and a single PASS on a latency claim
+  // escaped it (#118). Matching the tokens case-sensitively removes the noise,
+  // so one unmeasured PASS is flagged like two.
   const verdictPattern =
-    /\b(?:PASS|SPEC-COMPLETE|NEEDS-RUNTIME|INCONCLUSIVE|FAIL)\b/gi;
+    /\b(?:PASS|SPEC-COMPLETE|NEEDS-RUNTIME|INCONCLUSIVE|FAIL)\b/g;
   const verdicts: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = verdictPattern.exec(content)) !== null) {
@@ -130,7 +136,7 @@ export function checkHonestVerificationVerdicts(
   if (verdicts.length === 0) return [];
 
   const hasOnlyPass = verdicts.every((v) => v === "PASS");
-  if (hasOnlyPass && verdicts.length >= 2) {
+  if (hasOnlyPass) {
     return [
       makeViolation(
         "honest_verification_verdicts",

@@ -93,6 +93,29 @@ describe("checkHonestVerificationVerdicts", () => {
   it("returns nothing for empty content", () => {
     expect(checkHonestVerificationVerdicts("", PERF)).toEqual([]);
   });
+
+  // #118: the rule required at least two verdicts, so a single PASS on a
+  // latency claim passed the deterministic checks.
+  it("flags a single PASS verdict on a latency claim", () => {
+    const content = ["## Verification", "", "p95 <= 200", "", "Verdict: PASS"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
+  it("does not count the English verb 'pass' as a verdict", () => {
+    const content = "p95 <= 200 ms. Requests pass through the gateway; retries pass the token.";
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("accepts a single NEEDS-RUNTIME verdict on a latency claim", () => {
+    const content = ["p95 <= 200", "", "Verdict: NEEDS-RUNTIME"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("accepts a PASS alongside a SPEC-COMPLETE verdict", () => {
+    const content = ["p95 <= 200", "Verdict: PASS", "Verdict: SPEC-COMPLETE"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
 });
 
 describe("checkDocumentVerificationVerdicts", () => {
