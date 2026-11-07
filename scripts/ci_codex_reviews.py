@@ -25,7 +25,7 @@ if "ci_codex_review_runtime" not in sys.modules:
 import ci_codex_review_runtime as runtime  # noqa: E402
 from ci_codex_review_runtime import _outputs  # noqa: E402
 from ci_codex_review_comments import _authenticate_editor, _bot_author, _canonical  # noqa: E402
-from ci_codex_review_comments import security_receipt  # noqa: E402
+from ci_codex_review_comments import MISSING, reaction_verdict, security_receipt  # noqa: E402
 from ci_codex_review_agreement import conclude  # noqa: E402
 
 Record = dict[str, Any]
@@ -164,6 +164,10 @@ def _reviews(latest, target, comments):
             ) or security_receipt(
                 comments, (repo, pr, expected_sha), reviews[kind], security
             )
+            if proof is not None and proof.get("state") == MISSING:
+                proof = reaction_verdict(
+                    (repo, pr, expected_sha), latest["body"], reviews[kind], security
+                ) or proof
         if proof is not None:
             state = proof.pop("state")
             reviews[kind]["resolution"] = proof
