@@ -17,8 +17,8 @@ and does not phone home.
 
 ## What data it stores
 
-- A **local SQLite database** at `.prd-gen/evidence.db` (path overridable via
-  `PRD_GEN_EVIDENCE_DB`). This database holds quality scores, strategy-execution
+- A **local SQLite database** at `~/.prd-gen/evidence.db` by default, or at the
+  absolute path in `PRD_GEN_EVIDENCE_DB` when you set it. This database holds quality scores, strategy-execution
   records, and calibration data accumulated from your local pipeline runs. It exists
   solely on your machine.
 - The database is created on first run and is never synced or uploaded anywhere.
@@ -40,7 +40,7 @@ optional `better-sqlite3` native addon, which executes locally).
 ## Data retention
 
 The evidence database persists until you delete it. It contains only data your own
-pipeline runs produced. You can delete `.prd-gen/evidence.db` at any time with no
+pipeline runs produced. You can delete that file (`~/.prd-gen/evidence.db` by default) at any time with no
 consequence other than losing historical calibration data.
 
 ## Contact

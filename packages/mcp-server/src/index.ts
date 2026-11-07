@@ -19,15 +19,7 @@ import {
   type PRDContext,
 } from "@prd-gen/core";
 
-import { tryCreateEvidenceRepository, type EvidenceRepository } from "@prd-gen/core";
-
-/**
- * Minimal structural alias for the optional better-sqlite3-backed evidence
- * repository. The factory `tryCreateEvidenceRepository` returns
- * `EvidenceRepository | null` directly; we keep the alias name for
- * historical readability of the lazy-init helper below.
- */
-type EvidenceRepositoryLike = EvidenceRepository;
+import { getEvidenceRepo } from "./evidence-db-path.js";
 
 import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
@@ -126,18 +118,6 @@ server.server.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: 
 server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
   resourceTemplates: [],
 }));
-
-// Lazy-init evidence repository (only when better-sqlite3 is available).
-// `tryCreateEvidenceRepository` returns null if the native module is
-// missing — replaces the previous `await import + unknown cast` pattern
-// (cross-audit code-reviewer M7, Phase 3+4, 2026-04).
-let _evidenceRepo: EvidenceRepositoryLike | null | undefined = undefined;
-function getEvidenceRepo(): EvidenceRepositoryLike | null {
-  if (_evidenceRepo === undefined) {
-    _evidenceRepo = tryCreateEvidenceRepository();
-  }
-  return _evidenceRepo;
-}
 
 // ─── Tool 1: get_config ──────────────────────────────────────────────────────
 
@@ -346,7 +326,7 @@ const toolQualityHistory = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],
@@ -384,7 +364,7 @@ const toolStrategyEffectiveness = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],

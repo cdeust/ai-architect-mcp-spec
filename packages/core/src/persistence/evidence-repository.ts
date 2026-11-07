@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 // HardOutputRule is not imported: this repository persists rule COUNTS
@@ -44,7 +44,8 @@ try {
  * It activates: adaptive thresholds, effectiveness tracking, quality trends,
  * and refinement learning — all of which exist in the Swift code but are starved of data.
  *
- * Location: ~/.prd-gen/evidence.db
+ * Location: the caller's explicit `dbPath`; ~/.prd-gen/evidence.db when
+ * absent.
  */
 
 // ─── Retention constant (bounded-I/O Phase 3) ────────────────────────────────
@@ -120,7 +121,9 @@ export class EvidenceRepository {
       throw new Error("better-sqlite3 not available — install it with: pnpm add better-sqlite3");
     }
     const resolvedPath = dbPath ?? this.defaultDbPath();
-    const dir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+    // dirname, not a split on "/": a Windows path (C:\\data\\evidence.db)
+    // has no "/", which made dir "" and mkdirSync throw.
+    const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -132,7 +135,7 @@ export class EvidenceRepository {
   }
 
   private defaultDbPath(): string {
-    return join(homedir(), ".prd-gen", "evidence.db");
+    return defaultEvidenceDbPath();
   }
 
   private migrate(): void {
@@ -452,9 +455,15 @@ export class EvidenceRepository {
   }
 }
 
+/** The default evidence database location: ~/.prd-gen/evidence.db. */
+function defaultEvidenceDbPath(): string {
+  return join(homedir(), ".prd-gen", "evidence.db");
+}
+
 /**
- * Factory: try to construct an EvidenceRepository. Returns `null` if the
- * native better-sqlite3 module is not available. Composition roots
+ * Factory: try to construct an EvidenceRepository. Returns `null`, after
+ * writing the reason to stderr, when the native better-sqlite3 module is not
+ * available or the database cannot be opened. Composition roots
  * (e.g. mcp-server) should import this factory directly rather than
  * dynamically importing the module + casting through `unknown`.
  *
@@ -467,10 +476,22 @@ export class EvidenceRepository {
 export function tryCreateEvidenceRepository(
   dbPath?: string,
 ): EvidenceRepository | null {
-  if (!Database) return null;
+  // Every failure is reported on stderr (never stdout, which carries the MCP
+  // JSON-RPC stream): the tools that need the repository answer "see stderr",
+  // so stderr must say why, for the default path as well as an explicit one.
+  // The path is resolved inside the try (os.homedir() can throw, e.g. no HOME
+  // and no passwd entry for the UID) and the same `target` is both opened and
+  // logged, so the message always names the file that was tried.
+  let target = dbPath ?? "~/.prd-gen/evidence.db";
   try {
-    return new EvidenceRepository(dbPath);
-  } catch {
+    target = dbPath ?? defaultEvidenceDbPath();
+    // A missing better-sqlite3 is reported by the constructor's own error,
+    // which carries the install hint.
+    return new EvidenceRepository(target);
+  } catch (err) {
+    console.error(
+      `[prd-gen] evidence database at ${target} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }

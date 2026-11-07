@@ -253,7 +253,7 @@ The host displays the summary to the user. Pipeline run complete.
 
 ## What did the closed feedback loop do?
 
-While the run was happening, **for every section that reached a terminal status (passed or failed), one `ExecutionResult` per required strategy was enqueued onto `state.strategy_executions`**. The mcp-server composition root drained that queue and forwarded each entry to `EffectivenessTracker.recordExecution`, which wrote rows to the local `~/.prd-gen/evidence.db` SQLite database:
+While the run was happening, **for every section that reached a terminal status (passed or failed), one `ExecutionResult` per required strategy was enqueued onto `state.strategy_executions`**. The mcp-server composition root drained that queue and forwarded each entry to `EffectivenessTracker.recordExecution`, which wrote rows to the local SQLite evidence database (`~/.prd-gen/evidence.db` by default, or the absolute path in `PRD_GEN_EVIDENCE_DB` when set):
 
 ```sql
 SELECT strategy, claim_characteristics, was_compliant, actual_confidence_gain
