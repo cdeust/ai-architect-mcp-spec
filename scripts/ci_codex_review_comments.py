@@ -185,6 +185,100 @@ def security_receipt(comments, target, review, metadata):
     }
 
 
+# Ported from cdeust/Cortex scripts/ci_codex_review_comments.py (resolve_no_findings,
+# main 2026-11-07), not re-rendered. Since 2026-10-31 Codex may close a clean
+# security review with no receipt: the summary flags stay null and Codex reacts
+# 👍 on the PR ("reacts with 👍 once all reviews finish with no findings").
+# Source: PR165, summary6505735695 edited 2026-11-03T15:15:17Z, +1 at 15:15:19Z,
+# no receipt, blocked as codex_security_verdict_missing.
+COMPLETED_ROW = re.compile(
+    r"^\|[^|\n]*\*\*(Code|Security) Review\*\* \| ✅ \*\*Completed\*\* "
+    r'<relative-time datetime="([^"]+)"[^|\n]*\| `([0-9a-f]{7,40})` \|',
+    re.M,
+)
+REVIEW_KINDS = ("Code", "Security")
+# Any finding text voids the clean path.
+FINDING_TEXT = (
+    "\n### Security findings\n",
+    "<!-- codex-security-review-finding:v1 -->",
+)
+
+
+def _stamp(value: Any) -> datetime:
+    if not isinstance(value, str) or STAMP_PATTERN.fullmatch(value) is None:
+        raise _runtime().EvidenceError("protocol")
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:  # shape-valid, calendar-invalid (month 13)
+        raise _runtime().EvidenceError("protocol") from exc
+
+
+# The reactions API reports the Codex user with type "User": only the login is read.
+def _codex_reactions(repo: str, pr: int) -> dict[str, datetime]:
+    pages = _api(f"repos/{repo}/issues/{pr}/reactions", paginate=True)
+    if not isinstance(pages, list) or any(not isinstance(p, list) for p in pages):
+        raise _runtime().EvidenceError("protocol")
+    rows = [row for page in pages for row in page]
+    if any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("content"), str)
+        or not isinstance(row.get("user"), dict)
+        or not isinstance(row["user"].get("login"), str)
+        for row in rows
+    ):
+        raise _runtime().EvidenceError("protocol")
+    return {
+        row["content"]: _stamp(row.get("created_at"))
+        for row in rows
+        if row["user"]["login"] == BOT
+    }
+
+
+def _unresolved_findings(repo: str, pr: int, sha: str) -> bool:
+    """Native Codex finding threads on this head that the owner has not resolved."""
+    runtime = _runtime()
+    owner, name = repo.split("/")
+    fields = dict(query=runtime.THREAD_QUERY, owner=owner, name=name, number=pr)
+    pages = runtime._api("graphql", paginate=True, fields=fields)
+    return not all(runtime._thread_states(pages, sha, owner).values())
+
+
+def reaction_verdict(target, body, review, metadata):
+    """Null verdict with no receipt is clean only with Codex's +1 not earlier than
+    both Completed rows of this Bot summary for this head (second precision),
+    with no 👀 left, no finding text in the summary and no unresolved native
+    finding thread.
+    """
+    repo, pr, sha = target
+    if (
+        (review.get("has_any_findings"), review.get("has_unresolved_findings")) != (None, None)
+        or review.get("status") != "completed"
+        or review.get("commit_sha") != sha
+        or not isinstance(metadata, dict)
+        or (metadata.get("repository"), metadata.get("pullRequestNumber")) != (repo, pr)
+        or (metadata.get("headSha"), metadata.get("status")) != (sha, "completed")
+    ):
+        return None
+    if any(marker in body for marker in FINDING_TEXT):
+        return None
+    rows = COMPLETED_ROW.findall(body)
+    if sorted(kind for kind, _, _ in rows) != sorted(REVIEW_KINDS):
+        return None
+    if any(not sha.startswith(short) for _, _, short in rows):
+        return None
+    finished = max(_stamp(stamp) for _, stamp, _ in rows).replace(microsecond=0)
+    marks = _codex_reactions(repo, pr)
+    if "eyes" in marks or "+1" not in marks or marks["+1"] < finished:
+        return None
+    if _unresolved_findings(repo, pr, sha):
+        return None
+    return {
+        "state": "success",
+        "source": "github_reaction",
+        "reacted_at": marks["+1"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
 # Rule D5, 2026-10-29: Claude skips Dependabot (no Actions secrets, PR #224), so an absent
 # marker agrees on a PR by GraphQL author dependabot/Bot on dependabot/* (prD evidence, PR212).
 DEPENDABOT = {"login": "dependabot", "__typename": "Bot"}
