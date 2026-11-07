@@ -75,20 +75,25 @@ const SYMBOL_SHAPE = new RegExp(
 /**
  * Whether the parentheses of an argument list balance, ignoring those inside
  * a quoted string (`run(")")`) and escaped quotes within it (PR #174 review
- * r4501809310). An unterminated string is unbalanced.
+ * r4501809310). A `'` opens a string only after a non-word character, so an
+ * apostrophe in prose (`notify(user's email)`, `run(don't)`) or a Rust
+ * lifetime (`parse(&'a str)`) is plain text (PR #174 review r4501836587).
+ * A string still open at the end is unbalanced.
  */
 function balancedParens(text: string): boolean {
   let depth = 0;
   let quote: string | null = null;
   let escaped = false;
+  let prev = "";
   for (const ch of text) {
     if (quote !== null) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
       else if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'") quote = ch;
+    } else if (ch === '"' || (ch === "'" && !/[\w&]/.test(prev))) quote = ch;
     else if (ch === "(") depth += 1;
     else if (ch === ")" && --depth < 0) return false;
+    prev = ch;
   }
   return depth === 0 && quote === null;
 }

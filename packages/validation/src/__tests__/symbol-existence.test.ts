@@ -252,3 +252,29 @@ describe("checkSymbolExistence — third review round", () => {
   });
 
 });
+
+describe("checkSymbolExistence — fourth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it("skips a fence inside a blockquote (r4501828721)", () => {
+    expect(syms("> ```ts\n> const x = `newHelper()`;\n> ```\n`Ghost.run()`")).toEqual(["Ghost.run"]);
+    expect(syms("> - ```\n>   `inside()`\n>   ```\n`out()`")).toEqual(["out"]);
+  });
+
+  it("keeps single backticks inside a multi-line double-backtick span literal (r4501828724)", () => {
+    expect(syms("Use `` multiline\n`Ghost.run()`\ntext `` here.")).toEqual([]);
+  });
+
+  it.each([
+    ["UserService.notify(user's email)", "UserService.notify"],
+    ["Foo.run(don't)", "Foo.run"],
+    ["Parser.parse(&'a str)", "Parser.parse"],
+    ["Foo.run('(')", "Foo.run"],
+  ])("reads %s: an apostrophe after a word character is text (r4501836587)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("does not let two apostrophes hide an unbalanced span", () => {
+    expect(symbolFromSpan("Foo.run(it's) or Bar.go(isn't)")).toBeNull();
+  });
+});

@@ -17,7 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `validate_prd_section` and `validate_prd_document` accept an optional `known_symbols` list (the symbol names the host read from its code graph) and then report `symbolExistence`: the code symbols named in inline code spans — calls, `::`/`#` paths, `PascalCase.member` — that no known symbol resolves. Fenced blocks are skipped as proposed code. Reported, not scored: an unresolved symbol is either introduced by the PRD or fabricated (#118).
+- `validate_prd_section` and `validate_prd_document` accept an optional `known_symbols` list (the symbol names the host read from its code graph) and then report `symbolExistence`: the code symbols named in inline code spans — calls on a bare name or an upper-case receiver, `::`/`#` paths, `Upper.member`; language built-ins, markdown anchors and file names skipped — that no known symbol resolves. Fenced blocks are skipped as proposed code. Reported, not scored: an unresolved symbol is either introduced by the PRD or fabricated (#118).
 - **The single CI pipeline, run by the Claude bot.** `.github/workflows/pipeline.yml`
   runs contract, unit (90 % of lines from `coverage.xml`), regression, e2e,
   environment and install (ubuntu, macOS, Windows, bare runner plus the pinned

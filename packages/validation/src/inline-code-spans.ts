@@ -17,13 +17,15 @@
 /**
  * A fence line. A backtick fence's info string cannot contain a backtick
  * (CommonMark 4.5), so ```` ```Ghost.run()``` is new ```` is inline code, not
- * a fence that would swallow the rest of the section. Any indentation and an
- * optional list marker are accepted, because PRDs nest proposed-code fences
- * in list items (`- Proposed:` then an indented fence, or `1. ```ts`); the
- * scanner tracks no list container, so it cannot apply CommonMark's
- * container-relative 3-space limit (PR #174 review r4501809320).
+ * a fence that would swallow the rest of the section. The fence may follow a
+ * container prefix — any indentation, blockquote markers and one list marker
+ * — because PRDs nest proposed-code fences in list items and quotes
+ * (`- Proposed:` then an indented fence, `1. ```ts`, `> ```ts`). The scanner
+ * tracks no container, so it cannot apply CommonMark's container-relative
+ * 3-space limit (PR #174 reviews r4501809320, r4501828721).
  */
-const FENCE_OPEN = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?(`{3,}(?=[^`]*$)|~{3,})/;
+const CONTAINER_PREFIX = /^(?:\s*>)*\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?/;
+const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
 const BLANK_LINE = /\n[ \t]*\n/;
 
@@ -37,14 +39,15 @@ function stripFencedBlocks(content: string): string {
   const kept: string[] = [];
   let fence: string | null = null;
   for (const line of content.replace(/\r\n?/g, "\n").split("\n")) {
-    const open = FENCE_OPEN.exec(line);
+    const rest = line.replace(CONTAINER_PREFIX, "");
+    const open = FENCE.exec(rest);
     if (fence === null) {
       if (open) {
         fence = open[1];
         kept.push("");
       } else kept.push(line);
     } else if (open && open[1][0] === fence[0] && open[1].length >= fence.length
-      && line.trim() === open[1]) {
+      && rest.trim() === open[1]) {
       fence = null;
     }
   }
