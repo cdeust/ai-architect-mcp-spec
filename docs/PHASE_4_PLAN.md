@@ -1132,7 +1132,7 @@ with one row per run, schema:
 {
   "run_id": "string",
   "machine_class": "m_series_high|m_series_mid|x86_intel|x86_amd|ci_runner",
-  "frozen_baseline_commit": "string (must match the merge-base hash)",
+  "frozen_baseline_commit": "string (provenance: HEAD sha at run time, recorded and never compared)",
   "kpis": "PipelineKpis (full object)",
   "schema_version": 1,
   "timestamp": "ISO-8601 UTC"
@@ -1159,17 +1159,18 @@ For a P95-type gate with binomial false-positive rate α=0.05:
 
 **Frozen-baseline definition.**
 - "Frozen baseline" = the canned-dispatcher run produced by
-  `makeCannedDispatcher` at the merge-base of Wave B (commit `1152299` or
-  whatever was on `main` at the moment 4.5 calibration begins).
+  `makeCannedDispatcher` at the source-tree state the calibration run records
+  (its `frozen_baseline_commit`, the HEAD sha at run time, is provenance).
 - The K≥100 calibration runs MUST be reproducible from the committed RNG
   seed (below) against that exact source-tree state. The seed is committed
   BEFORE any data row is written.
-- The calibration runner asserts at startup that
-  `git merge-base --is-ancestor <frozen-baseline-commit> HEAD` succeeds and
-  that `pipeline-kpis.ts` content hash at the merge-base matches the
-  recorded reference; if either check fails, the run aborts with a clear
-  error rather than producing data against a moved baseline (Popper AP-1
-  ratchet protection).
+- No decision depends on the identity of a commit hash or on the content of
+  `main`. The recorded commit is provenance only: nothing is refused because
+  of it. The one pre-flight check compares the SHA-256 of the
+  `pipeline-kpis.ts` file being measured with the hash stored in a sealed
+  artefact; on a mismatch the run aborts with a clear error rather than
+  mixing data from two different instruments (Popper AP-1 ratchet
+  protection).
 
 **Per-machine-class wall_time_ms gate.**
 - Detection: `detectMachineClass()` in
