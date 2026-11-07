@@ -135,7 +135,7 @@ export class EvidenceRepository {
   }
 
   private defaultDbPath(): string {
-    return join(homedir(), ".prd-gen", "evidence.db");
+    return defaultEvidenceDbPath();
   }
 
   private migrate(): void {
@@ -455,6 +455,11 @@ export class EvidenceRepository {
   }
 }
 
+/** The default evidence database location: ~/.prd-gen/evidence.db. */
+function defaultEvidenceDbPath(): string {
+  return join(homedir(), ".prd-gen", "evidence.db");
+}
+
 /**
  * Factory: try to construct an EvidenceRepository. Returns `null` if the
  * native better-sqlite3 module is not available. Composition roots
@@ -473,15 +478,16 @@ export function tryCreateEvidenceRepository(
   // Every failure is reported on stderr (never stdout, which carries the MCP
   // JSON-RPC stream): the tools that need the repository answer "see stderr",
   // so stderr must say why, for the default path as well as an explicit one.
-  const target = dbPath ?? join(homedir(), ".prd-gen", "evidence.db");
-  if (!Database) {
-    console.error(
-      `[prd-gen] evidence database at ${target} not opened; evidence storage is off: better-sqlite3 is not available`,
-    );
-    return null;
-  }
+  // The path is resolved inside the try (os.homedir() can throw, e.g. no HOME
+  // and no passwd entry for the UID) and the same `target` is both opened and
+  // logged, so the message always names the file that was tried.
+  let target = dbPath ?? "~/.prd-gen/evidence.db";
   try {
-    return new EvidenceRepository(dbPath);
+    target = dbPath ?? defaultEvidenceDbPath();
+    if (!Database) {
+      throw new Error("better-sqlite3 is not available");
+    }
+    return new EvidenceRepository(target);
   } catch (err) {
     console.error(
       `[prd-gen] evidence database at ${target} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`,
