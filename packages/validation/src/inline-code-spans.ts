@@ -8,8 +8,8 @@
  *  - Spans pair within a block, so a span hard-wrapped onto the next line is
  *    still one span; its line break reads as a space (CommonMark 6.1). A
  *    block ends at a blank line, before each list item, heading or table
- *    row, after each heading or table row, and where a quote starts or
- *    ends; consecutive quote lines form one paragraph (PR #174 reviews
+ *    row, after each heading or table row, and where a quote is entered
+ *    (at any depth) or left; consecutive quote lines form one paragraph (PR #174 reviews
  *    r4501850253, r4501882138).
  *  - A run of N backticks opens a span that only the next run of exactly N
  *    backticks closes; an opener with no closer is literal text.
@@ -53,11 +53,11 @@ function blocks(text: string): string[] {
     if (current.length > 0) out.push(current.join("\n"));
     current = [];
   };
-  let prevQuoted = false;
+  let prevDepth = 0;
   for (const line of text.split("\n")) {
     if (line.trim() === "") {
       flush();
-      prevQuoted = false;
+      prevDepth = 0;
       continue;
     }
     // Consecutive quote lines are one paragraph, so a span may wrap across
@@ -66,20 +66,26 @@ function blocks(text: string): string[] {
     // apply to the text after the markers.
     const quoted = QUOTE_MARKERS.test(line);
     const inner = quoted ? line.replace(QUOTE_MARKERS, "") : line;
+    const depth = quoted ? (QUOTE_MARKERS.exec(line)?.[0].split(">").length ?? 1) - 1 : 0;
     // A marker-only `>` line is a blank line inside the quote: it ends the
     // quoted paragraph (PR #174 review r4501917315).
     if (inner.trim() === "") {
       flush();
-      prevQuoted = quoted;
+      prevDepth = depth;
       continue;
     }
     if (BREAK_LINE.test(inner)) {
       flush();
-      prevQuoted = quoted;
+      prevDepth = depth;
       continue;
     }
-    if (quoted !== prevQuoted || BLOCK_START.test(inner)) flush();
-    prevQuoted = quoted;
+    // Entering a quote or a deeper one starts a block; leaving to depth 0
+    // too. Going from `> >` back to `>` is a lazy continuation (PR #174
+    // review r4501937185).
+    const enters = depth > prevDepth;
+    const leaves = depth === 0 && prevDepth > 0;
+    if (enters || leaves || BLOCK_START.test(inner)) flush();
+    prevDepth = depth;
     current.push(inner);
     // A heading or table row also ends its block, so a stray backtick in it
     // cannot pair with the next line (PR #174 review r4501867831).

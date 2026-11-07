@@ -23,7 +23,10 @@
  *  - A dotted reference needs an upper-case first segment: a lower-case
  *    receiver (`user.save()`) is a local or runtime object. JS built-ins
  *    (`JSON.parse()`, `fetch()`) and `std::` paths are not read; a Rust
- *    relative root (`crate::`, `self::`, `super::`, `Self::`) is dropped.
+ *    relative root (`crate::`, `self::`, `super::`, `Self::`) is dropped; a
+ *    non-call left with one name (`Self::CONST`) is not read.
+ *  - A call's parentheses must balance, reading quotes either as string
+ *    delimiters or not at all (see balancedParens).
  *  - A reference is resolved when its segment path is a suffix of a known
  *    symbol's path or the other way round, so `create()` resolves against a
  *    graph entry `UserService.create`; `Order.create` does not. A bare graph
@@ -41,7 +44,11 @@ import { inlineCodeSpans } from "./inline-code-spans.js";
 
 /** One referenced symbol that no supplied graph symbol resolves. */
 export interface UnresolvedSymbol {
-  /** The reference as written, call arguments removed (`UserService.create`). */
+  /**
+   * The reference as first written, call arguments and leading Rust relative
+   * roots removed (`UserService.create`; `crate::config::load()` →
+   * `config::load`).
+   */
   readonly symbol: string;
   /** Number of inline code spans that reference it. */
   readonly occurrences: number;
@@ -73,61 +80,34 @@ const SYMBOL_SHAPE = new RegExp(
   `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`,
 );
 
-const LITERAL_PREFIXES: ReadonlySet<string> = new Set([
-  "b", "r", "u", "f", "rb", "br", "fr", "rf",
-]);
-
 /**
- * The letters right before position `i` form a string-literal prefix
- * (`b'`, `r'`, `rb'`, `f'`) standing alone, not the end of a word.
+ * `'` read as text rather than a string delimiter: inside a word (`don't`,
+ * `user's`, `rock'n'roll`), or a Rust lifetime right after `&` (`&'a str`).
+ * Both are unambiguous; every other `'` is ambiguous (a JS string or a
+ * lifetime after `<`, `+`, `,`), which balancedParens settles by trying the
+ * quote-blind reading too.
  */
-function literalPrefixBefore(text: string, i: number): boolean {
-  let start = i;
-  while (start > 0 && /[A-Za-z]/.test(text[start - 1]) && i - start < 2) start -= 1;
-  if (start > 0 && /\w/.test(text[start - 1])) return false;
-  return LITERAL_PREFIXES.has(text.slice(start, i).toLowerCase());
-}
-
-/**
- * A `'` in a Rust lifetime position: right after `&`, `<` or `+`, or after a
- * `,` while a `<` is open (`&'a str`, `Cow<'a, str>`, `Foo<'a, 'b>`,
- * `impl Fn() + 'static`), and followed by an identifier. Decided from what
- * comes before the quote, never from quotes further on (PR #174 review
- * r4501919701).
- */
-function isLifetime(text: string, i: number): boolean {
-  if (!/[A-Za-z_]/.test(text[i + 1] ?? "")) return false;
-  let k = i - 1;
-  while (k >= 0 && text[k] === " ") k -= 1;
-  const before = text[k] ?? "";
-  if (before === "&" || before === "<" || before === "+") return true;
-  if (before !== ",") return false;
-  let angle = 0;
-  for (let j = 0; j < k; j++) {
-    if (text[j] === "<") angle += 1;
-    else if (text[j] === ">" && text[j - 1] !== "-" && text[j - 1] !== "=") angle -= 1;
-  }
-  return angle > 0;
-}
-
-/** `'` used as text, not a string delimiter. */
 function isTextApostrophe(text: string, i: number): boolean {
-  // A literal prefix opens a string when a closing quote follows: `b'a'`,
-  // `r'abc'`, `rb'('`; `B's edges` has none and stays an apostrophe.
-  if (literalPrefixBefore(text, i) && text.includes("'", i + 1)) return false;
-  // An apostrophe inside a word: `don't`, `user's`.
   if (/\w/.test(text[i - 1] ?? "") && /\w/.test(text[i + 1] ?? "")) return true;
-  return isLifetime(text, i);
+  return text[i - 1] === "&" && /[A-Za-z_]/.test(text[i + 1] ?? "");
+}
+
+/** Whether parentheses balance when every quote is ignored. */
+function balancedIgnoringQuotes(text: string): boolean {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
 }
 
 /**
- * Whether the parentheses of an argument list balance, ignoring those inside
- * a quoted string (`run(")")`, `b'('`, `r'('`) and escaped quotes within it
- * (PR #174 review r4501809310). An apostrophe inside a word or a Rust
- * lifetime is text, not a delimiter (PR #174 reviews r4501836587,
- * r4501864237). A string still open at the end is unbalanced.
+ * Whether parentheses balance when `"` and `'` delimit strings (except the
+ * apostrophes isTextApostrophe reads as text), with escapes inside strings.
+ * A string still open at the end is unbalanced.
  */
-function balancedParens(text: string): boolean {
+function balancedWithStrings(text: string): boolean {
   let depth = 0;
   let quote: string | null = null;
   let escaped = false;
@@ -142,6 +122,20 @@ function balancedParens(text: string): boolean {
     else if (ch === ")" && --depth < 0) return false;
   }
   return depth === 0 && quote === null;
+}
+
+/**
+ * Whether an argument list's parentheses balance under at least one reading:
+ * quotes ignored, or quotes as string delimiters. A quote in prose is
+ * ambiguous — `'b'` after `+` is a JS string, `'a` after `<` a Rust
+ * lifetime — and guessing it has regressed both ways in review (PR #174
+ * reviews r4501894817, r4501919701, r4501937076). Trying both reads
+ * `notify(")")`, `run('(')` (balanced only as strings) and `Cow<'a, str>`,
+ * `prefix + 'b'`, `x < 'm'` (balanced only quote-blind), while `f(a) + g(b)`,
+ * `run(it's) or go(isn't)` and `f(&'a T) + g(&'b U)` stay unbalanced in both.
+ */
+function balancedParens(text: string): boolean {
+  return balancedIgnoringQuotes(text) || balancedWithStrings(text);
 }
 
 /**
@@ -255,6 +249,8 @@ function entryPath(text: string): string {
     if (ch === "<") depth += 1;
     else if (ch === ">") {
       if (text[i - 1] !== "-" && text[i - 1] !== "=") depth = Math.max(0, depth - 1);
+      // A depth-0 `->` is a member access (`Foo->bar`): read it as `.`.
+      else if (depth === 0 && text[i - 1] === "-" && out.endsWith("-")) out = `${out.slice(0, -1)}.`;
     } else if (depth === 0) {
       if (ch === "(") break;
       out += ch;

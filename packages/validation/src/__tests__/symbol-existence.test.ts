@@ -182,8 +182,9 @@ describe("checkSymbolExistence — second review round", () => {
     expect(checkSymbolExistence('`Ghost.run("a\\"(")`', []).checkedSymbols).toBe(1);
   });
 
-  it("rejects an argument list with an unterminated string", () => {
-    expect(symbolFromSpan('Ghost.run(")')).toBeNull();
+  it("accepts an unterminated quote when the parentheses balance without it", () => {
+    // Quote-blind reading balances: the callee is unambiguous.
+    expect(symbolFromSpan('Ghost.run(")')).toBe("Ghost.run");
   });
 
   it("counts `User#save` and `User.save` as one symbol, under the first spelling", () => {
@@ -439,10 +440,13 @@ describe("checkSymbolExistence — tenth review round", () => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
 
-  it("still rejects a string that hides an unbalanced parenthesis", () => {
+  it("reads a call that balances under either reading of its quotes", () => {
+    // Balanced only with quotes as strings.
     expect(symbolFromSpan("Foo.run(')')")).toBe("Foo.run");
-    // Reaches balancedParens and fails only because the string never closes.
-    expect(symbolFromSpan("Foo.run(')")).toBeNull();
+    // Balanced only with quotes ignored.
+    expect(symbolFromSpan("Foo.run(')")).toBe("Foo.run");
+    // Unbalanced in both readings.
+    expect(symbolFromSpan("Foo.run(a) + Bar.go(')')")).toBeNull();
   });
 
   it.each([
@@ -569,5 +573,41 @@ describe("checkSymbolExistence — fourteenth review round", () => {
 
   it("still reads a span on a line of dashes inside text", () => {
     expect(syms("Use `Ghost.run()` -- not `Other.go()`")).toEqual(["Ghost.run", "Other.go"]);
+  });
+});
+
+describe("checkSymbolExistence — fifteenth review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["Ghost.build(prefix + 'b')", "Ghost.build"],
+    ["Ghost.cmp(x < 'm')", "Ghost.cmp"],
+    ["Ghost.cmp(a < b, 'c')", "Ghost.cmp"],
+    ["Logger.info('a' + 'b')", "Logger.info"],
+    ["Ghost.build(prefix + 'a b')", "Ghost.build"],
+    ["Graph.walk(b's edges, 'x')", "Graph.walk"],
+    ["Foo.run(Herb's, 'x')", "Foo.run"],
+    ["Foo.run(Vec<u8>, 'c')", "Foo.run"],
+  ])("reads %s: an ambiguous quote cannot drop a balanced call (r4501937076)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("starts a block when a deeper quote begins (r4501937185)", () => {
+    expect(syms("> stray ` here\n> > call `Ghost.run()`")).toEqual(["Ghost.run"]);
+    // Back from `> >` to `>` continues the paragraph lazily.
+    expect(syms("> > call `Ghost.run(a,\n> b)` here")).toEqual(["Ghost.run"]);
+  });
+
+  it("makes the list-item fence test depend on the list-item rule (r4501937562)", () => {
+    // A 4-backtick first fence: `  ```` cannot close it, only leaving the item can.
+    expect(syms("- ````ts\n\n  `in()`\n- ```\n\n  `in2()`\n  ```\n`out()`")).toEqual(["out"]);
+  });
+
+  it.each([
+    ["Box<dyn Fn() -> u8>.call", "`Box.call()`"],
+    ["Foo->bar", "`Foo.bar()`"],
+  ])("handles an arrow in graph entry %s", (entry, prd) => {
+    expect(syms(prd, [entry])).toEqual([]);
   });
 });
