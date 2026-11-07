@@ -611,3 +611,21 @@ describe("checkSymbolExistence — fifteenth review round", () => {
     expect(syms(prd, [entry])).toEqual([]);
   });
 });
+
+describe("checkSymbolExistence — sixteenth review round", () => {
+  it.each([
+    ["UserService.find(prefix + 'id')", "UserService.find"],
+    ["Logger.warn(ok && 'fallback')", "Logger.warn"],
+    ["Logger.warn(ok &&'fallback')", "Logger.warn"],
+    ["Parser.run(\"<\", 'x')", "Parser.run"],
+    ["Note.add(Herb's, ')', x)", "Note.add"],
+    ["Parser.parse(x: Foo<fn() -> u8, 'a>)", "Parser.parse"],
+  ])("reads %s (r4501948154, r4501948548)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("does not let an arrow inside generics close them (r4501948548)", () => {
+    expect(checkSymbolExistence("`Repo.find()`", ["Repo<fn() -> User>.find"]).unresolvedSymbols)
+      .toEqual([]);
+  });
+});

@@ -53,8 +53,11 @@ function growthRatio(small: number, large: number, pairs = 7): number {
  * with the length squared (a pass per nesting level, an unanchored
  * `/[?!]+$/`) shows near 4x, and linear work near 2x (PR #174 review
  * r4501882470). Every entry shares the reference's last segment, so all of
- * them walk the reference trie. At depth 250 vs 500 (entries up to ~505 characters,
- * inside the 512 schema bound), measured runs of five pairs: the
+ * them walk the reference trie. At depth 250 vs 500 the `?` entries stay inside
+ * the 512-character schema bound (~509); the generic entries reach ~1,009,
+ * which the test can use because it calls checkSymbolExistence directly,
+ * bypassing the schema (PR #174 review r4501948847). Measured runs of five
+ * pairs, before `entryPath` and the `owned` filter (both only lower the cost): the
  * reference-trie code 1.58–2.30; the previous multi-pass `stripGenerics` with an unanchored
  * `/[?!]+$/` 3.42–3.59.
  */
