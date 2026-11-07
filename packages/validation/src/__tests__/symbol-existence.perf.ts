@@ -47,14 +47,21 @@ function growthRatio(small: number, large: number, pairs = 7): number {
 }
 
 /**
- * Graph entries at the schema's 512-character bound, deep and nested.
- * Measured 2.13–2.19 at 1k/2k entries, three runs of five pairs.
+ * 2,000 graph entries of a given length: nested generics and a run of `?`.
+ * The count is fixed and the length doubles, so per-entry work that grows
+ * with the length squared (a pass per nesting level, an unanchored
+ * `/[?!]+$/`) shows near 4x, and linear work near 2x (PR #174 review
+ * r4501882470). Every entry shares the reference's last segment, so all of
+ * them reach the trie. At depth 250 vs 500 (entries up to ~505 characters,
+ * inside the 512 schema bound), measured three runs of five pairs: this code
+ * 1.74–1.97; the previous multi-pass `stripGenerics` with an unanchored
+ * `/[?!]+$/` 3.42–3.59.
  */
-function pathological(n: number): string[] {
-  return Array.from({ length: n }, (_, i) =>
+function pathological(depth: number): string[] {
+  return Array.from({ length: 2_000 }, (_, i) =>
     i % 2 === 0
-      ? "<".repeat(250) + ">".repeat(250) + `G${i}`
-      : "a.".repeat(250) + `x${i}`);
+      ? `G${i}` + "<".repeat(depth) + ">".repeat(depth) + ".run"
+      : `Q${i}.run` + "?".repeat(depth));
 }
 
 function normalizationRatio(small: number, large: number, pairs = 5): number {
@@ -64,10 +71,10 @@ function normalizationRatio(small: number, large: number, pairs = 5): number {
   let fastestLarge = Infinity;
   for (let i = 0; i < pairs; i++) {
     let t = performance.now();
-    checkSymbolExistence("`G0()`", gs);
+    checkSymbolExistence("`Ghost.run()`", gs);
     fastestSmall = Math.min(fastestSmall, performance.now() - t);
     t = performance.now();
-    checkSymbolExistence("`G0()`", gl);
+    checkSymbolExistence("`Ghost.run()`", gl);
     fastestLarge = Math.min(fastestLarge, performance.now() - t);
   }
   return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
@@ -75,7 +82,7 @@ function normalizationRatio(small: number, large: number, pairs = 5): number {
 
 describe("checkSymbolExistence — resolution growth", () => {
   it("normalizes deep and nested graph entries in linear time (PR #174 review r4501850098)", () => {
-    expect(normalizationRatio(1_000, 2_000)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    expect(normalizationRatio(250, 500)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 
   it("doubling a shared-last-segment graph and the references does not quadruple the time", () => {

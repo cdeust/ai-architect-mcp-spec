@@ -216,15 +216,6 @@ function trimOptionalMarkers(segment: string): string {
 }
 
 /**
- * Segments kept per graph entry, counted from the end. A reference is at most
- * MAX_SPAN_LENGTH characters, so at most 100 segments (one character plus one
- * separator each); `resolves` never walks deeper than the reference, so a
- * longer entry tail changes no result, and the cap bounds the trie at
- * entries × 100 nodes (PR #174 review r4501850098).
- */
-const MAX_KNOWN_SEGMENTS = Math.ceil(MAX_SPAN_LENGTH / 2);
-
-/**
  * A graph entry as segments, its decorations removed so it compares like a
  * reference: the signature (`parseConfig()`, Swift `create(email:)`), generic
  * arguments (`decode<T>`, `Repo<User>.find`) and optional markers
@@ -236,8 +227,33 @@ function knownSegments(entry: string): string[] {
   const path = stripGenerics(paren >= 0 ? text.slice(0, paren) : text);
   return segments(path)
     .map(trimOptionalMarkers)
-    .filter((s) => s.length > 0)
-    .slice(-MAX_KNOWN_SEGMENTS);
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * The graph entries a reference can reach, cut to the depth a walk can go.
+ * `resolves` only enters the bucket of a reference's last segment and never
+ * walks deeper than the longest reference, so an entry with another last
+ * segment, or the head of a longer entry, changes no result. Keeping at least
+ * 2 segments preserves the "bare entry with owners" test at depth 1. The trie
+ * is thus bounded by the references (at most MAX_SPAN_LENGTH characters
+ * each), not by the graph size (PR #174 reviews r4501850098, r4501882299,
+ * r4501885091).
+ */
+function reachableEntries(
+  known: readonly string[][],
+  counts: ReadonlyMap<string, UnresolvedSymbol>,
+): string[][] {
+  const lastSegments = new Set<string>();
+  let depth = 2;
+  for (const key of counts.keys()) {
+    const ref = key.split(".");
+    lastSegments.add(ref[ref.length - 1]);
+    depth = Math.max(depth, ref.length);
+  }
+  return known
+    .filter((parts) => lastSegments.has(parts[parts.length - 1]))
+    .map((parts) => parts.slice(-depth));
 }
 
 interface TrieNode {
@@ -321,9 +337,8 @@ export function checkSymbolExistence(
   for (const parts of knownSymbols.map(knownSegments)) {
     if (parts.length > 0) distinct.set(parts.join("."), parts);
   }
-  const trie = suffixTrie([...distinct.values()]);
-
   const counts = referenceCounts(content);
+  const trie = suffixTrie(reachableEntries([...distinct.values()], counts));
   const unresolved: UnresolvedSymbol[] = [];
   for (const [key, entry] of counts) {
     const ref = key.split(".");

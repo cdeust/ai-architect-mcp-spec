@@ -392,3 +392,31 @@ describe("checkSymbolExistence — eighth review round", () => {
     expect(syms("- > ```ts\n  >\n  > `in()`\n- Calls `Ghost.run()`.")).toEqual(["Ghost.run"]);
   });
 });
+
+describe("checkSymbolExistence — ninth review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it("pairs a span wrapped across consecutive quote lines (r4501882138, r4501884764)", () => {
+    expect(syms("> FR-001 calls `UserService.archiveAll(\n> staleDays)` nightly.")).toEqual(["UserService.archiveAll"]);
+    expect(syms("> Use `Ghost.run(a,\n> b)` here")).toEqual(["Ghost.run"]);
+  });
+
+  it("still splits where a quote starts, ends, or holds a list item", () => {
+    expect(syms("Uses `Foo.run()\n> Then `Bar.go()`")).toEqual(["Bar.go"]);
+    expect(syms("> Uses `Foo.run()\nThen `Bar.go()`")).toEqual(["Bar.go"]);
+    expect(syms("> - Uses `Foo.run()\n> - Then `Bar.go()`")).toEqual(["Bar.go"]);
+  });
+
+  it("keeps every segment a reference can walk (r4501882470)", () => {
+    const tail = ".a".repeat(98); // 199 characters with "()": 99 segments, under MAX_SPAN_LENGTH
+    expect(syms(`\`R${tail}()\``, [`Q${tail}`])).toEqual([`R${tail}`]);
+    expect(syms(`\`R${tail}()\``, [`P.R${tail}`])).toEqual([]);
+  });
+
+  it("counts every distinct graph entry, reachable or not", () => {
+    const report = checkSymbolExistence("`Ghost.run()`", ["A.b", "C.d", "Other.run"]);
+    expect(report.knownSymbols).toBe(3);
+    expect(report.unresolvedSymbols).toEqual([{ symbol: "Ghost.run", occurrences: 1 }]);
+  });
+});

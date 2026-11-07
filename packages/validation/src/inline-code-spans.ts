@@ -7,9 +7,10 @@
  *  - Fenced blocks are removed: they show proposed code.
  *  - Spans pair within a block, so a span hard-wrapped onto the next line is
  *    still one span; its line break reads as a space (CommonMark 6.1). A
- *    block ends at a blank line and before each list item, heading, table
- *    row or quote line, which are separate blocks in CommonMark (PR #174
- *    review r4501850253).
+ *    block ends at a blank line, before each list item, heading or table
+ *    row, after each heading or table row, and where a quote starts or
+ *    ends; consecutive quote lines form one paragraph (PR #174 reviews
+ *    r4501850253, r4501882138).
  *  - A run of N backticks opens a span that only the next run of exactly N
  *    backticks closes; an opener with no closer is literal text.
  *  - A backslash-escaped backtick is literal and cannot open a span; inside a
@@ -29,10 +30,11 @@
 const CONTAINER_PREFIX = /^(?:\s*(?:>|(?:[-*+]|\d{1,9}[.)])(?=\s)))*\s*/;
 const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
-/** A line that starts a new block: list item, ATX heading, table row, quote. */
-const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\||>)/;
+/** A line that starts a new block: list item, ATX heading, table row. */
+const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\|)/;
 /** A block that is always one line: an ATX heading or a table row. */
 const ONE_LINE_BLOCK = /^\s*(?:#{1,6}(?:\s|$)|\|)/;
+const QUOTE_MARKERS = /^(?:\s*>)+\s?/;
 
 /** `text` split into blocks; the lines of one block are joined with `\n`. */
 function blocks(text: string): string[] {
@@ -42,16 +44,25 @@ function blocks(text: string): string[] {
     if (current.length > 0) out.push(current.join("\n"));
     current = [];
   };
+  let prevQuoted = false;
   for (const line of text.split("\n")) {
     if (line.trim() === "") {
       flush();
+      prevQuoted = false;
       continue;
     }
-    if (BLOCK_START.test(line)) flush();
-    current.push(line);
+    // Consecutive quote lines are one paragraph, so a span may wrap across
+    // them; entering or leaving a quote starts a block (PR #174 reviews
+    // r4501882138, r4501884764). Inside the quote, the same block starts
+    // apply to the text after the markers.
+    const quoted = QUOTE_MARKERS.test(line);
+    const inner = quoted ? line.replace(QUOTE_MARKERS, "") : line;
+    if (quoted !== prevQuoted || BLOCK_START.test(inner)) flush();
+    prevQuoted = quoted;
+    current.push(inner);
     // A heading or table row also ends its block, so a stray backtick in it
     // cannot pair with the next line (PR #174 review r4501867831).
-    if (ONE_LINE_BLOCK.test(line)) flush();
+    if (ONE_LINE_BLOCK.test(inner)) flush();
   }
   flush();
   return out;
