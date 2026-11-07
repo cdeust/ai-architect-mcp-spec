@@ -19,11 +19,14 @@
  *    segment is not a file extension (`README.md` is a file, not a symbol).
  *    A bare word in backticks (`user_id`) is ambiguous — a field, a config
  *    key, a column — and is not read.
+ *  - A dotted reference needs an upper-case first segment: a lower-case
+ *    receiver (`user.save()`) is a local or runtime object. Language
+ *    built-ins (`JSON.parse()`, `fetch()`) are not read.
  *  - A reference is resolved when its segment path is a suffix of a known
  *    symbol's path or the other way round, so `create()` resolves against a
- *    graph entry `UserService.create`, and `UserService.create` resolves
- *    against a bare `create` entry; `Order.create` does not resolve against
- *    `UserService.create`.
+ *    graph entry `UserService.create`; `Order.create` does not. A bare graph
+ *    entry resolves a qualified reference only when no qualified entry shares
+ *    its last segment. Graph entries lose their signature (`f(x:)` → `f`).
  *
  * An unresolved symbol is either introduced by the PRD or fabricated; this
  * check cannot tell which, so it reports and does not score. Turning it into
@@ -55,7 +58,12 @@ export interface SymbolExistenceReport {
  */
 const MAX_SPAN_LENGTH = 200;
 
-const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
+/**
+ * A fence line. A backtick fence's info string cannot contain a backtick
+ * (CommonMark 4.5), so ```` ```Ghost.run()``` is new ```` is inline code, not
+ * a fence that would swallow the rest of the section.
+ */
+const FENCE_OPEN = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
 
 const IDENT = "[A-Za-z_$][\\w$]*";
@@ -109,6 +117,20 @@ function inlineSpans(line: string): string[] {
   return spans;
 }
 
+/**
+ * Language built-ins a PRD names in passing (`JSON.parse()`, `fetch()`): no
+ * project graph holds them, so reporting them would bury the fabricated
+ * project symbol this check exists to find. Receivers and bare functions of
+ * the ECMAScript / web / Node globals only.
+ * source: provisional heuristic (PR #174 review r4501804248).
+ */
+const BUILTIN_NAMES: ReadonlySet<string> = new Set([
+  "JSON", "Math", "Object", "Array", "Promise", "Number", "String", "Date",
+  "Reflect", "Symbol", "Intl", "Buffer", "Error", "Map", "Set", "URL",
+  "fetch", "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+  "parseInt", "parseFloat", "require", "structuredClone",
+]);
+
 /** Last segments that make a dotted span a file name, not a member access. */
 const FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   "md", "txt", "json", "yaml", "yml", "toml", "xml", "html", "css", "csv",
@@ -150,14 +172,30 @@ export function symbolFromSpan(span: string): string | null {
   const match = SYMBOL_SHAPE.exec(text);
   if (match === null) return null;
   const path = match[1];
-  const isCall = match[2] !== undefined;
-  if (isCall) return balancedParens(match[3]) ? path : null;
-  if (path.includes("::") || path.includes("#")) return path;
-  if (!path.includes(".")) return null;
   const parts = segments(path);
-  const last = parts[parts.length - 1];
-  if (FILE_EXTENSIONS.has(last.toLowerCase())) return null;
-  return /^[A-Z]/.test(parts[0]) ? path : null;
+  if (BUILTIN_NAMES.has(parts[0])) return null;
+  if (path.includes("::") || path.includes("#")) return path;
+  const isCall = match[2] !== undefined;
+  if (isCall && !balancedParens(match[3])) return null;
+  if (!path.includes(".")) return isCall ? path : null;
+  // A lower-case receiver (`user.save()`, `this.handle()`, `console.log()`)
+  // is a local variable or a runtime object, not a project symbol path.
+  if (!/^[A-Z]/.test(parts[0])) return null;
+  return isCall || !FILE_EXTENSIONS.has(parts[parts.length - 1].toLowerCase())
+    ? path
+    : null;
+}
+
+/**
+ * A graph entry as segments, its signature removed so `parseConfig()` and
+ * Swift's `UserService.create(email:)` compare as `parseConfig` and
+ * `UserService.create` (PR #174 review r4501804140).
+ */
+function knownSegments(entry: string): string[] {
+  const text = entry.trim();
+  const match = SYMBOL_SHAPE.exec(text);
+  const paren = text.indexOf("(");
+  return segments(match ? match[1] : paren >= 0 ? text.slice(0, paren) : text);
 }
 
 function isSuffix(shorter: readonly string[], longer: readonly string[]): boolean {
@@ -166,8 +204,34 @@ function isSuffix(shorter: readonly string[], longer: readonly string[]): boolea
   return shorter.every((s, i) => s === longer[offset + i]);
 }
 
-function resolves(ref: readonly string[], known: readonly string[]): boolean {
-  return isSuffix(ref, known) || isSuffix(known, ref);
+/**
+ * Whether `ref` resolves against a bucket of graph entries sharing its last
+ * segment. A bare graph entry (`create`) resolves a qualified reference
+ * (`PaymentGateway.create`) only when the bucket has no qualified entry: once
+ * the graph says which owners have a `create`, an unlisted owner is unresolved
+ * (PR #174 review r4501804340).
+ */
+function resolvesIn(ref: readonly string[], bucket: readonly (readonly string[])[]): boolean {
+  const hasQualified = bucket.some((k) => k.length > 1);
+  return bucket.some((known) => {
+    if (isSuffix(ref, known)) return true;
+    if (known.length === 1 && ref.length > 1 && hasQualified) return false;
+    return isSuffix(known, ref);
+  });
+}
+
+function referenceCounts(content: string | readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  const parts = typeof content === "string" ? [content] : content;
+  for (const part of parts) {
+    for (const line of stripFencedBlocks(part).split("\n")) {
+      for (const span of inlineSpans(line)) {
+        const symbol = symbolFromSpan(span);
+        if (symbol !== null) counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
 }
 
 /**
@@ -183,7 +247,7 @@ export function checkSymbolExistence(
   knownSymbols: readonly string[],
 ): SymbolExistenceReport {
   const known = knownSymbols
-    .map((s) => segments(s.trim()))
+    .map(knownSegments)
     .filter((parts) => parts.length > 0);
   const byLast = new Map<string, string[][]>();
   for (const parts of known) {
@@ -193,22 +257,11 @@ export function checkSymbolExistence(
     else byLast.set(last, [parts]);
   }
 
-  const counts = new Map<string, number>();
-  const parts = typeof content === "string" ? [content] : content;
-  for (const part of parts) {
-    for (const line of stripFencedBlocks(part).split("\n")) {
-      for (const span of inlineSpans(line)) {
-        const symbol = symbolFromSpan(span);
-        if (symbol !== null) counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
-      }
-    }
-  }
-
+  const counts = referenceCounts(content);
   const unresolved: UnresolvedSymbol[] = [];
   for (const [symbol, occurrences] of counts) {
     const ref = segments(symbol);
-    const candidates = byLast.get(ref[ref.length - 1]) ?? [];
-    if (!candidates.some((parts) => resolves(ref, parts))) {
+    if (!resolvesIn(ref, byLast.get(ref[ref.length - 1]) ?? [])) {
       unresolved.push({ symbol, occurrences });
     }
   }

@@ -128,3 +128,47 @@ describe("checkSymbolExistence — document sections", () => {
       .toEqual([{ symbol: "Ghost.run", occurrences: 2 }]);
   });
 });
+
+describe("checkSymbolExistence — PR #174 review fixes", () => {
+  it("strips a signature from graph entries (r4501804140)", () => {
+    const prd = "`parseConfig()` and `UserService.create(email)`.";
+    expect(checkSymbolExistence(prd, ["parseConfig()", "UserService.create(email:)"])
+      .unresolvedSymbols).toEqual([]);
+  });
+
+  it("does not read lower-case receivers or language built-ins (r4501804248)", () => {
+    const prd = "`user.save()`, `this.handle()`, `console.log()`, `JSON.parse(s)`, "
+      + "`Promise.all(xs)`, `fetch(url)`, then `Ghost.run()`.";
+    const report = checkSymbolExistence(prd, []);
+    expect(report.unresolvedSymbols).toEqual([{ symbol: "Ghost.run", occurrences: 1 }]);
+    expect(report.checkedSymbols).toBe(1);
+  });
+
+  it("a bare graph entry does not resolve an unlisted owner once a qualified entry exists (r4501804340)", () => {
+    const graph = ["UserService.create", "create"];
+    expect(checkSymbolExistence("`PaymentGateway.create()`", graph).unresolvedSymbols)
+      .toEqual([{ symbol: "PaymentGateway.create", occurrences: 1 }]);
+    expect(checkSymbolExistence("`UserService.create()` and `create()`", graph)
+      .unresolvedSymbols).toEqual([]);
+    // With only a bare entry, the graph names no owner: the reference resolves.
+    expect(checkSymbolExistence("`PaymentGateway.create()`", ["create"]).unresolvedSymbols)
+      .toEqual([]);
+  });
+
+  it("does not open a fence on a line whose triple-backtick run is inline code (r4501804419)", () => {
+    const prd = ["```Ghost.run()``` is new", "and `Other.go()` too"].join("\n");
+    expect(checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol))
+      .toEqual(["Ghost.run", "Other.go"]);
+  });
+
+  it.each([
+    ["a longer closing fence closes", ["```", "`in()`", "`````", "`out()`"]],
+    ["a tilde fence closes only on tildes", ["~~~", "```", "`in()`", "~~~", "`out()`"]],
+    ["a shorter run does not close", ["````", "```", "`in()`", "````", "`out()`"]],
+    ["a run with trailing text does not close", ["```", "``` x", "`in()`", "```", "`out()`"]],
+    ["an indented fence of up to 3 spaces counts", ["   ```", "`in()`", "   ```", "`out()`"]],
+  ])("fence rules: %s", (_name, lines) => {
+    expect(checkSymbolExistence(lines.join("\n"), []).unresolvedSymbols.map((u) => u.symbol))
+      .toEqual(["out"]);
+  });
+});
