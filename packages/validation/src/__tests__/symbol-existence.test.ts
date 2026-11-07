@@ -307,8 +307,10 @@ describe("checkSymbolExistence — fifth review round", () => {
       "a.".repeat(250) + "Deep.run",
       "Real<T<U>>.find?!",
     ];
-    expect(checkSymbolExistence("`Deep.run()` and `Real.find()` and `a()`", graph).unresolvedSymbols)
-      .toEqual([]);
+    const report = checkSymbolExistence("`Deep.run()` and `Real.find()` and `a()`", graph);
+    expect(report.unresolvedSymbols).toEqual([]);
+    // The all-generics entry normalizes to nothing; the other four remain.
+    expect(report.knownSymbols).toBe(4);
   });
 });
 
@@ -322,7 +324,7 @@ describe("checkSymbolExistence — sixth review round", () => {
 
   it("ends an unclosed list-item fence with its list item", () => {
     expect(syms("- ```ts\n  `in()`\n\nCalls `Ghost.run()`.")).toEqual(["Ghost.run"]);
-    expect(syms("- ```ts\n  `in()`\n\n  `still.in()`\n  ```\n`out()`")).toEqual(["out"]);
+    expect(syms("- ```ts\n  `in()`\n\n  `Still.in()`\n  ```\n`out()`")).toEqual(["out"]);
   });
 
   it("keeps a top-level fence open across less-indented lines", () => {
@@ -418,5 +420,46 @@ describe("checkSymbolExistence — ninth review round", () => {
     const report = checkSymbolExistence("`Ghost.run()`", ["A.b", "C.d", "Other.run"]);
     expect(report.knownSymbols).toBe(3);
     expect(report.unresolvedSymbols).toEqual([{ symbol: "Ghost.run", occurrences: 1 }]);
+  });
+});
+
+describe("checkSymbolExistence — tenth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["UserService.notify('welcome back')", "UserService.notify"],
+    ["EventBus.emit('order.created')", "EventBus.emit"],
+    ["Config.get('db.host')", "Config.get"],
+    ["Foo.run('a b')", "Foo.run"],
+    ["Lexer::push(b'a')", "Lexer::push"],
+    ["Pattern.compile(r'abc')", "Pattern.compile"],
+    ["Parser.parse(x: Foo<'a, 'b>)", "Parser.parse"],
+    ["Foo.run(f: impl Fn() + 'static)", "Foo.run"],
+  ])("reads %s: a quote that can be closed is a string (r4501894817)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
+  });
+
+  it("still rejects a string that hides an unbalanced parenthesis", () => {
+    expect(symbolFromSpan("Foo.run(')')")).toBe("Foo.run");
+    expect(symbolFromSpan("Foo.run(')'")).toBeNull();
+  });
+
+  it.each([
+    ["a quoted line inside a list-item fence", "- ```md\n  > See `in()`\n  ```\nText `out()`"],
+    ["a nested list-marker fence line", "- ```md\n  - ```\n  `in()`\n  ```\n`out()`"],
+    ["a deeper quote inside a quoted fence", "> ```md\n> > ```\n>\n> `in()`\n> ```\n`out()`"],
+    ["a 4-space fence under a list item", "- Proposed:\n    ```ts\n\n    `in()`\n`out()`"],
+  ])("keeps the fence boundaries right with %s (r4501895058)", (_name, prd) => {
+    expect(syms(prd)).toEqual(["out"]);
+  });
+
+  it.each([
+    ["super::super::Config::load()", "Config::load"],
+    ["Self.x::y()", "x::y"],
+    ["Self::CONST", null],
+    ["crate::Foo", null],
+    ["crate::billing::Invoice", "billing::Invoice"],
+  ])("drops every Rust relative root from %s (r4501895577)", (span, symbol) => {
+    expect(symbolFromSpan(span)).toBe(symbol);
   });
 });

@@ -69,19 +69,25 @@ function blocks(text: string): string[] {
 }
 
 const QUOTE_PREFIX = /^(?:\s*>)*/;
-const LIST_MARKER = /^\s*(?:[-*+]|\d{1,9}[.)])\s/;
 /**
- * Whether the line's container prefix holds a quote marker, in any order
- * with list markers (`> - x`, `- > x`) (PR #174 review r4501881974).
+ * Quote depth of a line: the `>` markers in its container prefix, in any
+ * order with list markers (`> - x`, `- > x`) (PR #174 review r4501881974).
  */
-function isQuoted(line: string): boolean {
-  return (CONTAINER_PREFIX.exec(line)?.[0] ?? "").includes(">");
+function quoteDepth(line: string): number {
+  const prefix = CONTAINER_PREFIX.exec(line)?.[0] ?? "";
+  let depth = 0;
+  for (const ch of prefix) if (ch === ">") depth += 1;
+  return depth;
 }
 
 interface OpenFence {
   readonly marker: string;
-  /** Opened inside a blockquote: ends with the first unquoted line. */
-  readonly quoted: boolean;
+  /**
+   * Quote depth of the opener. Above 0 the fence ends with the first line of
+   * lesser depth, and only a line of the same depth can close it (PR #174
+   * review r4501895058).
+   */
+  readonly depth: number;
   /**
    * Content column of the list item holding the fence (see containerColumn).
    * Above 0, the item ends at the first non-blank line indented less.
@@ -107,41 +113,42 @@ function openFence(line: string): OpenFence | null {
   const rest = line.replace(CONTAINER_PREFIX, "");
   const open = FENCE.exec(rest);
   if (!open) return null;
+  const depth = quoteDepth(line);
   return {
     marker: open[1],
-    quoted: isQuoted(line),
+    depth,
     // A quoted fence ends with its quote; its column is not tracked.
-    column: isQuoted(line) ? 0 : containerColumn(unquoted, rest),
+    column: depth > 0 ? 0 : containerColumn(unquoted, rest),
   };
 }
 
 /**
- * Whether `line` closes `fence` explicitly. The closer must sit in the
- * fence's own container: inside a top-level fence that shows markdown, a
- * `> ```` or `- ```` line is content, not a closer (PR #174 review
- * r4501863973).
+ * Whether `line` closes `fence` explicitly: a line of the fence's own quote
+ * depth holding, after its quote markers, only indentation and a run of at
+ * least as many of the same fence characters. A list marker before the run
+ * (`- ````), or another quote depth (`> ```` in a top-level fence, `> > ````
+ * in a quoted one), makes it content (PR #174 reviews r4501863973,
+ * r4501895058).
  */
 function closes(fence: OpenFence, line: string): boolean {
-  if (!fence.quoted && isQuoted(line)) return false;
-  const unquoted = line.replace(QUOTE_PREFIX, "");
-  if (fence.column === 0 && LIST_MARKER.test(unquoted)) return false;
-  const rest = line.replace(CONTAINER_PREFIX, "").trim();
-  const run = FENCE.exec(rest);
-  return run !== null && rest === run[1] && run[1][0] === fence.marker[0]
+  if (quoteDepth(line) !== fence.depth) return false;
+  const body = (fence.depth > 0 ? line.replace(QUOTE_PREFIX, "") : line).trim();
+  const run = FENCE.exec(body);
+  return run !== null && body === run[1] && run[1][0] === fence.marker[0]
     && run[1].length >= fence.marker.length;
 }
 
 /**
  * Whether `line` lies outside the container `fence` was opened in, which
  * ends the fenced block without a closing fence (CommonMark 5.1, 5.2; PR
- * #174 review r4501862077).
+ * #174 reviews r4501862077, r4501895058): a lesser quote depth for a quoted
+ * fence; for a list-item fence, a non-blank line indented less than the
+ * item's content. Quote markers count as content of a list-item fence.
  */
 function leavesContainer(fence: OpenFence, line: string): boolean {
-  if (fence.quoted && !isQuoted(line)) return true;
-  if (fence.column === 0) return false;
-  const unquoted = line.replace(QUOTE_PREFIX, "");
-  if (unquoted.trim() === "") return false;
-  const indent = unquoted.length - unquoted.trimStart().length;
+  if (fence.depth > 0) return quoteDepth(line) < fence.depth;
+  if (fence.column === 0 || line.trim() === "") return false;
+  const indent = line.length - line.trimStart().length;
   return indent < fence.column;
 }
 

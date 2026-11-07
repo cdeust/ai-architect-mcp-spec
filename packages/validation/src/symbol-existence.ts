@@ -77,12 +77,16 @@ const SYMBOL_SHAPE = new RegExp(
 function isTextApostrophe(text: string, i: number): boolean {
   const prev = text[i - 1] ?? "";
   const next = text[i + 1] ?? "";
+  // A one-letter literal prefix opens a string: `b'a'`, `r'abc'`, `b'('`.
+  if (/[bBrRuUfF]/.test(prev) && !/\w/.test(text[i - 2] ?? "")) return false;
   // An apostrophe inside a word: `don't`, `user's`.
   if (/\w/.test(prev) && /\w/.test(next)) return true;
-  // A Rust lifetime: `'a` or `'_` followed by a non-`'`, as in `&'a str`,
-  // `Cow<'a, str>`, `Ref<'_>`; a char literal `'a'` stays a string.
+  // A Rust lifetime (`&'a str`, `Cow<'a, str>`, `Ref<'_>`, `+ 'static`): an
+  // identifier after the quote, and no later quote that could close it as a
+  // string — `'welcome back'` and `'a'` are strings (PR #174 review
+  // r4501894817).
   const lifetime = /^'[A-Za-z_]\w*/.exec(text.slice(i));
-  return lifetime !== null && text[i + lifetime[0].length] !== "'";
+  return lifetime !== null && !text.includes("'", i + 1);
 }
 
 /**
@@ -138,7 +142,9 @@ const STD_ROOTS: ReadonlySet<string> = new Set(["std"]);
  * Rust relative roots: they name the current module, type or crate, not a
  * symbol, so they are dropped and the rest of the path is checked
  * (`crate::config::load` → `config::load`, which resolves by suffix against
- * `my_crate::config::load`; `Self::new` → `new`).
+ * `my_crate::config::load`; `Self::new()` → `new`). All leading roots go
+ * (`super::super::x`), the rest is reported joined with `::`, and a non-call
+ * left with one name (`Self::CONST`) is not read.
  */
 const RELATIVE_ROOTS: ReadonlySet<string> = new Set(["Self", "self", "super", "crate"]);
 
@@ -175,9 +181,14 @@ export function symbolFromSpan(span: string): string | null {
   const parts = segments(path);
   if (path.includes("::")) {
     if (STD_ROOTS.has(parts[0])) return null;
-    if (!RELATIVE_ROOTS.has(parts[0])) return path;
-    const rest = path.slice(path.indexOf("::") + 2);
-    return rest.length > 0 ? rest : null;
+    let roots = 0;
+    while (roots < parts.length - 1 && RELATIVE_ROOTS.has(parts[roots])) roots += 1;
+    if (roots === 0) return path;
+    // `super::super::Config::load` → `Config::load`. A single name left by a
+    // non-call (`Self::CONST`, `crate::Foo`) is as ambiguous as a bare word
+    // in backticks and is not read (PR #174 review r4501895577).
+    const rest = parts.slice(roots);
+    return rest.length === 1 && !isCall ? null : rest.join("::");
   }
   if (path.includes("#")) {
     return PASCAL_OWNER.test(path.slice(0, path.indexOf("#"))) ? path : null;

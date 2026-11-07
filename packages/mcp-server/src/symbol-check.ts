@@ -29,6 +29,7 @@ export const KnownSymbolsSchema = z
       "blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
       "Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: " +
       "lower-case receivers, JS built-ins, std:: paths, # after a non-mixed-case word (anchors), file names. " +
+      "Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked. " +
       "[] means an empty graph: " +
       "omit the field when the graph lookup failed.",
   );
