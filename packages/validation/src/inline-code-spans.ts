@@ -36,6 +36,13 @@ const BACKTICK_RUN = /`+/g;
 const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\|)/;
 /** A block that is always one line: an ATX heading or a table row. */
 const ONE_LINE_BLOCK = /^\s*(?:#{1,6}(?:\s|$)|\|)/;
+/**
+ * A thematic break (`***`, `---`, `___`) or a setext heading underline
+ * (`===`, `---`): a block boundary on both sides (CommonMark 4.1, 4.3; PR
+ * #174 review r4501932680). Each repetition consumes a marker, so it is
+ * linear.
+ */
+const BREAK_LINE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
 const QUOTE_MARKERS = /^(?:\s*>)+\s?/;
 
 /** `text` split into blocks; the lines of one block are joined with `\n`. */
@@ -62,6 +69,11 @@ function blocks(text: string): string[] {
     // A marker-only `>` line is a blank line inside the quote: it ends the
     // quoted paragraph (PR #174 review r4501917315).
     if (inner.trim() === "") {
+      flush();
+      prevQuoted = quoted;
+      continue;
+    }
+    if (BREAK_LINE.test(inner)) {
       flush();
       prevQuoted = quoted;
       continue;

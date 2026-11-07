@@ -555,3 +555,19 @@ describe("checkSymbolExistence — thirteenth review round", () => {
       .toEqual(["PaymentGateway.create"]);
   });
 });
+
+describe("checkSymbolExistence — fourteenth review round", () => {
+  const syms = (prd: string) => checkSymbolExistence(prd, []).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each(["***", "---", "___", "- - -", "===", "> ***"])(
+    "ends a block at a %j break or underline line (r4501932680)",
+    (line) => {
+      const prefix = line.startsWith(">") ? "> " : "";
+      expect(syms(`${prefix}A \`stray\n${line}\n${prefix}Calls \`Ghost.run()\`.`)).toEqual(["Ghost.run"]);
+    },
+  );
+
+  it("still reads a span on a line of dashes inside text", () => {
+    expect(syms("Use `Ghost.run()` -- not `Other.go()`")).toEqual(["Ghost.run", "Other.go"]);
+  });
+});
