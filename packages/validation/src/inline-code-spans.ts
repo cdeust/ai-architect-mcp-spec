@@ -5,9 +5,11 @@
  * over the document): the repo ships no markdown parser, and the symbol check
  * only needs the text of inline code spans.
  *  - Fenced blocks are removed: they show proposed code.
- *  - Spans pair within a paragraph (blank-line separated block), so a span
- *    hard-wrapped onto the next line is still one span; its line break reads
- *    as a space (CommonMark 6.1).
+ *  - Spans pair within a block, so a span hard-wrapped onto the next line is
+ *    still one span; its line break reads as a space (CommonMark 6.1). A
+ *    block ends at a blank line and before each list item, heading, table
+ *    row or quote line, which are separate blocks in CommonMark (PR #174
+ *    review r4501850253).
  *  - A run of N backticks opens a span that only the next run of exactly N
  *    backticks closes; an opener with no closer is literal text.
  *  - A backslash-escaped backtick is literal and cannot open a span; inside a
@@ -27,7 +29,28 @@
 const CONTAINER_PREFIX = /^(?:\s*>)*\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?/;
 const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
-const BLANK_LINE = /\n[ \t]*\n/;
+/** A line that starts a new block: list item, ATX heading, table row, quote. */
+const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\||>)/;
+
+/** `text` split into blocks; the lines of one block are joined with `\n`. */
+function blocks(text: string): string[] {
+  const out: string[] = [];
+  let current: string[] = [];
+  const flush = () => {
+    if (current.length > 0) out.push(current.join("\n"));
+    current = [];
+  };
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") {
+      flush();
+      continue;
+    }
+    if (BLOCK_START.test(line)) flush();
+    current.push(line);
+  }
+  flush();
+  return out;
+}
 
 /**
  * `content` with every fenced code block removed, by a single line scan. A
@@ -109,5 +132,5 @@ function blockSpans(block: string): string[] {
 
 /** The text of every inline code span in `content`, fenced blocks excluded. */
 export function inlineCodeSpans(content: string): string[] {
-  return stripFencedBlocks(content).split(BLANK_LINE).flatMap(blockSpans);
+  return blocks(stripFencedBlocks(content)).flatMap(blockSpans);
 }

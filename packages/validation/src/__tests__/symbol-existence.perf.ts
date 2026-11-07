@@ -46,7 +46,38 @@ function growthRatio(small: number, large: number, pairs = 7): number {
   return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
 }
 
+/**
+ * Graph entries at the schema's 512-character bound, deep and nested.
+ * Measured 2.13–2.19 at 1k/2k entries, three runs of five pairs.
+ */
+function pathological(n: number): string[] {
+  return Array.from({ length: n }, (_, i) =>
+    i % 2 === 0
+      ? "<".repeat(250) + ">".repeat(250) + `G${i}`
+      : "a.".repeat(250) + `x${i}`);
+}
+
+function normalizationRatio(small: number, large: number, pairs = 5): number {
+  const gs = pathological(small);
+  const gl = pathological(large);
+  let fastestSmall = Infinity;
+  let fastestLarge = Infinity;
+  for (let i = 0; i < pairs; i++) {
+    let t = performance.now();
+    checkSymbolExistence("`G0()`", gs);
+    fastestSmall = Math.min(fastestSmall, performance.now() - t);
+    t = performance.now();
+    checkSymbolExistence("`G0()`", gl);
+    fastestLarge = Math.min(fastestLarge, performance.now() - t);
+  }
+  return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
+}
+
 describe("checkSymbolExistence — resolution growth", () => {
+  it("normalizes deep and nested graph entries in linear time (PR #174 review r4501850098)", () => {
+    expect(normalizationRatio(1_000, 2_000)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
   it("doubling a shared-last-segment graph and the references does not quadruple the time", () => {
     const ratio = growthRatio(2_000, 4_000);
     expect(ratio).toBeLessThan(QUADRATIC_GROWTH_CEILING);

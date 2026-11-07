@@ -278,3 +278,34 @@ describe("checkSymbolExistence — fourth review round", () => {
     expect(symbolFromSpan("Foo.run(it's) or Bar.go(isn't)")).toBeNull();
   });
 });
+
+describe("checkSymbolExistence — fifth review round", () => {
+  const syms = (prd: string, graph: string[] = []) =>
+    checkSymbolExistence(prd, graph).unresolvedSymbols.map((u) => u.symbol);
+
+  it.each([
+    ["list items", "- Uses `Foo.run()\n- Then `Bar.go()`"],
+    ["numbered items", "1. Uses `Foo.run()\n2. Then `Bar.go()`"],
+    ["a heading", "Uses `Foo.run()\n## Then `Bar.go()`"],
+    ["table rows", "| a | `Foo.run() |\n| b | `Bar.go()` |"],
+    ["quote lines", "Uses `Foo.run()\n> Then `Bar.go()`"],
+  ])("does not pair a stray backtick across %s (r4501850253)", (_name, prd) => {
+    expect(syms(prd)).toEqual(["Bar.go"]);
+  });
+
+  it("still pairs a span wrapped inside one list item", () => {
+    expect(syms("- Calls `Ghost.run(\n  email)` here")).toEqual(["Ghost.run"]);
+  });
+
+  it("normalizes pathological graph entries without losing real ones (r4501850098)", () => {
+    const graph = [
+      "<".repeat(256) + ">".repeat(256),
+      "?".repeat(255) + "a",
+      "a" + "?".repeat(255),
+      "a.".repeat(250) + "Deep.run",
+      "Real<T<U>>.find?!",
+    ];
+    expect(checkSymbolExistence("`Deep.run()` and `Real.find()` and `a()`", graph).unresolvedSymbols)
+      .toEqual([]);
+  });
+});

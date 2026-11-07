@@ -163,15 +163,37 @@ export function symbolFromSpan(span: string): string | null {
     : null;
 }
 
-/** `T<U<V>>` → `T`: generic arguments removed, innermost first. */
+/**
+ * `T<U<V>>` → `T`: generic arguments removed in one pass with a depth
+ * counter, so nesting depth does not multiply the cost (PR #174 review
+ * r4501850098). An unmatched `>` is dropped.
+ */
 function stripGenerics(text: string): string {
-  let out = text;
-  for (let prev = ""; prev !== out; ) {
-    prev = out;
-    out = out.replace(/<[^<>]*>/g, "");
+  let out = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "<") depth += 1;
+    else if (ch === ">") depth = Math.max(0, depth - 1);
+    else if (depth === 0) out += ch;
   }
   return out;
 }
+
+/** `init?!` → `init`, by a loop from the end (no unanchored regex retries). */
+function trimOptionalMarkers(segment: string): string {
+  let end = segment.length;
+  while (end > 0 && (segment[end - 1] === "?" || segment[end - 1] === "!")) end -= 1;
+  return segment.slice(0, end);
+}
+
+/**
+ * Segments kept per graph entry, counted from the end. A reference is at most
+ * MAX_SPAN_LENGTH characters, so at most 100 segments (one character plus one
+ * separator each); `resolves` never walks deeper than the reference, so a
+ * longer entry tail changes no result, and the cap bounds the trie at
+ * entries × 100 nodes (PR #174 review r4501850098).
+ */
+const MAX_KNOWN_SEGMENTS = Math.ceil(MAX_SPAN_LENGTH / 2);
 
 /**
  * A graph entry as segments, its decorations removed so it compares like a
@@ -184,8 +206,9 @@ function knownSegments(entry: string): string[] {
   const paren = text.indexOf("(");
   const path = stripGenerics(paren >= 0 ? text.slice(0, paren) : text);
   return segments(path)
-    .map((s) => s.replace(/[?!]+$/, ""))
-    .filter((s) => s.length > 0);
+    .map(trimOptionalMarkers)
+    .filter((s) => s.length > 0)
+    .slice(-MAX_KNOWN_SEGMENTS);
 }
 
 interface TrieNode {
