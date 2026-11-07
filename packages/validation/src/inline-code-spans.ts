@@ -9,10 +9,11 @@
  *    still one span; its line break reads as a space (CommonMark 6.1). A
  *    block ends at a blank line or a quote line holding only `>` markers, at
  *    a thematic break or setext underline (dropped), before each list item,
- *    heading or table row, after each heading or table row, and where a
- *    quote is entered (at any depth) or left; otherwise consecutive quote
- *    lines form one paragraph (PR #174 reviews r4501917315, r4501932680) (PR #174 reviews
- *    r4501850253, r4501882138).
+ *    heading or table row, after each heading or table row, where a quote
+ *    is entered or deepened, and where the text returns to depth 0 from a
+ *    quote; otherwise consecutive quote lines form one paragraph, including
+ *    a lazy return from `> >` to `>` (PR #174 reviews r4501850253,
+ *    r4501882138, r4501917315, r4501932680, r4501957522).
  *  - A run of N backticks opens a span that only the next run of exactly N
  *    backticks closes; an opener with no closer is literal text.
  *  - A backslash-escaped backtick is literal and cannot open a span; inside a
@@ -39,12 +40,15 @@ const BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\|)/;
 /** A block that is always one line: an ATX heading or a table row. */
 const ONE_LINE_BLOCK = /^\s*(?:#{1,6}(?:\s|$)|\|)/;
 /**
- * A thematic break (`***`, `---`, `___`) or a setext heading underline
- * (`===`, `---`): a block boundary on both sides (CommonMark 4.1, 4.3; PR
- * #174 review r4501932680). Each repetition consumes a marker, so it is
- * linear.
+ * A thematic break (`***`, `* * *`, `---`, `___`, `_ _ _`) or a setext
+ * heading underline (`===`, `--`): a block boundary on both sides
+ * (CommonMark 4.1, 4.3; PR #174 reviews r4501932680, r4501957522). Any
+ * indentation is accepted: inside a list item a break sits at the item's
+ * content column, which this scanner does not track, and a run of markers
+ * alone on a line never holds a span either way. Each repetition consumes a
+ * marker, so it is linear.
  */
-const BREAK_LINE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
+const BREAK_LINE = /^\s*(?:(?:-[ \t]*){3,}|-{2,}[ \t]*|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
 const QUOTE_MARKERS = /^(?:\s*>)+\s?/;
 
 /** `text` split into blocks; the lines of one block are joined with `\n`. */
@@ -81,8 +85,8 @@ function blocks(text: string): string[] {
       prevDepth = depth;
       continue;
     }
-    // Entering a quote or a deeper one starts a block; leaving to depth 0
-    // too. Going from `> >` back to `>` is a lazy continuation (PR #174
+    // Entering a quote or a deeper one starts a block, and so does a
+    // return to depth 0. Going from `> >` back to `>` is a lazy continuation (PR #174
     // review r4501937185).
     const enters = depth > prevDepth;
     const leaves = depth === 0 && prevDepth > 0;

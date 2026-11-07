@@ -82,14 +82,17 @@ const SYMBOL_SHAPE = new RegExp(
 
 /**
  * `'` read as text rather than a string delimiter: inside a word (`don't`,
- * `user's`, `rock'n'roll`), or a Rust lifetime right after `&` (`&'a str`).
- * Both are unambiguous; every other `'` is ambiguous (a JS string or a
- * lifetime after `<`, `+`, `,`), which balancedParens settles by trying the
- * quote-blind reading too.
+ * `user's`, `rock'n'roll`), or a Rust lifetime right after `&` or `<`
+ * (`&'a str`, `Cow<'a, str>`). A JS string directly after `<` with no space
+ * (`x <'m'`) is rare enough to give up; reading `<'a` as a string instead
+ * let two lifetimes pair up and hide a second call
+ * (`Parser::new(Cow<'a, str>) and Lexer::new(Cow<'a, str>)`, PR #174 review
+ * r4501971277). Every other `'` is ambiguous (a JS string or a lifetime
+ * after `+`, `,`), which balancedParens settles when a string is left open.
  */
 function isTextApostrophe(text: string, i: number): boolean {
   if (/\w/.test(text[i - 1] ?? "") && /\w/.test(text[i + 1] ?? "")) return true;
-  return text[i - 1] === "&" && /[A-Za-z_]/.test(text[i + 1] ?? "");
+  return (text[i - 1] === "&" || text[i - 1] === "<") && /[A-Za-z_]/.test(text[i + 1] ?? "");
 }
 
 /** Whether parentheses balance when every quote is ignored. */
@@ -103,11 +106,12 @@ function balancedIgnoringQuotes(text: string): boolean {
 }
 
 /**
- * Whether parentheses balance when `"` and `'` delimit strings (except the
- * apostrophes isTextApostrophe reads as text), with escapes inside strings.
- * A string still open at the end is unbalanced.
+ * How parentheses fare when `"` and `'` delimit strings (except the
+ * apostrophes isTextApostrophe reads as text), with escapes inside strings:
+ * "ok" when they balance and every string closes, "open" when a string is
+ * still open at the end, "unbalanced" otherwise.
  */
-function balancedWithStrings(text: string): boolean {
+function balanceWithStrings(text: string): "ok" | "open" | "unbalanced" {
   let depth = 0;
   let quote: string | null = null;
   let escaped = false;
@@ -119,23 +123,30 @@ function balancedWithStrings(text: string): boolean {
       else if (ch === quote) quote = null;
     } else if (ch === '"' || (ch === "'" && !isTextApostrophe(text, i))) quote = ch;
     else if (ch === "(") depth += 1;
-    else if (ch === ")" && --depth < 0) return false;
+    else if (ch === ")" && --depth < 0) return "unbalanced";
   }
-  return depth === 0 && quote === null;
+  if (quote !== null) return "open";
+  return depth === 0 ? "ok" : "unbalanced";
 }
 
 /**
- * Whether an argument list's parentheses balance under at least one reading:
- * quotes ignored, or quotes as string delimiters. A quote in prose is
- * ambiguous — `'b'` after `+` is a JS string, `'a` after `<` a Rust
- * lifetime — and guessing it has regressed both ways in review (PR #174
- * reviews r4501894817, r4501919701, r4501937076). Trying both reads
- * `notify(")")`, `run('(')` (balanced only as strings) and `Cow<'a, str>`,
- * `prefix + 'b'`, `x < 'm'` (balanced only quote-blind), while `f(a) + g(b)`,
- * `run(it's) or go(isn't)` and `f(&'a T) + g(&'b U)` stay unbalanced in both.
+ * Whether an argument list's parentheses balance. Quotes are read as string
+ * delimiters first. A quote in prose is ambiguous, though — `'a` after `<`
+ * or `+` is a Rust lifetime, not a string — and a lifetime read as a string
+ * swallows the rest of the text, so it ends with a string still open. Only
+ * then is the quote-blind reading tried. Guessing the apostrophe has
+ * regressed both ways in review (PR #174 reviews r4501894817, r4501919701,
+ * r4501937076), and accepting the quote-blind reading unconditionally let a
+ * string's parenthesis close another call's (`Parser.open('(') +
+ * Ghost.run(')')`, review r4501956987). So `notify(")")`, `run('(')` and
+ * `prefix + 'b'` balance as strings; `Cow<'a, str>` and `x: &'a T + 'static`
+ * balance only quote-blind, after the string reading is left open; and
+ * `f(a) + g(b)`, `Parser.open('(') + Ghost.run(')')` and
+ * `Bus.emit("(") + Ghost.run(")")` are unbalanced.
  */
 function balancedParens(text: string): boolean {
-  return balancedIgnoringQuotes(text) || balancedWithStrings(text);
+  const withStrings = balanceWithStrings(text);
+  return withStrings === "ok" || (withStrings === "open" && balancedIgnoringQuotes(text));
 }
 
 /**
@@ -240,8 +251,10 @@ export function symbolFromSpan(span: string): string | null {
  * multiply the cost (PR #174 review r4501850098). A `(` inside generic
  * arguments (`Repo<(User, Error)>.find`, `Repo<() => User>.find`) is not the
  * signature, and the `>` of an arrow (`=>`, `->`) closes nothing (PR #174
- * review r4501917318). Every `>` is dropped; an unmatched `<` drops the rest
- * of the entry.
+ * review r4501917318). A depth-0 `->` is a member access and reads as `.`
+ * (`Foo->bar` → `Foo.bar`), except after `operator`, so C++ `operator->`
+ * cannot match `operator()` (review r4501962748). Every `>` is dropped; an
+ * unmatched `<` drops the rest of the entry.
  */
 function entryPath(text: string): string {
   let out = "";
@@ -251,11 +264,16 @@ function entryPath(text: string): string {
     if (ch === "<") depth += 1;
     else if (ch === ">") {
       if (text[i - 1] !== "-" && text[i - 1] !== "=") depth = Math.max(0, depth - 1);
-      // A depth-0 `->` is a member access (`Foo->bar`): read it as `.`.
-      else if (depth === 0 && text[i - 1] === "-" && out.endsWith("-")) out = `${out.slice(0, -1)}.`;
     } else if (depth === 0) {
       if (ch === "(") break;
-      out += ch;
+      // A depth-0 `->` is a member access (`Foo->bar`): append `.` and skip
+      // the `>`, so the output is never rewritten (review r4501957183).
+      // C++ `operator->` keeps its arrow, so it cannot collide with
+      // `operator()`.
+      if (ch === "-" && text[i + 1] === ">" && !out.endsWith("operator")) {
+        out += ".";
+        i += 1;
+      } else out += ch;
     }
   }
   return out;
@@ -385,7 +403,7 @@ function referenceCounts(content: string | readonly string[]): Map<string, Unres
  *   array — each is scanned on its own, so an unclosed fence in one section
  *   cannot hide the next.
  * @param knownSymbols symbol names from the host's code graph, plain or
- *   qualified with `.`, `::` or `#`.
+ *   qualified with `.`, `::`, `#` or a C-style `->` (read as `.`).
  */
 export function checkSymbolExistence(
   content: string | readonly string[],
