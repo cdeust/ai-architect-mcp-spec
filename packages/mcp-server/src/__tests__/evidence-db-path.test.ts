@@ -79,7 +79,7 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      // The parent "directory" is a regular file: mkdirSync throws.
+      // The parent is a regular file, not a directory: opening the database fails.
       expect(tryCreateEvidenceRepository(join(blocker, "evidence.db"))).toBeNull();
       expect(err).toHaveBeenCalledOnce();
       expect(String(err.mock.calls[0][0])).toContain("evidence storage is off");
@@ -142,7 +142,12 @@ describe("evidence repository wiring", () => {
 
   it("both composition roots take the repository from getEvidenceRepo()", () => {
     for (const f of ["index.ts", "pipeline-tools.ts"]) {
-      expect(readFileSync(join(SRC_DIR, f), "utf-8"), f).toMatch(/getEvidenceRepo\(\)/);
+      // Comments stripped first: a comment naming getEvidenceRepo() must not
+      // satisfy this (review r4502015550).
+      const code = readFileSync(join(SRC_DIR, f), "utf-8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "");
+      expect(code, f).toMatch(/getEvidenceRepo\(\)/);
     }
   });
 
