@@ -45,7 +45,7 @@ export interface UnresolvedSymbol {
 export interface SymbolExistenceReport {
   /** Distinct code-shaped symbols referenced in inline code spans. */
   readonly checkedSymbols: number;
-  /** Number of known symbols the check compared against. */
+  /** Number of distinct known symbols the check compared against. */
   readonly knownSymbols: number;
   /** References with no match in the known symbols, sorted by name. */
   readonly unresolvedSymbols: readonly UnresolvedSymbol[];
@@ -61,9 +61,13 @@ const MAX_SPAN_LENGTH = 200;
 /**
  * A fence line. A backtick fence's info string cannot contain a backtick
  * (CommonMark 4.5), so ```` ```Ghost.run()``` is new ```` is inline code, not
- * a fence that would swallow the rest of the section.
+ * a fence that would swallow the rest of the section. Any indentation and an
+ * optional list marker are accepted, because PRDs nest proposed-code fences
+ * in list items (`- Proposed:` then an indented fence, or `1. ```ts`); the
+ * scanner tracks no list container, so it cannot apply CommonMark's
+ * container-relative 3-space limit (PR #174 review r4501809320).
  */
-const FENCE_OPEN = /^\s{0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const FENCE_OPEN = /^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?(`{3,}(?=[^`]*$)|~{3,})/;
 const BACKTICK_RUN = /`+/g;
 
 const IDENT = "[A-Za-z_$][\\w$]*";
@@ -76,13 +80,25 @@ const SYMBOL_SHAPE = new RegExp(
   `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`,
 );
 
+/**
+ * Whether the parentheses of an argument list balance, ignoring those inside
+ * a quoted string (`run(")")`) and escaped quotes within it (PR #174 review
+ * r4501809310). An unterminated string is unbalanced.
+ */
 function balancedParens(text: string): boolean {
   let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
   for (const ch of text) {
-    if (ch === "(") depth += 1;
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "(") depth += 1;
     else if (ch === ")" && --depth < 0) return false;
   }
-  return depth === 0;
+  return depth === 0 && quote === null;
 }
 
 /**
@@ -220,14 +236,22 @@ function resolvesIn(ref: readonly string[], bucket: readonly (readonly string[])
   });
 }
 
-function referenceCounts(content: string | readonly string[]): Map<string, number> {
-  const counts = new Map<string, number>();
+/**
+ * Occurrences per referenced symbol, keyed by its segment path so that
+ * `User#save` and `User.save` count as one symbol, reported under the
+ * spelling seen first.
+ */
+function referenceCounts(content: string | readonly string[]): Map<string, UnresolvedSymbol> {
+  const counts = new Map<string, UnresolvedSymbol>();
   const parts = typeof content === "string" ? [content] : content;
   for (const part of parts) {
     for (const line of stripFencedBlocks(part).split("\n")) {
       for (const span of inlineSpans(line)) {
         const symbol = symbolFromSpan(span);
-        if (symbol !== null) counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
+        if (symbol === null) continue;
+        const key = segments(symbol).join(".");
+        const seen = counts.get(key);
+        counts.set(key, { symbol: seen?.symbol ?? symbol, occurrences: (seen?.occurrences ?? 0) + 1 });
       }
     }
   }
@@ -246,9 +270,11 @@ export function checkSymbolExistence(
   content: string | readonly string[],
   knownSymbols: readonly string[],
 ): SymbolExistenceReport {
-  const known = knownSymbols
-    .map(knownSegments)
-    .filter((parts) => parts.length > 0);
+  const distinct = new Map<string, string[]>();
+  for (const parts of knownSymbols.map(knownSegments)) {
+    if (parts.length > 0) distinct.set(parts.join("."), parts);
+  }
+  const known = [...distinct.values()];
   const byLast = new Map<string, string[][]>();
   for (const parts of known) {
     const last = parts[parts.length - 1];
@@ -259,11 +285,9 @@ export function checkSymbolExistence(
 
   const counts = referenceCounts(content);
   const unresolved: UnresolvedSymbol[] = [];
-  for (const [symbol, occurrences] of counts) {
-    const ref = segments(symbol);
-    if (!resolvesIn(ref, byLast.get(ref[ref.length - 1]) ?? [])) {
-      unresolved.push({ symbol, occurrences });
-    }
+  for (const [key, entry] of counts) {
+    const ref = key.split(".");
+    if (!resolvesIn(ref, byLast.get(ref[ref.length - 1]) ?? [])) unresolved.push(entry);
   }
   unresolved.sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
 

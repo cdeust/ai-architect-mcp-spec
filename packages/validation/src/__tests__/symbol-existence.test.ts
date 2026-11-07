@@ -167,8 +167,32 @@ describe("checkSymbolExistence — PR #174 review fixes", () => {
     ["a shorter run does not close", ["````", "```", "`in()`", "````", "`out()`"]],
     ["a run with trailing text does not close", ["```", "``` x", "`in()`", "```", "`out()`"]],
     ["an indented fence of up to 3 spaces counts", ["   ```", "`in()`", "   ```", "`out()`"]],
+    ["a fence nested in a list item counts (r4501809320)", ["- Proposed code:", "    ```ts", "    `in()`", "    ```", "`out()`"]],
+    ["a fence on a list-marker line counts", ["1. ```ts", "`in()`", "   ```", "`out()`"]],
   ])("fence rules: %s", (_name, lines) => {
     expect(checkSymbolExistence(lines.join("\n"), []).unresolvedSymbols.map((u) => u.symbol))
       .toEqual(["out"]);
+  });
+});
+
+describe("checkSymbolExistence — second review round", () => {
+  it("ignores parentheses inside quoted arguments (r4501809310)", () => {
+    expect(checkSymbolExistence('Calls `Ghost.run(")")` and `Other.go(\'(\')`.', []).unresolvedSymbols
+      .map((u) => u.symbol)).toEqual(["Ghost.run", "Other.go"]);
+    expect(checkSymbolExistence('`Ghost.run("a\\"(")`', []).checkedSymbols).toBe(1);
+  });
+
+  it("rejects an argument list with an unterminated string", () => {
+    expect(symbolFromSpan('Ghost.run(")')).toBeNull();
+  });
+
+  it("counts `User#save` and `User.save` as one symbol, under the first spelling", () => {
+    const report = checkSymbolExistence("`User#save()` then `User.save()`", []);
+    expect(report.checkedSymbols).toBe(1);
+    expect(report.unresolvedSymbols).toEqual([{ symbol: "User#save", occurrences: 2 }]);
+  });
+
+  it("counts distinct known symbols", () => {
+    expect(checkSymbolExistence("", ["A.b", "A::b", "A.b()", "c"]).knownSymbols).toBe(2);
   });
 });

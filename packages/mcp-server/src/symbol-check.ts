@@ -16,7 +16,9 @@ export const KnownSymbolsSchema = z
   .describe(
     "Optional symbol names from the host's code graph (plain, or qualified with ., :: or #; a trailing signature such as (email:) is ignored). " +
       "When given, the report gains `symbolExistence`: the code symbols named in inline code spans " +
-      "that none of these resolve — each is either introduced by the PRD or fabricated. Not scored.",
+      "that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. " +
+      "Only code-shaped spans are checked (calls, ::/# paths, PascalCase.member). [] means an empty graph: " +
+      "omit the field when the graph lookup failed.",
   );
 
 /** The validation report, plus the symbol check when the host sent a graph. */
