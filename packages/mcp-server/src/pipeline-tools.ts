@@ -38,7 +38,6 @@ import {
   JudgeVerdictSchema,
   ClaimSchema,
   ExternalGroundingTypeSchema,
-  type EvidenceRepository,
   type Claim,
 } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
@@ -77,24 +76,13 @@ const MAX_CONCURRENT_RUNS = Number(
   process.env.PRD_MAX_CONCURRENT_RUNS ?? 8,
 ); // env-configurable; default 8 — see source note above
 
-/**
- * Lazily-built EvidenceRepository handle for run-eviction cleanup. The full
- * tracker is built in getTracker(); this references the same repo so onEvict can
- * release run-tied evidence. Both share the _repo cache below.
- */
-function getRepo(): EvidenceRepository | null {
-  // Force lazy init via getTracker so _repo is resolved exactly once.
-  getTracker();
-  return _repo ?? null;
-}
-
 const runStore = new InMemoryRunStore({
   // When a terminal run is evicted (TTL or max-runs), release its persisted
   // strategy-execution evidence so disk growth tracks live runs. Best-effort:
   // onEvict must not throw (InMemoryRunStore swallows throws), and a missing
   // repo is a no-op. source: evidence-repository.ts pruneRunEvidence.
   onEvict: (runId: string) => {
-    getRepo()?.pruneRunEvidence(runId);
+    getEvidenceRepo()?.pruneRunEvidence(runId);
     lastActionByRun.delete(runId);
   },
 });
@@ -125,12 +113,15 @@ function inFlightRunCount(): number {
  * only place that performs I/O; orchestration produces the queue,
  * mcp-server drains it.
  */
-let _repo: EvidenceRepository | null | undefined = undefined;
+// The repository itself is the server-wide singleton getEvidenceRepo()
+// (evidence-db-path.ts); only the tracker wrapping it is cached here.
+let _trackerResolved = false;
 let _tracker: EffectivenessTracker | null = null;
 function getTracker(): EffectivenessTracker | null {
-  if (_repo === undefined) {
-    _repo = getEvidenceRepo();
-    if (_repo) _tracker = new EffectivenessTracker(_repo);
+  if (!_trackerResolved) {
+    _trackerResolved = true;
+    const repo = getEvidenceRepo();
+    if (repo) _tracker = new EffectivenessTracker(repo);
   }
   return _tracker;
 }

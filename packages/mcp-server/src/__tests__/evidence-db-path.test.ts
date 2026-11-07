@@ -122,22 +122,28 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
 // ─── Production wiring ───────────────────────────────────────────────────────
 //
 // The tests above exercise the resolver and the repository, not the call
-// sites. These two pin the wiring: reverting either composition root to its
-// own `tryCreateEvidenceRepository()` call must fail a test.
+// sites. These pin the wiring: reverting either composition root to its
+// own repository (factory or `new EvidenceRepository`) must fail a test.
 
 const SRC_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const SERVER_ENTRY = join(SRC_DIR, "..", "dist", "index.js");
 
 describe("evidence repository wiring", () => {
   it("only evidence-db-path.ts opens the evidence repository", () => {
-    const offenders = readdirSync(SRC_DIR)
-      .filter((f) => f.endsWith(".ts") && f !== "evidence-db-path.ts")
-      .filter((f) =>
-        readFileSync(join(SRC_DIR, f), "utf-8").includes("tryCreateEvidenceRepository"),
-      );
-    // index.ts and pipeline-tools.ts must go through getEvidenceRepo(), which
-    // resolves PRD_GEN_EVIDENCE_DB; a direct call would bypass it.
+    // Either way of opening the repository bypasses PRD_GEN_EVIDENCE_DB if it
+    // is not getEvidenceRepo(): the factory, or the class it wraps.
+    const opener = /tryCreateEvidenceRepository|new\s+EvidenceRepository\s*\(/;
+    const offenders = (readdirSync(SRC_DIR, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && !f.includes("__tests__"))
+      .filter((f) => f !== "evidence-db-path.ts")
+      .filter((f) => opener.test(readFileSync(join(SRC_DIR, f), "utf-8")));
     expect(offenders).toEqual([]);
+  });
+
+  it("both composition roots take the repository from getEvidenceRepo()", () => {
+    for (const f of ["index.ts", "pipeline-tools.ts"]) {
+      expect(readFileSync(join(SRC_DIR, f), "utf-8"), f).toMatch(/getEvidenceRepo\(\)/);
+    }
   });
 
   // Real server over stdio (the built entry point, as `pnpm build && pnpm
@@ -150,12 +156,20 @@ describe("evidence repository wiring", () => {
       const dir = mkdtempSync(join(tmpdir(), "evidence-stdio-"));
       dirs.push(dir);
       const dbPath = join(dir, "evidence.db");
+      // Isolated from the developer's environment: HOME points at the temp
+      // dir (so a regression that ignores the variable writes there, not to
+      // the real ~/.prd-gen), and the tool profile is forced to full (an
+      // inherited PRD_GEN_PROFILE=agent would hide get_quality_history).
+      const fakeHome = join(dir, "home");
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+      delete env.PRD_GEN_PROFILE;
+      env.HOME = fakeHome;
+      env.USERPROFILE = fakeHome;
       env[EVIDENCE_DB_ENV] = dbPath;
       const client = new Client({ name: "evidence-db-path-test", version: "0" });
       await client.connect(
-        new StdioClientTransport({ command: process.execPath, args: [SERVER_ENTRY], env, stderr: "ignore" }),
+        new StdioClientTransport({ command: process.execPath, args: [SERVER_ENTRY, "--profile", "full"], env, stderr: "ignore" }),
       );
       try {
         const res = await client.callTool({ name: "get_quality_history", arguments: {} });
@@ -164,6 +178,7 @@ describe("evidence repository wiring", () => {
         await client.close();
       }
       expect(existsSync(dbPath)).toBe(true);
+      expect(existsSync(join(fakeHome, ".prd-gen", "evidence.db"))).toBe(false);
     },
     30_000,
   );

@@ -118,9 +118,6 @@ server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
   resourceTemplates: [],
 }));
 
-// The evidence repository is the server-wide lazy singleton in
-// evidence-db-path.ts (null when better-sqlite3 is unavailable).
-
 // ─── Tool 1: get_config ──────────────────────────────────────────────────────
 
 const toolGetConfig = server.tool(
