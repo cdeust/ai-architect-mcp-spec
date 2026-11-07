@@ -61,6 +61,20 @@ describe("checkSymbolExistence — fabricated symbol (issue #118)", () => {
       .toEqual(["before"]);
   });
 
+  it("pairs backtick runs by length, so a literal backtick cannot hide a later span (Codex r4501799706)", () => {
+    const report = checkSymbolExistence("Uses `` `literal` `` and `Ghost.run()`.", []);
+    expect(report.unresolvedSymbols).toEqual([{ symbol: "Ghost.run", occurrences: 1 }]);
+    expect(checkSymbolExistence("`` Ghost.run() `` and ``a()`", []).unresolvedSymbols
+      .map((u) => u.symbol)).toEqual(["Ghost.run"]);
+  });
+
+  it("treats an unmatched backtick as literal text", () => {
+    expect(checkSymbolExistence("a ` stray, then `Ghost.run()`", []).unresolvedSymbols)
+      .toEqual([]);
+    expect(checkSymbolExistence("a `` stray, then `Ghost.run()`", []).unresolvedSymbols
+      .map((u) => u.symbol)).toEqual(["Ghost.run"]);
+  });
+
   it("reports every reference as unresolved when the graph is empty", () => {
     const report = checkSymbolExistence("`parseConfig()`", []);
     expect(report.knownSymbols).toBe(0);
@@ -75,6 +89,8 @@ describe("symbolFromSpan — only code-shaped spans are references", () => {
     ["Billing::Invoice", "Billing::Invoice"],
     ["User#save", "User#save"],
     ["UserService.create", "UserService.create"],
+    ["Ghost.run(normalize(email))", "Ghost.run"],
+    ["f(g(h(x)), y)", "f"],
   ])("reads %s as %s", (span, symbol) => {
     expect(symbolFromSpan(span)).toBe(symbol);
   });
@@ -87,6 +103,9 @@ describe("symbolFromSpan — only code-shaped spans are references", () => {
     "config.timeout",
     "GET /users",
     "p95 < 200ms",
+    "f(a))",
+    "f((a)",
+    "f(a) + g(b)",
     "",
     `${"a".repeat(201)}()`,
   ])("does not read %s as a symbol", (span) => {

@@ -56,13 +56,58 @@ export interface SymbolExistenceReport {
 const MAX_SPAN_LENGTH = 200;
 
 const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
-const INLINE_SPAN = /`([^`\n]+)`/g;
+const BACKTICK_RUN = /`+/g;
 
 const IDENT = "[A-Za-z_$][\\w$]*";
-/** `a`, `a.b`, `A::b`, `A#b`, each optionally followed by one `(...)`. */
+/**
+ * `a`, `a.b`, `A::b`, `A#b`, optionally followed by an argument list. The
+ * argument text may hold nested calls (`run(normalize(x))`); its parentheses
+ * are checked for balance separately, so the pattern stays linear.
+ */
 const SYMBOL_SHAPE = new RegExp(
-  `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\([^()]*\\))?$`,
+  `^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`,
 );
+
+function balancedParens(text: string): boolean {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * The inline code spans of one line, CommonMark style: a run of N backticks
+ * opens a span that only the next run of exactly N backticks closes, so
+ * `` `x` `` holds a literal backtick and cannot pair with a later span. An
+ * opener with no closer is literal text. Linear: each run's closer is found
+ * through a precomputed "next run of the same length" index.
+ */
+function inlineSpans(line: string): string[] {
+  const runs = [...line.matchAll(BACKTICK_RUN)].map((m) => ({
+    start: m.index,
+    len: m[0].length,
+  }));
+  const nextSame = new Array<number>(runs.length).fill(-1);
+  const lastSeen = new Map<number, number>();
+  for (let i = runs.length - 1; i >= 0; i--) {
+    nextSame[i] = lastSeen.get(runs[i].len) ?? -1;
+    lastSeen.set(runs[i].len, i);
+  }
+  const spans: string[] = [];
+  let i = 0;
+  while (i < runs.length) {
+    const j = nextSame[i];
+    if (j === -1) {
+      i += 1;
+      continue;
+    }
+    spans.push(line.slice(runs[i].start + runs[i].len, runs[j].start));
+    i = j + 1;
+  }
+  return spans;
+}
 
 /** Last segments that make a dotted span a file name, not a member access. */
 const FILE_EXTENSIONS: ReadonlySet<string> = new Set([
@@ -106,7 +151,7 @@ export function symbolFromSpan(span: string): string | null {
   if (match === null) return null;
   const path = match[1];
   const isCall = match[2] !== undefined;
-  if (isCall) return path;
+  if (isCall) return balancedParens(match[3]) ? path : null;
   if (path.includes("::") || path.includes("#")) return path;
   if (!path.includes(".")) return null;
   const parts = segments(path);
@@ -151,9 +196,11 @@ export function checkSymbolExistence(
   const counts = new Map<string, number>();
   const parts = typeof content === "string" ? [content] : content;
   for (const part of parts) {
-    for (const m of stripFencedBlocks(part).matchAll(INLINE_SPAN)) {
-      const symbol = symbolFromSpan(m[1]);
-      if (symbol !== null) counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
+    for (const line of stripFencedBlocks(part).split("\n")) {
+      for (const span of inlineSpans(line)) {
+        const symbol = symbolFromSpan(span);
+        if (symbol !== null) counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
+      }
     }
   }
 
