@@ -1,11 +1,12 @@
 /**
  * Resolve the evidence database path from the environment.
  *
- * `.mcp.json` and `manifest.json` set `PRD_GEN_EVIDENCE_DB` and PRIVACY.md
- * documents it as the override for `.prd-gen/evidence.db`, but until this
- * module nothing read it: both composition-root call sites called
- * `tryCreateEvidenceRepository()` with no path, so the repository always
- * fell back to `~/.prd-gen/evidence.db` (issue #121, audit 2026-10-10).
+ * `PRD_GEN_EVIDENCE_DB` is a user override documented in PRIVACY.md. Until
+ * this module nothing read it: both composition-root call sites called
+ * `tryCreateEvidenceRepository()` with no path (issue #121, audit
+ * 2026-10-10). The shipped `.mcp.json` and `manifest.json` deliberately do
+ * not set it, so the database stays at `~/.prd-gen/evidence.db` (beside
+ * `reliability.db`) instead of the install directory an update replaces.
  *
  * The composition root reads the environment, not `@prd-gen/core`: the
  * repository keeps taking an explicit path, and its own `~/.prd-gen`

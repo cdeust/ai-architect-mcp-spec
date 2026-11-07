@@ -1,7 +1,7 @@
 /**
- * PRD_GEN_EVIDENCE_DB is honoured (issue #121): `.mcp.json` and
- * `manifest.json` set it and PRIVACY.md documents it, but the server ignored
- * it and always wrote `~/.prd-gen/evidence.db`.
+ * PRD_GEN_EVIDENCE_DB is honoured as a user override (issue #121):
+ * PRIVACY.md documents it, but the server ignored it and always wrote
+ * `~/.prd-gen/evidence.db`. The shipped configs do not set it.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { tmpdir } from "node:os";
