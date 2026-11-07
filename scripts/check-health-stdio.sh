@@ -16,7 +16,6 @@ RESPONSES="$(
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_health","arguments":{}}}' \
   | PRD_GEN_SKILL_CONFIG="${ROOT}/packages/skill/skill-config.json" \
-    PRD_GEN_EVIDENCE_DB="${ROOT}/.prd-gen/evidence.db" \
     bash "${ROOT}/bin/ensure-deps.sh" "${ROOT}" || true
 )"
 

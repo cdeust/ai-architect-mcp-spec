@@ -31,8 +31,7 @@
       "command": "node",
       "args": ["${__dirname}/mcp-server/index.js"],
       "env": {
-        "PRD_GEN_SKILL_CONFIG": "${__dirname}/packages/skill/skill-config.json",
-        "PRD_GEN_EVIDENCE_DB": "${__dirname}/.prd-gen/evidence.db"
+        "PRD_GEN_SKILL_CONFIG": "${__dirname}/packages/skill/skill-config.json"
       }
     }
   },

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 // HardOutputRule is not imported: this repository persists rule COUNTS
@@ -122,7 +122,9 @@ export class EvidenceRepository {
       throw new Error("better-sqlite3 not available — install it with: pnpm add better-sqlite3");
     }
     const resolvedPath = dbPath ?? this.defaultDbPath();
-    const dir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+    // dirname, not a split on "/": a Windows path (C:\\data\\evidence.db)
+    // has no "/", which made dir "" and mkdirSync throw (PR #175 review).
+    const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -472,7 +474,15 @@ export function tryCreateEvidenceRepository(
   if (!Database) return null;
   try {
     return new EvidenceRepository(dbPath);
-  } catch {
+  } catch (err) {
+    // An explicit path is a user choice (PRD_GEN_EVIDENCE_DB): say why it
+    // could not be opened instead of silently turning evidence storage off.
+    // stderr only — stdout carries the MCP JSON-RPC stream.
+    if (dbPath !== undefined) {
+      console.error(
+        `[prd-gen] evidence database at ${dbPath} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     return null;
   }
 }

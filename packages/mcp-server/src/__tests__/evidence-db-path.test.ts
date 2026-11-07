@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -69,6 +69,39 @@ for (const s of ["", "-wal", "-shm"]) rmSync(probePath + s, { force: true });
 const sqliteAvailable = probe !== null;
 
 describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", () => {
+  it("reports on stderr, not stdout, an explicit path it cannot open", () => {
+    const dir = join(tmpdir(), `evidence-blocked-${process.pid}-${Date.now()}`);
+    dirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    const blocker = join(dir, "file");
+    writeFileSync(blocker, "");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      // The parent "directory" is a regular file: mkdirSync throws.
+      expect(tryCreateEvidenceRepository(join(blocker, "evidence.db"))).toBeNull();
+      expect(err).toHaveBeenCalledOnce();
+      expect(String(err.mock.calls[0][0])).toContain("evidence storage is off");
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("the default warn of the resolver writes to stderr, not stdout", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      resolveEvidenceDbPath({ [EVIDENCE_DB_ENV]: "relative.db" });
+      expect(err).toHaveBeenCalledOnce();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
+      log.mockRestore();
+    }
+  });
+
   it("creates the database file at PRD_GEN_EVIDENCE_DB, not under ~/.prd-gen", () => {
     const dir = join(tmpdir(), `evidence-env-${process.pid}-${Date.now()}`);
     dirs.push(dir);
@@ -76,9 +109,12 @@ describe.skipIf(!sqliteAvailable)("evidence repository at the configured path", 
     const repo = tryCreateEvidenceRepository(
       resolveEvidenceDbPath({ [EVIDENCE_DB_ENV]: dbPath }, vi.fn()),
     );
-    expect(repo).not.toBeNull();
-    expect(existsSync(dbPath)).toBe(true);
-    repo?.close();
+    try {
+      expect(repo).not.toBeNull();
+      expect(existsSync(dbPath)).toBe(true);
+    } finally {
+      repo?.close();
+    }
   });
 });
 
