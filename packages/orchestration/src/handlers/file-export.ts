@@ -1,8 +1,9 @@
 /**
  * File export — write the PRD deliverable files (6 core + up to 3 companion,
- * one run-notes file when any section was skipped) per SKILL.md Phase 4,
- * plus an optional sidecar (`stage-5.affected_symbols.json`) when the
- * technical_specification section asserted symbol-level claims.
+ * one run-notes file when any file was skipped or any failed section was
+ * withheld) per SKILL.md Phase 4, plus a sidecar
+ * (`stage-5.affected_symbols.json`) whenever the technical_specification
+ * section produced content.
  *
  * Protocol:
  *   - On entry with no result: emit write_file for the first un-written file.
@@ -27,7 +28,9 @@
  * failed is then skipped as "failed_validation". The affected-symbols
  * sidecar below still reads a failed technical_specification draft:
  * pre_impl_grounding depends on it, so withholding it there is a separate
- * change (tracked on #122).
+ * change (tracked on #122). JIRA tickets are not generated from failed
+ * drafts either (jira-generation.ts gatherSourceSections); self-check still
+ * judges them (tracked on #122).
  * source: cdeust/ai-architect-mcp-spec#122 — audit of v0.8.0 on 2026-10-10
  * found failed sections exported as deliverables.
  *
@@ -42,8 +45,9 @@
  * through the low-precision regex path. So the sidecar is written whenever
  * the technical_specification section produced content (extraction ran),
  * regardless of how many claims parseAffectedSymbolsBlock found in it; it
- * is omitted only when that section never ran (not scheduled / failed /
- * skipped).
+ * is omitted only when that section produced no content (not scheduled /
+ * skipped / failed with no draft). A failed draft still feeds it (see
+ * "NO FAILED DRAFTS AS DELIVERABLES" above).
  * source: ai-architect-mcp-codebase stages/stage-6.md, "Zero-claims case —
  * not the same as absent" (§4.2), pinned at commit
  * 92216cd90f8f26cb15348675fc6556b8293edfc1.
@@ -52,6 +56,7 @@
 import type { StepHandler } from "../runner.js";
 import { appendError, type PipelineState } from "../types/state.js";
 import { SECTIONS_BY_CONTEXT } from "../section-plan.js";
+import { JIRA_SOURCE_TYPES } from "./jira-generation.js";
 import {
   SECTION_DISPLAY_NAMES,
   SECTION_ORDER,
@@ -78,10 +83,12 @@ export interface PrdFile {
  *   "failed_validation"      — at least one of the section types was
  *                               attempted and its terminal status is
  *                               "failed" (MAX_ATTEMPTS exhausted).
+ *                               For JIRA: the subagent failed, or every
+ *                               source section that ran failed — see
+ *                               jiraSkipReason.
  *   "skipped"                — planned but never reached a terminal state
  *                               with content (e.g. the run ended early), or
- *                               (for JIRA) no source material / a subagent
- *                               failure — see jiraSkipReason.
+ *                               (for JIRA) no source material.
  */
 type SkipReason = "not_in_context_profile" | "failed_validation" | "skipped";
 
@@ -127,11 +134,16 @@ function reasonForSectionTypes(
  * JIRA generation is context-independent (jira-generation.ts runs for every
  * PRD context when source material exists), so `reasonForSectionTypes`'s
  * "not_in_context_profile" bucket does not apply — distinguish "the
- * subagent failed" from "there was nothing to build tickets from".
+ * subagent failed" or "every source that ran failed validation" (no
+ * exportable source left, #122) from "there was nothing to build tickets
+ * from".
  */
 function jiraSkipReason(state: PipelineState): SkipReason {
-  const failed = state.errors.some((e) => e.startsWith("[jira_generation] failed"));
-  return failed ? "failed_validation" : "skipped";
+  const subagentFailed = state.errors.some((e) => e.startsWith("[jira_generation] failed"));
+  const sources = state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type));
+  const sourcesFailed =
+    sources.some((s) => s.status === "failed") && !sources.some(exportable);
+  return subagentFailed || sourcesFailed ? "failed_validation" : "skipped";
 }
 
 type Section = PipelineState["sections"][number];
@@ -281,7 +293,7 @@ function withheldSections(state: PipelineState): WithheldSection[] {
   const files: readonly { filename: string; sectionTypes: readonly SectionType[] }[] = [
     { filename: CORE_FILENAME, sectionTypes: CORE_SECTION_TYPES },
     ...COMPANION_FILES,
-    { filename: JIRA_FILENAME, sectionTypes: ["jira_tickets"] },
+    { filename: JIRA_FILENAME, sectionTypes: ["jira_tickets", ...JIRA_SOURCE_TYPES] },
   ];
   return state.sections
     .filter((s) => s.status === "failed" && s.content)
@@ -406,8 +418,8 @@ function runNotesFile(
  * precondition:  none.
  * postcondition: returns the core PRD file (always written), every
  *                companion/JIRA file THAT HAS CONTENT (no placeholders —
- *                see module doc), the affected-symbols sidecar when claims
- *                were parsed, and — iff at least one file was skipped or
+ *                see module doc), the affected-symbols sidecar whenever
+ *                technical_specification has content, and — iff at least one file was skipped or
  *                one failed section was withheld — `00-run-notes.md`
  *                naming each skip and each withheld section.
  */
