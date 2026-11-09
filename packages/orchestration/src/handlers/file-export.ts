@@ -19,6 +19,18 @@
  * files were one-line "_No ... section._" placeholders the user discovered
  * only after delivery.
  *
+ * NO FAILED DRAFTS AS DELIVERABLES: a section whose terminal status is
+ * "failed" keeps its last draft in state (failSection stores it so the run
+ * stays inspectable), but that draft is not a deliverable. It is withheld
+ * from every exported markdown file, and `00-run-notes.md` names it with
+ * its attempt and violation counts. A companion file whose only sources
+ * failed is then skipped as "failed_validation". The affected-symbols
+ * sidecar below still reads a failed technical_specification draft:
+ * pre_impl_grounding depends on it, so withholding it there is a separate
+ * change (tracked on #122).
+ * source: cdeust/ai-architect-mcp-spec#122 — audit of v0.8.0 on 2026-10-10
+ * found failed sections exported as deliverables.
+ *
  * The affected-symbols sidecar's presence, not its claim count, is the
  * signal ai-architect-mcp-codebase stage 6 reads: an ABSENT
  * `stage-5.affected_symbols.json` means "the generator's structured-
@@ -122,13 +134,24 @@ function jiraSkipReason(state: PipelineState): SkipReason {
   return failed ? "failed_validation" : "skipped";
 }
 
+type Section = PipelineState["sections"][number];
+
+/**
+ * precondition:  none.
+ * postcondition: true iff the section carries content that may be exported:
+ *                a failed section's draft never is (see module doc).
+ */
+function exportable(section: Section): boolean {
+  return Boolean(section.content) && section.status !== "failed";
+}
+
 /**
  * Section body for markdown assembly. Strips the affected-symbols marker
  * block from technical_specification so the internal validator payload
  * never leaks into the human-readable PRD (it is exported separately, as
  * its own sidecar file, when present).
  */
-function sectionBody(section: PipelineState["sections"][number]): string {
+function sectionBody(section: Section): string {
   const trimmed = section.content!.trim();
   return section.section_type === "technical_specification"
     ? stripAffectedSymbolsBlock(trimmed)
@@ -140,7 +163,7 @@ function joinSections(
   types: readonly SectionType[],
 ): string {
   return state.sections
-    .filter((s) => types.includes(s.section_type) && s.content)
+    .filter((s) => types.includes(s.section_type) && exportable(s))
     .sort(
       (a, b) =>
         SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type],
@@ -152,7 +175,7 @@ function joinSections(
 function jiraContent(state: PipelineState): string {
   const last = [...state.sections]
     .reverse()
-    .find((s) => s.section_type === "jira_tickets" && s.content);
+    .find((s) => s.section_type === "jira_tickets" && exportable(s));
   return last?.content?.trim() ?? "";
 }
 
@@ -211,13 +234,24 @@ const COMPANION_FILES: readonly CompanionFileSpec[] = [
   { filename: "09-test-code.md", display: "Test Code", sectionTypes: ["test_code"] },
 ];
 
+const CORE_FILENAME = "01-prd.md";
+const JIRA_FILENAME = "07-jira-tickets.md";
+const CORE_SECTION_TYPES: readonly SectionType[] = [
+  "overview",
+  "goals",
+  "requirements",
+  "user_stories",
+  "technical_specification",
+  "acceptance_criteria",
+];
+
 /**
  * precondition:  none.
  * postcondition: returns the core PRD file (always written).
  */
 function corePrdFile(state: PipelineState, base: string): PrdFile {
   return {
-    path: `${base}/01-prd.md`,
+    path: `${base}/${CORE_FILENAME}`,
     content: () =>
       [
         `# PRD: ${state.feature_description}`,
@@ -225,16 +259,41 @@ function corePrdFile(state: PipelineState, base: string): PrdFile {
         `Run ID: ${state.run_id}`,
         `Context: ${state.prd_context ?? "unknown"}`,
         "",
-        joinSections(state, [
-          "overview",
-          "goals",
-          "requirements",
-          "user_stories",
-          "technical_specification",
-          "acceptance_criteria",
-        ]),
+        joinSections(state, CORE_SECTION_TYPES),
       ].join("\n"),
   };
+}
+
+interface WithheldSection {
+  readonly display: string;
+  readonly filenames: readonly string[];
+  readonly attempt: number;
+  readonly violations: number;
+}
+
+/**
+ * precondition:  none.
+ * postcondition: one entry per failed section that holds a draft, in
+ *                SECTION_ORDER, naming the file(s) it would have fed. A
+ *                failed section with no draft withholds nothing.
+ */
+function withheldSections(state: PipelineState): WithheldSection[] {
+  const files: readonly { filename: string; sectionTypes: readonly SectionType[] }[] = [
+    { filename: CORE_FILENAME, sectionTypes: CORE_SECTION_TYPES },
+    ...COMPANION_FILES,
+    { filename: JIRA_FILENAME, sectionTypes: ["jira_tickets"] },
+  ];
+  return state.sections
+    .filter((s) => s.status === "failed" && s.content)
+    .sort((a, b) => SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type])
+    .map((s) => ({
+      display: SECTION_DISPLAY_NAMES[s.section_type],
+      filenames: files
+        .filter((f) => f.sectionTypes.includes(s.section_type))
+        .map((f) => f.filename),
+      attempt: s.attempt,
+      violations: s.violation_count,
+    }));
 }
 
 /**
@@ -266,11 +325,11 @@ function companionAndJiraFiles(
 
   const jira = jiraContent(state);
   if (jira) {
-    files.push({ path: `${base}/07-jira-tickets.md`, content: () => jira });
+    files.push({ path: `${base}/${JIRA_FILENAME}`, content: () => jira });
   } else {
     skipped.push({
       display: "JIRA Tickets",
-      filename: "07-jira-tickets.md",
+      filename: JIRA_FILENAME,
       reason: jiraSkipReason(state),
     });
   }
@@ -300,28 +359,46 @@ function affectedSymbolsFile(state: PipelineState, base: string): PrdFile | null
 
 /**
  * precondition:  none.
- * postcondition: returns `00-run-notes.md` naming each skip and its reason
- *                when `skipped` is non-empty; null otherwise. Numbering-
+ * postcondition: returns `00-run-notes.md` naming each skipped file with its
+ *                reason and each withheld failed section, when either list
+ *                is non-empty; null otherwise. Numbering-
  *                stable by construction: skipped filenames keep their
  *                originally-planned slot (e.g. 03-api-spec.md is simply
  *                absent, never renumbered), so run-notes lists exactly the
  *                gaps in the sequence.
  */
-function runNotesFile(base: string, skipped: readonly SkippedFile[]): PrdFile | null {
-  if (skipped.length === 0) return null;
+function runNotesFile(
+  base: string,
+  skipped: readonly SkippedFile[],
+  withheld: readonly WithheldSection[],
+): PrdFile | null {
+  if (skipped.length === 0 && withheld.length === 0) return null;
   const sorted = [...skipped].sort((a, b) => a.filename.localeCompare(b.filename));
+  const blocks: string[][] = [];
+  if (sorted.length > 0) {
+    blocks.push([
+      "The following deliverable files were not generated in this run:",
+      "",
+      ...sorted.map(
+        (s) => `- **${s.display}** (\`${s.filename}\`): ${SKIP_REASON_TEXT[s.reason]}.`,
+      ),
+    ]);
+  }
+  if (withheld.length > 0) {
+    blocks.push([
+      "The following sections failed validation; their drafts are not deliverables " +
+        "and were withheld from the exported files:",
+      "",
+      ...withheld.map(
+        (w) =>
+          `- **${w.display}** (${w.filenames.map((f) => `\`${f}\``).join(", ")}): ` +
+          `failed after ${w.attempt} attempt(s) with ${w.violations} violation(s).`,
+      ),
+    ]);
+  }
   return {
     path: `${base}/${RUN_NOTES_FILENAME}`,
-    content: () =>
-      [
-        "# Run Notes",
-        "",
-        "The following deliverable files were not generated in this run:",
-        "",
-        ...sorted.map(
-          (s) => `- **${s.display}** (\`${s.filename}\`): ${SKIP_REASON_TEXT[s.reason]}.`,
-        ),
-      ].join("\n"),
+    content: () => ["# Run Notes", "", blocks.map((b) => b.join("\n")).join("\n\n")].join("\n"),
   };
 }
 
@@ -330,8 +407,9 @@ function runNotesFile(base: string, skipped: readonly SkippedFile[]): PrdFile | 
  * postcondition: returns the core PRD file (always written), every
  *                companion/JIRA file THAT HAS CONTENT (no placeholders —
  *                see module doc), the affected-symbols sidecar when claims
- *                were parsed, and — iff at least one file was skipped —
- *                `00-run-notes.md` naming each skip and its reason.
+ *                were parsed, and — iff at least one file was skipped or
+ *                one failed section was withheld — `00-run-notes.md`
+ *                naming each skip and each withheld section.
  */
 function buildFileSet(state: PipelineState): readonly PrdFile[] {
   const slug = state.run_id.slice(0, 8);
@@ -344,7 +422,7 @@ function buildFileSet(state: PipelineState): readonly PrdFile[] {
   const affected = affectedSymbolsFile(state, base);
   if (affected) files.push(affected);
 
-  const runNotes = runNotesFile(base, skipped);
+  const runNotes = runNotesFile(base, skipped, withheldSections(state));
   if (runNotes) files.push(runNotes);
 
   return files;
