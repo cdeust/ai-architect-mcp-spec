@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The CI follows Cortex's: the Claude review decides the merge. Codex is out of the pipeline (`Codex.yml`, the `review` job and its scripts are removed); `merge` is the aggregate of the test jobs. `claude-review.yml` caps automatic reviews at three per pull request and ends each with `Verdict: approve` or `Verdict: block`. The post-merge resolver merges a pull request only on an `approve` bound to the review run of its head, except a Dependabot minor or patch update of `pnpm-lock.yaml` / `package.json`, which merges on green required checks; it then closes the issues the pull request closes. Source: Cortex ADR-1119, ADR-1120, ADR-1121, ADR-1126.
+- The README lists the full pipeline's real requirements in a new Requirements section: Cortex is required unless `skip_preflight` is set, zetetic-team-subagents is required with no degraded mode and is not checked by the preflight, and ai-architect-mcp-codebase is needed only with `codebase_path`. The companion section had framed all three as "for full effect" (#123).
 
 ### Removed
 
