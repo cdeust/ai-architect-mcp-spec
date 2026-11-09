@@ -27,11 +27,14 @@ describe("pipeline KPIs", () => {
     // stages/stage-6.md §4.2, "Zero-claims case — not the same as absent",
     // pinned at commit 92216cd90f8f26cb15348675fc6556b8293edfc1)
     // stage-5.affected_symbols.json is still written (empty arrays), never
-    // omitted, because the section ran. Net: 01,02,03,04,05,07 (6 content
-    // files) + 00-run-notes + 10-verification-report +
-    // stage-5.affected_symbols.json = 9. See orchestration smoke.test.ts's
-    // "writes the expected deliverable files" for the exact accounting.
-    expect(kpis.written_files_count).toBe(9);
+    // omitted, because the section ran. data_model and api_specification
+    // fail validation on canned drafts, and a failed draft is not a
+    // deliverable (cdeust/ai-architect-mcp-spec#122), so 02 and 03 are
+    // omitted. Net: 01,04,05,07 (4 content files) + 00-run-notes +
+    // 10-verification-report + stage-5.affected_symbols.json = 7. See
+    // orchestration smoke.test.ts's "writes the expected deliverable files"
+    // for the exact accounting.
+    expect(kpis.written_files_count).toBe(7);
     // Upper bound raised from 70 to 77 by PR 3b (design-phases-3-5.md): the
     // canned dispatcher answers the new `implementation_gate` ask_user with
     // "PRD only" (zero-regression default), which costs one extra
@@ -81,8 +84,8 @@ describe("pipeline KPIs", () => {
 
     expect(kpis.final_action_kind).toBe("done");
     // See the "trial+codebase canned-response baseline" test above for the
-    // 9-file accounting (root-cause fix, 2026-07-15).
-    expect(kpis.written_files_count).toBe(9);
+    // 7-file accounting (root-cause fix 2026-07-15, failed drafts withheld #122).
+    expect(kpis.written_files_count).toBe(7);
     // Upper bound — feature context schedules 11 sections; 7 iterations per
     // section (recall → draft → validate ×3 + finalize) is the worst-case
     // upper bound, plus pipeline overhead. 80 is conservative.
