@@ -37,6 +37,7 @@ import {
   closeReliabilityRepo,
 } from "./reliability-wiring.js";
 import { resolveServerVersion } from "./server-version.js";
+import { healthStatus } from "./health-status.js";
 
 // ─── Reliability wiring (D2.4 / D2.6) ───────────────────────────────────────
 // Re-exported so pipeline-tools and other callers can inject the provider into
@@ -55,6 +56,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT ?? join(__dirname, "..", "..", "..");
 
+// Marks the fallback config. The fallback also carries `version`, so
+// check_health tests this marker, not `version` (#124).
+const CONFIG_NOT_FOUND = "config_not_found";
+
 function loadSkillConfig(): Record<string, unknown> {
   const configPaths = [
     process.env.PRD_GEN_SKILL_CONFIG,
@@ -68,7 +73,7 @@ function loadSkillConfig(): Record<string, unknown> {
     }
   }
 
-  return { version: "2.0.0", status: "config_not_found" };
+  return { version: "2.0.0", status: CONFIG_NOT_FOUND };
 }
 
 function loadSkillMd(): string {
@@ -157,7 +162,7 @@ const toolCheckHealth = server.tool(
   {},
   { readOnlyHint: true },
   async () => {
-    const configAvailable = loadSkillConfig().version !== undefined;
+    const configAvailable = loadSkillConfig().status !== CONFIG_NOT_FOUND;
     const skillAvailable = loadSkillMd() !== "SKILL.md not found";
 
     let dbHealthy = false;
@@ -171,16 +176,15 @@ const toolCheckHealth = server.tool(
       dbHealthy = false;
     }
 
+    const components = { configAvailable, skillAvailable, evidenceDbHealthy: dbHealthy };
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              status: "ok",
-              configAvailable,
-              skillAvailable,
-              evidenceDbHealthy: dbHealthy,
+              ...healthStatus(components),
+              ...components,
               timestamp: new Date().toISOString(),
             },
             null,
