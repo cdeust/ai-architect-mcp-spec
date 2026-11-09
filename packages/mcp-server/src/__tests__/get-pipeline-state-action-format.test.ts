@@ -69,6 +69,20 @@ describe("get_pipeline_state format:'action'", () => {
     expect(actionRes.run_id).toBe(runId);
     // The cached action matches what start_pipeline itself returned.
     expect(actionRes.action).toEqual(startRes.action);
+    // A single-step action fits on one page; the page marker says so.
+    expect(actionRes.__page).toMatchObject({ offset: 0, next_offset: null, budget_chars: 100_000 });
+  });
+
+  it("format:'action' with an invocation_offset past the last action returns a structured error", async () => {
+    const start = handlers.get("start_pipeline")!;
+    const getState = handlers.get("get_pipeline_state")!;
+    const runId = parse(await start({
+      feature_description: "OAuth login for the mobile app",
+      skip_preflight: true,
+    })).run_id as string;
+    const res = await getState({ run_id: runId, format: "action", invocation_offset: 10_000 });
+    expect(res.isError).toBe(true);
+    expect(parse(res).error).toContain("out of range");
   });
 
   it("format:'action' on an unknown run_id returns a structured error, not a crash", async () => {
