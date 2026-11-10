@@ -1,7 +1,8 @@
 /**
- * File export — write the PRD deliverable files (6 core + up to 3 companion,
- * one run-notes file when any file was skipped or any failed section was
- * withheld) per SKILL.md Phase 4, plus a sidecar
+ * File export — write the PRD deliverable files (the core PRD, the companion
+ * and JIRA files whose sections passed, one run-notes file when any file was
+ * skipped or any failed section was withheld) per SKILL.md Phase 4, plus a
+ * sidecar
  * (`stage-5.affected_symbols.json`) whenever the technical_specification
  * section produced content.
  *
