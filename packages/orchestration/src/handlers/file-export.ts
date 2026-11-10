@@ -170,6 +170,64 @@ function sectionBody(section: Section): string {
     : trimmed;
 }
 
+/**
+ * precondition:  `display` is the section's SECTION_DISPLAY_NAMES entry.
+ * postcondition: `body` without its first line when that line is a markdown
+ *                heading (any level) whose text is `display` (case and
+ *                inner whitespace ignored), and without the blank lines
+ *                that followed it; `body` unchanged otherwise.
+ *
+ * joinSections owns each section's heading in the exported files. The
+ * section prompt (meta-prompting section-prompts.ts COMMON_RULES #2) also
+ * tells the model to start its draft with `## <Section Display Name>`, so
+ * a compliant draft carried a second copy of the heading the export adds.
+ * Only a heading that names the section is removed: any other leading
+ * heading is draft content.
+ * source: cdeust/ai-architect-mcp-spec#122 — audit of v0.8.0 on 2026-10-10
+ * found every exported file with duplicated headings.
+ */
+function withoutOwnHeading(body: string, display: string): string {
+  const newline = body.indexOf("\n");
+  const first = newline === -1 ? body : body.slice(0, newline);
+  const text = headingText(first);
+  if (text === null || normalizeTitle(text) !== normalizeTitle(display)) return body;
+  const rest = newline === -1 ? "" : body.slice(newline + 1);
+  return rest.slice(leadingBlankLinesLength(rest));
+}
+
+/**
+ * precondition:  `line` holds no newline.
+ * postcondition: the text of an ATX heading line (`#` to `######`, then a
+ *                space or tab), without its optional closing `#` run;
+ *                null when `line` is not a heading. Scans by index, with
+ *                no regular expression: a backtracking heading pattern is
+ *                polynomial on long runs of spaces in model output
+ *                (CodeQL js/polynomial-redos on #198).
+ */
+function headingText(line: string): string | null {
+  let level = 0;
+  while (level < line.length && line[level] === "#") level++;
+  const separator = line[level];
+  if (level < 1 || level > 6 || (separator !== " " && separator !== "\t")) return null;
+  let end = line.length;
+  while (end > level && line[end - 1] === "#") end--;
+  return line.slice(level, end);
+}
+
+function normalizeTitle(text: string): string {
+  return text.split(/[ \t]+/).filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Length of the run of whitespace-only lines at the start of `text`. */
+function leadingBlankLinesLength(text: string): number {
+  let cut = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") cut = i + 1;
+    else if (text[i] !== " " && text[i] !== "\t" && text[i] !== "\r") break;
+  }
+  return cut;
+}
+
 function joinSections(
   state: PipelineState,
   types: readonly SectionType[],
@@ -180,7 +238,10 @@ function joinSections(
       (a, b) =>
         SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type],
     )
-    .map((s) => `## ${SECTION_DISPLAY_NAMES[s.section_type]}\n\n${sectionBody(s)}`)
+    .map((s) => {
+      const display = SECTION_DISPLAY_NAMES[s.section_type];
+      return `## ${display}\n\n${withoutOwnHeading(sectionBody(s), display)}`;
+    })
     .join("\n\n");
 }
 
