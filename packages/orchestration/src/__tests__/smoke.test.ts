@@ -220,8 +220,11 @@ describe("end-to-end smoke run", () => {
     // pinned at commit 92216cd90f8f26cb15348675fc6556b8293edfc1) that MUST
     // still produce stage-5.affected_symbols.json (empty arrays), not omit
     // it — the section ran; only "the section never ran" omits the sidecar.
-    // Total: 01,02,03,04,05,07(jira) + 00-run-notes + 10-verification-report
-    // + stage-5.affected_symbols.json = 9.
+    // data_model and api_specification are in the known failing baseline
+    // below: their failed drafts are not deliverables, so 02 and 03 are
+    // omitted and named in 00-run-notes.md (cdeust/ai-architect-mcp-spec#122).
+    // Total: 01,04,05,07(jira) + 00-run-notes + 10-verification-report
+    // + stage-5.affected_symbols.json = 7.
     const seed = newPipelineState({
       run_id: "smoke_file_count",
       feature_description: "build a feature for OAuth login",
@@ -233,8 +236,6 @@ describe("end-to-end smoke run", () => {
     expect(paths).toEqual(
       expect.arrayContaining([
         "01-prd.md",
-        "02-data-model.md",
-        "03-api-spec.md",
         "04-security.md",
         "05-testing.md",
         "07-jira-tickets.md",
@@ -246,7 +247,9 @@ describe("end-to-end smoke run", () => {
     expect(paths).not.toContain("06-deployment.md");
     expect(paths).not.toContain("08-source-code.md");
     expect(paths).not.toContain("09-test-code.md");
-    expect(result.finalState.written_files.length).toBe(9);
+    expect(paths).not.toContain("02-data-model.md");
+    expect(paths).not.toContain("03-api-spec.md");
+    expect(result.finalState.written_files.length).toBe(7);
   });
 
   it("loop terminates within the safety cap", () => {

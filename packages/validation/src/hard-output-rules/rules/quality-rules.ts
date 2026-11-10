@@ -119,18 +119,29 @@ export function checkHonestVerificationVerdicts(
     /NFR-\d+|(?:p95|p99|latency|throughput|response\s+time)\s*(?:[:≤=]|<=?)\s*\d+/gi;
   if (!nfrPattern.test(content)) return [];
 
+  // A verdict is a canonical upper-case token anywhere, or any casing right
+  // after a `Verdict:` label. The pattern used to carry a blanket `i` flag,
+  // which counted the English verb ("requests pass through the gateway") as a
+  // PASS verdict; with that noise in the count, the rule needed at least two
+  // verdicts before firing, and a single PASS on a latency claim escaped it
+  // (#118). A labelled `Verdict: Pass` or `Verdict: Spec-Complete` still counts.
   const verdictPattern =
     /\b(?:PASS|SPEC-COMPLETE|NEEDS-RUNTIME|INCONCLUSIVE|FAIL)\b/gi;
+  const verdictLabel = /\bverdict\s*[:=]\s*$/i;
   const verdicts: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = verdictPattern.exec(content)) !== null) {
-    verdicts.push(match[0].toUpperCase());
+    const token = match[0];
+    const isCanonical = token === token.toUpperCase();
+    const lineStart = content.lastIndexOf("\n", match.index) + 1;
+    const isLabelled = verdictLabel.test(content.slice(lineStart, match.index));
+    if (isCanonical || isLabelled) verdicts.push(token.toUpperCase());
   }
 
   if (verdicts.length === 0) return [];
 
   const hasOnlyPass = verdicts.every((v) => v === "PASS");
-  if (hasOnlyPass && verdicts.length >= 2) {
+  if (hasOnlyPass) {
     return [
       makeViolation(
         "honest_verification_verdicts",

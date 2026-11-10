@@ -93,6 +93,46 @@ describe("checkHonestVerificationVerdicts", () => {
   it("returns nothing for empty content", () => {
     expect(checkHonestVerificationVerdicts("", PERF)).toEqual([]);
   });
+
+  // #118: the rule required at least two verdicts, so a single PASS on a
+  // latency claim passed the deterministic checks.
+  it("flags a single PASS verdict on a latency claim", () => {
+    const content = ["## Verification", "", "p95 <= 200", "", "Verdict: PASS"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
+  it("does not count the English verb 'pass' as a verdict", () => {
+    const content = "p95 <= 200 ms. Requests pass through the gateway; retries pass the token.";
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("counts a mixed-case verdict written after a Verdict: label", () => {
+    const content = ["p95 <= 200", "", "Verdict: Pass"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
+  it("accepts a labelled mixed-case Spec-Complete next to a PASS", () => {
+    const content = ["p95 <= 200", "Verdict: Spec-Complete", "| T-1 | PASS |"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("does not count prose 'fail' as a verdict that cancels a PASS", () => {
+    const content = ["p95 <= 200", "Requests fail over to the replica.", "Verdict: PASS"].join("\n");
+    const v = checkHonestVerificationVerdicts(content, PERF);
+    expect(v.map((x) => x.rule)).toEqual(["honest_verification_verdicts"]);
+  });
+
+  it("accepts a single NEEDS-RUNTIME verdict on a latency claim", () => {
+    const content = ["p95 <= 200", "", "Verdict: NEEDS-RUNTIME"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
+
+  it("accepts a PASS alongside a SPEC-COMPLETE verdict", () => {
+    const content = ["p95 <= 200", "Verdict: PASS", "Verdict: SPEC-COMPLETE"].join("\n");
+    expect(checkHonestVerificationVerdicts(content, PERF)).toEqual([]);
+  });
 });
 
 describe("checkDocumentVerificationVerdicts", () => {

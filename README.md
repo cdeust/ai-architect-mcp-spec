@@ -113,6 +113,22 @@ map_failure_to_retrieval(violations[])
 
 <sub><strong>A note on naming.</strong> This is published as <code>ai-architect-mcp-spec</code> across its Claude Code, Codex, Gemini, MCPB, PyPI/npm and MCP Registry surfaces. <code>0.7.0</code> moved the Registry entry and primary bundle to that identity; <code>0.8.0</code> completed the migration, so no <code>prd-spec-generator</code> plugin or release alias is retained anywhere. The former <code>io.github.cdeust/prd-spec-generator</code> Registry versions are deprecated with a pointer to the canonical entry rather than left active and frozen.</sub>
 
+### Requirements
+
+The rule-based checking tools (`validate_prd_section`, `validate_prd_document`, `map_failure_to_retrieval`) run on their own. The verification tools (`plan_section_verification`, `plan_document_verification`, `conclude_verification`) need zetetic-team-subagents, because the host spawns the judges they select. The full `/generate-prd` pipeline needs the companions below, and its preflight checks only some of them.
+
+| Companion (for `/generate-prd`) | Required? | Checked by preflight? |
+|---|---|---|
+| [Cortex](https://github.com/cdeust/Cortex) (`hypermnesia-mcp`) | Yes, unless `skip_preflight: true` | Yes |
+| [zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents) | Yes, no degraded mode | No |
+| [ai-architect-mcp-codebase](https://github.com/cdeust/ai-architect-mcp-codebase) | Only with `codebase_path` | Yes, when `codebase_path` is set |
+
+- **Cortex** provides the run-level recall in input analysis, the per-section recall during section generation, and the `remember` of the run summary at the end. Without it the run stops at `preflight` with "Cortex MCP not reachable". `skip_preflight: true` lets the run continue without that context.
+- **zetetic-team-subagents** provides the subagent types of the PRD-generation and verification steps: `zetetic-team-subagents:engineer` for clarification, section drafts and JIRA tickets, the `zetetic-team-subagents:genius:*` and team judges (for example `zetetic-team-subagents:code-reviewer`) for verification, and `zetetic-team-subagents:git-historian` when a codebase is given. No probe checks for it, and a missing plugin does not stop the run cleanly: the git-history step fails and the run continues without it, clarification shows the host's spawn error as the question, and each section draft is marked failed without a retry and left out of the exported files, so no JIRA ticket is generated either.
+- **`skip_preflight: true`** skips both probes, including the ai-architect-mcp-codebase one. It does not make ai-architect-mcp-codebase optional when `codebase_path` is set: if it is missing, the run stops at `input_analysis` when `analyze_codebase` fails.
+
+Install commands for all three are in [Companion ecosystem](#companion-ecosystem).
+
 ### Install (marketplace — recommended)
 
 ```bash
@@ -121,7 +137,10 @@ claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
 ```
 
 Restart your Claude Code session. The 17 MCP tools register on first
-stdio handshake. Then:
+stdio handshake. `/generate-prd` also needs Cortex and zetetic-team-subagents
+installed: without them it stops at `preflight` or produces no section (see
+[Requirements](#requirements) and [Companion ecosystem](#companion-ecosystem)).
+Then:
 
 ```
 /generate-prd build OAuth login for the admin console
@@ -130,6 +149,26 @@ stdio handshake. Then:
 The plugin's bundled MCP server at `mcp-server/index.js` is self-contained
 (only `better-sqlite3` is an optional native dependency for the evidence
 repository — gracefully degrades to in-memory mode when absent).
+
+#### Supported platforms
+
+<!-- This table is checked against the CI matrix by scripts/portable-distribution.test.mjs. -->
+`manifest.json` declares `darwin`, `win32` and `linux`. What CI proves on each,
+on every pull request (`.github/workflows/pipeline.yml`) and again on the merge
+commit (`.github/workflows/pipeline-post-merge.yml`):
+
+| Platform | CI runner | What runs there |
+|---|---|---|
+| Linux | `ubuntu-latest` | unit, regression, e2e (including the `.mcpb` smoke), environment, install |
+| macOS | `macos-latest` | environment, install |
+| Windows | `windows-latest` | environment, install |
+
+The environment and install jobs start the server through the plugin launcher
+`bin/ensure-deps.sh` and call `check_health` over stdio; the install job does so
+from a real `claude plugin install`. The launcher is a bash script: on Windows,
+CI runs it under Git Bash, so a Windows host needs a bash on `PATH`. The `.mcpb`
+bundle launches `node` directly and needs no bash, but its smoke test runs on
+Linux only, so the bundle has no CI evidence on macOS or Windows.
 
 #### Migrating from `prd-spec-generator`
 
@@ -166,22 +205,27 @@ gemini extensions install https://github.com/cdeust/ai-architect-mcp-spec
 
 ### Companion ecosystem
 
-For full effect, install the three companion plugins so the pipeline can
-consume codebase intelligence, persistent memory, and the genius-agent
-panel:
+Cortex (unless `skip_preflight: true`) and zetetic-team-subagents are required by the full pipeline;
+ai-architect-mcp-codebase is needed only when you pass `codebase_path`
+(see [Requirements](#requirements)):
 
 ```bash
 claude plugin marketplace add cdeust/ai-architect-mcp-codebase  # codebase graph intel
 claude plugin marketplace add cdeust/Cortex                  # persistent memory
 claude plugin marketplace add cdeust/zetetic-team-subagents  # the genius + team agents
 
-claude plugin install ai-architect-mcp-codebase
-claude plugin install hypermnesia-mcp
-claude plugin install zetetic-team-subagents
+claude plugin install ai-architect-mcp-codebase@ai-architect-mcp-codebase-marketplace
+claude plugin install hypermnesia-mcp@cortex-plugins
+claude plugin install zetetic-team-subagents@zetetic-marketplace
 ```
 
-Each plugin is independently useful; together they are the ai-architect
-ecosystem. See [Companion ecosystem](#companion-ecosystem) above.
+Each install names its marketplace. `zetetic-team-subagents` is listed both in
+its own `zetetic-marketplace` and in Cortex's `cortex-plugins` (pinned to a
+release there), so an unqualified install would not say which one it takes.
+These are the commands the preflight prints when a probe fails.
+
+Each companion is also useful on its own outside this pipeline; together they are the ai-architect
+ecosystem.
 
 ### Building from source
 
@@ -314,7 +358,7 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 | # | Step | What it produces |
 |---|------|------------------|
 | **1** | `banner` | Welcome banner with run ID + feature description + capability summary |
-| **2** | `preflight` | Probes the required ecosystem MCPs (Cortex, ai-architect) before the pipeline depends on them; skippable via `skip_preflight` |
+| **2** | `preflight` | Probes Cortex, and ai-architect-mcp-codebase when `codebase_path` is set, before the pipeline depends on them; skippable via `skip_preflight`. zetetic-team-subagents is not probed (see [Requirements](#requirements)) |
 | **3** | `context_detection` | Detects PRD type from trigger words; asks user when ambiguous |
 | **4** | `input_analysis` | Calls `index_codebase` (ai-architect-mcp-codebase) when a path is provided; sets `codebase_graph_path` |
 | **5** | `feasibility_gate` | Detects epic-scope inputs (≥2 EPIC_SIGNALS); asks user to focus |

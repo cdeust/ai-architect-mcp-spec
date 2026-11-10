@@ -229,6 +229,164 @@ describe("file_export handler", () => {
   });
 });
 
+/** Every write_file action (path → content) of a file_export drain. */
+function exportedContents(state: PipelineState): Map<string, string> {
+  const files = new Map<string, string>();
+  let current = state;
+  let out = step({ state: current });
+  for (let i = 0; i < 20 && out.action.kind === "write_file"; i++) {
+    files.set(out.action.path, out.action.content);
+    const next = step({
+      state: current,
+      result: { kind: "file_written", path: out.action.path, bytes: 1 },
+    });
+    current = next.state;
+    out = next;
+  }
+  return files;
+}
+
+/** The fully populated fixture with the named sections failed, drafts kept. */
+function withFailed(
+  types: readonly PipelineState["sections"][number]["section_type"][],
+): PipelineState {
+  const s = stateAtFileExportFullyPopulated();
+  return {
+    ...s,
+    sections: s.sections.map((section) =>
+      types.includes(section.section_type)
+        ? {
+            ...section,
+            status: "failed" as const,
+            attempt: 3,
+            violation_count: 4,
+            content: `FAILED DRAFT of ${section.section_type}`,
+          }
+        : section,
+    ),
+  };
+}
+
+// source: cdeust/ai-architect-mcp-spec#122 — failSection keeps the last draft
+// in state, and the audit of v0.8.0 found those drafts exported as deliverables.
+describe("file_export handler — failed sections are withheld, never exported", () => {
+  it("leaves a failed core section's draft out of 01-prd.md and names it in run notes", () => {
+    const files = exportedContents(withFailed(["goals"]));
+    const prd = files.get("prd-output/test_exp/01-prd.md")!;
+    expect(prd).not.toContain("FAILED DRAFT");
+    expect(prd).not.toContain("## Goals & Objectives");
+    expect(prd).toContain("Overview content");
+    const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
+    expect(notes).toContain(
+      "- **Goals & Objectives** (`01-prd.md`): failed after 3 attempt(s) with 4 violation(s).",
+    );
+  });
+
+  it("skips a companion file whose only source failed, as failed_validation", () => {
+    const files = exportedContents(withFailed(["data_model"]));
+    expect(files.has("prd-output/test_exp/02-data-model.md")).toBe(false);
+    const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
+    expect(notes).toMatch(
+      /Data Model\*\* \(`02-data-model.md`\): section generation failed validation/,
+    );
+    expect(notes).toContain("- **Data Model** (`02-data-model.md`): failed after 3 attempt(s)");
+  });
+
+  it("keeps the passed half of a two-source file and withholds the failed half", () => {
+    const files = exportedContents(withFailed(["performance_requirements"]));
+    const security = files.get("prd-output/test_exp/04-security.md")!;
+    expect(security).toContain("Security content");
+    expect(security).not.toContain("FAILED DRAFT");
+  });
+
+  it("names every file a failed section would have fed", () => {
+    const files = exportedContents(withFailed(["acceptance_criteria"]));
+    for (const [path, content] of files) {
+      if (!path.endsWith("00-run-notes.md")) expect(content, path).not.toContain("FAILED DRAFT");
+    }
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toContain(
+      "- **Acceptance Criteria** (`01-prd.md`, `05-testing.md`, `07-jira-tickets.md`): failed after 3 attempt(s)",
+    );
+  });
+
+  it("skips 07-jira-tickets.md as failed_validation when every JIRA source failed", () => {
+    const s = withFailed(["requirements", "user_stories", "acceptance_criteria"]);
+    // jira_generation builds nothing from failed drafts, so no ticket section exists.
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.filter((section) => section.section_type !== "jira_tickets"),
+    });
+    expect(files.has("prd-output/test_exp/07-jira-tickets.md")).toBe(false);
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): section generation failed validation/,
+    );
+  });
+
+  it("keeps 07-jira-tickets.md as merely skipped when there is no JIRA source material", () => {
+    const files = exportedContents(stateAtFileExport());
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): not generated in this run/,
+    );
+  });
+
+  it("keeps 07-jira-tickets.md as merely skipped when one JIRA source failed and another passed", () => {
+    const s = withFailed(["user_stories"]);
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.filter((section) => section.section_type !== "jira_tickets"),
+    });
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): not generated in this run/,
+    );
+  });
+
+  it("keeps a failed technical_specification draft out of 01-prd.md but still writes the sidecar", () => {
+    const files = exportedContents(withFailed(["technical_specification"]));
+    expect(files.get("prd-output/test_exp/01-prd.md")).not.toContain("FAILED DRAFT");
+    // Deliberate for now: pre_impl_grounding reads the sidecar (follow-up on #122).
+    expect(files.has("prd-output/test_exp/stage-5.affected_symbols.json")).toBe(true);
+  });
+
+  it("does not list a failed section with no draft, but still skips its file as failed_validation", () => {
+    const s = withFailed(["data_model"]);
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.map((section) =>
+        section.section_type === "data_model" ? { ...section, content: undefined } : section,
+      ),
+    });
+    const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
+    expect(notes).toMatch(/Data Model\*\* \(`02-data-model.md`\): section generation failed validation/);
+    expect(notes).not.toContain("following sections failed validation");
+  });
+
+  it("lists withheld sections apart from the skipped files in run notes", () => {
+    const s = stateAtFileExport();
+    const files = exportedContents({
+      ...s,
+      prd_context: "poc",
+      sections: [
+        ...s.sections,
+        {
+          section_type: "goals",
+          status: "failed",
+          attempt: 3,
+          violation_count: 2,
+          last_violations: [],
+          content: "FAILED DRAFT of goals",
+        },
+      ],
+    });
+    const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
+    expect(notes).toContain("- **Goals & Objectives** (`01-prd.md`): failed after 3 attempt(s) with 2 violation(s).");
+    const skippedAt = notes.indexOf("were not generated in this run");
+    const withheldAt = notes.indexOf("following sections failed validation");
+    expect(skippedAt).toBeGreaterThan(-1);
+    expect(withheldAt).toBeGreaterThan(skippedAt);
+    expect(files.get("prd-output/test_exp/01-prd.md")).not.toContain("FAILED DRAFT");
+  });
+});
+
 describe("file_export handler — stage-5.affected_symbols.json sidecar", () => {
   const AFFECTED_SYMBOLS_BLOCK = [
     "## Technical Specification",

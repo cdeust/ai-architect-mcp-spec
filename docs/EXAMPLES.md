@@ -253,7 +253,7 @@ The host displays the summary to the user. Pipeline run complete.
 
 ## What did the closed feedback loop do?
 
-While the run was happening, **for every section that reached a terminal status (passed or failed), one `ExecutionResult` per required strategy was enqueued onto `state.strategy_executions`**. The mcp-server composition root drained that queue and forwarded each entry to `EffectivenessTracker.recordExecution`, which wrote rows to the local `~/.prd-gen/evidence.db` SQLite database:
+While the run was happening, **for every section that reached a terminal status (passed or failed), one `ExecutionResult` per required strategy was enqueued onto `state.strategy_executions`**. The mcp-server composition root drained that queue and forwarded each entry to `EffectivenessTracker.recordExecution`, which wrote rows to the local SQLite evidence database (`~/.prd-gen/evidence.db` by default, or the absolute path in `PRD_GEN_EVIDENCE_DB` when set):
 
 ```sql
 SELECT strategy, claim_characteristics, was_compliant, actual_confidence_gain
@@ -277,7 +277,7 @@ These rows feed back into the next session's `selectStrategy` call via `getHisto
 
 If a section can't pass validation in 3 attempts (e.g., the engineer produces drafts with FR-numbering gaps every time), the run still completes — the section is marked `failed`, an entry appears in `state.errors` with `kind: "section_failure"`, and the pipeline advances to the next section. The final `done` summary shows `Sections: 10/11 passed, 1 failed`. The user sees the failed section's last violations in the output and can re-prompt with more context.
 
-This is the precautionary design: a single section failure doesn't sink the whole PRD. The user gets 10 good sections + a clearly marked 11th to fix manually, rather than "the pipeline crashed and you have nothing."
+This is the precautionary design: a single section failure doesn't sink the whole PRD. The user gets 10 good sections, and `00-run-notes.md` names the 11th (its draft is withheld from the exported files) to fix manually, rather than "the pipeline crashed and you have nothing."
 
 ---
 

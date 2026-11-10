@@ -46,7 +46,7 @@ function adviseCortexInstall(): string {
     "prior-decision context — generation quality degrades silently.",
     "",
     "To install:",
-    "  /plugin marketplace add cdeust/cortex",
+    "  /plugin marketplace add cdeust/Cortex",
     "  /plugin install hypermnesia-mcp@cortex-plugins",
     "  /reload-plugins",
     "",

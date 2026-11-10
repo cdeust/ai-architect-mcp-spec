@@ -19,17 +19,10 @@ import {
   type PRDContext,
 } from "@prd-gen/core";
 
-import { tryCreateEvidenceRepository, type EvidenceRepository } from "@prd-gen/core";
-
-/**
- * Minimal structural alias for the optional better-sqlite3-backed evidence
- * repository. The factory `tryCreateEvidenceRepository` returns
- * `EvidenceRepository | null` directly; we keep the alias name for
- * historical readability of the lazy-init helper below.
- */
-type EvidenceRepositoryLike = EvidenceRepository;
+import { getEvidenceRepo } from "./evidence-db-path.js";
 
 import { validateSection, validateDocument } from "@prd-gen/validation";
+import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { registerBudgetTools } from "./budget-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
@@ -44,6 +37,7 @@ import {
   closeReliabilityRepo,
 } from "./reliability-wiring.js";
 import { resolveServerVersion } from "./server-version.js";
+import { healthStatus } from "./health-status.js";
 
 // ─── Reliability wiring (D2.4 / D2.6) ───────────────────────────────────────
 // Re-exported so pipeline-tools and other callers can inject the provider into
@@ -62,6 +56,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT ?? join(__dirname, "..", "..", "..");
 
+// Marks the fallback config. The fallback also carries `version`, so
+// check_health tests this marker, not `version` (#124).
+const CONFIG_NOT_FOUND = "config_not_found";
+
 function loadSkillConfig(): Record<string, unknown> {
   const configPaths = [
     process.env.PRD_GEN_SKILL_CONFIG,
@@ -75,7 +73,7 @@ function loadSkillConfig(): Record<string, unknown> {
     }
   }
 
-  return { version: "2.0.0", status: "config_not_found" };
+  return { version: "2.0.0", status: CONFIG_NOT_FOUND };
 }
 
 function loadSkillMd(): string {
@@ -126,18 +124,6 @@ server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
   resourceTemplates: [],
 }));
 
-// Lazy-init evidence repository (only when better-sqlite3 is available).
-// `tryCreateEvidenceRepository` returns null if the native module is
-// missing — replaces the previous `await import + unknown cast` pattern
-// (cross-audit code-reviewer M7, Phase 3+4, 2026-04).
-let _evidenceRepo: EvidenceRepositoryLike | null | undefined = undefined;
-function getEvidenceRepo(): EvidenceRepositoryLike | null {
-  if (_evidenceRepo === undefined) {
-    _evidenceRepo = tryCreateEvidenceRepository();
-  }
-  return _evidenceRepo;
-}
-
 // ─── Tool 1: get_config ──────────────────────────────────────────────────────
 
 const toolGetConfig = server.tool(
@@ -176,7 +162,7 @@ const toolCheckHealth = server.tool(
   {},
   { readOnlyHint: true },
   async () => {
-    const configAvailable = loadSkillConfig().version !== undefined;
+    const configAvailable = loadSkillConfig().status !== CONFIG_NOT_FOUND;
     const skillAvailable = loadSkillMd() !== "SKILL.md not found";
 
     let dbHealthy = false;
@@ -190,16 +176,15 @@ const toolCheckHealth = server.tool(
       dbHealthy = false;
     }
 
+    const components = { configAvailable, skillAvailable, evidenceDbHealthy: dbHealthy };
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              status: "ok",
-              configAvailable,
-              skillAvailable,
-              evidenceDbHealthy: dbHealthy,
+              ...healthStatus(components),
+              ...components,
               timestamp: new Date().toISOString(),
             },
             null,
@@ -275,13 +260,14 @@ const toolValidateSection = server.tool(
     section_type: SectionTypeSchema.describe(
       "The type of PRD section being validated",
     ),
+    known_symbols: KnownSymbolsSchema,
   },
   { readOnlyHint: true },
-  async ({ content, section_type }) => {
+  async ({ content, section_type, known_symbols }) => {
     // section_type is already validated by SectionTypeSchema at the MCP
     // boundary above. No cast required (cross-audit code-reviewer H5,
     // Phase 3+4, 2026-04).
-    const report = validateSection(content, section_type);
+    const report = withSymbolCheck(validateSection(content, section_type), content, known_symbols);
     return {
       content: [
         { type: "text" as const, text: JSON.stringify(report, null, 2) },
@@ -307,10 +293,12 @@ const toolValidateDocument = server.tool(
         }),
       )
       .describe("Array of PRD sections to validate"),
+    known_symbols: KnownSymbolsSchema,
   },
   { readOnlyHint: true },
-  async ({ sections }) => {
-    const report = validateDocument(sections);
+  async ({ sections, known_symbols }) => {
+    const contents = sections.map((s) => s.content);
+    const report = withSymbolCheck(validateDocument(sections), contents, known_symbols);
     return {
       content: [
         { type: "text" as const, text: JSON.stringify(report, null, 2) },
@@ -342,7 +330,7 @@ const toolQualityHistory = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],
@@ -380,7 +368,7 @@ const toolStrategyEffectiveness = server.tool(
           {
             type: "text" as const,
             text: JSON.stringify({
-              error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+              error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
             }),
           },
         ],
