@@ -55,11 +55,26 @@ import {
 
 const VERIFY_BATCH_ID = "self_check_verify";
 
+/**
+ * postcondition: the sections whose claims self-check judges — every section
+ *                with content, except jira_tickets (generated outside the
+ *                section validation loop; no claim extractor is defined for
+ *                ticket format) and failed sections. failSection keeps a
+ *                failed draft in `content`, but that draft is not a
+ *                deliverable (file_export withholds it, #122), so judging
+ *                its claims would count them in the verification report as
+ *                if they were part of the PRD. The failure itself is still
+ *                reported: finalize() counts failed sections and sets
+ *                outcome "needs_attention".
+ */
 function gatherSections(state: PipelineState) {
-  // Exclude jira_tickets — generated outside the section validation loop;
-  // no claim extractor is defined for ticket format.
   return state.sections
-    .filter((s) => s.content && s.section_type !== "jira_tickets")
+    .filter(
+      (s) =>
+        s.content &&
+        s.status !== "failed" &&
+        s.section_type !== "jira_tickets",
+    )
     .map((s) => ({ type: s.section_type, content: s.content! }));
 }
 
