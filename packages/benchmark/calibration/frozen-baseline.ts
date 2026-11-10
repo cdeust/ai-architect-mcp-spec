@@ -9,7 +9,8 @@
  *      from the calibration's frozen baseline (Popper AP-1 ratchet protection).
  *
  *   2. `resolveFrozenBaselineCommit` — returns the current `git rev-parse HEAD`
- *      so the runner pins itself to a commit. Falls back to "unknown" when not
+ *      so the runner records it as provenance (nothing is refused because of
+ *      it). Falls back to "unknown" when not
  *      in a git tree (e.g., installed-package context).
  *
  * source: docs/PHASE_4_PLAN.md §4.5 — Frozen-baseline definition.

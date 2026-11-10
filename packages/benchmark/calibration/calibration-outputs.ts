@@ -143,10 +143,12 @@ export type GateCalibrationEntry = z.infer<typeof GateCalibrationEntrySchema>;
  * Empty `gates: []` is the unsealed-template state — the committed stub.
  * `loadCalibratedGates()` returns null when `gates.length === 0`.
  *
- * `frozen_baseline_commit` is the merge-base commit at which the canned
- * dispatcher's behaviour was recorded. The runner asserts at startup that
- * `pipeline-kpis.ts` content hash at that commit matches the stored
- * `frozen_baseline_content_hash` — see §4.5 Frozen-baseline definition.
+ * `frozen_baseline_commit` is the HEAD sha recorded as provenance when the
+ * canned dispatcher's behaviour was measured (`frozen-baseline.ts`); nothing
+ * is refused because of it. The runner's only pre-flight check compares the
+ * SHA-256 of the `pipeline-kpis.ts` being measured with the stored
+ * `frozen_baseline_content_hash` of a sealed artefact — see §4.5
+ * Frozen-baseline definition.
  *
  * source: docs/PHASE_4_PLAN.md §4.5 PRE-REGISTRATION → Frozen-baseline.
  * source: D3.3 brief — schema_version + commit_hash + seed_used + timestamp.

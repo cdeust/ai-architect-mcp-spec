@@ -2,7 +2,7 @@
  * Machine-class detection + per-bucket gate lookup for Phase 4.5.
  *
  * Phase 4.5 calibrates `wall_time_ms` against the canned-baseline pipeline
- * (`makeCannedDispatcher`) at the frozen merge-base of Wave B. Because
+ * (`makeCannedDispatcher`) at the frozen baseline of Wave B. Because
  * canned-pipeline wall-time is dominated by JS execution speed (no LLM,
  * no I/O), it is sensitive to host-machine class. A single global gate is
  * either too tight on a slow CI runner or too loose on a fast workstation.
