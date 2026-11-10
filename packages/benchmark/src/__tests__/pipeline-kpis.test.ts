@@ -15,7 +15,7 @@ describe("pipeline KPIs", () => {
 
     expect(kpis.final_action_kind).toBe("done");
     expect(kpis.current_step).toBe("complete");
-    // 9: file-export.ts's root-cause fix (2026-07-15) stops writing
+    // 7: file-export.ts's root-cause fix (2026-07-15) stops writing
     // placeholder files for sections never scheduled by the run's PRD
     // context (06-deployment/08-source-code/09-test-code — "feature"
     // context never schedules deployment/timeline/risks or source/test
