@@ -170,6 +170,30 @@ function sectionBody(section: Section): string {
     : trimmed;
 }
 
+/**
+ * precondition:  `display` is the section's SECTION_DISPLAY_NAMES entry.
+ * postcondition: `body` without its first line when that line is a markdown
+ *                heading (any level) whose text is `display` (case and
+ *                inner whitespace ignored), and without the blank lines
+ *                that followed it; `body` unchanged otherwise.
+ *
+ * joinSections owns each section's heading in the exported files. The
+ * section prompt (meta-prompting section-prompts.ts COMMON_RULES #2) also
+ * tells the model to start its draft with `## <Section Display Name>`, so
+ * a compliant draft carried a second copy of the heading the export adds.
+ * Only a heading that names the section is removed: any other leading
+ * heading is draft content.
+ * source: cdeust/ai-architect-mcp-spec#122 — audit of v0.8.0 on 2026-10-10
+ * found every exported file with duplicated headings.
+ */
+function withoutOwnHeading(body: string, display: string): string {
+  const normalize = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
+  const [first = "", ...rest] = body.split("\n");
+  const heading = /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(first);
+  if (!heading || normalize(heading[1]!) !== normalize(display)) return body;
+  return rest.join("\n").replace(/^\s*\n/, "");
+}
+
 function joinSections(
   state: PipelineState,
   types: readonly SectionType[],
@@ -180,7 +204,10 @@ function joinSections(
       (a, b) =>
         SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type],
     )
-    .map((s) => `## ${SECTION_DISPLAY_NAMES[s.section_type]}\n\n${sectionBody(s)}`)
+    .map((s) => {
+      const display = SECTION_DISPLAY_NAMES[s.section_type];
+      return `## ${display}\n\n${withoutOwnHeading(sectionBody(s), display)}`;
+    })
     .join("\n\n");
 }
 

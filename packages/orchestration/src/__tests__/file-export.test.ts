@@ -536,3 +536,44 @@ describe("file_export handler — stage-5.affected_symbols.json sidecar", () => 
     }
   });
 });
+
+describe("file_export handler — one heading per section (#122)", () => {
+  /** The fully populated fixture with the named section's draft replaced. */
+  function withDraft(
+    type: PipelineState["sections"][number]["section_type"],
+    content: string,
+  ): PipelineState {
+    const s = stateAtFileExportFullyPopulated();
+    return {
+      ...s,
+      sections: s.sections.map((section) =>
+        section.section_type === type ? { ...section, content } : section,
+      ),
+    };
+  }
+
+  function count(haystack: string, needle: string): number {
+    return haystack.split(needle).length - 1;
+  }
+
+  it("exports a draft that starts with its own heading (prompt rule 2) under one heading", () => {
+    const files = exportedContents(withDraft("goals", "## Goals & Objectives\n\nShip it."));
+    const prd = files.get("prd-output/test_exp/01-prd.md")!;
+    expect(count(prd, "Goals & Objectives")).toBe(1);
+    expect(prd).toContain("## Goals & Objectives\n\nShip it.");
+  });
+
+  it("deduplicates a companion file's heading whatever the draft's level and case", () => {
+    const files = exportedContents(withDraft("data_model", "# data   MODEL\n\n\n  - users table"));
+    const dataModel = files.get("prd-output/test_exp/02-data-model.md")!;
+    expect(count(dataModel.toLowerCase(), "data model")).toBe(1);
+    expect(dataModel).toContain("## Data Model\n\n  - users table");
+  });
+
+  it("keeps a leading heading that does not name the section", () => {
+    const files = exportedContents(withDraft("goals", "## Context\n\nWhy now."));
+    expect(files.get("prd-output/test_exp/01-prd.md")).toContain(
+      "## Goals & Objectives\n\n## Context\n\nWhy now.",
+    );
+  });
+});
