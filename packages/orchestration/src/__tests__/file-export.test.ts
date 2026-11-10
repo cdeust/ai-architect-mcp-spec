@@ -566,7 +566,7 @@ describe("file_export handler — one heading per section (#122)", () => {
   it("deduplicates a companion file's heading whatever the draft's level and case", () => {
     const files = exportedContents(withDraft("data_model", "# data   MODEL\n\n\n  - users table"));
     const dataModel = files.get("prd-output/test_exp/02-data-model.md")!;
-    expect(count(dataModel.toLowerCase(), "data model")).toBe(1);
+    expect(count(dataModel.toLowerCase().replace(/[ \t]+/g, " "), "data model")).toBe(1);
     expect(dataModel).toContain("## Data Model\n\n  - users table");
   });
 
@@ -579,6 +579,20 @@ describe("file_export handler — one heading per section (#122)", () => {
     const files = exportedContents(withDraft("goals", spaces));
     expect(performance.now() - started).toBeLessThan(2_000);
     expect(files.get("prd-output/test_exp/01-prd.md")).toContain(spaces);
+  });
+
+  it("drops the heading of a CRLF draft and a closing run followed by spaces", () => {
+    const crlf = exportedContents(withDraft("goals", "## Goals & Objectives\r\n\r\nShip it."));
+    expect(count(crlf.get("prd-output/test_exp/01-prd.md")!, "Goals & Objectives")).toBe(1);
+    const trailing = exportedContents(withDraft("goals", "## Goals & Objectives ##  \n\nShip it."));
+    expect(count(trailing.get("prd-output/test_exp/01-prd.md")!, "Goals & Objectives")).toBe(1);
+  });
+
+  it("keeps a trailing # that is part of the title, not a closing sequence", () => {
+    const files = exportedContents(withDraft("goals", "## Goals & Objectives#\n\nShip it."));
+    expect(files.get("prd-output/test_exp/01-prd.md")).toContain(
+      "## Goals & Objectives\n\n## Goals & Objectives#\n\nShip it.",
+    );
   });
 
   it("keeps a leading heading that does not name the section", () => {
