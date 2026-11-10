@@ -115,3 +115,67 @@ test("portable identity accepts pre-release and real post-release checksums", ()
   assert.doesNotThrow(() => assertOptionalReleasedChecksum("a".repeat(64)));
   assert.throws(() => assertOptionalReleasedChecksum("0".repeat(64)));
 });
+
+// Issue #126: manifest.json declared win32 while the README said nothing about
+// what CI proves per platform. The README table is now the claim; this test
+// ties it to both pipeline workflows so it cannot drift from the evidence.
+const RUNNER_FOR_PLATFORM = {
+  linux: "ubuntu-latest",
+  darwin: "macos-latest",
+  win32: "windows-latest",
+};
+const RUNNER_FOR_LABEL = {
+  Linux: "ubuntu-latest",
+  macOS: "macos-latest",
+  Windows: "windows-latest",
+};
+// The pull-request pipeline and the merge-commit pipeline run the same tests.
+const PIPELINES = [".github/workflows/pipeline.yml", ".github/workflows/pipeline-post-merge.yml"];
+const TEST_JOBS = ["unit", "regression", "e2e", "environment", "install"];
+
+/** The `os` matrix, or the `runs-on` value, of one job of a workflow, sorted. */
+const jobRunners = (workflow, job) => {
+  const start = workflow.indexOf(`\n  ${job}:\n`);
+  assert.notEqual(start, -1, `job ${job} missing from the workflow`);
+  const next = workflow.slice(start + 1).search(/\n  [a-z0-9_-]+:\n/);
+  const body = next === -1 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+  const matrix = /\n\s+matrix:\n(?:\s+[a-z-]+: \S+\n)*\s+os: \[([^\]]+)\]/.exec(body);
+  if (matrix) return matrix[1].split(",").map((os) => os.trim()).sort();
+  const runsOn = /\n\s+runs-on: (\S+)/.exec(body);
+  assert.ok(runsOn, `job ${job} has no runs-on`);
+  return [runsOn[1]];
+};
+
+/** Rows of the README table: runner and the job names it lists (notes in parentheses dropped). */
+const readmePlatformRows = (readme) => {
+  const section = /#### Supported platforms\n([\s\S]*?)\n#### /.exec(readme);
+  assert.ok(section, "README: missing the Supported platforms section");
+  return [...section[1].matchAll(/^\| (\w+) \| `([^`]+)` \| (.+) \|$/gm)].map(
+    ([, label, runner, jobs]) => {
+      assert.equal(runner, RUNNER_FOR_LABEL[label], `README row ${label} names runner ${runner}`);
+      const names = jobs.replace(/\s*\([^)]*\)/g, "").split(",").map((job) => job.trim());
+      return { runner, jobs: names };
+    },
+  );
+};
+
+test("README supported-platforms table matches the CI matrix of both pipelines", () => {
+  const rows = readmePlatformRows(text("README.md"));
+  const readmeRunners = rows.map((row) => row.runner);
+  for (const platform of json("manifest.json").compatibility.platforms) {
+    const runner = RUNNER_FOR_PLATFORM[platform];
+    assert.ok(runner, `manifest declares ${platform}, which has no known CI runner`);
+    assert.ok(readmeRunners.includes(runner), `manifest declares ${platform}; README has no ${runner} row`);
+  }
+  for (const path of PIPELINES) {
+    const workflow = text(path);
+    for (const job of TEST_JOBS) {
+      const actual = jobRunners(workflow, job);
+      const claimed = rows.filter((row) => row.jobs.includes(job)).map((row) => row.runner).sort();
+      assert.deepEqual(claimed, actual, `${path}: README runners for ${job}`);
+    }
+    for (const { jobs } of rows) {
+      for (const job of jobs) assert.ok(TEST_JOBS.includes(job), `README lists unknown job ${job}`);
+    }
+  }
+});
