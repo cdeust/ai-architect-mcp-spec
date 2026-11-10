@@ -137,7 +137,10 @@ claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
 ```
 
 Restart your Claude Code session. The 17 MCP tools register on first
-stdio handshake. Then:
+stdio handshake. `/generate-prd` also needs Cortex and zetetic-team-subagents
+installed: without them it stops at `preflight` or produces no section (see
+[Requirements](#requirements) and [Companion ecosystem](#companion-ecosystem)).
+Then:
 
 ```
 /generate-prd build OAuth login for the admin console
@@ -191,10 +194,15 @@ claude plugin marketplace add cdeust/ai-architect-mcp-codebase  # codebase graph
 claude plugin marketplace add cdeust/Cortex                  # persistent memory
 claude plugin marketplace add cdeust/zetetic-team-subagents  # the genius + team agents
 
-claude plugin install ai-architect-mcp-codebase
-claude plugin install hypermnesia-mcp
-claude plugin install zetetic-team-subagents
+claude plugin install ai-architect-mcp-codebase@ai-architect-mcp-codebase-marketplace
+claude plugin install hypermnesia-mcp@cortex-plugins
+claude plugin install zetetic-team-subagents@zetetic-marketplace
 ```
+
+Each install names its marketplace. `zetetic-team-subagents` is listed both in
+its own `zetetic-marketplace` and in Cortex's `cortex-plugins` (pinned to a
+release there), so an unqualified install would not say which one it takes.
+These are the commands the preflight prints when a probe fails.
 
 Each companion is also useful on its own outside this pipeline; together they are the ai-architect
 ecosystem.
