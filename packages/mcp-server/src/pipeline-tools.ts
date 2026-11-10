@@ -53,6 +53,7 @@ import {
   boundGroundingResponse,
 } from "./bound-full-state.js";
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
+import { pageActionResponse } from "./page-action-response.js";
 
 /**
  * Global run semaphore cap — max pipeline runs in flight at once.
@@ -308,8 +309,8 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       const drained = drainStrategyExecutions(state);
       runStore.set(drained);
       // Cache the UNBOUNDED action before it is potentially shed by
-      // boundEnvelopeResponse — the observable recovery path for a
-      // __bounded spawn_subagents envelope. source: bound-envelope-action.ts.
+      // boundEnvelopeResponse — the recovery path for a spawn_subagents
+      // envelope whose prompts were omitted. source: bound-envelope-action.ts.
       lastActionByRun.set(drained.run_id, action as NextAction);
       return {
         content: [
@@ -408,18 +409,22 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
     "format:'grounding'); format:'grounding' returns the codebase_grounding (+ " +
     "prd_validation when it fits) blobs format:'full' sheds first; format:'validation' " +
     "returns prd_validation alone (the blob format:'grounding' sheds when the pair " +
-    "overshoots); format:'action' returns the UNBOUNDED last action emitted for this " +
-    "run (including full spawn_subagents prompts) — the recovery path when a " +
-    "start_pipeline/submit_action_result response carries a __bounded marker on its " +
-    "action.",
+    "overshoots); format:'action' returns the last action emitted for this run with " +
+    "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
+    "submit_action_result response's __bounded.applied records action.invocations[]." +
+    "prompt (its prompts are omitted stubs). It is " +
+    "paged under the same budget: each page holds whole invocations from " +
+    "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
+    "page, null on the last one.",
     {
       run_id: z.string(),
       format: z
         .enum(["full", "summary", "grounding", "validation", "action"])
         .default("summary"),
+      invocation_offset: z.number().int().min(0).default(0),
     },
     { readOnlyHint: true },
-    async ({ run_id, format }) => {
+    async ({ run_id, format, invocation_offset }) => {
       const state = runStore.get(run_id);
       if (!state) {
         return {
@@ -460,17 +465,28 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
           prd_validation: state.prd_validation,
         };
       } else if (format === "action") {
-        // Narrow re-fetch for the UNBOUNDED last action (prompts included) —
-        // the recovery path a host follows when a start_pipeline/
-        // submit_action_result envelope carries a __bounded marker on
-        // action.invocations[].prompt. Absent only when the run has never
-        // taken a step (cannot happen — runStore.get already found it) or
-        // was evicted (lastActionByRun is cleared in lockstep with runStore
-        // eviction via onEvict). source: bound-envelope-action.ts.
-        payload = {
-          run_id: state.run_id,
-          action: lastActionByRun.get(run_id) ?? null,
-        };
+        // Narrow re-fetch for the last action with its prompts — the
+        // recovery path a host follows when a start_pipeline/
+        // submit_action_result envelope's __bounded.applied records
+        // action.invocations[].prompt. Paged by whole invocations under
+        // MAX_RESPONSE_CHARS: the unpaged refetch measured ~112k chars in the
+        // 2026-10-10 audit (#125). `?? null` is defensive: an evicted run has
+        // already returned `unknown run_id` above (lastActionByRun is cleared
+        // in lockstep with runStore via onEvict). source: page-action-response.ts.
+        const page = pageActionResponse(
+          state.run_id,
+          lastActionByRun.get(run_id) ?? null,
+          // zod applies the default over MCP; a direct handler call (tests,
+          // in-process hosts) may omit the field.
+          invocation_offset ?? 0,
+        );
+        if ("error" in page) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(page) }],
+            isError: true,
+          };
+        }
+        payload = page;
       } else {
         payload = envelope(state, null);
       }

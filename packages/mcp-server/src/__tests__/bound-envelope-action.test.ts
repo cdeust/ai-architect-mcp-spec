@@ -85,6 +85,8 @@ describe("boundEnvelopeResponse — spawn_subagents envelope bounding", () => {
       expect(typeof prompt.chars).toBe("number");
       expect(prompt.chars).toBeGreaterThan(0);
       expect(String(prompt.hint)).toContain('format:"action"');
+      expect(String(prompt.hint)).toContain("__page.next_offset");
+      expect(String(prompt.hint)).toContain("invocation_offset");
     }
   });
 

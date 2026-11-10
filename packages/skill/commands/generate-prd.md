@@ -136,7 +136,18 @@ their input-cap worst case the two blobs together exceed the budget, so
 alone with `get_pipeline_state({ run_id, format: "validation" })`. Dynamic
 loading throughout — the detail is never lost, just fetched on demand.
 
-`get_pipeline_state` is **read-only** and does not advance the pipeline. Use it for diagnosis only.
+Every `start_pipeline` / `submit_action_result` response carries a `__bounded`
+marker. When its `applied` list records `action.invocations[].prompt`, the
+`spawn_subagents` prompts were replaced by `omitted` stubs to fit the budget.
+Fetch them with
+`get_pipeline_state({ run_id, format: "action" })`: the response is paged by whole
+invocations under the same budget. Call again with
+`invocation_offset: __page.next_offset` until `next_offset` is `null`, then
+dispatch the full batch.
+
+`get_pipeline_state` is **read-only** and does not advance the pipeline. Use it
+for diagnosis only, except `format: "action"`, which is the required recovery
+step for omitted prompts before a batch is dispatched.
 
 ---
 
