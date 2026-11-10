@@ -171,6 +171,7 @@ function doneAction(pending: PendingCompletion): NextAction {
     summary: pending.summary,
     artifacts: pending.artifacts,
     verification: pending.verification,
+    ...(pending.outcome ? { outcome: pending.outcome } : {}),
   };
 }
 

@@ -20,7 +20,7 @@
  */
 
 import type { StepHandler } from "../runner.js";
-import type { ActionResult, NextAction } from "../types/actions.js";
+import type { ActionResult, DoneOutcome, NextAction } from "../types/actions.js";
 import {
   appendError,
   type PipelineState,
@@ -101,6 +101,39 @@ function buildVerifyAction(
   };
 }
 
+/**
+ * precondition:  the three counts come from the same finalize() call;
+ *                `hardOutputScore` is validateDocument's totalScore, in [0, 1].
+ * postcondition: status is "needs_attention" iff at least one reason holds —
+ *                a failed section, a critical deterministic violation, or a
+ *                score at its floor of 0 (the penalties saturated, so the
+ *                score no longer distinguishes anything). No tuned threshold:
+ *                each reason is a fact the summary already reports.
+ *                `reasons` lists the facts in that order; empty iff "passed".
+ *
+ * source: issue #122 — an audited run showed `done` with a score of 0.00.
+ */
+export function computeDoneOutcome(
+  sectionsFailed: number,
+  criticalViolations: number,
+  hardOutputScore: number,
+): DoneOutcome {
+  const reasons: string[] = [];
+  if (sectionsFailed > 0) {
+    reasons.push(`${sectionsFailed} section(s) failed validation`);
+  }
+  if (criticalViolations > 0) {
+    reasons.push(`${criticalViolations} critical deterministic violation(s)`);
+  }
+  if (hardOutputScore <= 0) {
+    reasons.push("hard-output score is 0.00");
+  }
+  return {
+    status: reasons.length === 0 ? "passed" : "needs_attention",
+    reasons,
+  };
+}
+
 function finalize(
   state: PipelineState,
   verdicts: readonly JudgeVerdict[] = [],
@@ -117,8 +150,16 @@ function finalize(
   const sectionsTotal = state.sections.length;
   const docCritical = docReport.violations.filter((v) => v.isCritical).length;
 
+  const outcome = computeDoneOutcome(
+    sectionsFailed,
+    docCritical,
+    docReport.totalScore,
+  );
+
   const summary = [
-    `Self-check complete.`,
+    outcome.status === "passed"
+      ? `Self-check complete.`
+      : `Self-check complete: NEEDS ATTENTION (${outcome.reasons.join("; ")}).`,
     `Sections: ${sectionsPassed}/${sectionsTotal} passed, ${sectionsFailed} failed.`,
     `Deterministic violations: ${docReport.violations.length} (${docCritical} critical)`,
     `Hard-output score: ${docReport.totalScore.toFixed(2)} / 1.00`,
@@ -180,6 +221,7 @@ function finalize(
           // VerificationSummarySchema.total_subjective_claims doc.
           total_subjective_claims: totalSubjectiveClaims,
         },
+        outcome,
       },
       current_step: "implementation_gate" as const,
     },

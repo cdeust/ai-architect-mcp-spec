@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { PRDContextSchema } from "@prd-gen/core";
 import { ExecutionResultSchema } from "@prd-gen/strategy";
-import { VerificationSummarySchema } from "../actions.js";
+import { DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
 import { SectionStatusSchema } from "./section-status.js";
 import { VerificationPlanSnapshotSchema } from "./verification-plan.js";
@@ -329,6 +329,9 @@ export const PipelineStateSchema = z.object({
       // remember-phase.ts can reconstruct the `done` action byte-for-byte
       // without a cast. source: Phase 1b (2026-07-14).
       verification: VerificationSummarySchema.optional(),
+      // Matches DoneActionSchema.outcome (actions.ts), carried to `done` the
+      // same way. Optional so a state persisted before issue #122 still parses.
+      outcome: DoneOutcomeSchema.optional(),
     })
     .nullable()
     .default(null),
