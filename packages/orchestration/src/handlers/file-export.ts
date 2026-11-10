@@ -188,7 +188,8 @@ function sectionBody(section: Section): string {
  */
 function withoutOwnHeading(body: string, display: string): string {
   const newline = body.indexOf("\n");
-  const first = newline === -1 ? body : body.slice(0, newline);
+  const line = newline === -1 ? body : body.slice(0, newline);
+  const first = line.endsWith("\r") ? line.slice(0, -1) : line;
   const text = headingText(first);
   if (text === null || normalizeTitle(text) !== normalizeTitle(display)) return body;
   const rest = newline === -1 ? "" : body.slice(newline + 1);
@@ -198,7 +199,9 @@ function withoutOwnHeading(body: string, display: string): string {
 /**
  * precondition:  `line` holds no newline.
  * postcondition: the text of an ATX heading line (`#` to `######`, then a
- *                space or tab), without its optional closing `#` run;
+ *                space or tab), without its optional closing sequence (a
+ *                run of `#` preceded by a space or tab, then optional
+ *                spaces or tabs, as in CommonMark: `## C#` keeps its `#`);
  *                null when `line` is not a heading. Scans by index, with
  *                no regular expression: a backtracking heading pattern is
  *                polynomial on long runs of spaces in model output
@@ -209,8 +212,12 @@ function headingText(line: string): string | null {
   while (level < line.length && line[level] === "#") level++;
   const separator = line[level];
   if (level < 1 || level > 6 || (separator !== " " && separator !== "\t")) return null;
+  const isBlank = (ch: string | undefined): boolean => ch === " " || ch === "\t";
   let end = line.length;
-  while (end > level && line[end - 1] === "#") end--;
+  while (end > level && isBlank(line[end - 1])) end--;
+  let hashes = end;
+  while (hashes > level && line[hashes - 1] === "#") hashes--;
+  if (hashes < end && isBlank(line[hashes - 1])) end = hashes;
   return line.slice(level, end);
 }
 
