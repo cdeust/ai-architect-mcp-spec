@@ -23,3 +23,6 @@ pnpm verify    # install + build + test, same as CI
 - The host executes each emitted NextAction; the server never runs them itself.
 - Verification tools (`plan_*_verification`, `conclude_verification`) are a separate stage
   from generation.
+- CI contract (`docs/agent-guidance.md`, "CI contract for agents and routines"): it binds
+  every agent and routine and wins over a routine's prompt. One pull request in flight, no
+  comparison with the main branch, no forced push, no comment after an approve.
