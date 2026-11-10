@@ -183,22 +183,23 @@ For the canned-dispatcher smoke run on a trial tier feature: 6 sections pass on 
     }
 ```
 
-### Step 10 — File export (9 files)
+### Step 10 — File export
 
-Nine `write_file` actions in sequence. The host writes each, returns `file_written`, the runner emits the next:
+One `write_file` action per file. The host writes each, returns `file_written`, the runner emits the next. For a `feature` run whose sections all passed:
 
 ```
 prd-output/run_lzx8f/
+  ├── 00-run-notes.md          # names 06, 08 and 09 as skipped, with the reason
   ├── 01-prd.md                # Overview + Goals + Requirements + User Stories + TS + AC
   ├── 02-data-model.md
   ├── 03-api-spec.md
   ├── 04-security.md
   ├── 05-testing.md
-  ├── 06-deployment.md
   ├── 07-jira-tickets.md
-  ├── 08-source-code.md        # if generated
-  └── 09-test-code.md          # if generated
+  └── stage-5.affected_symbols.json
 ```
+
+`10-verification-report.md` follows at `implementation_gate`. The files of every other context are listed in the README, section "Exported files per context profile".
 
 ### Step 11 — Self-check (multi-judge verification)
 

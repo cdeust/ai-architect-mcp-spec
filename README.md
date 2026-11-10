@@ -366,12 +366,32 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 | **7** | `budget` | Per-section retrieval/generation token allocation via Cortex paper's 60/30/10 split |
 | **8** | `section_generation` | One section at a time: Cortex recall → engineer draft → validate → (retry up to 3) |
 | **9** | `jira_generation` | Synthesises JIRA tickets from requirements + user_stories + acceptance_criteria |
-| **10** | `file_export` | Writes 9 files (6 core + 3 companion) per SKILL.md |
+| **10** | `file_export` | Writes the PRD files of the run's context profile, plus `00-run-notes.md` for each skipped file or withheld failed section (see [Exported files per context profile](#exported-files-per-context-profile)) |
 | **11** | `self_check` | Two-phase multi-judge verification (see below); typed `verification` field on `done` |
 
 Steps 12–20 are the opt-in post-specs implementation loop: `implementation_gate` (human gate — "Implement" vs "PRD only"; also writes `10-verification-report.md`) → `pre_impl_grounding` → `implementation` (engineer subagent in an isolated worktree) → `post_impl_verification` (index → detect changes → semantic diff → security gates) → `testing` → `review` (a FAIL verdict retries `implementation` on the same worktree, bounded by `REVIEW_RETRY_CAP`) → `pr_gate` (mandatory human gate before any push) → `pr_creation` → `finalize`. Answering "PRD only" at `implementation_gate` skips straight to `finalize`; `complete` is the terminal marker, not a step.
 
 Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
+
+### Exported files per context profile
+
+The files a run writes depend on its PRD context: a companion file is written only when one of its sections was scheduled and passed. The table lists the most a run of each context writes, when every scheduled section passes and JIRA generation succeeds. A failed or skipped section only removes files; `00-run-notes.md` then names each missing file and each withheld failed draft with the reason.
+
+| Context | Files written |
+|---|---|
+| `proposal` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md` |
+| `feature` | `00-run-notes.md`, `01-prd.md`, `02-data-model.md`, `03-api-spec.md`, `04-security.md`, `05-testing.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `bug` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `incident` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `poc` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `mvp` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `release` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+| `cicd` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
+
+- `00-run-notes.md` is in every row because no context schedules the `source_code` and `test_code` sections, so `08-source-code.md` and `09-test-code.md` are always skipped.
+- `stage-5.affected_symbols.json` is written when the `technical_specification` section produced content; `proposal` does not schedule it.
+- `10-verification-report.md` is written by `implementation_gate`, after `self_check`, not by `file_export`.
+- `packages/orchestration/src/__tests__/readme-export-files.test.ts` fails when this table and the exporter disagree.
 
 ---
 
