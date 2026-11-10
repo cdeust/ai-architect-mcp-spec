@@ -223,10 +223,37 @@ export const VerificationSummarySchema = z.object({
 });
 export type VerificationSummary = z.infer<typeof VerificationSummarySchema>;
 
+/**
+ * What the finished run's deliverables are worth, so a terminal `done` never
+ * reads as a success when the self-check found the PRD unusable (issue #122:
+ * an audited run showed a hard-output score of 0.00 next to `done`).
+ *
+ * `kind: "done"` means the pipeline reached its end; `outcome.status` says
+ * whether its output can be trusted as is. "needs_attention" is set by
+ * self_check's finalize() when at least one section failed validation, the
+ * deterministic checks reported a critical violation, or the hard-output
+ * score is at its floor of 0 (penalties saturated). `reasons` names each
+ * fact, in that order, and is empty exactly when `status` is "passed".
+ *
+ * source: issue #122 (independent audit of v0.8.0, 2026-10-10).
+ */
+export const DoneOutcomeSchema = z.object({
+  status: z.enum(["passed", "needs_attention"]),
+  reasons: z.array(z.string()),
+});
+export type DoneOutcome = z.infer<typeof DoneOutcomeSchema>;
+
 export const DoneActionSchema = z.object({
   kind: z.literal("done"),
   summary: z.string(),
   artifacts: z.array(z.string()).default([]),
+  /**
+   * Quality verdict on the run's deliverables (DoneOutcomeSchema). Present
+   * on every `done` that went through self_check; absent on the `done`
+   * emissions that did not (replay of an already complete run, a runner
+   * fallback built from messages only).
+   */
+  outcome: DoneOutcomeSchema.optional(),
   /**
    * Typed verification summary. Optional only because not every `done`
    * emission has run the judge phase (zero-claim short-circuit, malformed

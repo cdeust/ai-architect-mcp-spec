@@ -231,10 +231,13 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 
 **Action shape:**
 ```json
-{ "kind": "done", "summary": "...", "artifacts": ["overview: passed", ...] }
+{ "kind": "done", "summary": "...", "artifacts": ["overview: passed", ...],
+  "outcome": { "status": "needs_attention", "reasons": ["1 section(s) failed validation"] } }
 ```
 
-**Execute:** Display `messages` (if any), then `summary`, then the `artifacts` list. **Stop the loop.**
+`outcome` says whether the deliverables can be trusted as is: `"passed"`, or `"needs_attention"` when a section failed validation, the deterministic checks found a critical violation, or the hard-output score is 0.00. `reasons` names each fact. It is absent only on a `done` that did not go through the self-check.
+
+**Execute:** Display `messages` (if any), then `summary`, then the `artifacts` list. When `outcome.status` is `"needs_attention"`, tell the user the run finished but its output needs review, and list `outcome.reasons`. **Stop the loop.**
 
 ---
 
