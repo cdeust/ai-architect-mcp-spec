@@ -4,6 +4,9 @@
  * Spawns the engineer subagent to produce JIRA tickets from the
  * acceptance_criteria + user_stories + requirements sections. The output is
  * stored as a synthetic "jira" pseudo-section so file_export can pick it up.
+ * A failed section's draft is never source material (#122): when every
+ * source failed, generation is skipped and file_export reports 07 as
+ * failed_validation.
  *
  * State machine:
  *   pending → spawn_subagents
@@ -11,23 +14,29 @@
  */
 
 import type { StepHandler } from "../runner.js";
+import type { SectionType } from "@prd-gen/core";
 import { appendError, type PipelineState } from "../types/state.js";
 import { buildJiraPrompt } from "@prd-gen/meta-prompting";
 import { JIRA_GENERATION_INV_ID as INVOCATION_ID } from "./protocol-ids.js";
 
 const BATCH_ID = "jira_generation";
 
+/** The section types JIRA tickets are built from (shared with file_export). */
+export const JIRA_SOURCE_TYPES: readonly SectionType[] = [
+  "requirements",
+  "user_stories",
+  "acceptance_criteria",
+];
+
 function gatherSourceSections(state: PipelineState): ReadonlyArray<{
   section_type: string;
   content: string;
 }> {
-  const wanted: ReadonlyArray<string> = [
-    "requirements",
-    "user_stories",
-    "acceptance_criteria",
-  ];
   return state.sections
-    .filter((s) => wanted.includes(s.section_type) && s.content)
+    // A failed draft is not a deliverable (#122): no tickets are built from it.
+    .filter(
+      (s) => JIRA_SOURCE_TYPES.includes(s.section_type) && s.content && s.status !== "failed",
+    )
     .map((s) => ({
       section_type: s.section_type,
       content: s.content!,

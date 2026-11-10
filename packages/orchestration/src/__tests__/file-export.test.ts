@@ -305,13 +305,59 @@ describe("file_export handler — failed sections are withheld, never exported",
       if (!path.endsWith("00-run-notes.md")) expect(content, path).not.toContain("FAILED DRAFT");
     }
     expect(files.get("prd-output/test_exp/00-run-notes.md")).toContain(
-      "- **Acceptance Criteria** (`01-prd.md`, `05-testing.md`): failed after 3 attempt(s)",
+      "- **Acceptance Criteria** (`01-prd.md`, `05-testing.md`, `07-jira-tickets.md`): failed after 3 attempt(s)",
     );
   });
 
-  it("keeps a failed technical_specification draft out of 01-prd.md", () => {
+  it("skips 07-jira-tickets.md as failed_validation when every JIRA source failed", () => {
+    const s = withFailed(["requirements", "user_stories", "acceptance_criteria"]);
+    // jira_generation builds nothing from failed drafts, so no ticket section exists.
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.filter((section) => section.section_type !== "jira_tickets"),
+    });
+    expect(files.has("prd-output/test_exp/07-jira-tickets.md")).toBe(false);
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): section generation failed validation/,
+    );
+  });
+
+  it("keeps 07-jira-tickets.md as merely skipped when there is no JIRA source material", () => {
+    const files = exportedContents(stateAtFileExport());
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): not generated in this run/,
+    );
+  });
+
+  it("keeps 07-jira-tickets.md as merely skipped when one JIRA source failed and another passed", () => {
+    const s = withFailed(["user_stories"]);
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.filter((section) => section.section_type !== "jira_tickets"),
+    });
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toMatch(
+      /JIRA Tickets\*\* \(`07-jira-tickets.md`\): not generated in this run/,
+    );
+  });
+
+  it("keeps a failed technical_specification draft out of 01-prd.md but still writes the sidecar", () => {
     const files = exportedContents(withFailed(["technical_specification"]));
     expect(files.get("prd-output/test_exp/01-prd.md")).not.toContain("FAILED DRAFT");
+    // Deliberate for now: pre_impl_grounding reads the sidecar (follow-up on #122).
+    expect(files.has("prd-output/test_exp/stage-5.affected_symbols.json")).toBe(true);
+  });
+
+  it("does not list a failed section with no draft, but still skips its file as failed_validation", () => {
+    const s = withFailed(["data_model"]);
+    const files = exportedContents({
+      ...s,
+      sections: s.sections.map((section) =>
+        section.section_type === "data_model" ? { ...section, content: undefined } : section,
+      ),
+    });
+    const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
+    expect(notes).toMatch(/Data Model\*\* \(`02-data-model.md`\): section generation failed validation/);
+    expect(notes).not.toContain("following sections failed validation");
   });
 
   it("lists withheld sections apart from the skipped files in run notes", () => {
@@ -333,6 +379,10 @@ describe("file_export handler — failed sections are withheld, never exported",
     });
     const notes = files.get("prd-output/test_exp/00-run-notes.md")!;
     expect(notes).toContain("- **Goals & Objectives** (`01-prd.md`): failed after 3 attempt(s) with 2 violation(s).");
+    const skippedAt = notes.indexOf("were not generated in this run");
+    const withheldAt = notes.indexOf("following sections failed validation");
+    expect(skippedAt).toBeGreaterThan(-1);
+    expect(withheldAt).toBeGreaterThan(skippedAt);
     expect(files.get("prd-output/test_exp/01-prd.md")).not.toContain("FAILED DRAFT");
   });
 });
