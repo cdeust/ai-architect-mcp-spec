@@ -131,6 +131,26 @@ The plugin's bundled MCP server at `mcp-server/index.js` is self-contained
 (only `better-sqlite3` is an optional native dependency for the evidence
 repository — gracefully degrades to in-memory mode when absent).
 
+#### Supported platforms
+
+<!-- This table is checked against the CI matrix by scripts/portable-distribution.test.mjs. -->
+`manifest.json` declares `darwin`, `win32` and `linux`. What CI proves on each,
+on every pull request (`.github/workflows/pipeline.yml`) and again on the merge
+commit (`.github/workflows/pipeline-post-merge.yml`):
+
+| Platform | CI runner | What runs there |
+|---|---|---|
+| Linux | `ubuntu-latest` | unit, regression, e2e (including the `.mcpb` smoke), environment, install |
+| macOS | `macos-latest` | environment, install |
+| Windows | `windows-latest` | environment, install |
+
+The environment and install jobs start the server through the plugin launcher
+`bin/ensure-deps.sh` and call `check_health` over stdio; the install job does so
+from a real `claude plugin install`. The launcher is a bash script: on Windows,
+CI runs it under Git Bash, so a Windows host needs a bash on `PATH`. The `.mcpb`
+bundle launches `node` directly and needs no bash, but its smoke test runs on
+Linux only, so the bundle has no CI evidence on macOS or Windows.
+
 #### Migrating from `prd-spec-generator`
 
 The old plugin and marketplace are deprecated publications, not aliases. Remove
