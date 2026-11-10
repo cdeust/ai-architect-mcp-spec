@@ -570,6 +570,17 @@ describe("file_export handler — one heading per section (#122)", () => {
     expect(dataModel).toContain("## Data Model\n\n  - users table");
   });
 
+  it("drops a closed ATX heading and stays linear on a long run of spaces", () => {
+    const closed = exportedContents(withDraft("goals", "### Goals & Objectives ###\n\nShip it."));
+    expect(closed.get("prd-output/test_exp/01-prd.md")).toContain("## Goals & Objectives\n\nShip it.");
+
+    const spaces = `## ${" ".repeat(50_000)}x`;
+    const started = performance.now();
+    const files = exportedContents(withDraft("goals", spaces));
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(files.get("prd-output/test_exp/01-prd.md")).toContain(spaces);
+  });
+
   it("keeps a leading heading that does not name the section", () => {
     const files = exportedContents(withDraft("goals", "## Context\n\nWhy now."));
     expect(files.get("prd-output/test_exp/01-prd.md")).toContain(

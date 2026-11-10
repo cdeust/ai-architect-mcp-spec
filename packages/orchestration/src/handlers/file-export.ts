@@ -187,11 +187,45 @@ function sectionBody(section: Section): string {
  * found every exported file with duplicated headings.
  */
 function withoutOwnHeading(body: string, display: string): string {
-  const normalize = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
-  const [first = "", ...rest] = body.split("\n");
-  const heading = /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(first);
-  if (!heading || normalize(heading[1]!) !== normalize(display)) return body;
-  return rest.join("\n").replace(/^\s*\n/, "");
+  const newline = body.indexOf("\n");
+  const first = newline === -1 ? body : body.slice(0, newline);
+  const text = headingText(first);
+  if (text === null || normalizeTitle(text) !== normalizeTitle(display)) return body;
+  const rest = newline === -1 ? "" : body.slice(newline + 1);
+  return rest.slice(leadingBlankLinesLength(rest));
+}
+
+/**
+ * precondition:  `line` holds no newline.
+ * postcondition: the text of an ATX heading line (`#` to `######`, then a
+ *                space or tab), without its optional closing `#` run;
+ *                null when `line` is not a heading. Scans by index, with
+ *                no regular expression: a backtracking heading pattern is
+ *                polynomial on long runs of spaces in model output
+ *                (CodeQL js/polynomial-redos on #198).
+ */
+function headingText(line: string): string | null {
+  let level = 0;
+  while (level < line.length && line[level] === "#") level++;
+  const separator = line[level];
+  if (level < 1 || level > 6 || (separator !== " " && separator !== "\t")) return null;
+  let end = line.length;
+  while (end > level && line[end - 1] === "#") end--;
+  return line.slice(level, end);
+}
+
+function normalizeTitle(text: string): string {
+  return text.split(/[ \t]+/).filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Length of the run of whitespace-only lines at the start of `text`. */
+function leadingBlankLinesLength(text: string): number {
+  let cut = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") cut = i + 1;
+    else if (text[i] !== " " && text[i] !== "\t" && text[i] !== "\r") break;
+  }
+  return cut;
 }
 
 function joinSections(
