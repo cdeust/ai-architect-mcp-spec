@@ -14,6 +14,11 @@
  * is used only as the GATE signal (non-null iff file-export found >=1 claim
  * — see file-export.ts's conditional sidecar emission).
  *
+ * A technical_specification draft that failed validation is not a symbol
+ * source: file-export.ts withholds it from the PRD and writes no sidecar
+ * from it, so this handler queries none of its symbols and says why it
+ * skipped. source: cdeust/ai-architect-mcp-spec#122.
+ *
  * PR 4a wiring (design §3, §5.2): once grounding is gathered (or skipped —
  * grounding is best-effort context, never a gate), this handler advances to
  * `implementation`, carrying `post_specs` forward so the engineer's prompt
@@ -64,17 +69,31 @@ function ensurePostSpecs(state: PipelineState): PostSpecsState {
  * postcondition: returns the deduplicated, cap-bounded list of qualified
  *                names claimed by the technical_specification section's
  *                affected-symbols block. Empty when no such section/block
- *                exists (mirrors file-export.ts's affectedSymbolsForState
- *                empty-document fallback).
+ *                exists or the section failed validation (mirrors
+ *                file-export.ts's affectedSymbolsForState empty-document
+ *                fallback).
  */
 function boundedAffectedSymbols(state: PipelineState): string[] {
   const techSpec = state.sections.find(
-    (s) => s.section_type === "technical_specification" && s.content,
+    (s) =>
+      s.section_type === "technical_specification" && s.content && s.status !== "failed",
   );
   if (!techSpec?.content) return [];
   const doc = parseAffectedSymbolsBlock(techSpec.content);
   const names = doc.affected_symbols.map((s) => s.qualified_name);
   return Array.from(new Set(names)).slice(0, IMPACT_QUERY_SYMBOL_CAP);
+}
+
+/**
+ * precondition:  none — safe on any state.
+ * postcondition: true iff a technical_specification draft failed validation
+ *                and no technical_specification section passed with content.
+ */
+function technicalSpecDraftWithheld(state: PipelineState): boolean {
+  const techSpecs = state.sections.filter(
+    (s) => s.section_type === "technical_specification" && s.content,
+  );
+  return techSpecs.length > 0 && techSpecs.every((s) => s.status === "failed");
 }
 
 /**
@@ -164,7 +183,10 @@ export const handlePreImplGrounding: StepHandler = ({ state, result }) => {
           impact_queries: { ...postSpecs.impact_queries, done: true },
         },
       },
-      "No affected-symbols grounding available. Proceeding to implementation.",
+      technicalSpecDraftWithheld(state)
+        ? "The Technical Specification section failed validation: its draft is withheld, " +
+            "so no blast-radius grounding is queried. Proceeding to implementation."
+        : "No affected-symbols grounding available. Proceeding to implementation.",
     );
   }
 

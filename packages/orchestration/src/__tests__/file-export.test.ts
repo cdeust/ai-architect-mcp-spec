@@ -246,6 +246,19 @@ function exportedContents(state: PipelineState): Map<string, string> {
   return files;
 }
 
+/** Drives file_export until every file is written; returns the state it leaves. */
+function runToSelfCheck(state: PipelineState): PipelineState {
+  let out = step({ state });
+  for (let i = 0; i < 20 && out.action.kind === "write_file"; i++) {
+    out = step({
+      state: out.state,
+      result: { kind: "file_written", path: out.action.path, bytes: 1 },
+    });
+  }
+  expect(out.action.kind).not.toBe("write_file");
+  return out.state;
+}
+
 /** The fully populated fixture with the named sections failed, drafts kept. */
 function withFailed(
   types: readonly PipelineState["sections"][number]["section_type"][],
@@ -340,11 +353,17 @@ describe("file_export handler — failed sections are withheld, never exported",
     );
   });
 
-  it("keeps a failed technical_specification draft out of 01-prd.md but still writes the sidecar", () => {
-    const files = exportedContents(withFailed(["technical_specification"]));
+  it("writes no sidecar from a failed technical_specification draft and names it in run notes", () => {
+    const s = withFailed(["technical_specification"]);
+    const files = exportedContents(s);
     expect(files.get("prd-output/test_exp/01-prd.md")).not.toContain("FAILED DRAFT");
-    // Deliberate for now: pre_impl_grounding reads the sidecar (follow-up on #122).
-    expect(files.has("prd-output/test_exp/stage-5.affected_symbols.json")).toBe(true);
+    // An absent sidecar means "extraction did not run" (module doc): a
+    // withheld draft is not an extraction result (#122).
+    expect(files.has("prd-output/test_exp/stage-5.affected_symbols.json")).toBe(false);
+    expect(files.get("prd-output/test_exp/00-run-notes.md")).toContain(
+      "- **Technical Specification** (`01-prd.md`, `stage-5.affected_symbols.json`): failed after",
+    );
+    expect(runToSelfCheck(s).affected_symbols_path).toBeNull();
   });
 
   it("does not list a failed section with no draft, but still skips its file as failed_validation", () => {

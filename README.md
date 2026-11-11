@@ -389,7 +389,7 @@ The files a run writes depend on its PRD context: a companion file is written on
 | `cicd` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
 
 - `00-run-notes.md` is in every row because no context schedules the `source_code` and `test_code` sections, so `08-source-code.md` and `09-test-code.md` are always skipped.
-- `stage-5.affected_symbols.json` is written when the `technical_specification` section produced content; `proposal` does not schedule it.
+- `stage-5.affected_symbols.json` is written when the `technical_specification` section passed with content, never from a failed draft; `proposal` does not schedule it.
 - `10-verification-report.md` is written by `implementation_gate`, after `self_check`, not by `file_export`.
 - `packages/orchestration/src/__tests__/readme-export-files.test.ts` fails when this table and the exporter disagree.
 
