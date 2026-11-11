@@ -20,9 +20,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+
+import { isEntry } from "../bin/is-entry.mjs";
 
 /** First launch runs `npm ci`; a cold runner needs the network for it. */
 const LAUNCH_TIMEOUT_MS = 600_000;
@@ -179,13 +180,4 @@ function main(argv) {
   return 0;
 }
 
-function isEntry() {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntry()) process.exit(main(process.argv));
+if (isEntry(import.meta.url)) process.exit(main(process.argv));

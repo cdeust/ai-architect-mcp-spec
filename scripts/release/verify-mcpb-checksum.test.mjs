@@ -8,6 +8,9 @@
  * reproduce exactly the blind spot #23 was.
  */
 
+import { cpSync, mkdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   ChecksumMismatchError,
@@ -75,6 +78,23 @@ describe("mcpb checksum verification (#23 class)", () => {
   });
 });
 
+/**
+ * Copies the script under `base` with the one module it imports, in the
+ * repository's layout: scripts/release/verify-mcpb-checksum.mjs and
+ * bin/is-entry.mjs. Returns the path of the copied script.
+ */
+function copyWithEntryHelper(base) {
+  const script = join(base, "scripts", "release", "verify-mcpb-checksum.mjs");
+  mkdirSync(join(base, "scripts", "release"), { recursive: true });
+  mkdirSync(join(base, "bin"));
+  cpSync(fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)), script);
+  cpSync(
+    fileURLToPath(new URL("../../bin/is-entry.mjs", import.meta.url)),
+    join(base, "bin", "is-entry.mjs"),
+  );
+  return script;
+}
+
 // #126: the CLI guard compared the module URL with `file://${argv[1]}`. On
 // Windows, and for any path with a space, the two never match, so the release
 // step exited 0 having verified nothing.
@@ -87,8 +107,7 @@ describe("run as a command", () => {
     const { fileURLToPath } = await import("node:url");
     const dir = mkdtempSync(join(tmpdir(), "verify mcpb "));
     try {
-      const script = join(dir, "verify-mcpb-checksum.mjs");
-      cpSync(fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)), script);
+      const script = copyWithEntryHelper(dir);
       const run = spawnSync(process.execPath, [script], { encoding: "utf8" });
       expect(run.status).toBe(2);
       expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
@@ -113,11 +132,8 @@ describe("run as a command", () => {
       const link = join(dir, "link");
       mkdirSync(real);
       symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
-      cpSync(
-        fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)),
-        join(real, "verify-mcpb-checksum.mjs"),
-      );
-      const run = spawnSync(process.execPath, [join(link, "verify-mcpb-checksum.mjs")], {
+      const script = copyWithEntryHelper(real);
+      const run = spawnSync(process.execPath, [join(link, relative(real, script))], {
         encoding: "utf8",
       });
       expect(run.status).toBe(2);
