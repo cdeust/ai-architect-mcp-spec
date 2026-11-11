@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/TypeScript-7.0+-3178c6.svg" alt="TypeScript 7.0+">
   <img src="https://img.shields.io/badge/Node-20.x_·_22.x-339933.svg" alt="Node 20/22">
-  <img src="https://img.shields.io/badge/Tests-1506_passing-brightgreen" alt="1506 passing">
+  <img src="https://img.shields.io/badge/Tests-1882_passing-brightgreen" alt="1882 passing">
   <img src="https://img.shields.io/badge/Packages-10-orange" alt="10 packages">
   <img src="https://img.shields.io/badge/MCP_Tools-17-8A2BE2" alt="17 MCP tools">
   <img src="https://img.shields.io/badge/Validators-Hard_Output_Rules-red" alt="Hard Output Rules">
@@ -56,7 +56,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
 
-**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1506 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
+**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1882 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
 ---
 
@@ -237,7 +237,7 @@ cd ai-architect-mcp-spec
 pnpm install --frozen-lockfile
 pnpm build      # builds all 9 buildable packages via tsc
 pnpm bundle     # produces the standalone mcp-server/index.js
-pnpm test       # 1506 tests (vitest workspace, all packages; the
+pnpm test       # 1882 tests (vitest workspace, all packages; the
                 # ai-architect-mcp-codebase wire contract is pinned
                 # unconditionally — see docs/INTEGRATION-TESTING.md)
 ```

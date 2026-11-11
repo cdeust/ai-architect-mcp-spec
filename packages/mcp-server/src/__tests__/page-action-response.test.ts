@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
-import { pageActionResponse, type ActionPage } from "../page-action-response.js";
+import { pageActionResponse, selfMeasuredChars, type ActionPage } from "../page-action-response.js";
 
 function judgeBatch(count: number, promptChars: number) {
   return {
@@ -30,11 +30,11 @@ function wireChars(value: unknown): number {
   return JSON.stringify(value, null, 2).length;
 }
 
-function walk(action: unknown): ActionPage[] {
+function walk(action: unknown, budgetChars?: number): ActionPage[] {
   const pages: ActionPage[] = [];
   let offset: number | null = 0;
   while (offset !== null) {
-    const page = pageActionResponse("run_page", action, offset);
+    const page = pageActionResponse("run_page", action, offset, budgetChars);
     if ("error" in page) throw new Error(page.error);
     pages.push(page);
     offset = page.__page.next_offset;
@@ -153,41 +153,74 @@ describe("pageActionResponse", () => {
   });
 
   it("finds full pages for every batch and page size around the doubling boundaries", () => {
-    // Prompt sizes chosen so a page holds 1, 2, 3, 4, 7, 8, 9, 15, 16 or 17
-    // invocations, covering both edges of every doubling bracket.
-    const pageSizes = [1, 2, 3, 4, 7, 8, 9, 15, 16, 17];
+    // The sweep runs at a tenth of the server's budget. The search compares
+    // serialized sizes with the budget and nothing else, so the page sizes
+    // it must find (both edges of every doubling bracket) are the same at
+    // any budget, and the real 100,000-char budget is held by the tests
+    // above. At the real budget this sweep serialized 300 MB of JSON in
+    // 3,916 passes: 1.1 to 2.2 s alone and 2.1 to 5.1 s inside `pnpm test`,
+    // against vitest's 5 s timeout (30 and 10 runs on 2026-11-11, one
+    // timeout). A tenth leaves the largest page (17 invocations) prompts of
+    // about 330 chars, above the per-invocation overhead measured below.
+    const budget = MAX_RESPONSE_CHARS / 10;
+    // Prompt sizes chosen so a page holds each of 1 to 17 invocations: both
+    // edges of every doubling bracket up to 16, and the sizes inside each
+    // bracket, which only the binary search reaches (a search that skipped
+    // a candidate passed the edges-only sweep).
+    const pageSizes = Array.from({ length: 17 }, (_, i) => i + 1);
     // Measured, not guessed: the envelope of an empty page and the wire cost
     // of one invocation with an empty prompt (its `${i}:` prefix included).
     const envelope = wireChars({
       run_id: "run_page",
       action: judgeBatch(0, 0),
-      __page: { offset: 0, count: 0, total: 0, next_offset: null, final_chars: 100_000, budget_chars: 100_000 },
+      __page: { offset: 0, count: 0, total: 0, next_offset: null, final_chars: budget, budget_chars: budget },
     });
     const perInvocation = Math.ceil((wireChars(judgeBatch(20, 0)) - wireChars(judgeBatch(0, 0))) / 20);
     const promptSizes = pageSizes.map(
-      (n) => Math.floor((MAX_RESPONSE_CHARS - envelope) / (n + 0.5)) - perInvocation,
+      (n) => Math.floor((budget - envelope) / (n + 0.5)) - perInvocation,
     );
+    for (const promptChars of promptSizes) expect(promptChars).toBeGreaterThan(0);
     const seenPageSizes = new Set<number>();
     for (const [count, promptChars] of [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 33].flatMap((c) =>
       promptSizes.map((p) => [c, p] as const),
     )) {
       const action = judgeBatch(count, promptChars);
-      const pages = walk(action);
+      const pages = walk(action, budget);
       for (const page of pages) {
-        expect(page.__page.final_chars).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+        expect(page.__page.budget_chars).toBe(budget);
+        expect(page.__page.final_chars).toBe(wireChars(page));
+        expect(page.__page.final_chars).toBeLessThanOrEqual(budget);
         const { offset, count: n, next_offset } = page.__page;
         if (next_offset === null) continue;
         const bigger = {
           ...page,
           action: { ...action, invocations: action.invocations.slice(offset, offset + n + 1) },
         };
-        expect(wireChars(bigger)).toBeGreaterThan(MAX_RESPONSE_CHARS);
+        expect(wireChars(bigger)).toBeGreaterThan(budget);
         seenPageSizes.add(n);
       }
       const seen = pages.flatMap((p) => (p.action as { invocations: unknown[] }).invocations);
       expect(seen).toEqual(action.invocations);
     }
     for (const n of pageSizes) expect(seenPageSizes).toContain(n);
+  });
+
+  it("reports as final_chars the size of the response that carries it", () => {
+    // `zero` is the size with `final_chars: 0`; the shipped size replaces
+    // that one character by its own digits. 99,995 and 99,996 sit on each
+    // side of the step from five to six digits.
+    for (const [zero, shipped] of [
+      [9, 9],
+      [10, 11],
+      [98, 99],
+      [99, 101],
+      [99_995, 99_999],
+      [99_996, 100_001],
+      [100_000, 100_005],
+    ] as const) {
+      expect(selfMeasuredChars(zero)).toBe(shipped);
+      expect(shipped - String(shipped).length).toBe(zero - 1);
+    }
   });
 
   it("rejects an offset past the end of the batch, and any offset on a non-batch action", () => {

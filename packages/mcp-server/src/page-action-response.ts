@@ -77,7 +77,33 @@ interface Slice {
   readonly total: number;
 }
 
-function pageOf(runId: string, action: unknown, { offset, count, total }: Slice): ActionPage {
+/**
+ * precondition:  `zeroChars` is the serialized size of a response whose
+ *                `final_chars` is 0, an integer >= 1.
+ * postcondition: the size `s` of that response once `final_chars` holds `s`
+ *                itself: `s = zeroChars - 1 + digits(s)`, since replacing the
+ *                one-character `0` by `s` changes nothing but that number's
+ *                digits. The smallest such `s` is returned; one exists
+ *                because `zeroChars - 1 + d` has at most `d` digits as soon
+ *                as `d` reaches the digit count of `zeroChars`, plus one.
+ *
+ * Computed, not re-measured: the size was found by serializing the page
+ * again until the value was stable (two or three passes), which tripled the
+ * serialization cost of every probe of every page.
+ */
+export function selfMeasuredChars(zeroChars: number): number {
+  for (let digits = 1; ; digits++) {
+    const size = zeroChars - 1 + digits;
+    if (String(size).length === digits) return size;
+  }
+}
+
+function pageOf(
+  runId: string,
+  action: unknown,
+  { offset, count, total }: Slice,
+  budgetChars: number,
+): ActionPage {
   const end = offset + count;
   const draft: ActionPage = {
     run_id: runId,
@@ -88,28 +114,26 @@ function pageOf(runId: string, action: unknown, { offset, count, total }: Slice)
       total,
       next_offset: end < total ? end : null,
       final_chars: 0,
-      budget_chars: MAX_RESPONSE_CHARS,
+      budget_chars: budgetChars,
     },
   };
-  // final_chars is part of the payload it measures: start from the size
-  // with a 0 placeholder and re-measure until the value is stable (2-3
-  // passes), so the reported size is the shipped size.
-  let measured = wireChars(draft);
-  for (;;) {
-    const candidate = { ...draft, __page: { ...draft.__page, final_chars: measured } };
-    const actual = wireChars(candidate);
-    if (actual === measured) return candidate;
-    measured = actual;
-  }
+  // final_chars is part of the payload it measures: the page is serialized
+  // once with a 0 placeholder, and the shipped size follows from it.
+  const finalChars = selfMeasuredChars(wireChars(draft));
+  return { ...draft, __page: { ...draft.__page, final_chars: finalChars } };
 }
 
 /**
  * precondition:  `action` is the unbounded last action cached for `runId`
- *                (or `null` when none is cached); `offset` is an integer >= 0.
+ *                (or `null` when none is cached); `offset` is an integer >= 0;
+ *                `budgetChars` is the response budget, the server's declared
+ *                MAX_RESPONSE_CHARS unless a caller states another (the
+ *                tests sweep page sizes at a smaller one: the search
+ *                compares sizes with the budget and nothing else).
  * postcondition: for a `spawn_subagents` action, the returned page holds the
  *                invocations [offset, offset + count) of the batch, every
  *                other field of the action unchanged, and
- *                `__page.final_chars <= MAX_RESPONSE_CHARS` unless the single
+ *                `__page.final_chars <= budgetChars` unless the single
  *                invocation at `offset` alone exceeds the budget (count = 1,
  *                overshoot visible in `final_chars`). Following `next_offset`
  *                from 0 visits every invocation exactly once. Any other
@@ -120,6 +144,7 @@ export function pageActionResponse(
   runId: string,
   action: unknown,
   offset: number,
+  budgetChars: number = MAX_RESPONSE_CHARS,
 ): ActionPage | ActionPageError {
   // zod enforces this over MCP; an in-process call does not go through zod,
   // and NaN or a negative offset would make slice() drop or misplace
@@ -131,21 +156,26 @@ export function pageActionResponse(
     if (offset !== 0) {
       return { error: `invocation_offset ${offset} out of range: the last action is not a spawn_subagents batch` };
     }
-    return pageOf(runId, action, { offset: 0, count: 0, total: 0 });
+    return pageOf(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
   }
 
   const all = action.invocations;
   const total = all.length;
   if (total === 0 && offset === 0) {
-    return pageOf(runId, action, { offset: 0, count: 0, total: 0 });
+    return pageOf(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
   }
   if (offset >= total) {
     return { error: `invocation_offset ${offset} out of range: the batch has ${total} invocations` };
   }
 
   const build = (count: number) =>
-    pageOf(runId, { ...action, invocations: all.slice(offset, offset + count) }, { offset, count, total });
-  return largestFittingPage(build, total - offset);
+    pageOf(
+      runId,
+      { ...action, invocations: all.slice(offset, offset + count) },
+      { offset, count, total },
+      budgetChars,
+    );
+  return largestFittingPage(build, total - offset, budgetChars);
 }
 
 /**
@@ -154,7 +184,11 @@ export function pageActionResponse(
  * postcondition: the page for the largest `n` that fits the budget, or the
  *                page for `n = 1` when none does.
  */
-function largestFittingPage(build: (count: number) => ActionPage, remaining: number): ActionPage {
+function largestFittingPage(
+  build: (count: number) => ActionPage,
+  remaining: number,
+  budgetChars: number,
+): ActionPage {
   // The serialized size grows with `count`. The largest slice that fits is
   // bracketed by doubling from 1, then found by binary search inside the
   // bracket, so no probe serializes more than about twice a page (a binary
@@ -166,7 +200,7 @@ function largestFittingPage(build: (count: number) => ActionPage, remaining: num
   let over = remaining + 1;
   for (let probe = 2; probe <= remaining; probe *= 2) {
     const candidate = build(probe);
-    if (candidate.__page.final_chars > MAX_RESPONSE_CHARS) {
+    if (candidate.__page.final_chars > budgetChars) {
       over = probe;
       break;
     }
@@ -175,7 +209,7 @@ function largestFittingPage(build: (count: number) => ActionPage, remaining: num
   }
   if (over === remaining + 1 && fit < remaining) {
     const last = build(remaining);
-    if (last.__page.final_chars <= MAX_RESPONSE_CHARS) return last;
+    if (last.__page.final_chars <= budgetChars) return last;
     over = remaining;
   }
   let lo = fit + 1;
@@ -183,7 +217,7 @@ function largestFittingPage(build: (count: number) => ActionPage, remaining: num
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
     const candidate = build(mid);
-    if (candidate.__page.final_chars <= MAX_RESPONSE_CHARS) {
+    if (candidate.__page.final_chars <= budgetChars) {
       best = candidate;
       lo = mid + 1;
     } else {
