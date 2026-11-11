@@ -48,13 +48,13 @@ const RUN_PIPELINE_STEPS: readonly Step[] = [
   { tool: "start_pipeline", guidance: "Initialize the run; it returns the first NextAction to execute." },
   { tool: "get_pipeline_state", guidance: "Read the current state by run_id whenever you need to re-orient." },
   { tool: "submit_action_result", guidance: "Feed each executed action's result back; repeat until the action is `done`." },
-  { tool: "plan_document_verification", guidance: "Once sections exist, emit the JudgeRequest[] across the whole document." },
+  { tool: "plan_document_verification", guidance: "Once sections exist, emit the JudgeRequest[] across the whole document; follow __page.next_offset (request_offset) to the last page." },
   { tool: "conclude_verification", guidance: "Aggregate the JudgeVerdict[] into the final VerificationReport." },
 ];
 
 const VERIFY_DOCUMENT_STEPS: readonly Step[] = [
   { tool: "get_pipeline_state", guidance: "Load the run's current sections by run_id." },
-  { tool: "plan_document_verification", guidance: "Emit the cross-section JudgeRequest[] to execute." },
+  { tool: "plan_document_verification", guidance: "Emit the cross-section JudgeRequest[] to execute; follow __page.next_offset (request_offset) to the last page." },
   { tool: "submit_action_result", guidance: "Return each judge batch's verdicts to the reducer." },
   { tool: "validate_prd_document", guidance: "Run the deterministic Hard Output Rules pass (SP arithmetic, AC numbering, coverage)." },
   { tool: "conclude_verification", guidance: "Aggregate verdicts into the VerificationReport." },

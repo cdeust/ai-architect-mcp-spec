@@ -412,8 +412,8 @@ Validation (2):
   validate_prd_document      Cross-section checks (SP/AC/FR/test traceability)
 
 Verification (3):
-  plan_section_verification  Extract claims + select judge panels
-  plan_document_verification Same, document-wide
+  plan_section_verification  Extract claims + select judge panels (paged: request_offset)
+  plan_document_verification Same, document-wide (paged: request_offset)
   conclude_verification      Aggregate JudgeVerdict[] → VerificationReport;
                              accepts optional `claims` array carrying
                              `external_grounding` so oracle-resolved ground
@@ -448,7 +448,13 @@ plan_document_verification(sections[])
       acceptance_criteria → toulmin + popper + test-engineer
       ...
 
-[host spawns the panel; each agent returns a JSON verdict]
+  → returns the plan in pages under the 100,000-char response budget:
+      each page holds whole JudgeRequests from request_offset (default 0);
+      claims and mechanical_claims are on the first page only;
+      __page.next_offset is the next request_offset, null on the last page
+
+[host follows __page.next_offset to the last page, then spawns the panel;
+ each agent returns a JSON verdict]
 
 conclude_verification(verdicts[])
   → Per claim, runs consensus():
@@ -458,6 +464,8 @@ conclude_verification(verdicts[])
   → distribution_suspicious flag fires when 100% PASS over ≥5 claims
   → returns ConsensusVerdict[] with full distribution + dissenting list
 ```
+
+`plan_section_verification` and `plan_document_verification` hold no state: a host reads the next page by calling the tool again with the same arguments and `request_offset` set to `__page.next_offset`. Every judge request carries the whole document as `context.prd_excerpt`, unchanged, so a page holds few requests when the document is long (one per page once the sections pass about half the budget), and a page goes over the budget only when a single request does not fit on its own (sections near the budget itself); the overshoot is then visible as `__page.final_chars` above `__page.budget_chars`.
 
 The verdict taxonomy is deliberately five-level — not binary. NFR claims (latency, fps, throughput, storage) **MUST NOT receive PASS**: they are SPEC-COMPLETE if a measurement method is specified, NEEDS-RUNTIME otherwise. Judges that default to PASS for everything are caught by the `distribution_suspicious` detector and flagged in the typed `done.verification` field.
 
