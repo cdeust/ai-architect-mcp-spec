@@ -4,7 +4,7 @@
  * skipped or any failed section was withheld) per SKILL.md Phase 4, plus a
  * sidecar
  * (`stage-5.affected_symbols.json`) whenever the technical_specification
- * section produced content.
+ * section passed with content.
  *
  * Protocol:
  *   - On entry with no result: emit write_file for the first un-written file.
@@ -27,11 +27,11 @@
  * from every exported markdown file, and `00-run-notes.md` names it with
  * its attempt and violation counts. A companion file whose only sources
  * failed is then skipped as "failed_validation". The affected-symbols
- * sidecar below still reads a failed technical_specification draft:
- * pre_impl_grounding depends on it, so withholding it there is a separate
- * change (tracked on #122). JIRA tickets are not generated from failed
- * drafts either (jira-generation.ts gatherSourceSections); self-check still
- * judges them (tracked on #122).
+ * sidecar below is not built from a failed technical_specification draft
+ * either, and pre_impl_grounding queries no symbol of one. JIRA tickets are
+ * not generated from failed drafts (jira-generation.ts
+ * gatherSourceSections) and self-check does not judge them (self-check.ts
+ * gatherSections).
  * source: cdeust/ai-architect-mcp-spec#122 — audit of v0.8.0 on 2026-10-10
  * found failed sections exported as deliverables.
  *
@@ -44,11 +44,15 @@
  * infra-only PRD) and must suppress the fallback. These are different
  * states and conflating them silently routes a legitimate zero-claims PRD
  * through the low-precision regex path. So the sidecar is written whenever
- * the technical_specification section produced content (extraction ran),
- * regardless of how many claims parseAffectedSymbolsBlock found in it; it
- * is omitted only when that section produced no content (not scheduled /
- * skipped / failed with no draft). A failed draft still feeds it (see
- * "NO FAILED DRAFTS AS DELIVERABLES" above).
+ * the technical_specification section passed with content (extraction
+ * ran), regardless of how many claims parseAffectedSymbolsBlock found in
+ * it; it is omitted when that section has no exportable content (not
+ * scheduled / skipped / failed, with or without a draft). A failed draft is
+ * withheld from the PRD, so its claims are not an extraction result: a
+ * sidecar built from it, even an empty one, would tell stage 6 "extraction
+ * ran" about a section the PRD does not contain. Its absence is the honest
+ * signal, and `00-run-notes.md` names the sidecar among the files the
+ * failed section would have fed.
  * source: ai-architect-mcp-codebase stages/stage-6.md, "Zero-claims case —
  * not the same as absent" (§4.2), pinned at commit
  * 92216cd90f8f26cb15348675fc6556b8293edfc1.
@@ -262,8 +266,9 @@ function jiraContent(state: PipelineState): string {
 
 /**
  * precondition:  none.
- * postcondition: returns the technical_specification section when it ran
- *                and produced content; null otherwise. This is the sole
+ * postcondition: returns the technical_specification section when it
+ *                passed with content (a failed draft is withheld — see
+ *                module doc); null otherwise. This is the sole
  *                signal for "did the generator's structured-extraction step
  *                run at all" — distinct from whether that section's own
  *                affected-symbols block was non-empty (see module doc).
@@ -273,7 +278,7 @@ function technicalSpecSection(
 ): PipelineState["sections"][number] | null {
   return (
     state.sections.find(
-      (s) => s.section_type === "technical_specification" && s.content,
+      (s) => s.section_type === "technical_specification" && exportable(s),
     ) ?? null
   );
 }
@@ -363,6 +368,7 @@ function withheldSections(state: PipelineState): WithheldSection[] {
     { filename: CORE_FILENAME, sectionTypes: CORE_SECTION_TYPES },
     ...COMPANION_FILES,
     { filename: JIRA_FILENAME, sectionTypes: ["jira_tickets", ...JIRA_SOURCE_TYPES] },
+    { filename: AFFECTED_SYMBOLS_FILENAME, sectionTypes: ["technical_specification"] },
   ];
   return state.sections
     .filter((s) => s.status === "failed" && s.content)
@@ -420,12 +426,13 @@ function companionAndJiraFiles(
 /**
  * precondition:  none.
  * postcondition: returns the affected-symbols sidecar file whenever the
- *                technical_specification section ran and produced content
+ *                technical_specification section passed with content
  *                (extraction ran), carrying whatever
  *                parseAffectedSymbolsBlock extracted — including empty
  *                `affected_symbols`/`scope_claims` arrays for a genuine
  *                zero-claims (docs-only/infra-only) PRD. Returns null only
- *                when that section never ran (see module doc — the file's
+ *                when that section never ran or failed validation (see
+ *                module doc — the file's
  *                ABSENCE, not an empty payload, is the codebase-graph
  *                stage's signal to fall back to regex extraction).
  */
@@ -488,7 +495,7 @@ function runNotesFile(
  * postcondition: returns the core PRD file (always written), every
  *                companion/JIRA file THAT HAS CONTENT (no placeholders —
  *                see module doc), the affected-symbols sidecar whenever
- *                technical_specification has content, and — iff at least one file was skipped or
+ *                technical_specification passed with content, and — iff at least one file was skipped or
  *                one failed section was withheld — `00-run-notes.md`
  *                naming each skip and each withheld section.
  */
