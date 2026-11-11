@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newPipelineState, step } from "../index.js";
 
@@ -94,7 +95,7 @@ describe("pipeline runner — emit_message coalescing", () => {
     expect(out.state.global_recall_done).toBe(true);
     expect(out.action.kind).toBe("write_file");
     if (out.action.kind === "write_file") {
-      expect(out.action.path).toBe("/some/path/.prd-gen/.gitignore");
+      expect(out.action.path).toBe(join("/some/path", ".prd-gen", ".gitignore"));
       expect(out.action.content).toBe("*\n");
     }
   });

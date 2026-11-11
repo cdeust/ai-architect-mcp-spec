@@ -149,7 +149,9 @@ function main(argv) {
     const pathKey = Object.keys(launchEnv).find((key) => key.toUpperCase() === "PATH");
     const left = (launchEnv[pathKey] ?? "").split(delimiter).filter(holdsBashExe);
     if (left.length > 0) {
-      console.error(`check_health FAIL: the no-bash PATH still holds a bash: ${left.join(delimiter)}`);
+      // The count, not the entries: PATH comes from the environment, and its
+      // values are not echoed to a CI log (CodeQL js/clear-text-logging).
+      console.error(`check_health FAIL: ${left.length} entr${left.length === 1 ? "y" : "ies"} of the no-bash PATH still hold a bash.exe`);
       return 1;
     }
     console.error("check-health-stdio: starting the server with no bash on PATH");

@@ -100,16 +100,24 @@ export class SqliteReliabilityRepository implements ReliabilityRepository {
     }
 
     this.db = new Database(resolvedPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    // busy_timeout is required for multi-writer WAL; 5000 ms covers typical
-    // UPSERT contention without unbounded blocking.
-    // source: SQLite docs, busy_timeout — https://www.sqlite.org/pragma.html#pragma_busy_timeout
-    // source: B-Curie-5 cross-audit finding.
-    this.db.pragma("busy_timeout = 5000");
+    try {
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      // busy_timeout is required for multi-writer WAL; 5000 ms covers typical
+      // UPSERT contention without unbounded blocking.
+      // source: SQLite docs, busy_timeout — https://www.sqlite.org/pragma.html#pragma_busy_timeout
+      // source: B-Curie-5 cross-audit finding.
+      this.db.pragma("busy_timeout = 5000");
 
-    this.migrate();
-    this.verifySchemaVersion();
+      this.migrate();
+      this.verifySchemaVersion();
+    } catch (error) {
+      // A constructor that throws hands no object back, so nobody can call
+      // close(): the handle must be released here. Left open, it kept the DB
+      // file locked on Windows (EBUSY on unlink) after a schema mismatch (#126).
+      this.db.close();
+      throw error;
+    }
   }
 
   // ─── Schema lifecycle ───────────────────────────────────────────────────

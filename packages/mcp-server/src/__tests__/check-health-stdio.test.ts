@@ -32,10 +32,17 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "check-health-"));
 });
 
-afterEach(() => {
+afterEach(async () => {
   // Kill before deleting root: the server may hold evidence.db open in it.
-  child?.kill();
+  // kill() only sends the signal; wait for the exit, or Windows still holds
+  // the file locked and the delete fails with EBUSY (#126).
+  const running = child;
   child = undefined;
+  if (running && running.exitCode === null && running.signalCode === null) {
+    const exited = new Promise<void>((resolve) => running.once("exit", () => resolve()));
+    running.kill();
+    await exited;
+  }
   rmSync(root, { recursive: true, force: true });
 });
 
