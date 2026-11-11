@@ -17,6 +17,7 @@ import {
   assertChecksumMatches,
   extractRecordedChecksum,
   sha256Hex,
+  namesThisScript,
 } from "./verify-mcpb-checksum.mjs";
 
 const REAL = "d6f0ce83456f65ffd7663966362612fa2224c7670dbc419d72db7cfccfc10815";
@@ -141,5 +142,63 @@ describe("run as a command", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// release.yml runs this script and reads its exit code only, not the `OK:`
+// line. Before this, a guard that did not match let the file end and the
+// process exit 0, so the step was green with nothing verified.
+describe("never exits 0 without verifying", () => {
+  const SCRIPT_URL = new URL("./verify-mcpb-checksum.mjs", import.meta.url).href;
+  const SCRIPT = fileURLToPath(SCRIPT_URL);
+
+  it("recognises a program path that names the script", () => {
+    expect(namesThisScript(SCRIPT_URL, SCRIPT)).toBe(true);
+    expect(namesThisScript(SCRIPT_URL, "/elsewhere/verify-mcpb-checksum.mjs")).toBe(true);
+    expect(namesThisScript(SCRIPT_URL, "C:\\a b\\Verify-Mcpb-Checksum.MJS")).toBe(true);
+    expect(namesThisScript(SCRIPT_URL, "/elsewhere/verify-mcpb-checksum")).toBe(true);
+    expect(namesThisScript(SCRIPT_URL, "/repo/node_modules/vitest/vitest.mjs")).toBe(false);
+    expect(namesThisScript(SCRIPT_URL, "/repo/verify-mcpb-checksum.test.mjs")).toBe(false);
+    expect(namesThisScript(SCRIPT_URL, undefined)).toBe(false);
+  });
+
+  it("exits 0 with an OK line when it verified a matching pair", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "verify-mcpb-ok-"));
+    try {
+      const bytes = Buffer.from("the bundle");
+      writeFileSync(join(dir, "x.mcpb"), bytes);
+      writeFileSync(join(dir, "server.json"), JSON.stringify(serverJson(sha256Hex(bytes))));
+      const run = spawnSync(process.execPath, [SCRIPT, join(dir, "x.mcpb"), join(dir, "server.json")], {
+        encoding: "utf8",
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toMatch(/^OK: server\.json checksum matches /);
+      writeFileSync(join(dir, "server.json"), JSON.stringify(serverJson(REAL)));
+      const bad = spawnSync(process.execPath, [SCRIPT, join(dir, "x.mcpb"), join(dir, "server.json")], {
+        encoding: "utf8",
+      });
+      expect(bad.status).toBe(1);
+      expect(bad.stdout).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A program path that names the script but that the entry check cannot
+  // resolve (here: it does not exist) is the shape of the #126 failures.
+  it("exits 2, not 0, when started as the command and the entry check misses", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const code =
+      `process.argv[1] = "/no/such/dir/verify-mcpb-checksum.mjs";` +
+      `await import(${JSON.stringify(SCRIPT_URL)});`;
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("nothing was verified");
   });
 });

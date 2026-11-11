@@ -31,7 +31,9 @@
  * `get_pipeline_state(run_id, format:"action")`, served from an in-memory
  * per-run cache that pipeline-tools.ts updates on every
  * start_pipeline/submit_action_result call BEFORE bounding is applied — no
- * silent truncation, no filesystem spooling required.
+ * silent truncation, no filesystem spooling required. That refetch is itself
+ * paged under MAX_RESPONSE_CHARS by whole invocations (page-action-response.ts,
+ * #125).
  *
  * Stripping is ALL-OR-NOTHING across the batch, never per-invocation: a host
  * driving a `spawn_subagents` batch needs every invocation's prompt or none.
@@ -64,7 +66,8 @@ function wireChars(value) {
  *                recorded in `__bounded.applied` with the exact chars
  *                reclaimed. The full action (prompts included) stays
  *                recoverable via
- *                `get_pipeline_state(run_id, format:"action")`.
+ *                `get_pipeline_state(run_id, format:"action")`, paged by
+ *                `invocation_offset`.
  */
 export function boundEnvelopeResponse(payload) {
     const applied = [];
@@ -93,7 +96,7 @@ export function boundEnvelopeResponse(payload) {
                 const stub = {
                     omitted: true,
                     chars,
-                    hint: `re-fetch via get_pipeline_state(run_id, format:"action") — full unbounded invocations, including prompts`,
+                    hint: `re-fetch via get_pipeline_state(run_id, format:"action") — every invocation with its prompt, paged under the response budget: follow __page.next_offset as invocation_offset until it is null`,
                 };
                 return { ...inv, prompt: stub };
             }

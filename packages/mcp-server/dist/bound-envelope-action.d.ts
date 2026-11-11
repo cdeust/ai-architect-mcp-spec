@@ -31,7 +31,9 @@
  * `get_pipeline_state(run_id, format:"action")`, served from an in-memory
  * per-run cache that pipeline-tools.ts updates on every
  * start_pipeline/submit_action_result call BEFORE bounding is applied — no
- * silent truncation, no filesystem spooling required.
+ * silent truncation, no filesystem spooling required. That refetch is itself
+ * paged under MAX_RESPONSE_CHARS by whole invocations (page-action-response.ts,
+ * #125).
  *
  * Stripping is ALL-OR-NOTHING across the batch, never per-invocation: a host
  * driving a `spawn_subagents` batch needs every invocation's prompt or none.
@@ -79,7 +81,8 @@ export interface BoundedEnvelope extends EnvelopePayload {
  *                recorded in `__bounded.applied` with the exact chars
  *                reclaimed. The full action (prompts included) stays
  *                recoverable via
- *                `get_pipeline_state(run_id, format:"action")`.
+ *                `get_pipeline_state(run_id, format:"action")`, paged by
+ *                `invocation_offset`.
  */
 export declare function boundEnvelopeResponse(payload: EnvelopePayload): BoundedEnvelope;
 //# sourceMappingURL=bound-envelope-action.d.ts.map

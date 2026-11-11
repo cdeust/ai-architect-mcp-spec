@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-11 — honest run outcome and health status, paged verification plans, node launcher, Windows and macOS validated
+
 ### Changed
 
 - The resolver reads the file names of the low-risk Dependabot tier from the new required `ci.json` key `low_risk_files` (`pnpm-lock.yaml`, `package.json`) on the default branch, and fails when the key is missing; the names are no longer written in `pipeline-post-merge.yml`. The `ci.json` validator of the `contract` job in `pipeline.yml` and `pipeline-post-merge.yml` accepts the key and reports its absence. A file is still matched by its name in any directory, and a path under `.github/` is never low risk (Cortex ADR-1131, amends Cortex ADR-1126).
@@ -24,6 +26,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `packages/mcp-server/dist` and `mcp-server/index.js` are rebuilt from the source. The committed copies dated from #160: the plugin, which runs the committed bundle, still answered `check_health` with `"ok"` as a literal and announced `0.8.0`, without `known_symbols`, the paging of the verification plans and of `format:"action"`, or `PRD_GEN_EVIDENCE_DB`, and `release.yml`, which rebuilds and then runs `git diff --exit-code packages/mcp-server/dist/`, would have failed after the tag. `docs/RELEASING.md` writes the release procedure down, including this rebuild.
+- `scripts/release/verify-mcpb-checksum.mjs` exits 2 when it is started as a command and its entry check does not recognise it. The file ended there and the process exited 0 with nothing verified, and `release.yml` reads the exit code of that step, not its `OK:` line.
 - The plugin launcher records a completed install and serializes concurrent ones. `bin/ensure-deps.mjs` took `mcp-server/node_modules/ajv` as proof that the dependencies were installed, so an `npm ci` interrupted after ajv was never repaired, and an updated lockfile was never installed. A marker inside `node_modules` now holds the SHA-256 of the lockfile a completed `npm ci` installed, and provisioning runs whenever it is missing or names another lockfile (an existing install has no marker and is installed once more). Two launches at once are serialized by an exclusive lock file, `mcp-server/.prd-gen-deps.lock`: the second waits, then finds the marker and installs nothing; a lock whose owner process no longer exists is taken over (#126).
 - One entry-point check, `bin/is-entry.mjs`, serves the launcher, `scripts/check-health-stdio.mjs`, `scripts/release/verify-mcpb-checksum.mjs` and `scripts/external-judge/calibrate.mjs`, which each carried a copy of it (#126).
 - The Claude Code plugin starts without bash: `.mcp.json` named `bash bin/ensure-deps.sh` as the launcher, so on Windows the plugin started only where a bash was on `PATH`, while `manifest.json` declares `win32`. The launcher is now `node bin/ensure-deps.mjs` (the bash script is removed): it runs the same `npm ci` against the committed lockfile in `mcp-server/` on first launch, with npm's output on stderr, then loads the server in the same process with its arguments. On Windows `npm ci` goes through a shell, because npm is `npm.cmd` there and node does not spawn it otherwise (#126).

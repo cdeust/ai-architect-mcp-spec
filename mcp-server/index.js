@@ -2817,8 +2817,8 @@ var require_validate = __commonJS({
           return data;
       }
       let expr = data;
-      const segments = jsonPointer.split("/");
-      for (const segment of segments) {
+      const segments2 = jsonPointer.split("/");
+      for (const segment of segments2) {
         if (segment) {
           data = (0, codegen_1._)`${data}${(0, codegen_1.getProperty)((0, util_1.unescapeJsonPointer)(segment))}`;
           expr = (0, codegen_1._)`${expr} && ${data}`;
@@ -3347,12 +3347,12 @@ var require_utils = __commonJS({
       if (path === "" || path[0] === "/") {
         return removeDotSegments(path);
       }
-      const segments = path.split("/");
-      const last = segments.length - 1;
+      const segments2 = path.split("/");
+      const last = segments2.length - 1;
       const output2 = [];
       let trailingDirectory = false;
       for (let i2 = 0; i2 <= last; i2++) {
-        const segment = segments[i2];
+        const segment = segments2[i2];
         if (segment === "." || segment === "..") {
           if (segment === "..") {
             if (output2.length !== 0 && output2[output2.length - 1] !== "..") {
@@ -4693,9 +4693,9 @@ var require_core = __commonJS({
         const rules = this.RULES.all;
         metaSchema = JSON.parse(JSON.stringify(metaSchema));
         for (const jsonPointer of keywordsJsonPointers) {
-          const segments = jsonPointer.split("/").slice(1);
+          const segments2 = jsonPointer.split("/").slice(1);
           let keywords2 = metaSchema;
-          for (const seg of segments)
+          for (const seg of segments2)
             keywords2 = keywords2[seg];
           for (const key in rules) {
             const rule = rules[key];
@@ -30183,7 +30183,7 @@ function visit(schema, fnOrHandlers) {
   return run(schema);
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -33198,7 +33198,7 @@ function date4(params) {
   return _coercedDate(ZodDate2, params);
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -34729,7 +34729,7 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -36018,7 +36018,7 @@ var zodToJsonSchema = (schema, options) => {
   return combined;
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t) {
   if (!t)
     return "draft-7";
@@ -36060,7 +36060,7 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -37037,7 +37037,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -37105,7 +37105,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks = class {
   constructor(_server) {
     this._server = _server;
@@ -37318,7 +37318,7 @@ var ExperimentalServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -37353,7 +37353,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
@@ -37724,7 +37724,7 @@ var Server = class extends Protocol {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -37738,7 +37738,7 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name323) {
   const warnings = [];
@@ -37796,7 +37796,7 @@ function validateAndWarnToolName(name323) {
   return result.isValid;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
@@ -37811,7 +37811,7 @@ var ExperimentalMcpServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 function toolInputElementCount(value, max3) {
   let count2 = 0;
   const stack = [value];
@@ -37860,6 +37860,15 @@ var McpServer = class {
     this._promptHandlersInitialized = false;
     this.server = new Server(serverInfo, options);
     this._maxToolInputElements = resolveMaxToolInputElements(options?.maxToolInputElements);
+    if (options?.capabilities?.tools) {
+      this.setToolRequestHandlers();
+    }
+    if (options?.capabilities?.resources) {
+      this.setResourceRequestHandlers();
+    }
+    if (options?.capabilities?.prompts) {
+      this.setPromptRequestHandlers();
+    }
   }
   /**
    * Access experimental features.
@@ -38643,10 +38652,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
   constructor(options) {
@@ -38683,7 +38692,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.1_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.32.2_zod@4.6.7/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
   constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
@@ -38752,7 +38761,7 @@ var StdioServerTransport = class {
 
 // packages/mcp-server/dist/index.js
 import { readFileSync as readFileSync5, existsSync as existsSync6 } from "node:fs";
-import { join as join10, dirname as dirname2 } from "node:path";
+import { join as join10, dirname as dirname5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // packages/core/dist/domain/prd-context.js
@@ -39508,7 +39517,7 @@ function extractJsonObject(text) {
 }
 
 // packages/core/dist/persistence/evidence-repository.js
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 var Database = null;
@@ -39524,7 +39533,7 @@ var EvidenceRepository = class {
       throw new Error("better-sqlite3 not available \u2014 install it with: pnpm add better-sqlite3");
     }
     const resolvedPath = dbPath ?? this.defaultDbPath();
-    const dir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+    const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -39534,7 +39543,7 @@ var EvidenceRepository = class {
     this.migrate();
   }
   defaultDbPath() {
-    return join(homedir(), ".prd-gen", "evidence.db");
+    return defaultEvidenceDbPath();
   }
   migrate() {
     this.db.exec(`
@@ -39763,12 +39772,16 @@ var EvidenceRepository = class {
     this.db.close();
   }
 };
+function defaultEvidenceDbPath() {
+  return join(homedir(), ".prd-gen", "evidence.db");
+}
 function tryCreateEvidenceRepository(dbPath) {
-  if (!Database)
-    return null;
+  let target = dbPath ?? "~/.prd-gen/evidence.db";
   try {
-    return new EvidenceRepository(dbPath);
-  } catch {
+    target = dbPath ?? defaultEvidenceDbPath();
+    return new EvidenceRepository(target);
+  } catch (err) {
+    console.error(`[prd-gen] evidence database at ${target} could not be opened; evidence storage is off: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -39782,7 +39795,7 @@ var DEFAULT_RELIABILITY_PRIOR = Object.freeze({
 var RELIABILITY_PRIOR_ESS = DEFAULT_RELIABILITY_PRIOR.alpha + DEFAULT_RELIABILITY_PRIOR.beta;
 
 // packages/core/dist/persistence/sqlite-reliability-repository.js
-import { join as join2 } from "node:path";
+import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 import { mkdirSync as mkdirSync2, existsSync as existsSync2 } from "node:fs";
 var Database2 = null;
@@ -39798,16 +39811,21 @@ var SqliteReliabilityRepository = class {
       throw new Error("better-sqlite3 not available \u2014 install it with: pnpm add better-sqlite3");
     }
     const resolvedPath = dbPath ?? defaultDbPath();
-    const dir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+    const dir = dirname2(resolvedPath);
     if (!existsSync2(dir)) {
       mkdirSync2(dir, { recursive: true });
     }
     this.db = new Database2(resolvedPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.db.pragma("busy_timeout = 5000");
-    this.migrate();
-    this.verifySchemaVersion();
+    try {
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      this.db.pragma("busy_timeout = 5000");
+      this.migrate();
+      this.verifySchemaVersion();
+    } catch (error62) {
+      this.db.close();
+      throw error62;
+    }
   }
   // ─── Schema lifecycle ───────────────────────────────────────────────────
   migrate() {
@@ -39963,6 +39981,31 @@ function tryCreateReliabilityRepository(dbPath) {
   } catch {
     return null;
   }
+}
+
+// packages/mcp-server/dist/evidence-db-path.js
+import { isAbsolute } from "node:path";
+var EVIDENCE_DB_ENV = "PRD_GEN_EVIDENCE_DB";
+function resolveEvidenceDbPath(env = process.env, warn = (m) => console.error(m)) {
+  const raw = env[EVIDENCE_DB_ENV]?.trim();
+  if (!raw)
+    return void 0;
+  if (raw.includes("${")) {
+    warn(`[prd-gen] ${EVIDENCE_DB_ENV}=${raw} contains an unexpanded placeholder; using ~/.prd-gen/evidence.db instead.`);
+    return void 0;
+  }
+  if (!isAbsolute(raw)) {
+    warn(`[prd-gen] ${EVIDENCE_DB_ENV}=${raw} is not an absolute path; using ~/.prd-gen/evidence.db instead.`);
+    return void 0;
+  }
+  return raw;
+}
+var _evidenceRepo = void 0;
+function getEvidenceRepo() {
+  if (_evidenceRepo === void 0) {
+    _evidenceRepo = tryCreateEvidenceRepository(resolveEvidenceDbPath());
+  }
+  return _evidenceRepo;
 }
 
 // packages/validation/dist/hard-output-rules/rule-mapping.js
@@ -40157,12 +40200,12 @@ function makeViolation(rule, sectionType, message, offendingContent = null) {
 function extractCodeBlocks(content) {
   const pattern = /```(?:\w+)?[ \t]*\r?\n([\s\S]*?)```/g;
   const LEADING_BLANK = /^(?:[ \t]*\r?\n)+/;
-  const blocks = [];
+  const blocks2 = [];
   let match;
   while ((match = pattern.exec(content)) !== null) {
-    blocks.push(match[1].replace(LEADING_BLANK, ""));
+    blocks2.push(match[1].replace(LEADING_BLANK, ""));
   }
-  return blocks;
+  return blocks2;
 }
 function extractTypeName(line) {
   const typeKeywords = [
@@ -40296,15 +40339,21 @@ function checkHonestVerificationVerdicts(content, sectionType) {
   if (!nfrPattern.test(content))
     return [];
   const verdictPattern = /\b(?:PASS|SPEC-COMPLETE|NEEDS-RUNTIME|INCONCLUSIVE|FAIL)\b/gi;
+  const verdictLabel = /\bverdict\s*[:=]\s*$/i;
   const verdicts = [];
   let match;
   while ((match = verdictPattern.exec(content)) !== null) {
-    verdicts.push(match[0].toUpperCase());
+    const token = match[0];
+    const isCanonical = token === token.toUpperCase();
+    const lineStart = content.lastIndexOf("\n", match.index) + 1;
+    const isLabelled = verdictLabel.test(content.slice(lineStart, match.index));
+    if (isCanonical || isLabelled)
+      verdicts.push(token.toUpperCase());
   }
   if (verdicts.length === 0)
     return [];
   const hasOnlyPass = verdicts.every((v) => v === "PASS");
-  if (hasOnlyPass && verdicts.length >= 2) {
+  if (hasOnlyPass) {
     return [
       makeViolation("honest_verification_verdicts", sectionType, `All ${verdicts.length} verdicts are PASS despite NFR performance claims that require runtime measurement \u2014 use SPEC-COMPLETE or NEEDS-RUNTIME for unverified metrics`, `Verdicts: ${verdicts.length}x PASS, 0x SPEC-COMPLETE/NEEDS-RUNTIME`)
     ];
@@ -43390,7 +43439,455 @@ function validateCrossReferences(sections) {
   };
 }
 
-// node_modules/.pnpm/js-yaml@5.4.3/node_modules/js-yaml/dist/js-yaml.mjs
+// packages/validation/dist/inline-code-spans.js
+var CONTAINER_PREFIX = /^(?:\s*(?:>|(?:[-*+]|\d{1,9}[.)])(?=\s)))*\s*/;
+var FENCE = /^(`{3,}(?=[^`]*$)|~{3,})/;
+var BACKTICK_RUN = /`+/g;
+var BLOCK_START = /^\s*(?:[-*+]\s|\d{1,9}[.)]\s|#{1,6}(?:\s|$)|\|)/;
+var ONE_LINE_BLOCK = /^\s*(?:#{1,6}(?:\s|$)|\|)/;
+var BREAK_LINE = /^\s*(?:(?:-[ \t]*){3,}|-{2,}[ \t]*|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
+var QUOTE_MARKERS = /^(?:\s*>)+\s?/;
+function blocks(text) {
+  const out = [];
+  let current = [];
+  const flush = () => {
+    if (current.length > 0)
+      out.push(current.join("\n"));
+    current = [];
+  };
+  let prevDepth = 0;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") {
+      flush();
+      prevDepth = 0;
+      continue;
+    }
+    const quoted = QUOTE_MARKERS.test(line);
+    const inner = quoted ? line.replace(QUOTE_MARKERS, "") : line;
+    const depth = quoted ? (QUOTE_MARKERS.exec(line)?.[0].split(">").length ?? 1) - 1 : 0;
+    if (inner.trim() === "") {
+      flush();
+      prevDepth = depth;
+      continue;
+    }
+    if (BREAK_LINE.test(inner)) {
+      flush();
+      prevDepth = depth;
+      continue;
+    }
+    const enters = depth > prevDepth;
+    const leaves = depth === 0 && prevDepth > 0;
+    if (enters || leaves || BLOCK_START.test(inner))
+      flush();
+    prevDepth = depth;
+    current.push(inner);
+    if (ONE_LINE_BLOCK.test(inner))
+      flush();
+  }
+  flush();
+  return out;
+}
+var QUOTE_PREFIX = /^(?:\s*>)*/;
+function quoteDepth(line) {
+  const prefix = CONTAINER_PREFIX.exec(line)?.[0] ?? "";
+  let depth = 0;
+  for (const ch of prefix)
+    if (ch === ">")
+      depth += 1;
+  return depth;
+}
+function containerColumn(unquoted, rest) {
+  const indent = unquoted.length - unquoted.trimStart().length;
+  const prefix = unquoted.length - rest.length;
+  if (prefix > indent)
+    return prefix;
+  return indent >= 4 ? indent : 0;
+}
+function openFence(line) {
+  const unquoted = line.replace(QUOTE_PREFIX, "");
+  const rest = line.replace(CONTAINER_PREFIX, "");
+  const open2 = FENCE.exec(rest);
+  if (!open2)
+    return null;
+  const depth = quoteDepth(line);
+  return {
+    marker: open2[1],
+    depth,
+    // A quoted fence ends with its quote; its column is not tracked.
+    column: depth > 0 ? 0 : containerColumn(unquoted, rest)
+  };
+}
+function closes(fence, line) {
+  if (quoteDepth(line) !== fence.depth)
+    return false;
+  const body = (fence.depth > 0 ? line.replace(QUOTE_PREFIX, "") : line).trim();
+  const run = FENCE.exec(body);
+  return run !== null && body === run[1] && run[1][0] === fence.marker[0] && run[1].length >= fence.marker.length;
+}
+function leavesContainer(fence, line) {
+  if (fence.depth > 0)
+    return quoteDepth(line) < fence.depth;
+  if (fence.column === 0 || line.trim() === "")
+    return false;
+  const indent = line.length - line.trimStart().length;
+  return indent < fence.column;
+}
+function stripFencedBlocks(content) {
+  const kept = [];
+  let fence = null;
+  for (const line of content.replace(/\r\n?/g, "\n").split("\n")) {
+    if (fence !== null) {
+      const indented = line.length - line.trimStart().length > 0;
+      if (leavesContainer(fence, line) && !(indented && closes(fence, line)))
+        fence = null;
+      else {
+        if (closes(fence, line))
+          fence = null;
+        continue;
+      }
+    }
+    fence = openFence(line);
+    kept.push(fence === null ? line : "");
+  }
+  return kept.join("\n");
+}
+function backtickRuns(block) {
+  return [...block.matchAll(BACKTICK_RUN)].map((m) => {
+    let slashes = 0;
+    for (let k = m.index - 1; k >= 0 && block[k] === "\\"; k--)
+      slashes += 1;
+    return { start: m.index, len: m[0].length, escaped: slashes % 2 === 1 };
+  });
+}
+function blockSpans(block) {
+  const runs = backtickRuns(block);
+  const byLen = /* @__PURE__ */ new Map();
+  runs.forEach((r, i3) => {
+    const list = byLen.get(r.len);
+    if (list)
+      list.push(i3);
+    else
+      byLen.set(r.len, [i3]);
+  });
+  const cursor = /* @__PURE__ */ new Map();
+  const closerAfter = (i3, len) => {
+    const list = byLen.get(len) ?? [];
+    let c = cursor.get(len) ?? 0;
+    while (c < list.length && list[c] <= i3)
+      c += 1;
+    cursor.set(len, c);
+    return c < list.length ? list[c] : -1;
+  };
+  const spans = [];
+  let i2 = 0;
+  while (i2 < runs.length) {
+    const r = runs[i2];
+    const len = r.escaped ? r.len - 1 : r.len;
+    const j = len > 0 ? closerAfter(i2, len) : -1;
+    if (j === -1) {
+      i2 += 1;
+      continue;
+    }
+    spans.push(block.slice(r.start + r.len, runs[j].start).replace(/\n/g, " "));
+    i2 = j + 1;
+  }
+  return spans;
+}
+function inlineCodeSpans(content) {
+  return blocks(stripFencedBlocks(content)).flatMap(blockSpans);
+}
+
+// packages/validation/dist/symbol-existence.js
+var MAX_SPAN_LENGTH = 200;
+var IDENT = "[A-Za-z_$][\\w$]*";
+var SYMBOL_SHAPE = new RegExp(`^(${IDENT}(?:(?:\\.|::|#)${IDENT})*)(\\((.*)\\))?$`);
+function isTextApostrophe(text, i2) {
+  if (/\w/.test(text[i2 - 1] ?? "") && /\w/.test(text[i2 + 1] ?? ""))
+    return true;
+  return (text[i2 - 1] === "&" || text[i2 - 1] === "<") && /[A-Za-z_]/.test(text[i2 + 1] ?? "");
+}
+function balancedIgnoringQuotes(text) {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(")
+      depth += 1;
+    else if (ch === ")" && --depth < 0)
+      return false;
+  }
+  return depth === 0;
+}
+function balanceWithStrings(text) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    const ch = text[i2];
+    if (quote !== null) {
+      if (escaped)
+        escaped = false;
+      else if (ch === "\\")
+        escaped = true;
+      else if (ch === quote)
+        quote = null;
+    } else if (ch === '"' || ch === "'" && !isTextApostrophe(text, i2))
+      quote = ch;
+    else if (ch === "(")
+      depth += 1;
+    else if (ch === ")" && --depth < 0)
+      return "unbalanced";
+  }
+  if (quote !== null)
+    return "open";
+  return depth === 0 ? "ok" : "unbalanced";
+}
+function balancedParens(text) {
+  const withStrings = balanceWithStrings(text);
+  return withStrings === "ok" || withStrings === "open" && balancedIgnoringQuotes(text);
+}
+var BUILTIN_NAMES = /* @__PURE__ */ new Set([
+  "JSON",
+  "Math",
+  "Object",
+  "Array",
+  "Promise",
+  "Number",
+  "String",
+  "Date",
+  "Reflect",
+  "Symbol",
+  "Intl",
+  "Buffer",
+  "Error",
+  "Map",
+  "Set",
+  "URL",
+  "fetch",
+  "setTimeout",
+  "setInterval",
+  "clearTimeout",
+  "clearInterval",
+  "parseInt",
+  "parseFloat",
+  "require",
+  "structuredClone"
+]);
+var STD_ROOTS = /* @__PURE__ */ new Set(["std"]);
+var RELATIVE_ROOTS = /* @__PURE__ */ new Set(["Self", "self", "super", "crate"]);
+var PASCAL_OWNER = /^[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*$/;
+var FILE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "md",
+  "txt",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "html",
+  "css",
+  "csv",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "kts",
+  "swift",
+  "sh",
+  "sql",
+  "lock",
+  "env",
+  "cfg",
+  "ini",
+  "log",
+  "pdf",
+  "png",
+  "svg",
+  "plist",
+  "cs",
+  "config",
+  "vue",
+  "resolved",
+  "storyboard",
+  "xib",
+  "xcconfig",
+  "gradle",
+  "proto",
+  "graphql",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "php",
+  "dart",
+  "scala"
+]);
+function segments(path) {
+  return path.split(/\.|::|#/).filter((s) => s.length > 0);
+}
+function symbolFromSpan(span) {
+  const text = span.trim();
+  if (text.length === 0 || text.length > MAX_SPAN_LENGTH)
+    return null;
+  const match = SYMBOL_SHAPE.exec(text);
+  if (match === null)
+    return null;
+  const isCall = match[2] !== void 0;
+  if (isCall && !balancedParens(match[3]))
+    return null;
+  const path = match[1];
+  const parts = segments(path);
+  if (path.includes("::")) {
+    if (STD_ROOTS.has(parts[0]))
+      return null;
+    let roots = 0;
+    while (roots < parts.length - 1 && RELATIVE_ROOTS.has(parts[roots]))
+      roots += 1;
+    if (roots === 0)
+      return path;
+    const rest = parts.slice(roots);
+    if (RELATIVE_ROOTS.has(rest[rest.length - 1]))
+      return null;
+    return rest.length === 1 && !isCall ? null : rest.join("::");
+  }
+  if (path.includes("#")) {
+    return PASCAL_OWNER.test(path.slice(0, path.indexOf("#"))) ? path : null;
+  }
+  if (BUILTIN_NAMES.has(parts[0]))
+    return null;
+  if (!path.includes("."))
+    return isCall ? path : null;
+  if (!/^[A-Z]/.test(parts[0]))
+    return null;
+  return isCall || !FILE_EXTENSIONS.has(parts[parts.length - 1].toLowerCase()) ? path : null;
+}
+function entryPath(text) {
+  let out = "";
+  let depth = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    const ch = text[i2];
+    if (ch === "<")
+      depth += 1;
+    else if (ch === ">") {
+      if (text[i2 - 1] !== "-" && text[i2 - 1] !== "=")
+        depth = Math.max(0, depth - 1);
+    } else if (depth === 0) {
+      if (ch === "(")
+        break;
+      if (ch === "-" && text[i2 + 1] === ">" && !out.endsWith("operator")) {
+        out += ".";
+        i2 += 1;
+      } else
+        out += ch;
+    }
+  }
+  return out;
+}
+function trimOptionalMarkers(segment) {
+  let end = segment.length;
+  while (end > 0 && (segment[end - 1] === "?" || segment[end - 1] === "!"))
+    end -= 1;
+  return segment.slice(0, end);
+}
+function knownSegments(entry) {
+  return segments(entryPath(entry.trim())).map(trimOptionalMarkers).filter((s) => s.length > 0);
+}
+function newRefNode() {
+  return { children: /* @__PURE__ */ new Map(), refEnd: false, coveredByEntry: false, entryEnd: false };
+}
+function referenceTrie(keys) {
+  const root = newRefNode();
+  for (const key of keys) {
+    const ref = key.split(".");
+    let node2 = root;
+    for (let k = ref.length - 1; k >= 0; k--) {
+      let next = node2.children.get(ref[k]);
+      if (!next) {
+        next = newRefNode();
+        node2.children.set(ref[k], next);
+      }
+      node2 = next;
+    }
+    node2.refEnd = true;
+  }
+  return root;
+}
+function streamEntry(root, parts) {
+  let node2 = root;
+  for (let k = parts.length - 1; k >= 0; k--) {
+    const next = node2.children.get(parts[k]);
+    if (!next)
+      return;
+    node2 = next;
+    if (node2.refEnd)
+      node2.coveredByEntry = true;
+  }
+  node2.entryEnd = true;
+}
+function resolves(root, ref, owned) {
+  let node2 = root;
+  for (let k = ref.length - 1; k >= 0; k--) {
+    const next = node2.children.get(ref[k]);
+    if (!next)
+      return false;
+    node2 = next;
+    const depth = ref.length - k;
+    const bareWithOwners = depth === 1 && owned.has(ref[k]);
+    if (node2.entryEnd && k > 0 && !bareWithOwners)
+      return true;
+  }
+  return node2.coveredByEntry;
+}
+function referenceCounts(content) {
+  const counts = /* @__PURE__ */ new Map();
+  const parts = typeof content === "string" ? [content] : content;
+  for (const part of parts) {
+    for (const span of inlineCodeSpans(part)) {
+      const symbol2 = symbolFromSpan(span);
+      if (symbol2 === null)
+        continue;
+      const key = segments(symbol2).join(".");
+      const seen = counts.get(key);
+      counts.set(key, { symbol: seen?.symbol ?? symbol2, occurrences: (seen?.occurrences ?? 0) + 1 });
+    }
+  }
+  return counts;
+}
+function checkSymbolExistence(content, knownSymbols) {
+  const counts = referenceCounts(content);
+  const trie = referenceTrie(counts.keys());
+  const distinct = /* @__PURE__ */ new Set();
+  const owned = /* @__PURE__ */ new Set();
+  for (const entry of knownSymbols) {
+    const parts = knownSegments(entry);
+    if (parts.length === 0)
+      continue;
+    distinct.add(parts.join("."));
+    const last = parts[parts.length - 1];
+    if (parts.length > 1 && trie.children.has(last))
+      owned.add(last);
+    streamEntry(trie, parts);
+  }
+  const unresolved = [];
+  for (const [key, entry] of counts) {
+    if (!resolves(trie, key.split("."), owned))
+      unresolved.push(entry);
+  }
+  unresolved.sort((a, b) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
+  return {
+    checkedSymbols: counts.size,
+    knownSymbols: distinct.size,
+    unresolvedSymbols: unresolved
+  };
+}
+
+// node_modules/.pnpm/js-yaml@5.5.0/node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -44042,7 +44539,6 @@ var Schema = class Schema2 {
         case "mapping":
           if (tag2.matchByTagPrefix) prefix.mapping.push(tag2);
           else exact.mapping[tag2.tagName] = tag2;
-          break;
       }
     }
     const implicitScalarAnyFirstChar = implicitScalarTags.filter((tag2) => tag2.implicitFirstChars === null);
@@ -44296,6 +44792,8 @@ var DEFAULT_TAG_HANDLERS = Object.assign(/* @__PURE__ */ Object.create(null), {
   "!": "!",
   "!!": "tag:yaml.org,2002:"
 });
+var TAG_SUFFIX_CHARS = "-#;/?:@&=+$_.~*'()";
+var TAG_URI_CHARS = TAG_SUFFIX_CHARS + "!,[]";
 var DEFAULT_CONSTRUCTOR_OPTIONS = {
   filename: "",
   schema: CORE_SCHEMA,
@@ -44455,6 +44953,16 @@ var COLLECTION_STYLE_FLOW = COLLECTION_STYLE.FLOW;
 var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
+
+// packages/mcp-server/dist/symbol-check.js
+var MAX_KNOWN_SYMBOLS = 2e5;
+var MAX_SYMBOL_LENGTH = 512;
+var KnownSymbolsSchema = external_exports.array(external_exports.string().max(MAX_SYMBOL_LENGTH)).max(MAX_KNOWN_SYMBOLS).optional().describe("Optional symbol names from the host's code graph (plain, or qualified with ., ::, # or -> (read as .); a signature such as (email:), generic arguments and trailing ?/! are ignored). When given, the report gains `symbolExistence` {checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced blocks that none of these resolve \u2014 each is either introduced by the PRD or fabricated. Not scored. Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: lower-case receivers, JS built-ins, std:: paths, # after anything but one PascalCase name (anchors), file names. Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked; a non-call left with one name (Self::CONST, crate::Foo) is not checked. [] means an empty graph: omit the field when the graph lookup failed.");
+function withSymbolCheck(report, content, knownSymbols) {
+  if (knownSymbols === void 0)
+    return report;
+  return { ...report, symbolExistence: checkSymbolExistence(content, knownSymbols) };
+}
 
 // packages/orchestration/dist/types/state/pipeline-step.js
 var PipelineStepSchema = external_exports.enum([
@@ -45707,10 +46215,21 @@ var VerificationSummarySchema = external_exports.object({
    */
   total_subjective_claims: external_exports.number().int().nonnegative().default(0)
 });
+var DoneOutcomeSchema = external_exports.object({
+  status: external_exports.enum(["passed", "needs_attention"]),
+  reasons: external_exports.array(external_exports.string())
+});
 var DoneActionSchema = external_exports.object({
   kind: external_exports.literal("done"),
   summary: external_exports.string(),
   artifacts: external_exports.array(external_exports.string()).default([]),
+  /**
+   * Quality verdict on the run's deliverables (DoneOutcomeSchema). Present
+   * on every `done` that went through self_check; absent on the `done`
+   * emissions that did not (replay of an already complete run, a runner
+   * fallback built from messages only).
+   */
+  outcome: DoneOutcomeSchema.optional(),
   /**
    * Typed verification summary. Optional only because not every `done`
    * emission has run the judge phase (zero-claim short-circuit, malformed
@@ -45943,13 +46462,13 @@ var PipelineStateSchema = external_exports.object({
   verification_plan: VerificationPlanSnapshotSchema.nullable().default(null),
   /**
    * Path to the `stage-5.affected_symbols.json` sidecar written by
-   * file-export.ts, when the technical_specification section ran and
-   * produced content (extraction ran — regardless of how many claims it
+   * file-export.ts, when the technical_specification section passed with
+   * content (extraction ran — regardless of how many claims it
    * found; empty arrays are a valid, written zero-claims document). Set in
    * file-export at the file-set-complete transition; read by self-check to
    * pass `affected_symbols_path` to `validate_prd_against_graph`. Null when
-   * the technical_specification section never ran (see file-export.ts
-   * module doc) or when file_export has not yet run.
+   * the technical_specification section never ran or failed validation
+   * (see file-export.ts module doc) or when file_export has not yet run.
    *
    * source: AP validate_prd_against_graph contract, `affected_symbols_path`
    * argument (ai-architect-mcp-codebase stages/stage-6.md §4.2/§6.1,
@@ -46083,7 +46602,10 @@ var PipelineStateSchema = external_exports.object({
     // Matches DoneActionSchema.verification exactly (actions.ts) so
     // remember-phase.ts can reconstruct the `done` action byte-for-byte
     // without a cast. source: Phase 1b (2026-07-14).
-    verification: VerificationSummarySchema.optional()
+    verification: VerificationSummarySchema.optional(),
+    // Matches DoneActionSchema.outcome (actions.ts), carried to `done` the
+    // same way. Optional so a state persisted before issue #122 still parses.
+    outcome: DoneOutcomeSchema.optional()
   }).nullable().default(null),
   /**
    * Idempotency flag for the Phase C `remember` emission in self-check.
@@ -46353,7 +46875,7 @@ function adviseCortexInstall() {
     "prior-decision context \u2014 generation quality degrades silently.",
     "",
     "To install:",
-    "  /plugin marketplace add cdeust/cortex",
+    "  /plugin marketplace add cdeust/Cortex",
     "  /plugin install hypermnesia-mcp@cortex-plugins",
     "  /reload-plugins",
     "",
@@ -47979,13 +48501,13 @@ function collectDraftText(result, sectionType) {
 
 // packages/orchestration/dist/handlers/jira-generation.js
 var BATCH_ID = "jira_generation";
+var JIRA_SOURCE_TYPES = [
+  "requirements",
+  "user_stories",
+  "acceptance_criteria"
+];
 function gatherSourceSections(state) {
-  const wanted = [
-    "requirements",
-    "user_stories",
-    "acceptance_criteria"
-  ];
-  return state.sections.filter((s) => wanted.includes(s.section_type) && s.content).map((s) => ({
+  return state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type) && s.content && s.status !== "failed").map((s) => ({
     section_type: s.section_type,
     content: s.content
   }));
@@ -48087,24 +48609,73 @@ function reasonForSectionTypes(state, types) {
   return anyFailed ? "failed_validation" : "skipped";
 }
 function jiraSkipReason(state) {
-  const failed = state.errors.some((e3) => e3.startsWith("[jira_generation] failed"));
-  return failed ? "failed_validation" : "skipped";
+  const subagentFailed = state.errors.some((e3) => e3.startsWith("[jira_generation] failed"));
+  const sources = state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type));
+  const sourcesFailed = sources.some((s) => s.status === "failed") && !sources.some(exportable);
+  return subagentFailed || sourcesFailed ? "failed_validation" : "skipped";
+}
+function exportable(section) {
+  return Boolean(section.content) && section.status !== "failed";
 }
 function sectionBody(section) {
   const trimmed = section.content.trim();
   return section.section_type === "technical_specification" ? stripAffectedSymbolsBlock(trimmed) : trimmed;
 }
+function withoutOwnHeading(body, display) {
+  const newline = body.indexOf("\n");
+  const line = newline === -1 ? body : body.slice(0, newline);
+  const first = line.endsWith("\r") ? line.slice(0, -1) : line;
+  const text = headingText(first);
+  if (text === null || normalizeTitle(text) !== normalizeTitle(display))
+    return body;
+  const rest = newline === -1 ? "" : body.slice(newline + 1);
+  return rest.slice(leadingBlankLinesLength(rest));
+}
+function headingText(line) {
+  let level = 0;
+  while (level < line.length && line[level] === "#")
+    level++;
+  const separator = line[level];
+  if (level < 1 || level > 6 || separator !== " " && separator !== "	")
+    return null;
+  const isBlank = (ch) => ch === " " || ch === "	";
+  let end = line.length;
+  while (end > level && isBlank(line[end - 1]))
+    end--;
+  let hashes = end;
+  while (hashes > level && line[hashes - 1] === "#")
+    hashes--;
+  if (hashes < end && isBlank(line[hashes - 1]))
+    end = hashes;
+  return line.slice(level, end);
+}
+function normalizeTitle(text) {
+  return text.split(/[ \t]+/).filter(Boolean).join(" ").toLowerCase();
+}
+function leadingBlankLinesLength(text) {
+  let cut = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    if (text[i2] === "\n")
+      cut = i2 + 1;
+    else if (text[i2] !== " " && text[i2] !== "	" && text[i2] !== "\r")
+      break;
+  }
+  return cut;
+}
 function joinSections(state, types) {
-  return state.sections.filter((s) => types.includes(s.section_type) && s.content).sort((a, b) => SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type]).map((s) => `## ${SECTION_DISPLAY_NAMES[s.section_type]}
+  return state.sections.filter((s) => types.includes(s.section_type) && exportable(s)).sort((a, b) => SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type]).map((s) => {
+    const display = SECTION_DISPLAY_NAMES[s.section_type];
+    return `## ${display}
 
-${sectionBody(s)}`).join("\n\n");
+${withoutOwnHeading(sectionBody(s), display)}`;
+  }).join("\n\n");
 }
 function jiraContent(state) {
-  const last = [...state.sections].reverse().find((s) => s.section_type === "jira_tickets" && s.content);
+  const last = [...state.sections].reverse().find((s) => s.section_type === "jira_tickets" && exportable(s));
   return last?.content?.trim() ?? "";
 }
 function technicalSpecSection(state) {
-  return state.sections.find((s) => s.section_type === "technical_specification" && s.content) ?? null;
+  return state.sections.find((s) => s.section_type === "technical_specification" && exportable(s)) ?? null;
 }
 function affectedSymbolsForState(state) {
   const techSpec = technicalSpecSection(state);
@@ -48123,25 +48694,42 @@ var COMPANION_FILES = [
   { filename: "08-source-code.md", display: "Source Code", sectionTypes: ["source_code"] },
   { filename: "09-test-code.md", display: "Test Code", sectionTypes: ["test_code"] }
 ];
+var CORE_FILENAME = "01-prd.md";
+var JIRA_FILENAME = "07-jira-tickets.md";
+var CORE_SECTION_TYPES = [
+  "overview",
+  "goals",
+  "requirements",
+  "user_stories",
+  "technical_specification",
+  "acceptance_criteria"
+];
 function corePrdFile(state, base) {
   return {
-    path: `${base}/01-prd.md`,
+    path: `${base}/${CORE_FILENAME}`,
     content: () => [
       `# PRD: ${state.feature_description}`,
       "",
       `Run ID: ${state.run_id}`,
       `Context: ${state.prd_context ?? "unknown"}`,
       "",
-      joinSections(state, [
-        "overview",
-        "goals",
-        "requirements",
-        "user_stories",
-        "technical_specification",
-        "acceptance_criteria"
-      ])
+      joinSections(state, CORE_SECTION_TYPES)
     ].join("\n")
   };
+}
+function withheldSections(state) {
+  const files = [
+    { filename: CORE_FILENAME, sectionTypes: CORE_SECTION_TYPES },
+    ...COMPANION_FILES,
+    { filename: JIRA_FILENAME, sectionTypes: ["jira_tickets", ...JIRA_SOURCE_TYPES] },
+    { filename: AFFECTED_SYMBOLS_FILENAME, sectionTypes: ["technical_specification"] }
+  ];
+  return state.sections.filter((s) => s.status === "failed" && s.content).sort((a, b) => SECTION_ORDER[a.section_type] - SECTION_ORDER[b.section_type]).map((s) => ({
+    display: SECTION_DISPLAY_NAMES[s.section_type],
+    filenames: files.filter((f) => f.sectionTypes.includes(s.section_type)).map((f) => f.filename),
+    attempt: s.attempt,
+    violations: s.violation_count
+  }));
 }
 function companionAndJiraFiles(state, base, skipped) {
   const files = [];
@@ -48159,11 +48747,11 @@ function companionAndJiraFiles(state, base, skipped) {
   }
   const jira = jiraContent(state);
   if (jira) {
-    files.push({ path: `${base}/07-jira-tickets.md`, content: () => jira });
+    files.push({ path: `${base}/${JIRA_FILENAME}`, content: () => jira });
   } else {
     skipped.push({
       display: "JIRA Tickets",
-      filename: "07-jira-tickets.md",
+      filename: JIRA_FILENAME,
       reason: jiraSkipReason(state)
     });
   }
@@ -48178,19 +48766,28 @@ function affectedSymbolsFile(state, base) {
     content: () => JSON.stringify(affected, null, 2)
   };
 }
-function runNotesFile(base, skipped) {
-  if (skipped.length === 0)
+function runNotesFile(base, skipped, withheld) {
+  if (skipped.length === 0 && withheld.length === 0)
     return null;
   const sorted = [...skipped].sort((a, b) => a.filename.localeCompare(b.filename));
-  return {
-    path: `${base}/${RUN_NOTES_FILENAME}`,
-    content: () => [
-      "# Run Notes",
-      "",
+  const blocks2 = [];
+  if (sorted.length > 0) {
+    blocks2.push([
       "The following deliverable files were not generated in this run:",
       "",
       ...sorted.map((s) => `- **${s.display}** (\`${s.filename}\`): ${SKIP_REASON_TEXT[s.reason]}.`)
-    ].join("\n")
+    ]);
+  }
+  if (withheld.length > 0) {
+    blocks2.push([
+      "The following sections failed validation; their drafts are not deliverables and were withheld from the exported files:",
+      "",
+      ...withheld.map((w) => `- **${w.display}** (${w.filenames.map((f) => `\`${f}\``).join(", ")}): failed after ${w.attempt} attempt(s) with ${w.violations} violation(s).`)
+    ]);
+  }
+  return {
+    path: `${base}/${RUN_NOTES_FILENAME}`,
+    content: () => ["# Run Notes", "", blocks2.map((b) => b.join("\n")).join("\n\n")].join("\n")
   };
 }
 function buildFileSet(state) {
@@ -48202,7 +48799,7 @@ function buildFileSet(state) {
   const affected = affectedSymbolsFile(state, base);
   if (affected)
     files.push(affected);
-  const runNotes = runNotesFile(base, skipped);
+  const runNotes = runNotesFile(base, skipped, withheldSections(state));
   if (runNotes)
     files.push(runNotes);
   return files;
@@ -49318,7 +49915,7 @@ function countSubjectiveClaims(requests) {
 // packages/orchestration/dist/handlers/self-check.js
 var VERIFY_BATCH_ID = "self_check_verify";
 function gatherSections(state) {
-  return state.sections.filter((s) => s.content && s.section_type !== "jira_tickets").map((s) => ({ type: s.section_type, content: s.content }));
+  return state.sections.filter((s) => s.content && s.status !== "failed" && s.section_type !== "jira_tickets").map((s) => ({ type: s.section_type, content: s.content }));
 }
 function buildVerifyAction(requests, config5) {
   const models = assignJudgeModels(requests, config5);
@@ -49340,6 +49937,22 @@ function buildVerifyAction(requests, config5) {
     })
   };
 }
+function computeDoneOutcome(sectionsFailed, criticalViolations, hardOutputScore) {
+  const reasons = [];
+  if (sectionsFailed > 0) {
+    reasons.push(`${sectionsFailed} section(s) failed validation`);
+  }
+  if (criticalViolations > 0) {
+    reasons.push(`${criticalViolations} critical deterministic violation(s)`);
+  }
+  if (hardOutputScore <= 0) {
+    reasons.push("hard-output score is 0.00");
+  }
+  return {
+    status: reasons.length === 0 ? "passed" : "needs_attention",
+    reasons
+  };
+}
 function finalize2(state, verdicts = [], totalSubjectiveClaims = 0) {
   const sections = gatherSections(state);
   const docReport = validateDocument(sections);
@@ -49348,8 +49961,9 @@ function finalize2(state, verdicts = [], totalSubjectiveClaims = 0) {
   const sectionsFailed = state.sections.filter((s) => s.status === "failed").length;
   const sectionsTotal = state.sections.length;
   const docCritical = docReport.violations.filter((v) => v.isCritical).length;
+  const outcome = computeDoneOutcome(sectionsFailed, docCritical, docReport.totalScore);
   const summary = [
-    `Self-check complete.`,
+    outcome.status === "passed" ? `Self-check complete.` : `Self-check complete: NEEDS ATTENTION (${outcome.reasons.join("; ")}).`,
     `Sections: ${sectionsPassed}/${sectionsTotal} passed, ${sectionsFailed} failed.`,
     `Deterministic violations: ${docReport.violations.length} (${docCritical} critical)`,
     `Hard-output score: ${docReport.totalScore.toFixed(2)} / 1.00`,
@@ -49395,7 +50009,8 @@ function finalize2(state, verdicts = [], totalSubjectiveClaims = 0) {
           // handlers/verification-policy.ts's unsampled-ratio gate — see
           // VerificationSummarySchema.total_subjective_claims doc.
           total_subjective_claims: totalSubjectiveClaims
-        }
+        },
+        outcome
       },
       current_step: "implementation_gate"
     },
@@ -49892,12 +50507,16 @@ function ensurePostSpecs2(state) {
   return state.post_specs ?? initialPostSpecs();
 }
 function boundedAffectedSymbols(state) {
-  const techSpec = state.sections.find((s) => s.section_type === "technical_specification" && s.content);
+  const techSpec = state.sections.find((s) => s.section_type === "technical_specification" && s.content && s.status !== "failed");
   if (!techSpec?.content)
     return [];
   const doc = parseAffectedSymbolsBlock(techSpec.content);
   const names = doc.affected_symbols.map((s) => s.qualified_name);
   return Array.from(new Set(names)).slice(0, IMPACT_QUERY_SYMBOL_CAP);
+}
+function technicalSpecDraftWithheld(state) {
+  const techSpecs = state.sections.filter((s) => s.section_type === "technical_specification" && s.content);
+  return techSpecs.length > 0 && techSpecs.every((s) => s.status === "failed");
 }
 function advanceToImplementation(state, message) {
   return {
@@ -49950,7 +50569,7 @@ var handlePreImplGrounding = ({ state, result }) => {
         ...postSpecs,
         impact_queries: { ...postSpecs.impact_queries, done: true }
       }
-    }, "No affected-symbols grounding available. Proceeding to implementation.");
+    }, technicalSpecDraftWithheld(state) ? "The Technical Specification section failed validation: its draft is withheld, so no blast-radius grounding is queried. Proceeding to implementation." : "No affected-symbols grounding available. Proceeding to implementation.");
   }
   if (postSpecs.impact_queries.index >= symbols.length) {
     return advanceToImplementation({
@@ -50821,7 +51440,8 @@ function doneAction(pending) {
     kind: "done",
     summary: pending.summary,
     artifacts: pending.artifacts,
-    verification: pending.verification
+    verification: pending.verification,
+    ...pending.outcome ? { outcome: pending.outcome } : {}
   };
 }
 function emitRememberOrDone(state, pending) {
@@ -51876,7 +52496,7 @@ var BenchmarkConsensusReliabilityProvider = class {
 
 // packages/benchmark/dist/calibration/heldout-seals.js
 import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync2 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname as dirname3 } from "node:path";
 var MaxAttemptsHeldoutLockSchema = external_exports.object({
   schema_version: external_exports.literal(1),
   rng_seed: external_exports.number().int().nonnegative(),
@@ -51935,7 +52555,7 @@ var KpiGatesHeldoutLockSchema = external_exports.object({
 });
 var JUDGE_OBSERVATION_LOG_PATH = "packages/benchmark/calibration/data/judge-observation-log.jsonl";
 function appendObservationLog(obs, logPath = JUDGE_OBSERVATION_LOG_PATH) {
-  const dir = dirname(logPath);
+  const dir = dirname3(logPath);
   if (!existsSync4(dir)) {
     mkdirSync3(dir, { recursive: true });
   }
@@ -77379,10 +77999,10 @@ var createBlockNode = /* @__PURE__ */ factory(name214, dependencies215, (_ref) =
      *            which is a boolean. The property visible is optional and
      *            is true by default
      */
-    constructor(blocks) {
+    constructor(blocks2) {
       super();
-      if (!Array.isArray(blocks)) throw new Error("Array expected");
-      this.blocks = blocks.map(function(block) {
+      if (!Array.isArray(blocks2)) throw new Error("Array expected");
+      this.blocks = blocks2.map(function(block) {
         var node2 = block && block.node;
         var visible = block && block.visible !== void 0 ? block.visible : true;
         if (!isNode(node2)) throw new TypeError('Property "node" must be a Node');
@@ -77448,29 +78068,29 @@ var createBlockNode = /* @__PURE__ */ factory(name214, dependencies215, (_ref) =
      * @returns {BlockNode} Returns a transformed copy of the node
      */
     map(callback) {
-      var blocks = [];
+      var blocks2 = [];
       for (var i2 = 0; i2 < this.blocks.length; i2++) {
         var block = this.blocks[i2];
         var node2 = this._ifNode(callback(block.node, "blocks[" + i2 + "].node", this));
-        blocks[i2] = {
+        blocks2[i2] = {
           node: node2,
           visible: block.visible
         };
       }
-      return new BlockNode2(blocks);
+      return new BlockNode2(blocks2);
     }
     /**
      * Create a clone of this node, a shallow copy
      * @return {BlockNode}
      */
     clone() {
-      var blocks = this.blocks.map(function(block) {
+      var blocks2 = this.blocks.map(function(block) {
         return {
           node: block.node,
           visible: block.visible
         };
       });
-      return new BlockNode2(blocks);
+      return new BlockNode2(blocks2);
     }
     /**
      * Get string representation
@@ -80977,7 +81597,7 @@ var createParse = /* @__PURE__ */ factory(name226, dependencies227, (_ref) => {
   }
   function parseBlock(state) {
     var node2;
-    var blocks = [];
+    var blocks2 = [];
     var visible;
     if (state.token !== "" && state.token !== "\n" && state.token !== ";") {
       node2 = parseAssignment(state);
@@ -80986,9 +81606,9 @@ var createParse = /* @__PURE__ */ factory(name226, dependencies227, (_ref) => {
       }
     }
     while (state.token === "\n" || state.token === ";") {
-      if (blocks.length === 0 && node2) {
+      if (blocks2.length === 0 && node2) {
         visible = state.token !== ";";
-        blocks.push({
+        blocks2.push({
           node: node2,
           visible
         });
@@ -81000,14 +81620,14 @@ var createParse = /* @__PURE__ */ factory(name226, dependencies227, (_ref) => {
           node2.comment = state.comment;
         }
         visible = state.token !== ";";
-        blocks.push({
+        blocks2.push({
           node: node2,
           visible
         });
       }
     }
-    if (blocks.length > 0) {
-      return new BlockNode2(blocks);
+    if (blocks2.length > 0) {
+      return new BlockNode2(blocks2);
     } else {
       if (!node2) {
         node2 = new ConstantNode2(void 0);
@@ -97069,8 +97689,9 @@ async function mathOracle(payload) {
 // packages/benchmark/dist/calibration/code-oracle.js
 import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync as writeFileSync2, rmSync } from "fs";
+import { createRequire } from "module";
 import { tmpdir } from "os";
-import { join as join7 } from "path";
+import { dirname as dirname4, join as join7 } from "path";
 
 // packages/benchmark/dist/calibration/oracle-errors.js
 var OracleUnavailableError = class _OracleUnavailableError extends Error {
@@ -97087,16 +97708,23 @@ var OracleUnavailableError = class _OracleUnavailableError extends Error {
 // packages/benchmark/dist/calibration/code-oracle.js
 var TSC_TIMEOUT_MS = 1e4;
 var TSC_PROBE_TIMEOUT_MS = 1e4;
+function tscCandidates(resolvePackageJson = () => createRequire(import.meta.url).resolve("typescript/package.json")) {
+  const candidates = [];
+  try {
+    const entry = join7(dirname4(resolvePackageJson()), "bin", "tsc");
+    candidates.push({ command: process.execPath, prefixArgs: [entry] });
+  } catch {
+  }
+  candidates.push({ command: "tsc", prefixArgs: [] });
+  return candidates;
+}
 function findTscBinary() {
-  const candidates = [
-    // pnpm hoisted location
-    new URL("../../../../node_modules/.bin/tsc", import.meta.url).pathname,
-    // Fallback: tsc on PATH (resolved at call time)
-    "tsc"
-  ];
-  for (const candidate of candidates) {
+  for (const candidate of tscCandidates()) {
     try {
-      execFileSync(candidate, ["--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" });
+      execFileSync(candidate.command, [...candidate.prefixArgs, "--version"], {
+        timeout: TSC_PROBE_TIMEOUT_MS,
+        stdio: "pipe"
+      });
       return candidate;
     } catch {
     }
@@ -97111,7 +97739,7 @@ async function codeOracle(payload) {
   }
   let tscVersion = "unknown";
   try {
-    tscVersion = execFileSync(tscBin, ["--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" }).toString().trim();
+    tscVersion = execFileSync(tscBin.command, [...tscBin.prefixArgs, "--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" }).toString().trim();
   } catch {
   }
   const tempDir = mkdtempSync(join7(tmpdir(), "prd-gen-code-oracle-"));
@@ -97121,7 +97749,7 @@ async function codeOracle(payload) {
     let compilesCleanly;
     let stderr = "";
     try {
-      execFileSync(tscBin, ["--noEmit", "--strict", "--target", "ES2022", "--module", "node16", "--moduleResolution", "node16", snippetFile], { timeout: TSC_TIMEOUT_MS, stdio: "pipe" });
+      execFileSync(tscBin.command, [...tscBin.prefixArgs, "--noEmit", "--strict", "--target", "ES2022", "--module", "node16", "--moduleResolution", "node16", snippetFile], { timeout: TSC_TIMEOUT_MS, stdio: "pipe" });
       compilesCleanly = true;
     } catch (err) {
       compilesCleanly = false;
@@ -97484,7 +98112,7 @@ function boundEnvelopeResponse(payload) {
         const stub = {
           omitted: true,
           chars,
-          hint: `re-fetch via get_pipeline_state(run_id, format:"action") \u2014 full unbounded invocations, including prompts`
+          hint: `re-fetch via get_pipeline_state(run_id, format:"action") \u2014 every invocation with its prompt, paged under the response budget: follow __page.next_offset as invocation_offset until it is null`
         };
         return { ...inv2, prompt: stub };
       }
@@ -97507,19 +98135,176 @@ function boundEnvelopeResponse(payload) {
   return { ...payload, __bounded: marker(originalChars) };
 }
 
+// packages/mcp-server/dist/page-action-response.js
+function wireChars3(value) {
+  return JSON.stringify(value, null, 2).length;
+}
+function isSpawnAction(action) {
+  if (action === null || typeof action !== "object")
+    return false;
+  const a = action;
+  return a.kind === "spawn_subagents" && Array.isArray(a.invocations);
+}
+function selfMeasuredChars(zeroChars) {
+  for (let digits2 = 1; ; digits2++) {
+    const size2 = zeroChars - 1 + digits2;
+    if (String(size2).length === digits2)
+      return size2;
+  }
+}
+function pageOf(runId, action, { offset, count: count2, total }, budgetChars) {
+  const end = offset + count2;
+  const draft = {
+    run_id: runId,
+    action,
+    __page: {
+      offset,
+      count: count2,
+      total,
+      next_offset: end < total ? end : null,
+      final_chars: 0,
+      budget_chars: budgetChars
+    }
+  };
+  const finalChars = selfMeasuredChars(wireChars3(draft));
+  return { ...draft, __page: { ...draft.__page, final_chars: finalChars } };
+}
+function pageActionResponse(runId, action, offset, budgetChars = MAX_RESPONSE_CHARS) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    return { error: `invocation_offset ${offset} is not a non-negative integer` };
+  }
+  if (!isSpawnAction(action)) {
+    if (offset !== 0) {
+      return { error: `invocation_offset ${offset} out of range: the last action is not a spawn_subagents batch` };
+    }
+    return pageOf(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
+  }
+  const all = action.invocations;
+  const total = all.length;
+  if (total === 0 && offset === 0) {
+    return pageOf(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
+  }
+  if (offset >= total) {
+    return { error: `invocation_offset ${offset} out of range: the batch has ${total} invocations` };
+  }
+  const build = (count2) => pageOf(runId, { ...action, invocations: all.slice(offset, offset + count2) }, { offset, count: count2, total }, budgetChars);
+  return largestFittingPage(build, total - offset, budgetChars);
+}
+function largestFittingPage(build, remaining, budgetChars) {
+  let best = build(1);
+  let fit = 1;
+  let over = remaining + 1;
+  for (let probe = 2; probe <= remaining; probe *= 2) {
+    const candidate = build(probe);
+    if (candidate.__page.final_chars > budgetChars) {
+      over = probe;
+      break;
+    }
+    best = candidate;
+    fit = probe;
+  }
+  if (over === remaining + 1 && fit < remaining) {
+    const last = build(remaining);
+    if (last.__page.final_chars <= budgetChars)
+      return last;
+    over = remaining;
+  }
+  let lo = fit + 1;
+  let hi = over - 1;
+  while (lo <= hi) {
+    const mid = lo + hi >>> 1;
+    const candidate = build(mid);
+    if (candidate.__page.final_chars <= budgetChars) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+// packages/mcp-server/dist/fit-page.js
+function selfMeasuredChars2(zeroChars) {
+  for (let digits2 = 1; ; digits2++) {
+    const size2 = zeroChars - 1 + digits2;
+    if (String(size2).length === digits2)
+      return size2;
+  }
+}
+function largestFittingCount(sizeOf, remaining, budgetChars) {
+  let fit = 1;
+  let over = remaining + 1;
+  for (let probe = 2; probe <= remaining; probe *= 2) {
+    if (sizeOf(probe) > budgetChars) {
+      over = probe;
+      break;
+    }
+    fit = probe;
+  }
+  let lo = fit + 1;
+  let hi = over - 1;
+  while (lo <= hi) {
+    const mid = lo + hi >>> 1;
+    if (sizeOf(mid) <= budgetChars) {
+      fit = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return fit;
+}
+
+// packages/mcp-server/dist/page-plan-response.js
+function planWireText(value) {
+  return JSON.stringify(value, null, 2);
+}
+function pageOf2(plan, offset, count2, budgetChars) {
+  const total = plan.judge_requests.length;
+  const end = offset + count2;
+  const judge_requests = plan.judge_requests.slice(offset, end);
+  const marker = {
+    offset,
+    count: count2,
+    total,
+    next_offset: end < total ? end : null,
+    final_chars: 0,
+    budget_chars: budgetChars
+  };
+  const draft = offset === 0 ? { claims: plan.claims, judge_requests, mechanical_claims: plan.mechanical_claims, __page: marker } : { judge_requests, __page: marker };
+  const finalChars = selfMeasuredChars2(planWireText(draft).length);
+  return { ...draft, __page: { ...marker, final_chars: finalChars } };
+}
+function pagePlanResponse(plan, offset, budgetChars = MAX_RESPONSE_CHARS) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    return { error: `request_offset ${offset} is not a non-negative integer` };
+  }
+  const total = plan.judge_requests.length;
+  if (total === 0 && offset === 0)
+    return pageOf2(plan, 0, 0, budgetChars);
+  if (offset >= total) {
+    return { error: `request_offset ${offset} out of range: the plan has ${total} judge requests` };
+  }
+  const count2 = largestFittingCount((n) => pageOf2(plan, offset, n, budgetChars).__page.final_chars, total - offset, budgetChars);
+  return pageOf2(plan, offset, count2, budgetChars);
+}
+var PLAN_PAGING_DESCRIPTION = "The response is paged under the 100,000-char MCP response budget: each page holds whole judge requests from request_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and request_offset set to next_offset until it is null, and dispatch the judge requests of every page. claims and mechanical_claims are on the page at offset 0 only.";
+function planPageResult(plan, offset) {
+  const page = pagePlanResponse(plan, offset ?? 0);
+  const content = [{ type: "text", text: planWireText(page) }];
+  return "error" in page ? { content, isError: true } : { content };
+}
+
 // packages/mcp-server/dist/pipeline-tools.js
 var MAX_CONCURRENT_RUNS = Number(process.env.PRD_MAX_CONCURRENT_RUNS ?? 8);
-function getRepo() {
-  getTracker();
-  return _repo ?? null;
-}
 var runStore = new InMemoryRunStore({
   // When a terminal run is evicted (TTL or max-runs), release its persisted
   // strategy-execution evidence so disk growth tracks live runs. Best-effort:
   // onEvict must not throw (InMemoryRunStore swallows throws), and a missing
   // repo is a no-op. source: evidence-repository.ts pruneRunEvidence.
   onEvict: (runId) => {
-    getRepo()?.pruneRunEvidence(runId);
+    getEvidenceRepo()?.pruneRunEvidence(runId);
     lastActionByRun.delete(runId);
   }
 });
@@ -97531,13 +98316,14 @@ function inFlightRunCount() {
   }
   return n;
 }
-var _repo = void 0;
+var _trackerResolved = false;
 var _tracker = null;
 function getTracker() {
-  if (_repo === void 0) {
-    _repo = tryCreateEvidenceRepository();
-    if (_repo)
-      _tracker = new EffectivenessTracker(_repo);
+  if (!_trackerResolved) {
+    _trackerResolved = true;
+    const repo = getEvidenceRepo();
+    if (repo)
+      _tracker = new EffectivenessTracker(repo);
   }
   return _tracker;
 }
@@ -97678,10 +98464,11 @@ function registerPipelineTools(server2) {
       inFlight.delete(run_id);
     }
   });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the UNBOUNDED last action emitted for this run (including full spawn_subagents prompts) \u2014 the recovery path when a start_pipeline/submit_action_result response carries a __bounded marker on its action.", {
+  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action emitted for this run with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt (its prompts are omitted stubs). It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one.", {
     run_id: external_exports.string(),
-    format: external_exports.enum(["full", "summary", "grounding", "validation", "action"]).default("summary")
-  }, { readOnlyHint: true }, async ({ run_id, format: format5 }) => {
+    format: external_exports.enum(["full", "summary", "grounding", "validation", "action"]).default("summary"),
+    invocation_offset: external_exports.number().int().min(0).default(0)
+  }, { readOnlyHint: true }, async ({ run_id, format: format5, invocation_offset }) => {
     const state = runStore.get(run_id);
     if (!state) {
       return {
@@ -97705,10 +98492,20 @@ function registerPipelineTools(server2) {
         prd_validation: state.prd_validation
       };
     } else if (format5 === "action") {
-      payload = {
-        run_id: state.run_id,
-        action: lastActionByRun.get(run_id) ?? null
-      };
+      const page = pageActionResponse(
+        state.run_id,
+        lastActionByRun.get(run_id) ?? null,
+        // zod applies the default over MCP; a direct handler call (tests,
+        // in-process hosts) may omit the field.
+        invocation_offset ?? 0
+      );
+      if ("error" in page) {
+        return {
+          content: [{ type: "text", text: JSON.stringify(page) }],
+          isError: true
+        };
+      }
+      payload = page;
     } else {
       payload = envelope(state, null);
     }
@@ -97718,47 +98515,35 @@ function registerPipelineTools(server2) {
       ]
     };
   });
-  const planSectionVerificationTool = server2.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel.", {
+  const planSectionVerificationTool = server2.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " + PLAN_PAGING_DESCRIPTION, {
     section_type: SectionTypeSchema,
     content: external_exports.string(),
     codebase_excerpts: external_exports.array(external_exports.string()).default([]),
-    memory_excerpts: external_exports.array(external_exports.string()).default([])
-  }, { readOnlyHint: true }, async ({ section_type, content, codebase_excerpts, memory_excerpts }) => {
+    memory_excerpts: external_exports.array(external_exports.string()).default([]),
+    request_offset: external_exports.number().int().min(0).default(0)
+  }, { readOnlyHint: true }, async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
     const plan = planSectionVerification(section_type, content, {
       codebase_excerpts,
       memory_excerpts,
       include_prd_excerpt: true
     });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(plan, null, 2)
-        }
-      ]
-    };
+    return planPageResult(plan, request_offset);
   });
-  const planDocumentVerificationTool = server2.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document.", {
+  const planDocumentVerificationTool = server2.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document. " + PLAN_PAGING_DESCRIPTION, {
     sections: external_exports.array(external_exports.object({
       type: SectionTypeSchema,
       content: external_exports.string()
     })).min(1),
     codebase_excerpts: external_exports.array(external_exports.string()).default([]),
-    memory_excerpts: external_exports.array(external_exports.string()).default([])
-  }, { readOnlyHint: true }, async ({ sections, codebase_excerpts, memory_excerpts }) => {
+    memory_excerpts: external_exports.array(external_exports.string()).default([]),
+    request_offset: external_exports.number().int().min(0).default(0)
+  }, { readOnlyHint: true }, async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
     const plan = planDocumentVerification(sections, {
       codebase_excerpts,
       memory_excerpts,
       include_prd_excerpt: true
     });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(plan, null, 2)
-        }
-      ]
-    };
+    return planPageResult(plan, request_offset);
   });
   const concludeVerification = server2.tool("conclude_verification", "Aggregate JudgeVerdict[] from spawned subagents into a VerificationReport (consensus + dissent). IMPORTANT: omitting claim_types when a reliability repository is open suppresses observation flushing for this batch \u2014 the calibration data will be missing for these runs (one-sided censoring).", {
     scope: external_exports.enum(["section", "document"]).default("section"),
@@ -97832,12 +98617,12 @@ var RUN_PIPELINE_STEPS = [
   { tool: "start_pipeline", guidance: "Initialize the run; it returns the first NextAction to execute." },
   { tool: "get_pipeline_state", guidance: "Read the current state by run_id whenever you need to re-orient." },
   { tool: "submit_action_result", guidance: "Feed each executed action's result back; repeat until the action is `done`." },
-  { tool: "plan_document_verification", guidance: "Once sections exist, emit the JudgeRequest[] across the whole document." },
+  { tool: "plan_document_verification", guidance: "Once sections exist, emit the JudgeRequest[] across the whole document; follow __page.next_offset (request_offset) to the last page." },
   { tool: "conclude_verification", guidance: "Aggregate the JudgeVerdict[] into the final VerificationReport." }
 ];
 var VERIFY_DOCUMENT_STEPS = [
   { tool: "get_pipeline_state", guidance: "Load the run's current sections by run_id." },
-  { tool: "plan_document_verification", guidance: "Emit the cross-section JudgeRequest[] to execute." },
+  { tool: "plan_document_verification", guidance: "Emit the cross-section JudgeRequest[] to execute; follow __page.next_offset (request_offset) to the last page." },
   { tool: "submit_action_result", guidance: "Return each judge batch's verdicts to the reducer." },
   { tool: "validate_prd_document", guidance: "Run the deterministic Hard Output Rules pass (SP arithmetic, AC numbering, coverage)." },
   { tool: "conclude_verification", guidance: "Aggregate verdicts into the VerificationReport." }
@@ -97980,9 +98765,16 @@ function resolveServerVersion(runtimeDir, pluginRoot) {
   return UNRESOLVED_VERSION;
 }
 
+// packages/mcp-server/dist/health-status.js
+function healthStatus(components) {
+  const degraded = Object.entries(components).filter(([, healthy]) => !healthy).map(([name323]) => name323);
+  return { status: degraded.length === 0 ? "ok" : "degraded", degraded };
+}
+
 // packages/mcp-server/dist/index.js
-var __dirname = dirname2(fileURLToPath(import.meta.url));
+var __dirname = dirname5(fileURLToPath(import.meta.url));
 var PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT ?? join10(__dirname, "..", "..", "..");
+var CONFIG_NOT_FOUND = "config_not_found";
 function loadSkillConfig() {
   const configPaths = [
     process.env.PRD_GEN_SKILL_CONFIG,
@@ -97994,7 +98786,7 @@ function loadSkillConfig() {
       return JSON.parse(readFileSync5(p, "utf-8"));
     }
   }
-  return { version: "2.0.0", status: "config_not_found" };
+  return { version: "2.0.0", status: CONFIG_NOT_FOUND };
 }
 function loadSkillMd() {
   const skillPaths = [join10(PLUGIN_ROOT, "packages", "skill", "SKILL.md")];
@@ -98021,13 +98813,6 @@ server.server.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: 
 server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
   resourceTemplates: []
 }));
-var _evidenceRepo = void 0;
-function getEvidenceRepo() {
-  if (_evidenceRepo === void 0) {
-    _evidenceRepo = tryCreateEvidenceRepository();
-  }
-  return _evidenceRepo;
-}
 var toolGetConfig = server.tool("get_config", "Get the full skill configuration", {}, { readOnlyHint: true }, async () => {
   const config5 = loadSkillConfig();
   return {
@@ -98041,7 +98826,7 @@ var toolReadSkillConfig = server.tool("read_skill_config", "Read the SKILL.md co
   };
 });
 var toolCheckHealth = server.tool("check_health", "Check system health \u2014 verify all components are accessible", {}, { readOnlyHint: true }, async () => {
-  const configAvailable = loadSkillConfig().version !== void 0;
+  const configAvailable = loadSkillConfig().status !== CONFIG_NOT_FOUND;
   const skillAvailable = loadSkillMd() !== "SKILL.md not found";
   let dbHealthy = false;
   try {
@@ -98053,15 +98838,14 @@ var toolCheckHealth = server.tool("check_health", "Check system health \u2014 ve
   } catch {
     dbHealthy = false;
   }
+  const components = { configAvailable, skillAvailable, evidenceDbHealthy: dbHealthy };
   return {
     content: [
       {
         type: "text",
         text: JSON.stringify({
-          status: "ok",
-          configAvailable,
-          skillAvailable,
-          evidenceDbHealthy: dbHealthy,
+          ...healthStatus(components),
+          ...components,
           timestamp: (/* @__PURE__ */ new Date()).toISOString()
         }, null, 2)
       }
@@ -98100,9 +98884,10 @@ var toolListStrategies = server.tool("list_available_strategies", "List thinking
 });
 var toolValidateSection = server.tool("validate_prd_section", "Run deterministic Hard Output Rules validation on a single PRD section. Returns violations found \u2014 zero LLM calls, pure regex/parsing.", {
   content: external_exports.string().describe("The markdown content of the PRD section"),
-  section_type: SectionTypeSchema.describe("The type of PRD section being validated")
-}, { readOnlyHint: true }, async ({ content, section_type }) => {
-  const report = validateSection(content, section_type);
+  section_type: SectionTypeSchema.describe("The type of PRD section being validated"),
+  known_symbols: KnownSymbolsSchema
+}, { readOnlyHint: true }, async ({ content, section_type, known_symbols }) => {
+  const report = withSymbolCheck(validateSection(content, section_type), content, known_symbols);
   return {
     content: [
       { type: "text", text: JSON.stringify(report, null, 2) }
@@ -98116,9 +98901,11 @@ var toolValidateDocument = server.tool("validate_prd_document", "Run full docume
     // Cross-audit code-reviewer H5 (Phase 3+4, 2026-04).
     type: SectionTypeSchema.describe("Section type"),
     content: external_exports.string().describe("Section content")
-  })).describe("Array of PRD sections to validate")
-}, { readOnlyHint: true }, async ({ sections }) => {
-  const report = validateDocument(sections);
+  })).describe("Array of PRD sections to validate"),
+  known_symbols: KnownSymbolsSchema
+}, { readOnlyHint: true }, async ({ sections, known_symbols }) => {
+  const contents = sections.map((s) => s.content);
+  const report = withSymbolCheck(validateDocument(sections), contents, known_symbols);
   return {
     content: [
       { type: "text", text: JSON.stringify(report, null, 2) }
@@ -98135,7 +98922,7 @@ var toolQualityHistory = server.tool("get_quality_history", "Get historical PRD 
         {
           type: "text",
           text: JSON.stringify({
-            error: "Evidence repository unavailable (better-sqlite3 not loaded)"
+            error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)"
           })
         }
       ],
@@ -98159,7 +98946,7 @@ var toolStrategyEffectiveness = server.tool("get_strategy_effectiveness", "Get s
         {
           type: "text",
           text: JSON.stringify({
-            error: "Evidence repository unavailable (better-sqlite3 not loaded)"
+            error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)"
           })
         }
       ],
@@ -98233,7 +99020,7 @@ export {
 /*! Bundled license information:
 
 js-yaml/dist/js-yaml.mjs:
-  (*! js-yaml 5.4.3 https://github.com/nodeca/js-yaml @license MIT *)
+  (*! js-yaml 5.5.0 https://github.com/nodeca/js-yaml @license MIT *)
 
 decimal.js/decimal.mjs:
   (*!
