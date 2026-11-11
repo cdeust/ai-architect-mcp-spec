@@ -15,6 +15,8 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isEntry } from "../../bin/is-entry.mjs";
 
 /** Thrown when the artifact's digest does not equal server.json's record. */
@@ -91,7 +93,8 @@ export function assertChecksumMatches(serverJson, actualSha256) {
 
 /**
  * CLI: `verify-mcpb-checksum.mjs <mcpb-path> <server.json-path>`.
- * Exit 0 on match, 1 on mismatch, 2 on IO/format error.
+ * Exit 0 on match (with an `OK:` line on stdout), 1 on mismatch, 2 on
+ * IO/format error or when it was started as a command and did not verify.
  */
 export async function main(argv) {
   const [mcpbPath, serverJsonPath] = argv;
@@ -124,7 +127,38 @@ export async function main(argv) {
   return 0;
 }
 
+/**
+ * True when the program path names this script, whatever the entry check
+ * says about it.
+ *
+ * The CLI guard below used to be a bare `if (isEntry(...))`: when it did not
+ * match, the file fell off its end and the process exited 0 with nothing
+ * verified. That happened on Windows paths, on paths with a space and under
+ * symlinked directories (#126), and release.yml reads this step's exit code
+ * only, not its `OK:` line, so a release would have been published
+ * unverified. The guard is fixed, but a guard that can only fail open is the
+ * wrong shape for a release gate: a program path that names this script while
+ * the entry check says "not me" is now a refusal (exit 2), not silence.
+ *
+ * precondition:  `moduleUrl` is this module's `import.meta.url`; `argv1` is
+ *                `process.argv[1]` or undefined.
+ * postcondition: true iff the file name of `argv1` is this script's, with or
+ *                without its extension, in any case, under either separator.
+ */
+export function namesThisScript(moduleUrl, argv1 = process.argv[1]) {
+  if (!argv1) return false;
+  const own = basename(fileURLToPath(moduleUrl)).toLowerCase();
+  const started = basename(String(argv1).replaceAll("\\", "/")).toLowerCase();
+  return started === own || `${started}.mjs` === own;
+}
+
 // Run as a CLI when invoked directly (not when imported by tests).
 if (isEntry(import.meta.url)) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
+} else if (namesThisScript(import.meta.url)) {
+  process.stderr.write(
+    `verify-mcpb-checksum: started as a command (${process.argv[1]}) but the ` +
+      `entry check did not recognise this module; nothing was verified\n`,
+  );
+  process.exit(2);
 }

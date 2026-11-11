@@ -16,12 +16,15 @@
 import { z } from "zod";
 import { newPipelineState, step, InMemoryRunStore, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
-import { SectionTypeSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, tryCreateEvidenceRepository, } from "@prd-gen/core";
+import { SectionTypeSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
+import { getEvidenceRepo } from "./evidence-db-path.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
 import { boundFullStateResponse, boundGroundingResponse, } from "./bound-full-state.js";
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
+import { pageActionResponse } from "./page-action-response.js";
+import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js";
 /**
  * Global run semaphore cap — max pipeline runs in flight at once.
  *
@@ -41,23 +44,13 @@ import { boundEnvelopeResponse } from "./bound-envelope-action.js";
  * hits, yielding a clear structured rejection instead of silent eviction.
  */
 const MAX_CONCURRENT_RUNS = Number(process.env.PRD_MAX_CONCURRENT_RUNS ?? 8); // env-configurable; default 8 — see source note above
-/**
- * Lazily-built EvidenceRepository handle for run-eviction cleanup. The full
- * tracker is built in getTracker(); this references the same repo so onEvict can
- * release run-tied evidence. Both share the _repo cache below.
- */
-function getRepo() {
-    // Force lazy init via getTracker so _repo is resolved exactly once.
-    getTracker();
-    return _repo ?? null;
-}
 const runStore = new InMemoryRunStore({
     // When a terminal run is evicted (TTL or max-runs), release its persisted
     // strategy-execution evidence so disk growth tracks live runs. Best-effort:
     // onEvict must not throw (InMemoryRunStore swallows throws), and a missing
     // repo is a no-op. source: evidence-repository.ts pruneRunEvidence.
     onEvict: (runId) => {
-        getRepo()?.pruneRunEvidence(runId);
+        getEvidenceRepo()?.pruneRunEvidence(runId);
         lastActionByRun.delete(runId);
     },
 });
@@ -87,13 +80,16 @@ function inFlightRunCount() {
  * only place that performs I/O; orchestration produces the queue,
  * mcp-server drains it.
  */
-let _repo = undefined;
+// The repository itself is the server-wide singleton getEvidenceRepo()
+// (evidence-db-path.ts); only the tracker wrapping it is cached here.
+let _trackerResolved = false;
 let _tracker = null;
 function getTracker() {
-    if (_repo === undefined) {
-        _repo = tryCreateEvidenceRepository();
-        if (_repo)
-            _tracker = new EffectivenessTracker(_repo);
+    if (!_trackerResolved) {
+        _trackerResolved = true;
+        const repo = getEvidenceRepo();
+        if (repo)
+            _tracker = new EffectivenessTracker(repo);
     }
     return _tracker;
 }
@@ -253,8 +249,8 @@ export function registerPipelineTools(server) {
         const drained = drainStrategyExecutions(state);
         runStore.set(drained);
         // Cache the UNBOUNDED action before it is potentially shed by
-        // boundEnvelopeResponse — the observable recovery path for a
-        // __bounded spawn_subagents envelope. source: bound-envelope-action.ts.
+        // boundEnvelopeResponse — the recovery path for a spawn_subagents
+        // envelope whose prompts were omitted. source: bound-envelope-action.ts.
         lastActionByRun.set(drained.run_id, action);
         return {
             content: [
@@ -333,15 +329,19 @@ export function registerPipelineTools(server) {
         "format:'grounding'); format:'grounding' returns the codebase_grounding (+ " +
         "prd_validation when it fits) blobs format:'full' sheds first; format:'validation' " +
         "returns prd_validation alone (the blob format:'grounding' sheds when the pair " +
-        "overshoots); format:'action' returns the UNBOUNDED last action emitted for this " +
-        "run (including full spawn_subagents prompts) — the recovery path when a " +
-        "start_pipeline/submit_action_result response carries a __bounded marker on its " +
-        "action.", {
+        "overshoots); format:'action' returns the last action emitted for this run with " +
+        "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
+        "submit_action_result response's __bounded.applied records action.invocations[]." +
+        "prompt (its prompts are omitted stubs). It is " +
+        "paged under the same budget: each page holds whole invocations from " +
+        "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
+        "page, null on the last one.", {
         run_id: z.string(),
         format: z
             .enum(["full", "summary", "grounding", "validation", "action"])
             .default("summary"),
-    }, { readOnlyHint: true }, async ({ run_id, format }) => {
+        invocation_offset: z.number().int().min(0).default(0),
+    }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset }) => {
         const state = runStore.get(run_id);
         if (!state) {
             return {
@@ -385,17 +385,25 @@ export function registerPipelineTools(server) {
             };
         }
         else if (format === "action") {
-            // Narrow re-fetch for the UNBOUNDED last action (prompts included) —
-            // the recovery path a host follows when a start_pipeline/
-            // submit_action_result envelope carries a __bounded marker on
-            // action.invocations[].prompt. Absent only when the run has never
-            // taken a step (cannot happen — runStore.get already found it) or
-            // was evicted (lastActionByRun is cleared in lockstep with runStore
-            // eviction via onEvict). source: bound-envelope-action.ts.
-            payload = {
-                run_id: state.run_id,
-                action: lastActionByRun.get(run_id) ?? null,
-            };
+            // Narrow re-fetch for the last action with its prompts — the
+            // recovery path a host follows when a start_pipeline/
+            // submit_action_result envelope's __bounded.applied records
+            // action.invocations[].prompt. Paged by whole invocations under
+            // MAX_RESPONSE_CHARS: the unpaged refetch measured ~112k chars in the
+            // 2026-10-10 audit (#125). `?? null` is defensive: an evicted run has
+            // already returned `unknown run_id` above (lastActionByRun is cleared
+            // in lockstep with runStore via onEvict). source: page-action-response.ts.
+            const page = pageActionResponse(state.run_id, lastActionByRun.get(run_id) ?? null, 
+            // zod applies the default over MCP; a direct handler call (tests,
+            // in-process hosts) may omit the field.
+            invocation_offset ?? 0);
+            if ("error" in page) {
+                return {
+                    content: [{ type: "text", text: JSON.stringify(page) }],
+                    isError: true,
+                };
+            }
+            payload = page;
         }
         else {
             payload = envelope(state, null);
@@ -407,28 +415,24 @@ export function registerPipelineTools(server) {
         };
     });
     // ─── plan_section_verification ─────────────────────────────────────────────
-    const planSectionVerificationTool = server.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel.", {
+    const planSectionVerificationTool = server.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " +
+        PLAN_PAGING_DESCRIPTION, {
         section_type: SectionTypeSchema,
         content: z.string(),
         codebase_excerpts: z.array(z.string()).default([]),
         memory_excerpts: z.array(z.string()).default([]),
-    }, { readOnlyHint: true }, async ({ section_type, content, codebase_excerpts, memory_excerpts }) => {
+        request_offset: z.number().int().min(0).default(0),
+    }, { readOnlyHint: true }, async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
         const plan = planSectionVerification(section_type, content, {
             codebase_excerpts,
             memory_excerpts,
             include_prd_excerpt: true,
         });
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: JSON.stringify(plan, null, 2),
-                },
-            ],
-        };
+        return planPageResult(plan, request_offset);
     });
     // ─── plan_document_verification ────────────────────────────────────────────
-    const planDocumentVerificationTool = server.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document.", {
+    const planDocumentVerificationTool = server.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document. " +
+        PLAN_PAGING_DESCRIPTION, {
         sections: z
             .array(z.object({
             type: SectionTypeSchema,
@@ -437,20 +441,14 @@ export function registerPipelineTools(server) {
             .min(1),
         codebase_excerpts: z.array(z.string()).default([]),
         memory_excerpts: z.array(z.string()).default([]),
-    }, { readOnlyHint: true }, async ({ sections, codebase_excerpts, memory_excerpts }) => {
+        request_offset: z.number().int().min(0).default(0),
+    }, { readOnlyHint: true }, async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
         const plan = planDocumentVerification(sections, {
             codebase_excerpts,
             memory_excerpts,
             include_prd_excerpt: true,
         });
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: JSON.stringify(plan, null, 2),
-                },
-            ],
-        };
+        return planPageResult(plan, request_offset);
     });
     // ─── conclude_verification ─────────────────────────────────────────────────
     const concludeVerification = server.tool("conclude_verification", "Aggregate JudgeVerdict[] from spawned subagents into a VerificationReport (consensus + dissent). " +

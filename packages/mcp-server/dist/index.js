@@ -7,14 +7,16 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRD_CONTEXT_CONFIGS, CAPABILITIES, STRATEGY_TIERS, SectionTypeSchema, } from "@prd-gen/core";
-import { tryCreateEvidenceRepository } from "@prd-gen/core";
+import { getEvidenceRepo } from "./evidence-db-path.js";
 import { validateSection, validateDocument } from "@prd-gen/validation";
+import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { registerBudgetTools } from "./budget-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
 import { resolveProfile, instructions as profileInstructions, isAllowed, } from "./tool-profiles.js";
 import { checkReliabilityHealth, closeReliabilityRepo, } from "./reliability-wiring.js";
 import { resolveServerVersion } from "./server-version.js";
+import { healthStatus } from "./health-status.js";
 // ─── Reliability wiring (D2.4 / D2.6) ───────────────────────────────────────
 // Re-exported so pipeline-tools and other callers can inject the provider into
 // ConsensusConfig.reliabilityProvider without importing benchmark directly.
@@ -27,6 +29,9 @@ export { getConsensusReliabilityProvider } from "./reliability-wiring.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // ─── Config Loading ──────────────────────────────────────────────────────────
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT ?? join(__dirname, "..", "..", "..");
+// Marks the fallback config. The fallback also carries `version`, so
+// check_health tests this marker, not `version` (#124).
+const CONFIG_NOT_FOUND = "config_not_found";
 function loadSkillConfig() {
     const configPaths = [
         process.env.PRD_GEN_SKILL_CONFIG,
@@ -38,7 +43,7 @@ function loadSkillConfig() {
             return JSON.parse(readFileSync(p, "utf-8"));
         }
     }
-    return { version: "2.0.0", status: "config_not_found" };
+    return { version: "2.0.0", status: CONFIG_NOT_FOUND };
 }
 function loadSkillMd() {
     const skillPaths = [join(PLUGIN_ROOT, "packages", "skill", "SKILL.md")];
@@ -78,17 +83,6 @@ server.server.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: 
 server.server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({
     resourceTemplates: [],
 }));
-// Lazy-init evidence repository (only when better-sqlite3 is available).
-// `tryCreateEvidenceRepository` returns null if the native module is
-// missing — replaces the previous `await import + unknown cast` pattern
-// (cross-audit code-reviewer M7, Phase 3+4, 2026-04).
-let _evidenceRepo = undefined;
-function getEvidenceRepo() {
-    if (_evidenceRepo === undefined) {
-        _evidenceRepo = tryCreateEvidenceRepository();
-    }
-    return _evidenceRepo;
-}
 // ─── Tool 1: get_config ──────────────────────────────────────────────────────
 const toolGetConfig = server.tool("get_config", "Get the full skill configuration", {}, { readOnlyHint: true }, async () => {
     const config = loadSkillConfig();
@@ -105,7 +99,7 @@ const toolReadSkillConfig = server.tool("read_skill_config", "Read the SKILL.md 
 });
 // ─── Tool 3: check_health ────────────────────────────────────────────────────
 const toolCheckHealth = server.tool("check_health", "Check system health — verify all components are accessible", {}, { readOnlyHint: true }, async () => {
-    const configAvailable = loadSkillConfig().version !== undefined;
+    const configAvailable = loadSkillConfig().status !== CONFIG_NOT_FOUND;
     const skillAvailable = loadSkillMd() !== "SKILL.md not found";
     let dbHealthy = false;
     try {
@@ -118,15 +112,14 @@ const toolCheckHealth = server.tool("check_health", "Check system health — ver
     catch {
         dbHealthy = false;
     }
+    const components = { configAvailable, skillAvailable, evidenceDbHealthy: dbHealthy };
     return {
         content: [
             {
                 type: "text",
                 text: JSON.stringify({
-                    status: "ok",
-                    configAvailable,
-                    skillAvailable,
-                    evidenceDbHealthy: dbHealthy,
+                    ...healthStatus(components),
+                    ...components,
                     timestamp: new Date().toISOString(),
                 }, null, 2),
             },
@@ -171,11 +164,12 @@ const toolListStrategies = server.tool("list_available_strategies", "List thinki
 const toolValidateSection = server.tool("validate_prd_section", "Run deterministic Hard Output Rules validation on a single PRD section. Returns violations found — zero LLM calls, pure regex/parsing.", {
     content: z.string().describe("The markdown content of the PRD section"),
     section_type: SectionTypeSchema.describe("The type of PRD section being validated"),
-}, { readOnlyHint: true }, async ({ content, section_type }) => {
+    known_symbols: KnownSymbolsSchema,
+}, { readOnlyHint: true }, async ({ content, section_type, known_symbols }) => {
     // section_type is already validated by SectionTypeSchema at the MCP
     // boundary above. No cast required (cross-audit code-reviewer H5,
     // Phase 3+4, 2026-04).
-    const report = validateSection(content, section_type);
+    const report = withSymbolCheck(validateSection(content, section_type), content, known_symbols);
     return {
         content: [
             { type: "text", text: JSON.stringify(report, null, 2) },
@@ -193,8 +187,10 @@ const toolValidateDocument = server.tool("validate_prd_document", "Run full docu
         content: z.string().describe("Section content"),
     }))
         .describe("Array of PRD sections to validate"),
-}, { readOnlyHint: true }, async ({ sections }) => {
-    const report = validateDocument(sections);
+    known_symbols: KnownSymbolsSchema,
+}, { readOnlyHint: true }, async ({ sections, known_symbols }) => {
+    const contents = sections.map((s) => s.content);
+    const report = withSymbolCheck(validateDocument(sections), contents, known_symbols);
     return {
         content: [
             { type: "text", text: JSON.stringify(report, null, 2) },
@@ -218,7 +214,7 @@ const toolQualityHistory = server.tool("get_quality_history", "Get historical PR
                 {
                     type: "text",
                     text: JSON.stringify({
-                        error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+                        error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
                     }),
                 },
             ],
@@ -248,7 +244,7 @@ const toolStrategyEffectiveness = server.tool("get_strategy_effectiveness", "Get
                 {
                     type: "text",
                     text: JSON.stringify({
-                        error: "Evidence repository unavailable (better-sqlite3 not loaded)",
+                        error: "Evidence repository unavailable (better-sqlite3 not loaded, or the database could not be opened; see stderr)",
                     }),
                 },
             ],
