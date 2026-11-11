@@ -10,7 +10,8 @@ const GUARD = "test_frozen_baseline_is_provenance.py";
 
 test("plan and calibration sources carry no commit gate", () => {
   const run = spawnSync(
-    "python3",
+    // The Windows runner image and python.org installers name it `python`.
+    process.platform === "win32" ? "python" : "python3",
     ["-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", GUARD, "-v"],
     { cwd: ROOT, encoding: "utf8" },
   );

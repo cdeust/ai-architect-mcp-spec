@@ -18,7 +18,7 @@
  * source: docs/PHASE_4_PLAN.md §4.1 Persistence — Laplace L6.
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 import type { AgentIdentity } from "../index.js";
@@ -90,7 +90,11 @@ export class SqliteReliabilityRepository implements ReliabilityRepository {
     }
 
     const resolvedPath = dbPath ?? defaultDbPath();
-    const dir = resolvedPath.substring(0, resolvedPath.lastIndexOf("/"));
+    // dirname, not a search for "/": a Windows path separates with "\\", so
+    // the search found nothing, the directory came out empty and mkdir
+    // failed, leaving the reliability store unavailable there (#126; the
+    // evidence store was fixed the same way in #175).
+    const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }

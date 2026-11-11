@@ -160,15 +160,23 @@ commit (`.github/workflows/pipeline-post-merge.yml`):
 | Platform | CI runner | What runs there |
 |---|---|---|
 | Linux | `ubuntu-latest` | unit, regression, e2e (including the `.mcpb` smoke), environment, install |
-| macOS | `macos-latest` | environment, install |
-| Windows | `windows-latest` | environment, install |
+| macOS | `macos-latest` | environment (plugin launch, then the test suite, the bundle and the `.mcpb` smoke), install |
+| Windows | `windows-latest` | environment (plugin launch with no bash on `PATH`, then the test suite, the bundle and the `.mcpb` smoke), install |
 
-The environment and install jobs start the server through the plugin launcher
-`bin/ensure-deps.sh` and call `check_health` over stdio; the install job does so
-from a real `claude plugin install`. The launcher is a bash script: on Windows,
-CI runs it under Git Bash, so a Windows host needs a bash on `PATH`. The `.mcpb`
-bundle launches `node` directly and needs no bash, but its smoke test runs on
-Linux only, so the bundle has no CI evidence on macOS or Windows.
+The workflow files are the ones every repository of the fleet shares, so the
+unit and e2e jobs stay on Linux; on macOS and Windows the same steps run inside
+the `environment` command of `ci.json`: `pnpm install --frozen-lockfile`,
+`pnpm build`, `pnpm test`, `pnpm bundle`, the portable-host checks and
+`scripts/release/smoke-mcpb.sh`.
+
+The environment and install jobs start the server with the command `.mcp.json`
+declares, `node bin/ensure-deps.mjs`, and call `check_health` over stdio
+(`scripts/check-health-stdio.mjs`); the install job does so from a real
+`claude plugin install`. The launcher is a node script: the plugin needs node
+and npm on `PATH` and no bash, on any platform. The CI's own shell is Git Bash
+on Windows, so there the health check removes every directory that holds a
+bash from `PATH` before it starts the server (the Windows directory stays: its
+`bash.exe` is the WSL launcher, not a shell for a native program).
 
 #### Migrating from `prd-spec-generator`
 

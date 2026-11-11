@@ -74,3 +74,26 @@ describe("mcpb checksum verification (#23 class)", () => {
     ).not.toThrow();
   });
 });
+
+// #126: the CLI guard compared the module URL with `file://${argv[1]}`. On
+// Windows, and for any path with a space, the two never match, so the release
+// step exited 0 having verified nothing.
+describe("run as a command", () => {
+  it("runs from a directory whose name holds a space", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { cpSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = mkdtempSync(join(tmpdir(), "verify mcpb "));
+    try {
+      const script = join(dir, "verify-mcpb-checksum.mjs");
+      cpSync(fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)), script);
+      const run = spawnSync(process.execPath, [script], { encoding: "utf8" });
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -17,7 +17,7 @@
 # Why the deps are provisioned HERE and not on the user's machine:
 #   - manifest.json launches `node ${__dirname}/mcp-server/index.js` directly.
 #     A .mcpb host runs that command; it does not run an install step, and it
-#     has no reason to know about bin/ensure-deps.sh.
+#     has no reason to know about bin/ensure-deps.mjs.
 #   - Resolving and integrity-checking dependencies in CI is strictly better
 #     than doing it on each user's machine at first launch (Scorecard
 #     PinnedDependenciesID, issue #36): it happens once, under a lockfile,
@@ -28,7 +28,7 @@
 #     evidence-DB cache is disabled and consensus falls back to the Beta(7,3)
 #     prior, which the server announces on stderr at startup.
 #
-# bin/ensure-deps.sh is NOT staged. It provisions the PLUGIN install path
+# bin/ensure-deps.mjs is NOT staged. It provisions the PLUGIN install path
 # (.mcp.json, a git clone with no node_modules) and has no caller inside the
 # .mcpb now that the deps ship with it; copying it in would be dead weight (§9).
 set -euo pipefail

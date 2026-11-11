@@ -66,6 +66,18 @@ afterEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("SqliteReliabilityRepository — construction", () => {
+  it("opens a database whose path holds no forward slash", () => {
+    // #126: the parent directory was cut at the last "/". A Windows path
+    // (C:\\Users\\…\\reliability.db) has none, so the directory came out
+    // empty and mkdir failed. A bare file name has none on any platform.
+    const name = `reliability-test-bare-${process.pid}-${Math.random().toString(36).slice(2)}.db`;
+    tempPaths.push(name, `${name}-wal`, `${name}-shm`);
+    expect(name).not.toContain("/");
+    const repo = new SqliteReliabilityRepository(name);
+    expect(existsSync(name)).toBe(true);
+    repo.close();
+  });
+
   it("creates the DB file and sets schema_version to RELIABILITY_SCHEMA_VERSION", () => {
     const path = tempDb("construction");
     const repo = new SqliteReliabilityRepository(path);

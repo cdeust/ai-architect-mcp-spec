@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.calibration.json",
-    "clean": "rm -rf dist",
+    "clean": "node ../../scripts/clean.mjs dist tsconfig.tsbuildinfo",
     "bench": "node dist/runner.js",
     "calibrate:gates": "node dist/calibration/calibration/calibrate-gates.js",
     "lint": "tsc --noEmit"

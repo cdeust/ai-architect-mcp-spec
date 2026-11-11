@@ -106,6 +106,8 @@ for (const host of HOSTS) {
       env: {
         ...process.env,
         HOME: isolatedHome,
+        // os.homedir() reads USERPROFILE on Windows, not HOME.
+        USERPROFILE: isolatedHome,
         PRD_GEN_SMOKE_HOST: host.name,
       },
       input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,

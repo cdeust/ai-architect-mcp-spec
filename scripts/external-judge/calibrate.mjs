@@ -31,6 +31,7 @@
  */
 
 import { resolveConfig } from "./lib/config.mjs";
+import { pathToFileURL } from "node:url";
 import { runJudge } from "./lib/judge-core.mjs";
 import { buildClaimPrompt } from "./lib/prompt-builder.mjs";
 // Imported as a MODULE, not read with `readFileSync`, and the difference is
@@ -192,7 +193,10 @@ async function main() {
 }
 
 // Only run main() when invoked directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not `file://${argv[1]}`: that string never equals the module
+// URL on Windows (`file:///C:/…`) or for a path with a space (`%20`), and the
+// script then exited 0 without doing anything (#126).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     process.stderr.write(`calibrate.mjs: unexpected failure: ${err instanceof Error ? err.stack : String(err)}\n`);
     process.exit(2);

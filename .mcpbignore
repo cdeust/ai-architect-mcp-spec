@@ -1,6 +1,6 @@
 # Exclude everything not needed to run the bundled server.
 # Kept in bundle: manifest.json, icon.png, README.md, LICENSE, PRIVACY.md,
-#   mcp-server/ (index.js + package.json), bin/ensure-deps.sh,
+#   mcp-server/ (index.js + package.json), bin/ensure-deps.mjs,
 #   packages/skill/skill-config.json (runtime env PRD_GEN_SKILL_CONFIG)
 
 node_modules/

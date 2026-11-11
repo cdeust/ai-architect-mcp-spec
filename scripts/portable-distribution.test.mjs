@@ -71,15 +71,17 @@ test("Claude remains on its existing full-profile launch path", () => {
   const claudePlugin = json(".claude-plugin/plugin.json");
   const manifest = json("manifest.json");
   const server = claude.mcpServers["prd-gen"];
-  const launcher = text("bin/ensure-deps.sh");
+  const launcher = text("bin/ensure-deps.mjs");
   assert.equal(claudePlugin.name, "ai-architect-mcp-spec");
   assert.equal(claudePlugin.version, pkg.version);
   assert.equal(manifest.name, "ai-architect-mcp-spec");
   assert.equal(manifest.version, pkg.version);
   assert.equal(server.args.includes("--profile"), false);
   assert.match(server.args[0], /\$\{CLAUDE_PLUGIN_ROOT\}/);
-  assert.match(launcher, /exec node .*"\$@"/);
-  assert.doesNotMatch(launcher, /PROFILE|--profile|omit=optional/);
+  // The launcher forwards its extra arguments and names no profile itself
+  // (its doc comment cites `--profile verifier` as what a host may pass).
+  assert.match(launcher, /serverArgv: \[argv\[0\], entry, \.\.\.argv\.slice\(3\)\]/);
+  assert.doesNotMatch(launcher.replace(/\/\*[\s\S]*?\*\//g, ""), /PROFILE|--profile|omit=optional/);
 });
 
 test("canonical distribution identity is shared by every host plugin", () => {
@@ -177,5 +179,38 @@ test("README supported-platforms table matches the CI matrix of both pipelines",
     for (const { jobs } of rows) {
       for (const job of jobs) assert.ok(TEST_JOBS.includes(job), `README lists unknown job ${job}`);
     }
+  }
+});
+
+// The unit and e2e jobs run on Linux only (the workflow files are shared by
+// every repository). The README says the same steps run on macOS and Windows
+// inside the environment command: that sentence is true only while ci.json
+// holds them, after the launch check and outside the Linux leg.
+test("README claims about the environment command match ci.json", () => {
+  const environment = json("ci.json").environment;
+  const readme = text("README.md");
+  const section = /#### Supported platforms\n([\s\S]*?)\n#### /.exec(readme)[1];
+  const claimed = [...section.matchAll(/`(pnpm [^`]+|scripts\/release\/smoke-mcpb\.sh)`/g)].map((m) => m[1]);
+  assert.deepEqual(claimed, [
+    "pnpm install --frozen-lockfile",
+    "pnpm build",
+    "pnpm test",
+    "pnpm bundle",
+    "scripts/release/smoke-mcpb.sh",
+  ]);
+  const offLinux = environment.split('[ "$CI_OS" = linux ] || {')[1];
+  assert.ok(offLinux, "the environment command has no off-Linux part");
+  let position = 0;
+  for (const step of claimed) {
+    const found = offLinux.indexOf(step, position);
+    assert.notEqual(found, -1, `README names ${step}; the environment command does not run it in that order`);
+    position = found + step.length;
+  }
+  assert.match(offLinux, /pnpm run test:portable && pnpm run test:portable:runtime/);
+  assert.ok(environment.startsWith('node scripts/check-health-stdio.mjs "$PWD" && '));
+  assert.match(section, /`node bin\/ensure-deps\.mjs`/);
+  assert.equal(json(".mcp.json").mcpServers["prd-gen"].command, "node");
+  for (const row of ["macOS", "Windows"]) {
+    assert.match(section, new RegExp(`\\| ${row} \\|[^\\n]*environment \\(plugin launch[^)]*the test suite[^)]*\\.mcpb\` smoke\\), install \\|`));
   }
 });

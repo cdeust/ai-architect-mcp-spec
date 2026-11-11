@@ -15,6 +15,7 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 /** Thrown when the artifact's digest does not equal server.json's record. */
 export class ChecksumMismatchError extends Error {
@@ -124,6 +125,9 @@ export async function main(argv) {
 }
 
 // Run as a CLI when invoked directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not `file://${argv[1]}`: that string never equals the module
+// URL on Windows (`file:///C:/…`) or for a path with a space (`%20`), and the
+// script then exited 0 without doing anything (#126).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }

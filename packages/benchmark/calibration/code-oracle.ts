@@ -27,8 +27,9 @@
 
 import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { createRequire } from "module";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { CodePayload, OracleResult } from "./oracle-types.js";
 import { OracleUnavailableError } from "./oracle-errors.js";
 
@@ -45,23 +46,49 @@ const TSC_TIMEOUT_MS = 10_000;
  *  as TSC_TIMEOUT_MS. */
 const TSC_PROBE_TIMEOUT_MS = 10_000;
 
-/** Locate the tsc binary from the worktree's local node_modules first,
- *  then fall back to system PATH. Returns null if not found. */
-function findTscBinary(): string | null {
-  // Prefer the workspace-local tsc to avoid version mismatches.
-  const candidates = [
-    // pnpm hoisted location
-    new URL(
-      "../../../../node_modules/.bin/tsc",
-      import.meta.url,
-    ).pathname,
-    // Fallback: tsc on PATH (resolved at call time)
-    "tsc",
-  ];
+/** How to run tsc: a program and the arguments that precede tsc's own. */
+export interface TscInvocation {
+  readonly command: string;
+  readonly prefixArgs: readonly string[];
+}
 
-  for (const candidate of candidates) {
+/**
+ * precondition:  `resolvePackageJson` resolves the `typescript` package's
+ *                package.json as this module sees it, or throws.
+ * postcondition: the candidates to try, in order.
+ *   1. The `typescript` package's own entry, `bin/tsc`, run with the node
+ *      that runs this process. No shim is involved: `node_modules/.bin/tsc`
+ *      is a shell script, and on Windows it is `tsc.cmd`, which node refuses
+ *      to spawn without a shell (EINVAL since the fix for CVE-2024-27980,
+ *      Node 20.12.2), so the previous lookup found no tsc there and every
+ *      code claim was reported as unverifiable (#126). The path was also
+ *      taken from `URL.pathname`, which is `/C:/…` on Windows.
+ *   2. `tsc` on PATH, as before, for a checkout whose workspace does not
+ *      carry typescript.
+ */
+export function tscCandidates(
+  resolvePackageJson: () => string = () =>
+    createRequire(import.meta.url).resolve("typescript/package.json"),
+): TscInvocation[] {
+  const candidates: TscInvocation[] = [];
+  try {
+    const entry = join(dirname(resolvePackageJson()), "bin", "tsc");
+    candidates.push({ command: process.execPath, prefixArgs: [entry] });
+  } catch {
+    // typescript is not resolvable from here; PATH is the only candidate.
+  }
+  candidates.push({ command: "tsc", prefixArgs: [] });
+  return candidates;
+}
+
+/** The first candidate that answers `--version`, or null. */
+function findTscBinary(): TscInvocation | null {
+  for (const candidate of tscCandidates()) {
     try {
-      execFileSync(candidate, ["--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" });
+      execFileSync(candidate.command, [...candidate.prefixArgs, "--version"], {
+        timeout: TSC_PROBE_TIMEOUT_MS,
+        stdio: "pipe",
+      });
       return candidate;
     } catch {
       // Not found at this location; try the next.
@@ -102,7 +129,7 @@ export async function codeOracle(payload: CodePayload): Promise<OracleResult> {
   // Get tsc version for evidence traceability.
   let tscVersion = "unknown";
   try {
-    tscVersion = execFileSync(tscBin, ["--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" })
+    tscVersion = execFileSync(tscBin.command, [...tscBin.prefixArgs, "--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" })
       .toString()
       .trim();
   } catch {
@@ -121,8 +148,8 @@ export async function codeOracle(payload: CodePayload): Promise<OracleResult> {
 
     try {
       execFileSync(
-        tscBin,
-        ["--noEmit", "--strict", "--target", "ES2022", "--module", "node16", "--moduleResolution", "node16", snippetFile],
+        tscBin.command,
+        [...tscBin.prefixArgs, "--noEmit", "--strict", "--target", "ES2022", "--module", "node16", "--moduleResolution", "node16", snippetFile],
         { timeout: TSC_TIMEOUT_MS, stdio: "pipe" },
       );
       compilesCleanly = true;
