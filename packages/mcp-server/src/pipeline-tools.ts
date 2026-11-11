@@ -54,6 +54,7 @@ import {
 } from "./bound-full-state.js";
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
 import { pageActionResponse } from "./page-action-response.js";
+import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js";
 
 /**
  * Global run semaphore cap — max pipeline runs in flight at once.
@@ -502,28 +503,23 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
 
   const planSectionVerificationTool = server.tool(
     "plan_section_verification",
-    "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel.",
+    "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " +
+    PLAN_PAGING_DESCRIPTION,
     {
       section_type: SectionTypeSchema,
       content: z.string(),
       codebase_excerpts: z.array(z.string()).default([]),
       memory_excerpts: z.array(z.string()).default([]),
+      request_offset: z.number().int().min(0).default(0),
     },
     { readOnlyHint: true },
-    async ({ section_type, content, codebase_excerpts, memory_excerpts }) => {
+    async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
       const plan = planSectionVerification(section_type, content, {
         codebase_excerpts,
         memory_excerpts,
         include_prd_excerpt: true,
       });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(plan, null, 2),
-          },
-        ],
-      };
+      return planPageResult(plan, request_offset);
     },
   );
 
@@ -531,7 +527,8 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
 
   const planDocumentVerificationTool = server.tool(
     "plan_document_verification",
-    "Same as plan_section_verification but across all sections of a document.",
+    "Same as plan_section_verification but across all sections of a document. " +
+    PLAN_PAGING_DESCRIPTION,
     {
       sections: z
         .array(
@@ -543,22 +540,16 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         .min(1),
       codebase_excerpts: z.array(z.string()).default([]),
       memory_excerpts: z.array(z.string()).default([]),
+      request_offset: z.number().int().min(0).default(0),
     },
     { readOnlyHint: true },
-    async ({ sections, codebase_excerpts, memory_excerpts }) => {
+    async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
       const plan = planDocumentVerification(sections, {
         codebase_excerpts,
         memory_excerpts,
         include_prd_excerpt: true,
       });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(plan, null, 2),
-          },
-        ],
-      };
+      return planPageResult(plan, request_offset);
     },
   );
 
