@@ -17,7 +17,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { codeOracle, isTscAvailable } from "../code-oracle.js";
+import { existsSync } from "node:fs";
+import { codeOracle, isTscAvailable, tscCandidates } from "../code-oracle.js";
 import { OracleUnavailableError } from "../oracle-errors.js";
 
 // Real-tsc subprocess tests measure 0.3–3.9s solo (2026-07-22, darwin arm64);
@@ -149,5 +150,32 @@ describe("codeOracle", () => {
     });
 
     expect(result.oracle_evidence).toMatch(/tsc="Version \d+\.\d+/);
+  });
+});
+
+// #126: tsc was looked up as `node_modules/.bin/tsc` (a shell script; `tsc.cmd`
+// on Windows, which node does not spawn without a shell), through
+// `URL.pathname` (`/C:/…` on Windows). Every test above that needs tsc then
+// returned early there, and every code claim was unverifiable.
+describe("tsc lookup needs no shell shim", () => {
+  it("runs the typescript package's own entry with this node", () => {
+    const [first, ...rest] = tscCandidates();
+    expect(first.command).toBe(process.execPath);
+    expect(first.prefixArgs).toHaveLength(1);
+    expect(first.prefixArgs[0]).toMatch(/typescript[\\/]bin[\\/]tsc$/);
+    expect(first.prefixArgs[0]).not.toMatch(/\.bin/);
+    expect(existsSync(first.prefixArgs[0])).toBe(true);
+    expect(rest).toEqual([{ command: "tsc", prefixArgs: [] }]);
+  });
+
+  it("falls back to tsc on PATH when typescript cannot be resolved", () => {
+    const candidates = tscCandidates(() => {
+      throw new Error("Cannot find module 'typescript/package.json'");
+    });
+    expect(candidates).toEqual([{ command: "tsc", prefixArgs: [] }]);
+  });
+
+  it("finds tsc in this workspace, so the real-tsc tests above cannot pass by returning early", () => {
+    expect(isTscAvailable()).toBe(true);
   });
 });

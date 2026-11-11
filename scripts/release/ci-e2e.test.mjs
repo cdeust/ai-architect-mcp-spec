@@ -59,14 +59,19 @@ function execute({ root, log }, fail = null) {
   return { result, calls: lines ? lines.split("\n").map(JSON.parse) : [] };
 }
 
-test("E2E builds once and tests manifest, portable runtime and staged MCPB in order", () => {
+// The e2e job runs on Linux only, and this harness is POSIX: /bin/bash, and
+// stand-in executables that are shebang scripts. The same steps run on macOS
+// and Windows inside the environment command (scripts/tests/test_ci_platforms.py).
+const posix = process.platform !== "win32";
+
+test.skipIf(!posix)("E2E builds once and tests manifest, portable runtime and staged MCPB in order", () => {
   const { result, calls } = execute(fixture());
   expect(result.error).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
   expect(calls).toEqual(REQUIRED);
 });
 
-test("each failed E2E prerequisite or acceptance check stops all later commands", () => {
+test.skipIf(!posix)("each failed E2E prerequisite or acceptance check stops all later commands", () => {
   const files = fixture();
   for (const [index, failure] of REQUIRED.entries()) {
     const { result, calls } = execute(files, failure);

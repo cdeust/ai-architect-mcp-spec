@@ -8,7 +8,7 @@ AI Architect MCP Spec is an MCP server that turns a feature description into a
 - **It runs as an MCP server in your session**, with the permissions your MCP
   host grants it, and it reads/writes the PRD workspace files it is pointed at.
 - **It provisions runtime dependencies on first launch.** The distributed
-  `.mcpb` bundle externalises three runtime deps that `bin/ensure-deps.sh`
+  `.mcpb` bundle externalises three runtime deps that `bin/ensure-deps.mjs`
   installs from the npm registry at first run — a pnpm workspace + lockfile is
   exactly the shape npm supply-chain attacks target (a postinstall script in a
   transitive dependency).
@@ -67,7 +67,7 @@ control now exists, not because the alert was silenced:
 | check | control |
 |---|---|
 | `VulnerabilitiesID` | 39 advisories → 0, with `auditConfig.ignoreGhsas` (pnpm-workspace.yaml) emptied. Floors in `overrides` (pnpm-workspace.yaml) are each advisory's `first_patched_version`. |
-| `PinnedDependenciesID` | `bin/ensure-deps.sh` runs `npm ci` against a committed `mcp-server/package-lock.json`, verifying integrity hashes on the user's machine. |
+| `PinnedDependenciesID` | `bin/ensure-deps.mjs` runs `npm ci` against a committed `mcp-server/package-lock.json`, verifying integrity hashes on the user's machine. |
 | `TokenPermissionsID` | every workflow declares top-level `permissions:`. |
 | `DependencyUpdateToolID` | `.github/dependabot.yml`, covering `npm` **and** `github-actions` (SHA pins do not age out on their own). |
 | `FuzzingID` | property-based tests under `fast-check` (`packages/validation/src/__tests__/validate-section.properties.test.ts`). |

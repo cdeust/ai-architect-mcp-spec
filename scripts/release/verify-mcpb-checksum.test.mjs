@@ -74,3 +74,56 @@ describe("mcpb checksum verification (#23 class)", () => {
     ).not.toThrow();
   });
 });
+
+// #126: the CLI guard compared the module URL with `file://${argv[1]}`. On
+// Windows, and for any path with a space, the two never match, so the release
+// step exited 0 having verified nothing.
+describe("run as a command", () => {
+  it("runs from a directory whose name holds a space", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { cpSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = mkdtempSync(join(tmpdir(), "verify mcpb "));
+    try {
+      const script = join(dir, "verify-mcpb-checksum.mjs");
+      cpSync(fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)), script);
+      const run = spawnSync(process.execPath, [script], { encoding: "utf8" });
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Node resolves symlinks in import.meta.url but leaves argv[1] as typed. On
+  // macOS tmpdir() sits under /var, a symlink to /private/var, so a URL guard
+  // never matched there and the script exited 0. A linked directory gives the
+  // same shape on every OS (a junction on Windows needs no privilege).
+  it("runs through a symlinked directory", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = mkdtempSync(join(tmpdir(), "verify-mcpb-link-"));
+    try {
+      const real = join(dir, "real");
+      const link = join(dir, "link");
+      mkdirSync(real);
+      symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
+      cpSync(
+        fileURLToPath(new URL("./verify-mcpb-checksum.mjs", import.meta.url)),
+        join(real, "verify-mcpb-checksum.mjs"),
+      );
+      const run = spawnSync(process.execPath, [join(link, "verify-mcpb-checksum.mjs")], {
+        encoding: "utf8",
+      });
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

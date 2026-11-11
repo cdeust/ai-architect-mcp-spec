@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/TypeScript-7.0+-3178c6.svg" alt="TypeScript 7.0+">
   <img src="https://img.shields.io/badge/Node-20.x_·_22.x-339933.svg" alt="Node 20/22">
-  <img src="https://img.shields.io/badge/Tests-1894_passing-brightgreen" alt="1894 passing">
+  <img src="https://img.shields.io/badge/Tests-1900_passing-brightgreen" alt="1900 passing">
   <img src="https://img.shields.io/badge/Packages-10-orange" alt="10 packages">
   <img src="https://img.shields.io/badge/MCP_Tools-17-8A2BE2" alt="17 MCP tools">
   <img src="https://img.shields.io/badge/Validators-Hard_Output_Rules-red" alt="Hard Output Rules">
@@ -56,7 +56,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
 
-**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1894 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
+**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1900 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
 ---
 
@@ -160,15 +160,23 @@ commit (`.github/workflows/pipeline-post-merge.yml`):
 | Platform | CI runner | What runs there |
 |---|---|---|
 | Linux | `ubuntu-latest` | unit, regression, e2e (including the `.mcpb` smoke), environment, install |
-| macOS | `macos-latest` | environment, install |
-| Windows | `windows-latest` | environment, install |
+| macOS | `macos-latest` | environment (plugin launch, then the test suite, the bundle and the `.mcpb` smoke), install |
+| Windows | `windows-latest` | environment (plugin launch with no bash on `PATH`, then the test suite, the bundle and the `.mcpb` smoke), install |
 
-The environment and install jobs start the server through the plugin launcher
-`bin/ensure-deps.sh` and call `check_health` over stdio; the install job does so
-from a real `claude plugin install`. The launcher is a bash script: on Windows,
-CI runs it under Git Bash, so a Windows host needs a bash on `PATH`. The `.mcpb`
-bundle launches `node` directly and needs no bash, but its smoke test runs on
-Linux only, so the bundle has no CI evidence on macOS or Windows.
+The workflow files are the ones every repository of the fleet shares, so the
+unit and e2e jobs stay on Linux; on macOS and Windows the same steps run inside
+the `environment` command of `ci.json`: `pnpm install --frozen-lockfile`,
+`pnpm build`, `pnpm test`, `pnpm bundle`, the portable-host checks and
+`scripts/release/smoke-mcpb.sh`.
+
+The environment and install jobs start the server with the command `.mcp.json`
+declares, `node bin/ensure-deps.mjs`, and call `check_health` over stdio
+(`scripts/check-health-stdio.mjs`); the install job does so from a real
+`claude plugin install`. The launcher is a node script: the plugin needs node
+and npm on `PATH` and no bash, on any platform. The CI's own shell is Git Bash
+on Windows, so there the health check removes every directory that holds a
+bash from `PATH` before it starts the server (the Windows directory stays: its
+`bash.exe` is the WSL launcher, not a shell for a native program).
 
 #### Migrating from `prd-spec-generator`
 
@@ -237,7 +245,7 @@ cd ai-architect-mcp-spec
 pnpm install --frozen-lockfile
 pnpm build      # builds all 9 buildable packages via tsc
 pnpm bundle     # produces the standalone mcp-server/index.js
-pnpm test       # 1894 tests (vitest workspace, all packages; the
+pnpm test       # 1900 tests (vitest workspace, all packages; the
                 # ai-architect-mcp-codebase wire contract is pinned
                 # unconditionally — see docs/INTEGRATION-TESTING.md)
 ```

@@ -1,0 +1,7 @@
+# Every text file is checked out with LF on every platform. Git for Windows
+# defaults to core.autocrlf=true, which hands CRLF files to tests that read the
+# repository's own Markdown, YAML and JSON line by line (frontmatter, tables,
+# rule files) and to the bundle whose bytes are published (#126).
+* text=auto eol=lf
+*.png binary
+*.mcpb binary

@@ -50,7 +50,7 @@ function readVersion(manifestPath: string): string | null {
  * @param runtimeDir directory holding the running entry point (`__dirname`).
  *   In both shipped shapes — the plugin install and the staged .mcpb — that
  *   is `mcp-server/`, whose package.json is stamped with the release version
- *   by `pnpm bundle` and is what `bin/ensure-deps.sh` installs from.
+ *   by `pnpm bundle` and is what `bin/ensure-deps.mjs` installs from.
  * @param pluginRoot the plugin/repo root. Covers the workspace run, where the
  *   entry point is `packages/mcp-server/dist/index.js` with no package.json
  *   beside it and the root package.json is the source of truth.

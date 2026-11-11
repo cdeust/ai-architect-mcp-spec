@@ -7,7 +7,7 @@
 #     server.mcp_config = { command: "node", args: ["${__dirname}/mcp-server/index.js"] }
 # and running that against the staged tree failed with `Cannot find module
 # 'ajv'`, because the tree carried no node_modules and nothing invoked
-# bin/ensure-deps.sh. A green test suite said nothing about it: the suite
+# bin/ensure-deps.mjs. A green test suite said nothing about it: the suite
 # exercises the workspace sources, never the distributable.
 #
 # So this speaks MCP over stdio to the staged artifact and asserts the two
@@ -27,6 +27,11 @@ set -euo pipefail
 
 EXPECTED_TOOLS="${EXPECTED_TOOLS:-17}"
 STAGE_ROOT="$(mktemp -d)"
+# Git Bash: mktemp answers an MSYS path (/tmp/…) that node, a native program,
+# cannot open when it reaches it inside an argument or a variable MSYS does
+# not rewrite. cygpath -m gives the same directory as C:/…; it exists only
+# there. source: Cortex pipeline.yml, step "Scratch directory and OS name".
+if command -v cygpath >/dev/null 2>&1; then STAGE_ROOT="$(cygpath -m "${STAGE_ROOT}")"; fi
 STAGE_DIR="${STAGE_ROOT}/ai-architect-mcp-spec-mcpb"
 trap 'rm -rf "${STAGE_ROOT}"' EXIT
 

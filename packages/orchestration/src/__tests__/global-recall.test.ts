@@ -22,6 +22,7 @@
  * source: Phase 1a (2026-07-14) — Cortex memory-loop closure.
  */
 
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newPipelineState, step, type PipelineState } from "../index.js";
 
@@ -92,7 +93,7 @@ describe("input_analysis Phase 1a — global recall (nominal)", () => {
     // just to re-enter input_analysis. Next action is the codebase flow.
     expect(out.action.kind).toBe("write_file");
     if (out.action.kind === "write_file") {
-      expect(out.action.path).toBe("/tmp/gr2/.prd-gen/.gitignore");
+      expect(out.action.path).toBe(join("/tmp/gr2", ".prd-gen", ".gitignore"));
     }
   });
 

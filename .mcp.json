@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "prd-gen": {
-      "command": "bash",
+      "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/bin/ensure-deps.sh",
+        "${CLAUDE_PLUGIN_ROOT}/bin/ensure-deps.mjs",
         "${CLAUDE_PLUGIN_ROOT}"
       ],
       "env": {
