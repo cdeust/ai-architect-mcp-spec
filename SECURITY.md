@@ -7,11 +7,22 @@ AI Architect MCP Spec is an MCP server that turns a feature description into a
 
 - **It runs as an MCP server in your session**, with the permissions your MCP
   host grants it, and it reads/writes the PRD workspace files it is pointed at.
-- **It provisions runtime dependencies on first launch.** The distributed
-  `.mcpb` bundle externalises three runtime deps that `bin/ensure-deps.mjs`
-  installs from the npm registry at first run — a pnpm workspace + lockfile is
-  exactly the shape npm supply-chain attacks target (a postinstall script in a
-  transitive dependency).
+- **Its runtime dependencies come from the npm registry, at two different
+  moments.** The server bundle (`mcp-server/index.js`) leaves three runtime
+  deps outside itself (ajv, ajv-formats, and the optional native
+  better-sqlite3).
+  - *Claude Code plugin install:* `claude plugin install` copies the
+    repository and installs nothing, so the launcher `bin/ensure-deps.mjs`
+    runs `npm ci --omit=dev` against the committed
+    `mcp-server/package-lock.json` on the first launch, on your machine.
+  - *`.mcpb` bundle:* `scripts/release/stage-mcpb.sh` runs
+    `npm ci --omit=dev --omit=optional` against the same lockfile when the
+    release is built and packs the resulting `node_modules` (ajv and
+    ajv-formats, no native addon) into the bundle; nothing is installed on
+    your machine.
+
+  Either way a lockfile-pinned npm tree is exactly the shape npm supply-chain
+  attacks target (a postinstall script in a transitive dependency).
 - **It shells out to the ecosystem** (optional ai-architect-mcp-codebase / Cortex
   MCPs) only when you configure them.
 

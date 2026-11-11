@@ -31,8 +31,7 @@
  */
 
 import { resolveConfig } from "./lib/config.mjs";
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { isEntry } from "../../bin/is-entry.mjs";
 import { runJudge } from "./lib/judge-core.mjs";
 import { buildClaimPrompt } from "./lib/prompt-builder.mjs";
 // Imported as a MODULE, not read with `readFileSync`, and the difference is
@@ -194,21 +193,7 @@ async function main() {
 }
 
 // Only run main() when invoked directly (not when imported by tests).
-// Compare real paths, not URLs: `file://${argv[1]}` never equals the module
-// URL on Windows (`file:///C:/…`) or for a path with a space (`%20`), and
-// Node resolves symlinks in import.meta.url but not in argv[1] (macOS tmpdir
-// is under /var -> /private/var). Either way the script exited 0 without
-// doing anything (#126). Same check as isEntry() in bin/ensure-deps.mjs.
-function isEntry() {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntry()) {
+if (isEntry(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`calibrate.mjs: unexpected failure: ${err instanceof Error ? err.stack : String(err)}\n`);
     process.exit(2);

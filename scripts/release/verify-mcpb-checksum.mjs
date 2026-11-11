@@ -14,9 +14,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { isEntry } from "../../bin/is-entry.mjs";
 
 /** Thrown when the artifact's digest does not equal server.json's record. */
 export class ChecksumMismatchError extends Error {
@@ -126,20 +125,6 @@ export async function main(argv) {
 }
 
 // Run as a CLI when invoked directly (not when imported by tests).
-// Compare real paths, not URLs: `file://${argv[1]}` never equals the module
-// URL on Windows (`file:///C:/…`) or for a path with a space (`%20`), and
-// Node resolves symlinks in import.meta.url but not in argv[1] (macOS tmpdir
-// is under /var -> /private/var). Either way the script exited 0 without
-// doing anything (#126). Same check as isEntry() in bin/ensure-deps.mjs.
-function isEntry() {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntry()) {
+if (isEntry(import.meta.url)) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }

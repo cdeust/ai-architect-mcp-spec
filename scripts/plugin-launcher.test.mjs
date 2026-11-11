@@ -6,14 +6,34 @@
 // the server its arguments and a clean stdout, provisions with `npm ci` in
 // the server directory, and builds a Windows launch that needs no bash.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, win32 } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { NPM_CI_ARGS, launchPlan, needsProvisioning, npmCiInvocation } from "../bin/ensure-deps.mjs";
+import {
+  LOCK_NAME,
+  MARKER_NAME,
+  NPM_CI_ARGS,
+  acquireLock,
+  launchPlan,
+  lockfileDigest,
+  needsProvisioning,
+  npmCiInvocation,
+  processExists,
+} from "../bin/ensure-deps.mjs";
+import { isEntry } from "../bin/is-entry.mjs";
 import {
   holdsNativeBash,
   launchEnvironment,
@@ -38,12 +58,16 @@ function fakePlugin({ provisioned }) {
   const serverDir = join(root, "mcp-server");
   mkdirSync(serverDir);
   writeFileSync(join(serverDir, "package.json"), '{"type":"module"}\n');
+  writeFileSync(join(serverDir, "package-lock.json"), '{"lockfileVersion":3,"packages":{}}\n');
   writeFileSync(
     join(serverDir, "index.js"),
     'process.stdout.write(JSON.stringify({ argv: process.argv.slice(1), ' +
       'ajv: (await import("node:fs")).existsSync(new URL("./node_modules/ajv", import.meta.url)) }) + "\\n");\n',
   );
-  if (provisioned) mkdirSync(join(serverDir, "node_modules", "ajv"), { recursive: true });
+  if (provisioned) {
+    mkdirSync(join(serverDir, "node_modules", "ajv"), { recursive: true });
+    writeFileSync(join(serverDir, "node_modules", MARKER_NAME), `${lockfileDigest(serverDir)}\n`);
+  }
   return { root, serverDir };
 }
 
@@ -59,7 +83,11 @@ function fakeNpm() {
       'const fs = require("node:fs");',
       `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + "\\n");`,
       'console.log("npm output that must not reach the MCP channel");',
+      // As `npm ci` does: the previous tree goes first, then the install.
+      'fs.rmSync("node_modules", { recursive: true, force: true });',
       'if (process.env.FAKE_NPM_FAIL) process.exit(7);',
+      'const ms = Number(process.env.FAKE_NPM_MS || 0);',
+      'if (ms) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);',
       'fs.mkdirSync("node_modules/ajv", { recursive: true });',
       "",
     ].join("\n"),
@@ -167,15 +195,171 @@ test("npm ci is spawned through a shell on Windows only, with constant arguments
   }
 });
 
-test("the launch plan forwards server arguments and keys provisioning on ajv", () => {
+test("the launch plan forwards server arguments", () => {
   const plan = launchPlan(["node", "ensure-deps.mjs", ROOT, "--profile", "verifier"]);
   assert.equal(plan.entry, join(ROOT, "mcp-server", "index.js"));
   assert.deepEqual(plan.serverArgv, ["node", plan.entry, "--profile", "verifier"]);
   assert.throws(() => launchPlan(["node", "ensure-deps.mjs"]), /usage/);
-  const asked = [];
-  assert.equal(needsProvisioning("X", (path) => (asked.push(path), false)), true);
-  assert.equal(needsProvisioning("X", () => true), false);
-  assert.deepEqual(asked, [join("X", "node_modules", "ajv")]);
+});
+
+const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+const withNpm = (npm, extra = {}) => ({
+  [pathKey]: `${npm.dir}${delimiter}${process.env[pathKey]}`,
+  ...extra,
+});
+const npmCalls = (npm) =>
+  existsSync(npm.log) ? readFileSync(npm.log, "utf8").trim().split("\n").filter(Boolean).length : 0;
+
+test("a completed install is recorded by a marker that names the lockfile it installed", () => {
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  assert.equal(needsProvisioning(serverDir), true);
+  assert.equal(launch(root, [], withNpm(npm)).status, 0);
+  const marker = readFileSync(join(serverDir, "node_modules", MARKER_NAME), "utf8");
+  assert.equal(marker, `${lockfileDigest(serverDir)}\n`);
+  assert.match(marker, /^[0-9a-f]{64}\n$/);
+  assert.equal(needsProvisioning(serverDir), false);
+  assert.equal(existsSync(join(serverDir, LOCK_NAME)), false, "the lock is released");
+});
+
+test("an install interrupted after ajv was written is repaired by the next launch", () => {
+  // The state the first launcher took for a finished install: the sentinel
+  // package is there, the rest of the tree is not, and no install completed.
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  mkdirSync(join(serverDir, "node_modules", "ajv"), { recursive: true });
+  const npm = fakeNpm();
+  assert.equal(needsProvisioning(serverDir), true);
+  const run = launch(root, [], withNpm(npm));
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(npmCalls(npm), 1);
+  assert.equal(needsProvisioning(serverDir), false);
+});
+
+test("a changed lockfile is installed again", () => {
+  const { root, serverDir } = fakePlugin({ provisioned: true });
+  const npm = fakeNpm();
+  assert.equal(launch(root, [], withNpm(npm)).status, 0);
+  assert.equal(npmCalls(npm), 0);
+  writeFileSync(join(serverDir, "package-lock.json"), '{"lockfileVersion":3,"packages":{"x":{}}}\n');
+  assert.equal(needsProvisioning(serverDir), true);
+  assert.equal(launch(root, [], withNpm(npm)).status, 0);
+  assert.equal(npmCalls(npm), 1);
+  assert.equal(needsProvisioning(serverDir), false);
+});
+
+test("a failed install leaves no marker and no lock, so the next launch installs", () => {
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  assert.equal(launch(root, [], withNpm(npm, { FAKE_NPM_FAIL: "1" })).status, 7);
+  assert.equal(existsSync(join(serverDir, "node_modules", MARKER_NAME)), false);
+  assert.equal(existsSync(join(serverDir, LOCK_NAME)), false);
+  assert.equal(launch(root, [], withNpm(npm)).status, 0);
+  assert.equal(npmCalls(npm), 2);
+});
+
+test("two launches at once install once, and both start the server on the installed tree", async () => {
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  const start = () =>
+    new Promise((done) => {
+      const child = spawn(process.execPath, [LAUNCHER, root], {
+        // The install outlasts the start of the second launcher by far.
+        env: { ...process.env, ...withNpm(npm, { FAKE_NPM_MS: "1500" }) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+      child.on("close", (status) => done({ status, stdout, stderr }));
+    });
+  const runs = await Promise.all([start(), start()]);
+  for (const run of runs) {
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(JSON.parse(run.stdout.trim()).ajv, true, "the server saw the installed tree");
+  }
+  assert.equal(npmCalls(npm), 1, "npm ci ran once for the two launches");
+  // At most one waited: under load the second may start after the first is
+  // done, and then finds the marker without ever seeing the lock.
+  assert.ok(runs.filter((run) => /another launch \(pid \d+\) is installing/.test(run.stderr)).length <= 1);
+  assert.equal(existsSync(join(serverDir, LOCK_NAME)), false);
+});
+
+test("a lock left by a launcher that no longer exists is taken over", () => {
+  const { serverDir } = fakePlugin({ provisioned: false });
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+  assert.equal(processExists(dead), false);
+  assert.equal(processExists(process.pid), true);
+  assert.equal(processExists(Number.NaN), false);
+  // EPERM: the process exists and is someone else's.
+  assert.equal(processExists(1, () => { throw Object.assign(new Error("x"), { code: "EPERM" }); }), true);
+  for (const content of [`${dead}\n`, "", "not a pid\n"]) {
+    writeFileSync(join(serverDir, LOCK_NAME), content);
+    const release = acquireLock(serverDir, { wait: () => {} });
+    assert.equal(readFileSync(join(serverDir, LOCK_NAME), "utf8"), `${process.pid}\n`);
+    release();
+    assert.equal(existsSync(join(serverDir, LOCK_NAME)), false);
+  }
+});
+
+test("a lock held by a live process is waited for, not broken", () => {
+  const { serverDir } = fakePlugin({ provisioned: false });
+  const lock = join(serverDir, LOCK_NAME);
+  writeFileSync(lock, "4242\n");
+  let polls = 0;
+  const release = acquireLock(serverDir, {
+    exists: (pid) => pid === 4242,
+    // The owner releases after three polls; until then the lock is its own.
+    wait: () => {
+      polls += 1;
+      assert.equal(readFileSync(lock, "utf8"), "4242\n");
+      if (polls === 3) rmSync(lock);
+    },
+  });
+  assert.equal(polls, 3);
+  assert.equal(readFileSync(lock, "utf8"), `${process.pid}\n`);
+  release();
+});
+
+test("one entry-point check serves every script, and holds through a linked directory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "prd-entry-"));
+  temporary.push(dir);
+  const real = join(dir, "real dir");
+  const link = join(dir, "link");
+  mkdirSync(real);
+  // A junction on Windows needs no privilege; macOS tmpdir() is itself a link.
+  symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
+  const script = join(real, "tool.mjs");
+  writeFileSync(script, "");
+  const url = pathToFileURL(script).href;
+  assert.equal(isEntry(url, script), true);
+  assert.equal(isEntry(url, join(link, "tool.mjs")), true, "argv[1] through the link");
+  assert.equal(isEntry(url, join(real, "other.mjs")), false, "a missing file is not the entry");
+  assert.equal(isEntry(url, undefined), false);
+  assert.equal(isEntry(url, LAUNCHER), false);
+
+  // The four programs use it and none carries a copy of the comparison.
+  for (const path of [
+    "bin/ensure-deps.mjs",
+    "scripts/check-health-stdio.mjs",
+    "scripts/release/verify-mcpb-checksum.mjs",
+    "scripts/external-judge/calibrate.mjs",
+  ]) {
+    const source = readFileSync(join(ROOT, path), "utf8");
+    assert.match(source, /import \{ isEntry \} from "(\.\.?\/)+(bin\/)?is-entry\.mjs";/, path);
+    assert.match(source, /if \(isEntry\(import\.meta\.url\)\)/, path);
+    assert.doesNotMatch(source, /realpathSync|file:\/\/\$\{/, path);
+  }
+  // Run through the link, the launcher still starts (it resolves is-entry.mjs beside itself).
+  const plugin = fakePlugin({ provisioned: true });
+  const binLink = join(dir, "bin-link");
+  symlinkSync(join(ROOT, "bin"), binLink, process.platform === "win32" ? "junction" : "dir");
+  const run = spawnSync(process.execPath, [join(binLink, "ensure-deps.mjs"), plugin.root], {
+    encoding: "utf8",
+    input: "",
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(JSON.parse(run.stdout.trim()).ajv, true);
 });
 
 test("the health check starts exactly what .mcp.json declares, with the plugin root substituted", () => {
