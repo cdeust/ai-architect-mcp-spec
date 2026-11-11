@@ -107,6 +107,36 @@ describe("pre_impl_grounding — clean skip conditions", () => {
   });
 });
 
+describe("pre_impl_grounding — failed technical_specification draft (#122)", () => {
+  function withFailedTechSpec(): PipelineState {
+    const s = stateAtGrounding({
+      graphPath: "/g/graph",
+      // A stale path must not re-open the gate: the draft itself is the source.
+      sidecarPath: "prd-output/x/stage-5.affected_symbols.json",
+      qualifiedNames: ["src/main.rs::handle"],
+    });
+    return {
+      ...s,
+      sections: s.sections.map((section) => ({ ...section, status: "failed" as const })),
+    };
+  }
+
+  it("queries no get_impact for the symbols of a failed draft", () => {
+    const out = step({ state: withFailedTechSpec() });
+    expect(out.action.kind).not.toBe("call_pipeline_tool");
+    expect(out.state.current_step).toBe("implementation");
+    expect(out.state.post_specs?.impact_queries.done).toBe(true);
+    expect(out.state.post_specs?.impact_queries.results).toEqual([]);
+  });
+
+  it("says the grounding was skipped because the section failed validation", () => {
+    const out = step({ state: withFailedTechSpec() });
+    expect(out.messages.map((m) => m.text).join("\n")).toContain(
+      "Technical Specification section failed validation",
+    );
+  });
+});
+
 describe("pre_impl_grounding — cursor loop over affected symbols", () => {
   it("emits one get_impact call per distinct qualified_name, in order", () => {
     const seed = stateAtGrounding({
