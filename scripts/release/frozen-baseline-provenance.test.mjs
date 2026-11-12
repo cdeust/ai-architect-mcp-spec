@@ -12,17 +12,23 @@ const GUARD = "test_frozen_baseline_is_provenance.py";
 // under full-suite parallel load that start scales with runner load. On
 // windows-latest it took 1178ms in run 43287696855 (job 131426502011) and
 // 6080ms in run 43293575660 (job 131446875348, PR #219), a timeout, not a
-// guard failure. 30s follows code-oracle.test.ts: the same headroom, and a
-// hung interpreter still fails.
+// guard failure. 30s follows code-oracle.test.ts.
 // source: the two job logs above; precedent packages/benchmark/calibration/__tests__/code-oracle.test.ts.
 const GUARD_TIMEOUT_MS = 30_000;
+
+// spawnSync blocks the event loop, so vitest's limit alone cannot stop a hung
+// interpreter. The child gets its own limit, below the test's, so a hang ends
+// as ETIMEDOUT in run.error, which goes into the failure message (the same
+// pattern as code-oracle.ts, which passes `timeout` to execFileSync).
+// source: margin of 5s left to vitest to report; review of PR #219.
+const GUARD_PROCESS_TIMEOUT_MS = GUARD_TIMEOUT_MS - 5_000;
 
 test("plan and calibration sources carry no commit gate", () => {
   const run = spawnSync(
     // The Windows runner image and python.org installers name it `python`.
     process.platform === "win32" ? "python" : "python3",
     ["-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", GUARD, "-v"],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, encoding: "utf8", timeout: GUARD_PROCESS_TIMEOUT_MS },
   );
   const output = [run.error, run.stdout, run.stderr].filter(Boolean).join("\n");
   expect(run.status, output).toBe(0);
