@@ -223,6 +223,36 @@ describe("dependency_targets_defined", () => {
     ]);
   });
 
+  it("reads every ID column as defining, so an Epic ID column ahead of Story ID does not hide the stories", () => {
+    const section: Section = {
+      type: "user_stories",
+      content: [
+        "| Epic ID | Story ID | Title | Depends On |",
+        "|---------|----------|-------|------------|",
+        "| EPIC-1 | STORY-1 | Create | — |",
+        "| EPIC-1 | STORY-2 | Search | STORY-1 |",
+        "| EPIC-1 | STORY-3 | Share | STORY-2, STORY-9 |",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: STORY-9",
+    ]);
+  });
+
+  it("defines nothing from a table whose first column is a dependency column and none is headed ID", () => {
+    const section: Section = {
+      type: "requirements",
+      content: [
+        "| Depends On | Requirement | Owner |",
+        "|------------|-------------|-------|",
+        "| FR-009 | Search | FR-001 |",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-009",
+    ]);
+  });
+
   it("does not count a bare identifier at a line start as a definition", () => {
     const section: Section = {
       type: "user_stories",
