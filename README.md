@@ -18,7 +18,7 @@
 
 <p align="center">
   <strong>Catch a hallucinated spec before it becomes code.</strong><br>
-  Its structural checks — every acceptance criterion traces to a requirement, no performance claim passes without a measurement — run deterministically, with no model in the loop. Given the symbols of your code graph, it reports every symbol the spec names that none of them resolve.<br>
+  Its structural checks — every acceptance criterion traces to a requirement, no performance claim passes without a measurement — run deterministically, with no model in the loop. Given the symbols of your code graph, it reports the inline-code symbols of the spec that none of them resolve.<br>
   <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
 </p>
 
@@ -38,7 +38,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 ### What you get
 
-- **A spec that survives contact with code.** Symbols are cross-checked against the real codebase graph, so a PRD cannot reference a function that was renamed last week.
+- **A spec checked against your code.** With a codebase (`codebase_path`), self-check sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report. That check is advisory: it does not block the run.
 - **Traceability that is actually checked.** Every acceptance criterion must tie back to a requirement; numbering gaps are caught, not assumed away.
 - **No PASS without a measurement.** The verdict taxonomy *refuses* to pass a latency, throughput, fps or storage claim — it returns SPEC-COMPLETE or NEEDS-RUNTIME instead of a confident guess.
 - **A guard against agreeable judges.** A panel that agrees 100% of the time over 5+ claims raises `distribution_suspicious` rather than being read as consensus.
@@ -556,7 +556,7 @@ A cross-audit found and fixed two layer violations:
 | Failure mode | What we do |
 |---|---|
 | **Section drift between turns** | Single immutable `PipelineState` snapshot per step; reducer is pure; host can replay any step |
-| **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list yet, so a symbol is checked only when the host passes it (#118) |
+| **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list. With a codebase graph (`codebase_path`), self-check also sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report, advisory (#118) |
 | **NFRs claiming PASS without measurement** | Verdict taxonomy refuses PASS for latency/throughput/fps/storage; consensus engine forwards SPEC-COMPLETE / NEEDS-RUNTIME |
 | **Confirmatory bias (every judge says PASS)** | `distribution_suspicious` flag fires at 100% PASS over ≥5 claims; surfaced in typed `done.verification.distribution_suspicious` |
 | **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
