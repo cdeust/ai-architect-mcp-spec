@@ -29,7 +29,7 @@ const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = 
   contradiction: [],
   missing_acceptance_criteria: ["fr_to_ac_coverage: 1 FR(s) have no acceptance criteria: FR-003"],
   unmeasurable_requirement: [],
-  wrong_number: [],
+  wrong_number: ["sp_arithmetic: SP total line shows 5 but the stories sum to 3"],
   hallucinated_dependency: [
     "dependency_targets_defined: 1 dependency target(s) are defined nowhere in the document: STORY-7",
   ],
@@ -102,7 +102,7 @@ describe("seeded-defect regression fixture (#118)", () => {
     }
   });
 
-  it("recall on the rebuilt set, computed from the validator, is 3 of 10", () => {
+  it("recall on the rebuilt set, computed from the validator, is 4 of 10", () => {
     // Counted from validateDocument, not from EXPECTED_DIAGNOSES, so a rule
     // that starts or stops diagnosing a seed fails here as well.
     const caught = SEEDED_DEFECTS.filter(
@@ -112,12 +112,14 @@ describe("seeded-defect regression fixture (#118)", () => {
       "duplicate_requirement",
       "hallucinated_dependency",
       "missing_acceptance_criteria",
+      "wrong_number",
     ]);
   });
 
-  it("the wrong total is caught only as a `| Total |` row of a timeline table", () => {
+  it("a wrong `| Total |` row of a timeline table is caught too, twice", () => {
     // sp_arithmetic reads table rows of the timeline, deployment and
-    // requirements sections; the prose total of the seed above is not read.
+    // requirements sections, and the prose total of a user-story list (the
+    // seed above).
     const withTimeline = (total: string): readonly Section[] => [
       ...CLEAN_CONTROL,
       {

@@ -1,4 +1,4 @@
-import type { HardOutputRule, HardOutputRuleViolation } from "@prd-gen/core";
+import { type HardOutputRule, type HardOutputRuleViolation } from "@prd-gen/core";
 /**
  * Validation failure → corrective retrieval mapper.
  * Meadows leverage point #2: closes the validation→retrieval feedback loop.
@@ -25,5 +25,5 @@ export interface FailureMappingResult {
     /** Summary of what went wrong */
     failureSummary: string;
 }
-export declare function mapFailuresToRetrievals(violations: readonly HardOutputRuleViolation[]): FailureMappingResult;
+export declare function mapFailuresToRetrievals(allViolations: readonly HardOutputRuleViolation[]): FailureMappingResult;
 //# sourceMappingURL=failure-mapper.d.ts.map
