@@ -29,6 +29,7 @@
 
 import { describe, expect, it } from "vitest";
 import { validateSection } from "../index.js";
+import { checkProseSPTotal } from "../hard-output-rules/rules/sp-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -146,5 +147,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
 
   it("space runs after a matrix row's third cell (no_placeholder_tests)", () => {
     expectSubQuadratic((n) => "|testa||" + " ".repeat(n), "testing");
+  });
+
+  // Review of #228: the first PROSE_TOTAL_START put two whitespace loops side
+  // by side; a line of spaces ending in an amount measured 13, 55 and 269 ms
+  // at 5k, 10k and 20k spaces. The prose total is a document-level check, so
+  // it is timed directly rather than through validateSection.
+  it("space runs before a story-point amount (prose sp_arithmetic)", () => {
+    const build = (n: number): string => " ".repeat(n) + "x 1 SP";
+    const run = (input: string): void => void checkProseSPTotal(input, "user_stories");
+    const small = build(64000);
+    const large = build(128000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 });

@@ -1,3 +1,4 @@
+import { isBlockingViolation, } from "@prd-gen/core";
 const RULE_TO_CATEGORY = {
     // Architecture
     clean_architecture: "missing_architecture",
@@ -95,7 +96,11 @@ const CATEGORY_TO_QUERY = {
     },
 };
 // ─── Mapping ─────────────────────────────────────────────────────────────────
-export function mapFailuresToRetrievals(violations) {
+export function mapFailuresToRetrievals(allViolations) {
+    // Advisory findings (a lexicon found none of a topic's words) are not
+    // failures: they call for no corrective retrieval and no retry (#117).
+    // A violation without the field is blocking, as before.
+    const violations = allViolations.filter(isBlockingViolation);
     // Group violations by category
     const categorySet = new Set();
     for (const v of violations) {
