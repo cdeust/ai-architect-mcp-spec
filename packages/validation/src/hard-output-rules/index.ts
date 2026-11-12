@@ -14,6 +14,9 @@ import {
   type DocumentLevelRule,
 } from "./rule-mapping.js";
 
+// Document-level dependency targets (#118)
+import { checkDocumentDependencyTargetsDefined } from "./rules/dependency-target-rules.js";
+
 // SP Rules (1, 8, 9)
 import {
   checkSPArithmetic,
@@ -318,6 +321,7 @@ function checkRule(
     // Document-level / process-level rules — checked in validateDocument()
     case "fr_to_ac_coverage":
     case "ac_to_test_coverage":
+    case "dependency_targets_defined":
     case "post_generation_self_check":
     case "mandatory_codebase_analysis":
       return [];
@@ -395,6 +399,8 @@ const DOCUMENT_LEVEL_CHECKS: Readonly<
     checkDocumentTestTraceability(sections),
   fr_to_ac_coverage: ({ sections }) => checkDocumentFRToACCoverage(sections),
   ac_to_test_coverage: ({ sections }) => checkDocumentACToTestCoverage(sections),
+  dependency_targets_defined: ({ sections }) =>
+    checkDocumentDependencyTargetsDefined(sections),
 };
 
 export function validateDocument(

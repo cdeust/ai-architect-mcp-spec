@@ -30,7 +30,9 @@ const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = 
   missing_acceptance_criteria: ["fr_to_ac_coverage: 1 FR(s) have no acceptance criteria: FR-003"],
   unmeasurable_requirement: [],
   wrong_number: [],
-  hallucinated_dependency: [],
+  hallucinated_dependency: [
+    "dependency_targets_defined: 1 dependency target(s) are defined nowhere in the document: STORY-7",
+  ],
   duplicate_requirement: [
     "duplicate_requirement_ids: Requirement ID 'FR-002' appears 2 times — each ID must be unique",
   ],
@@ -100,13 +102,17 @@ describe("seeded-defect regression fixture (#118)", () => {
     }
   });
 
-  it("recall on the rebuilt set, computed from the validator, is 2 of 10", () => {
+  it("recall on the rebuilt set, computed from the validator, is 3 of 10", () => {
     // Counted from validateDocument, not from EXPECTED_DIAGNOSES, so a rule
     // that starts or stops diagnosing a seed fails here as well.
     const caught = SEEDED_DEFECTS.filter(
       (d) => blockingFindingsBeyondControl(d.sections).length > 0,
     ).map((d) => d.category);
-    expect(caught.sort()).toEqual(["duplicate_requirement", "missing_acceptance_criteria"]);
+    expect(caught.sort()).toEqual([
+      "duplicate_requirement",
+      "hallucinated_dependency",
+      "missing_acceptance_criteria",
+    ]);
   });
 
   it("the wrong total is caught only as a `| Total |` row of a timeline table", () => {
