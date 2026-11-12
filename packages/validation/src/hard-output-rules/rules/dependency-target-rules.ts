@@ -119,30 +119,36 @@ function isSeparatorRow(row: string): boolean {
 interface TableColumns {
   /** Dependency columns: their identifiers are targets. */
   readonly dependency: ReadonlySet<number>;
-  /** The defining column, or -1 when a dependency column would be it. */
-  readonly defining: number;
+  /** Defining columns: an identifier-only cell in one of them defines it. */
+  readonly defining: ReadonlySet<number>;
 }
 
-const NO_HEADER: TableColumns = { dependency: new Set(), defining: 0 };
+const NO_HEADER: TableColumns = { dependency: new Set(), defining: new Set([0]) };
 
 /**
- * The defining column is the first column headed `ID` outside the dependency
- * columns, else the first column; never a dependency column.
+ * The defining columns are every column headed `ID` (`ID`, `Epic ID`,
+ * `Story ID`) outside the dependency columns, so that a story table whose
+ * first `… ID` column is the epic still defines its stories. Without such a
+ * column, the first column defines, unless it is a dependency column: a
+ * dependency column never defines.
  */
 function columnsOf(header: readonly string[]): TableColumns {
   const dependency = new Set<number>();
   header.forEach((cell, i) => {
     if (DEPENDENCY_HEADER.test(cell)) dependency.add(i);
   });
-  const idColumn = header.findIndex((cell, i) => !dependency.has(i) && ID_HEADER.test(cell));
-  const defining = idColumn >= 0 ? idColumn : dependency.has(0) ? -1 : 0;
+  const defining = new Set<number>();
+  header.forEach((cell, i) => {
+    if (!dependency.has(i) && ID_HEADER.test(cell)) defining.add(i);
+  });
+  if (defining.size === 0 && !dependency.has(0)) defining.add(0);
   return { dependency, defining };
 }
 
 /**
  * Reads every markdown table: adds to `targets` the identifiers of its
- * dependency columns, and to `defined` the identifier of each row's defining
- * column when that cell holds an identifier and nothing else.
+ * dependency columns, and to `defined` the identifier of each defining cell
+ * of a row that holds an identifier and nothing else.
  */
 function readTables(content: string, defined: Set<string>, targets: Map<string, string>): void {
   let columns = NO_HEADER;
@@ -159,8 +165,10 @@ function readTables(content: string, defined: Set<string>, targets: Map<string, 
     } else {
       const cells = cellsOf(line);
       for (const i of columns.dependency) addTargets(idsIn(cells[i] ?? ""), targets);
-      const owner = ID_ONLY_CELL.exec(cells[columns.defining] ?? "")?.[1];
-      if (owner !== undefined) defined.add(idKey(owner));
+      for (const i of columns.defining) {
+        const owner = ID_ONLY_CELL.exec(cells[i] ?? "")?.[1];
+        if (owner !== undefined) defined.add(idKey(owner));
+      }
     }
     previous = line;
   }
