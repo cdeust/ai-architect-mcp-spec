@@ -97,6 +97,100 @@ describe("dependency_targets_defined", () => {
     expect(messages([section])).toEqual([]);
   });
 
+  it("keeps the dependency column in place when a cell holds an escaped pipe", () => {
+    const section: Section = {
+      type: "requirements",
+      content: [
+        "| ID | Requirement | Priority | Depends On | Source |",
+        "|----|-------------|----------|------------|--------|",
+        "| FR-001 | Match a \\| b | High | FR-009 | User Request |",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-009",
+    ]);
+  });
+
+  it("keeps a nested shorter or other fence inside the enclosing block", () => {
+    const section: Section = {
+      type: "technical_specification",
+      content: [
+        "````markdown",
+        "```",
+        "- STORY-1: depends on FR-404.",
+        "```",
+        "~~~",
+        "- STORY-2: depends on FR-405.",
+        "````",
+        "- STORY-3: depends on FR-406.",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-406",
+    ]);
+  });
+
+  it("accepts a bold line start, a code-span cell and a later identifier cell as definitions", () => {
+    const sections: Section[] = [
+      { type: "user_stories", content: "**STORY-1**: First story." },
+      {
+        type: "requirements",
+        content: [
+          "| # | ID | Requirement |",
+          "|---|----|-------------|",
+          "| 1 | FR-001 | Create |",
+          "| `FR-002` | Search | |",
+        ].join("\n"),
+      },
+      { type: "timeline", content: "- STORY-2: depends on STORY-1, FR-001 and FR-002." },
+    ];
+    expect(messages(sections)).toEqual([]);
+  });
+
+  it("does not let a dependency cell define the identifier it names", () => {
+    const section: Section = {
+      type: "requirements",
+      content: [
+        "| # | Requirement | Depends On |",
+        "|---|-------------|------------|",
+        "| 1 | Search | FR-009 |",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-009",
+    ]);
+  });
+
+  it("reads STORY-001 and STORY-1 as the same identifier", () => {
+    const section: Section = {
+      type: "user_stories",
+      content: "- STORY-001: First story.\n- STORY-2: depends on STORY-1.",
+    };
+    expect(messages([section])).toEqual([]);
+  });
+
+  it("an unclosed fence ends with its section and hides no later section", () => {
+    const sections: Section[] = [
+      { type: "technical_specification", content: "```ts\nconst x = 1;" },
+      { type: "user_stories", content: "- STORY-1: depends on STORY-9." },
+    ];
+    expect(messages(sections)).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: STORY-9",
+    ]);
+  });
+
+  it("names at most twenty targets and counts the rest, without overflowing on a huge cell", () => {
+    const ids = Array.from({ length: 200_000 }, (_, i) => `FR-${i + 100}`).join(", ");
+    const section: Section = {
+      type: "requirements",
+      content: `| ID | Depends On |\n|----|------------|\n| FR-001 | ${ids} |`,
+    };
+    const [message] = messages([section]);
+    expect(message).toMatch(/^200000 dependency target\(s\) are defined nowhere in the document: /);
+    expect(message).toMatch(/ and 199980 more$/);
+    expect(message!.split(", ")).toHaveLength(20);
+  });
+
   it("lists each undefined target once, sorted", () => {
     const section: Section = {
       type: "user_stories",
