@@ -20,14 +20,20 @@ import {
   type Section,
 } from "./seeded-defects.fixture.js";
 
-/** Blocking rules reported on the seeded document, measured on this commit. */
+/**
+ * Blocking findings reported on the seeded document beyond the control's, as
+ * `rule: message`, measured on this commit. The message names the identifier
+ * at fault, so a rule that flags the wrong one fails here.
+ */
 const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = {
   contradiction: [],
-  missing_acceptance_criteria: ["fr_to_ac_coverage"],
+  missing_acceptance_criteria: ["fr_to_ac_coverage: 1 FR(s) have no acceptance criteria: FR-003"],
   unmeasurable_requirement: [],
   wrong_number: [],
   hallucinated_dependency: [],
-  duplicate_requirement: ["duplicate_requirement_ids"],
+  duplicate_requirement: [
+    "duplicate_requirement_ids: Requirement ID 'FR-002' appears 2 times — each ID must be unique",
+  ],
   scope_creep: [],
   missing_edge_case: [],
   inconsistent_terminology: [],
@@ -37,12 +43,12 @@ const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = 
 const signature = (v: HardOutputRuleViolation): string =>
   `${isBlockingViolation(v) ? "blocking" : "advisory"}:${v.rule}:${v.message}`;
 
-function blockingRulesBeyondControl(sections: readonly Section[]): string[] {
+function blockingFindingsBeyondControl(sections: readonly Section[]): string[] {
   const control = new Set(validateDocument(CLEAN_CONTROL).violations.map(signature));
-  const rules = validateDocument(sections)
+  return validateDocument(sections)
     .violations.filter((v) => isBlockingViolation(v) && !control.has(signature(v)))
-    .map((v) => v.rule);
-  return [...new Set(rules)].sort();
+    .map((v) => `${v.rule}: ${v.message}`)
+    .sort();
 }
 
 describe("seeded-defect regression fixture (#118)", () => {
@@ -53,10 +59,11 @@ describe("seeded-defect regression fixture (#118)", () => {
     expect(report.totalScore).toBe(1);
   });
 
-  it("the control's only findings are the seven advisory testing-lexicon rules", () => {
+  it("the control's only findings are seven advisory findings of six testing-lexicon rules", () => {
     // The audit counted 7 of its 12 violations as boilerplate that also fired
-    // on the clean control. On the rebuilt control they are these seven
-    // absence findings of the testing lexicon: advisory since #117, so they
+    // on the clean control. On the rebuilt control they are seven absence
+    // findings of six testing-lexicon rules (`mandatory_test_coverage` fires
+    // twice, once for test types and once for coverage targets): advisory since #117, so they
     // cost no score and trigger no retry, but they are still reported.
     const report = validateDocument(CLEAN_CONTROL);
     for (const v of report.violations) expect(v.isAdvisory, v.rule).toBe(true);
@@ -80,7 +87,7 @@ describe("seeded-defect regression fixture (#118)", () => {
   it.each(SEEDED_DEFECTS.map((d) => [d.category, d] as const))(
     "%s: the document check reports the pinned diagnosis",
     (category, defect) => {
-      expect(blockingRulesBeyondControl(defect.sections), defect.seed).toEqual(
+      expect(blockingFindingsBeyondControl(defect.sections), defect.seed).toEqual(
         EXPECTED_DIAGNOSES[category],
       );
     },
@@ -93,9 +100,13 @@ describe("seeded-defect regression fixture (#118)", () => {
     }
   });
 
-  it("recall on the rebuilt set is 2 of 10, so the README must not claim more", () => {
-    const caught = Object.values(EXPECTED_DIAGNOSES).filter((rules) => rules.length > 0);
-    expect(caught.length).toBe(2);
+  it("recall on the rebuilt set, computed from the validator, is 2 of 10", () => {
+    // Counted from validateDocument, not from EXPECTED_DIAGNOSES, so a rule
+    // that starts or stops diagnosing a seed fails here as well.
+    const caught = SEEDED_DEFECTS.filter(
+      (d) => blockingFindingsBeyondControl(d.sections).length > 0,
+    ).map((d) => d.category);
+    expect(caught.sort()).toEqual(["duplicate_requirement", "missing_acceptance_criteria"]);
   });
 
   it("the wrong total is caught only as a `| Total |` row of a timeline table", () => {
@@ -108,7 +119,13 @@ describe("seeded-defect regression fixture (#118)", () => {
         content: `## Timeline\n\n| Story | SP |\n|-------|----|\n| STORY-1 | 2 |\n| STORY-2 | 1 |\n| Total | ${total} |`,
       },
     ];
-    expect(blockingRulesBeyondControl(withTimeline("3"))).toEqual([]);
-    expect(blockingRulesBeyondControl(withTimeline("5"))).toEqual(["sp_arithmetic"]);
+    expect(blockingFindingsBeyondControl(withTimeline("3"))).toEqual([]);
+    // Reported twice, measured: once by the timeline section's own pass and
+    // once by the document-level pass over the timeline, deployment and
+    // requirements tables (checkDocumentSPArithmetic).
+    expect(blockingFindingsBeyondControl(withTimeline("5"))).toEqual([
+      "sp_arithmetic: SP total row shows 5 but individual rows sum to 3",
+      "sp_arithmetic: SP total row shows 5 but individual rows sum to 3",
+    ]);
   });
 });
