@@ -135,12 +135,25 @@ const RUNNER_FOR_LABEL = {
 const PIPELINES = [".github/workflows/pipeline.yml", ".github/workflows/pipeline-post-merge.yml"];
 const TEST_JOBS = ["unit", "regression", "e2e", "environment", "install"];
 
+// Since Cortex ADR-1133 the pull-request pipeline takes the `os` matrix of
+// `environment` and `install` from its `contract` job, which selects from the
+// one `RUNNERS = [...]` list of the selector embedded in the workflow.
+const SELECTED_MATRIX = "os: ${{ fromJSON(needs.contract.outputs.platforms) }}";
+
+/** The systems the `contract` job of a workflow selects from, sorted. */
+const selectableRunners = (workflow) => {
+  const lists = [...workflow.matchAll(/\n\s+RUNNERS = \[([^\]]+)\]\n/g)];
+  assert.equal(lists.length, 1, "the workflow does not hold exactly one RUNNERS list");
+  return lists[0][1].split(",").map((os) => os.trim().replace(/"/g, "")).sort();
+};
+
 /** The `os` matrix, or the `runs-on` value, of one job of a workflow, sorted. */
 const jobRunners = (workflow, job) => {
   const start = workflow.indexOf(`\n  ${job}:\n`);
   assert.notEqual(start, -1, `job ${job} missing from the workflow`);
   const next = workflow.slice(start + 1).search(/\n  [a-z0-9_-]+:\n/);
   const body = next === -1 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+  if (body.includes(SELECTED_MATRIX)) return selectableRunners(workflow);
   const matrix = /\n\s+matrix:\n(?:\s+[a-z-]+: \S+\n)*\s+os: \[([^\]]+)\]/.exec(body);
   if (matrix) return matrix[1].split(",").map((os) => os.trim()).sort();
   const runsOn = /\n\s+runs-on: (\S+)/.exec(body);

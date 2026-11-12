@@ -5,7 +5,10 @@ ubuntu-latest, macos-latest and windows-latest under one shell, and what they
 run is this repository's `ci.json`. So the platform evidence of this repository
 is in two places, and this file pins both:
 
-- the two jobs keep the three runners and the shared shell in both pipelines;
+- the two jobs keep the three runners and the shared shell in both pipelines:
+  the Pipeline after merge lists them inline, and the pull request Pipeline
+  takes its matrix from the `contract` job, which selects from the same three
+  (Cortex ADR-1133; what the selector answers is `test_ci_platform_selection.py`);
 - `ci.json` starts the plugin there with node (no bash launcher), and on macOS
   and Windows also runs the test suite and the bundle checks that the `unit`
   and `e2e` jobs run on Linux only.
@@ -24,6 +27,10 @@ PIPELINES = (
     ".github/workflows/pipeline-post-merge.yml",
 )
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
+# source: the matrix line of the two jobs in pipeline.yml since Cortex ADR-1133.
+SELECTED = "os: ${{ fromJSON(needs.contract.outputs.platforms) }}"
+# source: the output of the `contract` job that carries the selector's answer.
+SELECTOR_OUTPUT = "      platforms: ${{ steps.platforms.outputs.platforms }}\n"
 # The steps the `unit` and `e2e` commands run on Linux, which the environment
 # command repeats on the two other systems.
 OFF_LINUX_STEPS = (
@@ -44,15 +51,30 @@ def job(workflow: str, name: str) -> str:
     return text[start : start + 1 + following.start()] if following else text[start:]
 
 
+def selectable_runners(workflow: str) -> list:
+    """The systems the `contract` job selects from: the one `RUNNERS = [...]`
+    line of the selector embedded in the workflow."""
+    text = (ROOT / workflow).read_text(encoding="utf-8")
+    found = re.findall(r"\n\s+RUNNERS = \[([^\]]+)\]\n", text)
+    if len(found) != 1:
+        raise AssertionError(f"{len(found)} RUNNERS lines in {workflow}, expected 1")
+    return [item.strip().strip('"') for item in found[0].split(",")]
+
+
 class PlatformJobsTest(unittest.TestCase):
     def test_environment_and_install_run_on_the_three_systems(self):
         for workflow in PIPELINES:
             for name in ("environment", "install"):
                 with self.subTest(workflow=workflow, job=name):
                     body = job(workflow, name)
-                    matrix = re.search(r"\n\s+os: \[([^\]]+)\]", body)
-                    self.assertIsNotNone(matrix, "no os matrix")
-                    runners = [item.strip() for item in matrix.group(1).split(",")]
+                    if workflow.endswith("/pipeline.yml"):
+                        self.assertIn(SELECTED, body)
+                        self.assertIn(SELECTOR_OUTPUT, job(workflow, "contract"))
+                        runners = selectable_runners(workflow)
+                    else:
+                        matrix = re.search(r"\n\s+os: \[([^\]]+)\]", body)
+                        self.assertIsNotNone(matrix, "no os matrix")
+                        runners = [item.strip() for item in matrix.group(1).split(",")]
                     self.assertEqual(runners, RUNNERS)
                     self.assertIn("runs-on: ${{ matrix.os }}", body)
                     self.assertIn("fail-fast: false", body)
