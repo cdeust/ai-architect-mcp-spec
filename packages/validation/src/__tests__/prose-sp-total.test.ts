@@ -63,26 +63,32 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(messages(["- STORY-1: Copy", "Total: 5 SP"].join("\n"))).toEqual([]);
   });
 
-  it("does not guess with several total lines (subtotals then a grand total)", () => {
+  it("does not guess with several total lines (one subtotal per epic)", () => {
+    // Each subtotal is right for its epic and wrong for the whole list, so a
+    // check that compared either one with the sum of every story would fire.
     const content = [
       "- STORY-1 — 2 SP",
       "Total for epic A: 2 SP",
       "- STORY-2 — 1 SP",
       "Total for epic B: 1 SP",
-      "Grand total: 3 SP",
     ].join("\n");
     expect(messages(content)).toEqual([]);
   });
 
-  it("leaves table rows to the table check and skips fenced blocks", () => {
+  it("leaves table rows to the table check", () => {
+    const content = [...STORIES, "| STORY-9 | 40 SP |", "| Total | 9 SP |", "Total: 3 SP"].join("\n");
+    expect(messages(content)).toEqual([]);
+  });
+
+  it("skips fenced blocks; a shorter fence inside a block does not close it", () => {
     const content = [
       ...STORIES,
-      "| Total | 9 SP |",
-      "```markdown",
-      "- STORY-9 — 40 SP",
-      "Total: 1 SP",
-      "```",
       "Total: 3 SP",
+      "````markdown",
+      "- STORY-9 — 40 SP",
+      "```",
+      "- STORY-8 — 7 SP",
+      "````",
     ].join("\n");
     expect(messages(content)).toEqual([]);
   });

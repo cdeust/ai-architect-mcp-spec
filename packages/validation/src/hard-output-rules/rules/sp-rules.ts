@@ -222,8 +222,9 @@ const sameAmount = (a: number, b: number): boolean => Math.abs(a - b) < 1e-6;
  * Reads the list items that carry a story-point amount (`- STORY-1: … — 2 SP`)
  * and the one line that starts with Total, Sum or Grand Total and carries an
  * amount (`Total: 5 SP`). Only the items at the shallowest indentation are
- * summed, so a story broken into indented tasks is counted once. Table rows
- * are left to `checkSPArithmetic`, and fenced blocks are skipped.
+ * summed, so a story broken into indented tasks is counted once. A table row
+ * starts with a pipe, so neither pattern reads it: rows are left to
+ * `checkSPArithmetic`. Fenced blocks are skipped.
  *
  * Fires only when exactly one total line is found: with several (subtotals
  * per epic, then a grand total), which stories each one covers is not
@@ -236,7 +237,6 @@ export function checkProseSPTotal(
   const totals: number[] = [];
   const items: { indent: number; amount: number }[] = [];
   for (const line of linesOutsideFences(content)) {
-    if (TABLE_ROW_START.test(line)) continue;
     const amount = lastSPAmount(line);
     if (amount === null) continue;
     if (PROSE_TOTAL_START.test(line)) {
