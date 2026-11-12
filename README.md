@@ -18,7 +18,7 @@
 
 <p align="center">
   <strong>Catch a hallucinated spec before it becomes code.</strong><br>
-  It checks that every symbol exists, every acceptance criterion traces to a requirement, and no performance claim passes without a measurement — deterministically, with no model in the checking loop.<br>
+  Its structural checks — every acceptance criterion traces to a requirement, no performance claim passes without a measurement — run deterministically, with no model in the loop. Given the symbols of your code graph, it reports every symbol the spec names that none of them resolve.<br>
   <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
 </p>
 
@@ -556,7 +556,7 @@ A cross-audit found and fixed two layer violations:
 | Failure mode | What we do |
 |---|---|
 | **Section drift between turns** | Single immutable `PipelineState` snapshot per step; reducer is pure; host can replay any step |
-| **Hallucinated symbols** | `validate_prd_section` runs Hard Output Rules; symbols cross-checked against `ai-architect-mcp-codebase` graph if `codebase_path` is set |
+| **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list yet, so a symbol is checked only when the host passes it (#118) |
 | **NFRs claiming PASS without measurement** | Verdict taxonomy refuses PASS for latency/throughput/fps/storage; consensus engine forwards SPEC-COMPLETE / NEEDS-RUNTIME |
 | **Confirmatory bias (every judge says PASS)** | `distribution_suspicious` flag fires at 100% PASS over ≥5 claims; surfaced in typed `done.verification.distribution_suspicious` |
 | **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
