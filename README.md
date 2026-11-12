@@ -154,8 +154,10 @@ repository — gracefully degrades to in-memory mode when absent).
 
 <!-- This table is checked against the CI matrix by scripts/portable-distribution.test.mjs. -->
 `manifest.json` declares `darwin`, `win32` and `linux`. What CI proves on each,
-on every pull request (`.github/workflows/pipeline.yml`) and again on the merge
-commit (`.github/workflows/pipeline-post-merge.yml`):
+on a pull request (`.github/workflows/pipeline.yml`) and again on the merge
+commit (`.github/workflows/pipeline-post-merge.yml`). A pull request that
+changes only `docs/` or `CHANGELOG.md` runs the `environment` and `install`
+jobs on Linux alone; the macOS and Windows rows then run on its merge commit:
 
 | Platform | CI runner | What runs there |
 |---|---|---|
