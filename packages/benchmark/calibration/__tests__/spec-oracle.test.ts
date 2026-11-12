@@ -2,7 +2,8 @@
  * Tests for specOracle (E2.D).
  *
  * Contract under test:
- *   - truth = ((violations.length === 0) === expected_passes)
+ *   - truth = ((blocking violations === 0) === expected_passes); advisory
+ *     findings do not fail a section (#117)
  *   - oracle_evidence always contains the internal-grounding caveat
  *   - oracle_evidence is always non-empty
  *
@@ -142,5 +143,26 @@ describe("specOracle", () => {
     // an unknown type — either way oracle_evidence is non-empty.
     expect(result.oracle_evidence).toBeTruthy();
     expect(typeof result.truth).toBe("boolean");
+  });
+});
+
+describe("specOracle — advisory findings (#117)", () => {
+  // A technical specification with no server vocabulary: the lexicon checks
+  // report advisory findings only, so the section passes, as it does in the
+  // pipeline (validate-and-advance.ts).
+  const ADVISORY_ONLY_TECH_SPEC = `## Technical Specification
+
+The button is a small UI component rendered beside each code block. On click
+it reads the block's text and calls navigator.clipboard.writeText; on success
+it swaps its label for two seconds.`;
+
+  it("counts an advisory-only section as passing", async () => {
+    const result = await specOracle({
+      markdown: ADVISORY_ONLY_TECH_SPEC,
+      section_type: "technical_specification",
+      expected_passes: true,
+    });
+    expect(result.truth).toBe(true);
+    expect(result.oracle_evidence).toContain("actually_passes=true");
   });
 });

@@ -108,18 +108,21 @@ export function checkOutputEncodingInjectionPrevention(
     return [];
   }
   const signalCount = matchCount(content, ["injectionSignals"]);
+  const violations: HardOutputRuleViolation[] = [];
 
+  // The absence finding is advisory and must not end the check: the code
+  // blocks are scanned for an unsafe query whatever the vocabulary, since an
+  // interpolated query is a defect that is present and stays blocking.
   if (signalCount < 2) {
-    return [
+    violations.push(
       makeAdvisoryViolation(
         "output_encoding_injection_prevention",
         sectionType,
         "Technical spec must address injection prevention — specify parameterized queries (SQL injection), output encoding (XSS), and input sanitization strategies.",
       ),
-    ];
+    );
   }
 
-  const violations: HardOutputRuleViolation[] = [];
   const codeBlocks = extractCodeBlocks(content);
 
   const unsafeQueryPatterns: Array<{ pattern: RegExp; description: string }> = [

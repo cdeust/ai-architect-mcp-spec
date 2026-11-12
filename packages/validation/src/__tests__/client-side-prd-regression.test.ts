@@ -155,4 +155,24 @@ it swaps its label for two seconds.`;
       expect(v.scorePenalty).toBeGreaterThan(0);
     }
   });
+
+  it("an interpolated SQL query blocks even without prevention vocabulary", () => {
+    const content = [
+      "## Technical Specification",
+      "",
+      "```ts",
+      "const query = `SELECT * FROM users WHERE id = ${req.query.id}`;",
+      "```",
+    ].join("\n");
+    const report = validateSection(content, "technical_specification");
+    const injection = report.violations.filter(
+      (v) => v.rule === "output_encoding_injection_prevention",
+    );
+    // The advisory absence finding and the blocking defect are both reported.
+    expect(injection.some((v) => v.isAdvisory === true)).toBe(true);
+    const defects = injection.filter(isBlockingViolation);
+    expect(defects.length).toBeGreaterThan(0);
+    expect(defects.every((v) => v.isCritical && v.offendingContent !== null)).toBe(true);
+    expect(report.totalScore).toBeLessThan(1);
+  });
 });

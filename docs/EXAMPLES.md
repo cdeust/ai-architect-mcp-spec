@@ -160,9 +160,9 @@ For each section, the runner emits:
 1. **Strategy selection** (internal — no host action; assignment persisted on `state.sections[i].strategy_assignment`).
 2. **`call_cortex_tool({ tool_name: "recall", arguments: { query: "<section-specific>", max_results: 8 } })`** — pulls codebase + memory context.
 3. **`spawn_subagents({ purpose: "draft", invocation_id: "section_generate_<type>" })`** — engineer drafts the section. The prompt now includes a `<strategies>` block listing the required strategies (e.g., `chain_of_thought` + `verified_reasoning` for `requirements`; `react` + `verified_reasoning` for `technical_specification`).
-4. **In-process validation** (no host action; `validateSection` runs inside the reducer). On pass → next section. On fail with `attempt < 3` → re-spawn the engineer with the violations as `prior_violations` in the prompt. On fail with `attempt = 3` → mark `failed`, advance.
+4. **In-process validation** (no host action; `validateSection` runs inside the reducer). A section fails only on a blocking violation; an advisory one (a lexicon found none of a topic's words) is listed in the pass message and never retried (#117). On pass → next section. On fail with `attempt < 3` → re-spawn the engineer with the blocking violations as `prior_violations` in the prompt. On fail with `attempt = 3` → mark `failed`, advance.
 
-For the canned-dispatcher smoke run on a trial tier feature: 6 sections pass on first try, 5 fail their hard-output rules (because the canned drafts can't satisfy `clean_architecture` / `no_orphan_ddl` / `test_traceability_integrity` etc. — real LLM output normally does). Real LLM-driven runs typically pass 9–11 of 11 sections.
+For the canned-dispatcher smoke run on a trial tier feature, every scheduled section passes (`KNOWN_FAILING_SECTIONS` is empty in `packages/orchestration/src/__tests__/smoke.test.ts`). Until #117, 5 of them failed, only on lexicon checks that the short canned drafts could not satisfy; those checks are now advisory. Real LLM-driven runs typically pass 9–11 of 11 sections.
 
 ### Step 9 — JIRA generation
 
