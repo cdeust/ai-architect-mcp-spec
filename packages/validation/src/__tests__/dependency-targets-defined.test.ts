@@ -130,7 +130,7 @@ describe("dependency_targets_defined", () => {
     ]);
   });
 
-  it("accepts a bold line start, a code-span cell and a later identifier cell as definitions", () => {
+  it("accepts a bold line start and a plain or code-span cell of the ID column as definitions", () => {
     const sections: Section[] = [
       { type: "user_stories", content: "**STORY-1**: First story." },
       {
@@ -139,7 +139,7 @@ describe("dependency_targets_defined", () => {
           "| # | ID | Requirement |",
           "|---|----|-------------|",
           "| 1 | FR-001 | Create |",
-          "| `FR-002` | Search | |",
+          "| 2 | `FR-002` | Search |",
         ].join("\n"),
       },
       { type: "timeline", content: "- STORY-2: depends on STORY-1, FR-001 and FR-002." },
@@ -189,6 +189,79 @@ describe("dependency_targets_defined", () => {
     expect(message).toMatch(/^200000 dependency target\(s\) are defined nowhere in the document: /);
     expect(message).toMatch(/ and 199980 more$/);
     expect(message!.split(", ")).toHaveLength(20);
+  });
+
+  it("skips a fenced block written with CRLF line endings", () => {
+    const section: Section = {
+      type: "technical_specification",
+      content: "```ts\r\n// depends on FR-404\r\n```\r\n- STORY-1: depends on FR-405.\r\n",
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-405",
+    ]);
+  });
+
+  it("skips a fenced block nested in a list item with four-space indentation", () => {
+    const section: Section = {
+      type: "technical_specification",
+      content: ["1. Example:", "", "    ```ts", "    // depends on FR-404", "    ```"].join("\n"),
+    };
+    expect(messages([section])).toEqual([]);
+  });
+
+  it("does not let a code-span target in a leading dependency column define itself", () => {
+    const section: Section = {
+      type: "requirements",
+      content: [
+        "| Depends On | ID | Requirement |",
+        "|------------|----|-------------|",
+        "| `FR-009` | FR-001 | Search |",
+      ].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-009",
+    ]);
+  });
+
+  it("does not count a bare identifier at a line start as a definition", () => {
+    const section: Section = {
+      type: "user_stories",
+      content: "STORY-7 is deferred.\n- STORY-2: depends on STORY-7.",
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: STORY-7",
+    ]);
+  });
+
+  it("does not count an identifier outside the ID column of a table as a definition", () => {
+    const sections: Section[] = [
+      {
+        type: "timeline",
+        content: ["| Sprint | Story |", "|--------|-------|", "| 1 | STORY-7 |"].join("\n"),
+      },
+      { type: "user_stories", content: "- STORY-2: depends on STORY-7." },
+    ];
+    expect(messages(sections)).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: STORY-7",
+    ]);
+  });
+
+  it("counts STORY-07 and STORY-7 as one undefined target", () => {
+    const section: Section = {
+      type: "user_stories",
+      content: "- STORY-1: depends on STORY-07.\n- STORY-2: depends on STORY-7.",
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: STORY-07",
+    ]);
+  });
+
+  it("does not read an identifier of more than nine digits, which Number() would round", () => {
+    const section: Section = {
+      type: "user_stories",
+      content: `- STORY-1: depends on STORY-${"9".repeat(400)} and STORY-${"8".repeat(400)}.`,
+    };
+    expect(messages([section])).toEqual([]);
   });
 
   it("lists each undefined target once, sorted", () => {

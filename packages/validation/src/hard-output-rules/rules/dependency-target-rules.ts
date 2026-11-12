@@ -17,21 +17,26 @@ import { makeViolation } from "./helpers.js";
 // depends on STORY-7, which the document does not define"), which the
 // document check did not diagnose.
 
-/** Identifier families a dependency may name. */
-const DEP_ID_SOURCE = String.raw`\b(?:FR|NFR|STORY|US|EPIC)-\d+\b`;
+/**
+ * Identifier families a dependency may name. The number is bounded to nine
+ * digits so that `Number()` in idKey stays exact (below 2^53).
+ */
+const DEP_ID_SOURCE = String.raw`\b(?:FR|NFR|STORY|US|EPIC)-\d{1,9}\b`;
 
 /**
- * An identifier is defined where it opens a line, a table row, a list item or
- * a heading, optionally in bold or code (`| FR-001 |`, `- STORY-1:`,
- * `1. **US-2**`, `### EPIC-3`, `**STORY-4**:`, `` | `FR-005` | ``). A table
- * row whose first cells are not identifiers (`| 1 | FR-001 |`) defines the
- * identifier that fills its first identifier-only cell (readTables).
- * A mention anywhere else is a reference.
+ * Outside tables, an identifier is defined where it opens a list item or a
+ * heading (optionally in bold or code), or opens a line in bold:
+ * `- STORY-1:`, `1. **US-2**`, `### EPIC-3`, `**STORY-4**:`. A bare
+ * identifier at a line start (`STORY-7 is deferred.`) is a mention, not a
+ * definition. Table rows are read by readTables only.
  */
 const DEFINITION_PATTERN = new RegExp(
-  String.raw`^[ \t]*(?:\|[ \t]*|[-*+][ \t]+|\d+[.)][ \t]+|#{1,6}[ \t]+)?(?:\*\*|\x60)?(${DEP_ID_SOURCE})`,
+  String.raw`^[ \t]*(?:(?:[-*+]|\d{1,9}[.)]|#{1,6})[ \t]+(?:\*\*|\x60)?|\*\*)(${DEP_ID_SOURCE})`,
   "gm",
 );
+
+/** A table header cell that names the identifier column (`ID`, `Story ID`). */
+const ID_HEADER = /\bID\b/i;
 
 /** A table cell that holds one identifier and nothing else. */
 const ID_ONLY_CELL = new RegExp(String.raw`^(?:\*\*|\x60)?(${DEP_ID_SOURCE})(?:\*\*|\x60)?$`);
@@ -61,8 +66,14 @@ const PROSE_DEPENDENCY_PATTERN = /\b(?:depends[ \t]+on|blocked[ \t]+by)\b([^|\n.
 /** A table header cell that names a dependency column. */
 const DEPENDENCY_HEADER = /^(?:depends[ \t]+on|dependencies|dependency|blocked[ \t]+by)$/i;
 
-/** A fence line: up to three spaces, then three or more backticks or tildes. */
-const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+/**
+ * A fence line: three or more backticks or tildes after any indentation, so a
+ * fence nested in a list item (indented four spaces or more) is still one.
+ */
+const FENCE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
+
+/** Lines of a section, with CRLF and LF endings alike. */
+const LINE_BREAK = /\r?\n/;
 
 /**
  * The document without its fenced blocks, which show proposed code. As in
@@ -73,7 +84,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 function withoutFencedBlocks(content: string): string {
   const kept: string[] = [];
   let open: string | null = null;
-  for (const line of content.split("\n")) {
+  for (const line of content.split(LINE_BREAK)) {
     const fence = FENCE.exec(line);
     if (open === null) {
       if (fence) open = fence[1]!;
@@ -104,41 +115,68 @@ function isSeparatorRow(row: string): boolean {
   return /^[ \t]*\|[ \t:|-]*$/.test(row) && row.includes("-");
 }
 
+/** The columns of a table, read from its header row. */
+interface TableColumns {
+  /** Dependency columns: their identifiers are targets. */
+  readonly dependency: ReadonlySet<number>;
+  /** The defining column, or -1 when a dependency column would be it. */
+  readonly defining: number;
+}
+
+const NO_HEADER: TableColumns = { dependency: new Set(), defining: 0 };
+
+/**
+ * The defining column is the first column headed `ID` outside the dependency
+ * columns, else the first column; never a dependency column.
+ */
+function columnsOf(header: readonly string[]): TableColumns {
+  const dependency = new Set<number>();
+  header.forEach((cell, i) => {
+    if (DEPENDENCY_HEADER.test(cell)) dependency.add(i);
+  });
+  const idColumn = header.findIndex((cell, i) => !dependency.has(i) && ID_HEADER.test(cell));
+  const defining = idColumn >= 0 ? idColumn : dependency.has(0) ? -1 : 0;
+  return { dependency, defining };
+}
+
 /**
  * Reads every markdown table: adds to `targets` the identifiers of its
- * dependency columns, and to `defined` the identifier each row defines, which
- * is its first identifier-only cell outside a dependency column.
+ * dependency columns, and to `defined` the identifier of each row's defining
+ * column when that cell holds an identifier and nothing else.
  */
-function readTables(content: string, defined: Set<string>, targets: Set<string>): void {
-  let depColumns: number[] = [];
+function readTables(content: string, defined: Set<string>, targets: Map<string, string>): void {
+  let columns = NO_HEADER;
   let previous: string | null = null;
-  for (const line of content.split("\n")) {
+  for (const line of content.split(LINE_BREAK)) {
     if (!line.trimStart().startsWith("|")) {
-      depColumns = [];
+      columns = NO_HEADER;
       previous = null;
       continue;
     }
     if (isSeparatorRow(line)) {
       // The row above a separator is the header of a new table.
-      depColumns = (previous === null ? [] : cellsOf(previous))
-        .map((cell, i) => (DEPENDENCY_HEADER.test(cell) ? i : -1))
-        .filter((i) => i >= 0);
+      columns = previous === null ? NO_HEADER : columnsOf(cellsOf(previous));
     } else {
       const cells = cellsOf(line);
-      for (const i of depColumns) for (const id of idsIn(cells[i] ?? "")) targets.add(id);
-      const owner = cells.find((cell, i) => !depColumns.includes(i) && ID_ONLY_CELL.test(cell));
-      if (owner !== undefined) defined.add(idKey(ID_ONLY_CELL.exec(owner)![1]!));
+      for (const i of columns.dependency) addTargets(idsIn(cells[i] ?? ""), targets);
+      const owner = ID_ONLY_CELL.exec(cells[columns.defining] ?? "")?.[1];
+      if (owner !== undefined) defined.add(idKey(owner));
     }
     previous = line;
   }
 }
 
+/** Adds each identifier under its comparison key, keeping its first spelling. */
+function addTargets(ids: readonly string[], targets: Map<string, string>): void {
+  for (const id of ids) if (!targets.has(idKey(id))) targets.set(idKey(id), id);
+}
+
 /** Adds to `out` the identifiers named in prose dependency clauses. */
-function proseDependencyIds(content: string, out: Set<string>): void {
+function proseDependencyIds(content: string, out: Map<string, string>): void {
   const pattern = new RegExp(PROSE_DEPENDENCY_PATTERN.source, PROSE_DEPENDENCY_PATTERN.flags);
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content)) !== null) {
-    for (const id of idsIn(match[1] ?? "")) out.add(id);
+    addTargets(idsIn(match[1] ?? ""), out);
   }
 }
 
@@ -153,10 +191,13 @@ export function checkDocumentDependencyTargetsDefined(
   const definitionPattern = new RegExp(DEFINITION_PATTERN.source, DEFINITION_PATTERN.flags);
   let match: RegExpExecArray | null;
   while ((match = definitionPattern.exec(content)) !== null) defined.add(idKey(match[1]!));
-  const targets = new Set<string>();
+  const targets = new Map<string, string>();
   readTables(content, defined, targets);
   proseDependencyIds(content, targets);
-  const undefinedTargets = [...targets].filter((id) => !defined.has(idKey(id))).sort();
+  const undefinedTargets = [...targets]
+    .filter(([key]) => !defined.has(key))
+    .map(([, id]) => id)
+    .sort();
 
   if (undefinedTargets.length === 0) return [];
   const listed = undefinedTargets.slice(0, MAX_LISTED_TARGETS).join(", ");
