@@ -1,7 +1,8 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
 import {
-  findAbsenceViolation,
   extractCodeBlocks,
+  findAbsenceViolation,
+  makeAdvisoryViolation,
   makeViolation,
 } from "./helpers.js";
 import { hasExplicitOptOut, matchesAny, phrases } from "./lexicon.js";
@@ -39,7 +40,7 @@ export function checkNoMagicNumbers(
 
   if (!hasConstantGuidance && codeBlocks.length > 0) {
     violations.push(
-      makeViolation(
+      makeAdvisoryViolation(
         "no_magic_numbers",
         sectionType,
         "Technical spec should mandate named constants — all configuration values, thresholds, and limits must be extracted to named constants, not raw literals.",

@@ -1,8 +1,9 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
 import {
-  findAbsenceViolation,
   extractCodeBlocks,
   extractTypeName,
+  findAbsenceViolation,
+  makeAdvisoryViolation,
   makeViolation,
 } from "./helpers.js";
 
@@ -79,7 +80,7 @@ export function checkSingleResponsibility(
 
   if (!srpSignals.some((s) => lowered.includes(s))) {
     violations.push(
-      makeViolation(
+      makeAdvisoryViolation(
         "single_responsibility",
         sectionType,
         "Technical spec must establish single responsibility constraints — classes should have one reason to change, with clear separation of concerns.",
@@ -254,7 +255,7 @@ export function checkSolidCompliance(
 
   if (categoriesMet < 2) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "solid_compliance",
         sectionType,
         "Technical spec must demonstrate SOLID principles — at minimum: single responsibility (focused classes), open/closed (extensible without modification), and dependency inversion (depend on abstractions, not concretions).",
@@ -302,7 +303,7 @@ export function checkCodeReusability(
 
   if (!hasReusability && !hasReadability) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "code_reusability",
         sectionType,
         "Technical spec should establish code quality standards — specify that code must be reusable (shared components, centralized utilities) and readable (clear naming, self-documenting, consistent patterns).",

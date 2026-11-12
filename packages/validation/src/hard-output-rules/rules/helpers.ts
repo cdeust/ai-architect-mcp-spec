@@ -46,20 +46,41 @@ export function findAbsenceViolation(
   const signalCount = signals.filter((s) => lowered.includes(s)).length;
 
   if (signalCount < threshold) {
-    return [
-      {
-        rule,
-        sectionType,
-        message,
-        offendingContent: null,
-        location: null,
-        isCritical: isCriticalRule(rule),
-        scorePenalty: scorePenalty(rule),
-      },
-    ];
+    return [makeAdvisoryViolation(rule, sectionType, message)];
   }
 
   return [];
+}
+
+/**
+ * Create an advisory violation: the content lacks the vocabulary a lexicon
+ * expects for a topic. A lexicon cannot tell whether the topic applies to the
+ * feature (a client-side copy button has no rate limiting to specify), so the
+ * finding is reported as a prompt to the author and never blocks: no penalty,
+ * not critical, no retry.
+ *
+ * Use this for every finding that fires on the ABSENCE of words. A finding
+ * that fires on the PRESENCE of a defect (a weak algorithm, an interpolated
+ * SQL query, a duplicate identifier) uses makeViolation and stays blocking.
+ *
+ * source: issue #117 — a correct client-side PRD scored 0.00 with 52
+ *   critical violations, all from lexicon thresholds.
+ */
+export function makeAdvisoryViolation(
+  rule: HardOutputRule,
+  sectionType: SectionType | null,
+  message: string,
+): HardOutputRuleViolation {
+  return {
+    rule,
+    sectionType,
+    message,
+    offendingContent: null,
+    location: null,
+    isCritical: false,
+    scorePenalty: 0,
+    isAdvisory: true,
+  };
 }
 
 /**

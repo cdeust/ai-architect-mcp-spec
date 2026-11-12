@@ -1,5 +1,8 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
-import { findAbsenceViolation, makeViolation } from "./helpers.js";
+import {
+  findAbsenceViolation,
+  makeAdvisoryViolation,
+} from "./helpers.js";
 
 // Rule 53: Mandatory Test Coverage
 export function checkMandatoryTestCoverage(
@@ -49,7 +52,7 @@ export function checkMandatoryTestCoverage(
 
   if (!hasUnit || !hasIntegration) {
     violations.push(
-      makeViolation(
+      makeAdvisoryViolation(
         "mandatory_test_coverage",
         sectionType,
         "Test spec must include both unit tests and integration tests — every public method/endpoint needs corresponding test specifications.",
@@ -59,7 +62,7 @@ export function checkMandatoryTestCoverage(
 
   if (!hasCoverage) {
     violations.push(
-      makeViolation(
+      makeAdvisoryViolation(
         "mandatory_test_coverage",
         sectionType,
         "Test spec must define coverage targets — specify minimum code coverage thresholds for unit, integration, and overall coverage.",
@@ -211,7 +214,7 @@ export function checkEdgeCaseNegativeTests(
 
   if (!hasNegative || !hasEdgeCases) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "edge_case_negative_tests",
         sectionType,
         "Test spec must include both negative tests (failure scenarios, invalid inputs, unauthorized access) and edge cases (boundary values, empty states, concurrent operations).",

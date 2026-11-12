@@ -1,5 +1,8 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
-import { findAbsenceViolation, makeViolation } from "./helpers.js";
+import {
+  findAbsenceViolation,
+  makeAdvisoryViolation,
+} from "./helpers.js";
 import { hasExplicitOptOut, matchesAny, phrases } from "./lexicon.js";
 
 // Rule 39: Structured Error Handling
@@ -16,7 +19,7 @@ export function checkStructuredErrorHandling(
 
   if (!hasDomainErrors && !hasPropagation) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "structured_error_handling",
         sectionType,
         "Technical spec must define structured error handling — domain-specific error types, no swallowed exceptions, no generic catch-all, and explicit error propagation strategy.",

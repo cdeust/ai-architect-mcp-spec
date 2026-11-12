@@ -1,4 +1,8 @@
-import type { HardOutputRule, HardOutputRuleViolation } from "@prd-gen/core";
+import {
+  isBlockingViolation,
+  type HardOutputRule,
+  type HardOutputRuleViolation,
+} from "@prd-gen/core";
 
 /**
  * Validation failure → corrective retrieval mapper.
@@ -155,8 +159,12 @@ const CATEGORY_TO_QUERY: Record<FailureCategory, { query: string; maxResults: nu
 // ─── Mapping ─────────────────────────────────────────────────────────────────
 
 export function mapFailuresToRetrievals(
-  violations: readonly HardOutputRuleViolation[],
+  allViolations: readonly HardOutputRuleViolation[],
 ): FailureMappingResult {
+  // Advisory findings (a lexicon found none of a topic's words) are not
+  // failures: they call for no corrective retrieval and no retry (#117).
+  // A violation without the field is blocking, as before.
+  const violations = allViolations.filter(isBlockingViolation);
   // Group violations by category
   const categorySet = new Set<FailureCategory>();
   for (const v of violations) {

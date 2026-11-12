@@ -33,7 +33,12 @@ import {
   buildJudgePrompt,
   buildMechanicalVerdicts,
 } from "@prd-gen/verification";
-import { agentSubagentType, type JudgeRequest, type JudgeVerdict } from "@prd-gen/core";
+import {
+  agentSubagentType,
+  isBlockingViolation,
+  type JudgeRequest,
+  type JudgeVerdict,
+} from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
 import {
   resolveVerifyBudget,
@@ -164,6 +169,9 @@ function finalize(
     .length;
   const sectionsTotal = state.sections.length;
   const docCritical = docReport.violations.filter((v) => v.isCritical).length;
+  const docAdvisory = docReport.violations.filter(
+    (v) => !isBlockingViolation(v),
+  ).length;
 
   const outcome = computeDoneOutcome(
     sectionsFailed,
@@ -176,7 +184,7 @@ function finalize(
       ? `Self-check complete.`
       : `Self-check complete: NEEDS ATTENTION (${outcome.reasons.join("; ")}).`,
     `Sections: ${sectionsPassed}/${sectionsTotal} passed, ${sectionsFailed} failed.`,
-    `Deterministic violations: ${docReport.violations.length} (${docCritical} critical)`,
+    `Deterministic violations: ${docReport.violations.length} (${docCritical} critical, ${docAdvisory} advisory)`,
     `Hard-output score: ${docReport.totalScore.toFixed(2)} / 1.00`,
     `Multi-judge claims: ${verificationReport.claims_evaluated}`,
     `  PASS:           ${verificationReport.distribution.PASS}`,

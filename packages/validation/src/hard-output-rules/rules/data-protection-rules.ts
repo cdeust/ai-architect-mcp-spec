@@ -1,5 +1,8 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
-import { findAbsenceViolation, makeViolation } from "./helpers.js";
+import {
+  findAbsenceViolation,
+  makeAdvisoryViolation,
+} from "./helpers.js";
 import { hasExplicitOptOut, matchesAny, phrases } from "./lexicon.js";
 
 // Rule 33: Data Classification Required
@@ -36,7 +39,7 @@ export function checkSensitiveDataProtection(
 
   if (categoriesMet < 2) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "sensitive_data_protection",
         sectionType,
         "Technical spec must specify sensitive data protection strategy — address at least 2 of: encryption at rest, masking/anonymization, and access restrictions for PII and sensitive fields.",
@@ -65,7 +68,7 @@ export function checkNoSensitiveDataInLogs(
 
   if (!hasLogProtection && !broaderSignals) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "no_sensitive_data_in_logs",
         sectionType,
         "Technical spec must explicitly prevent sensitive data (PII, credentials, tokens) from appearing in logs, error messages, URLs, or query parameters.",
@@ -126,7 +129,7 @@ export function checkConsentAndErasureSupport(
 
   if (!hasConsent && !hasErasure) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "consent_and_erasure_support",
         sectionType,
         "Technical spec must support consent management and data erasure — specify how user consent is tracked, how deletion cascades through the data model, and GDPR/privacy compliance.",

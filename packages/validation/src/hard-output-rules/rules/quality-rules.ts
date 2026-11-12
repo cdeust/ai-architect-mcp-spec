@@ -2,7 +2,10 @@ import type {
   HardOutputRuleViolation,
   SectionType,
 } from "@prd-gen/core";
-import { makeViolation } from "./helpers.js";
+import {
+  makeAdvisoryViolation,
+  makeViolation,
+} from "./helpers.js";
 
 // Rule 2: No Self-Referencing Dependencies
 //
@@ -264,7 +267,7 @@ export function checkDeploymentRollbackPlan(
 
   if (!hasRollbackPlan) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "deployment_rollback_plan",
         sectionType,
         "Deployment section lacks a rollback/restore strategy — every deployment must have a recovery plan",

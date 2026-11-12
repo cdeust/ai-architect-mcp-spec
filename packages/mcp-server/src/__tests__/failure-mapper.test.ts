@@ -6,6 +6,29 @@ const v = (rule: string, message = "m"): HardOutputRuleViolation =>
   ({ rule, message, isCritical: false }) as unknown as HardOutputRuleViolation;
 
 describe("mapFailuresToRetrievals", () => {
+  it("ignores advisory findings: no retrieval and no retry (#117)", () => {
+    const advisory = {
+      ...v("auth_on_every_endpoint", "no auth vocabulary"),
+      isAdvisory: true,
+    } as HardOutputRuleViolation;
+    const r = mapFailuresToRetrievals([advisory]);
+    expect(r.correctiveRetrievals).toHaveLength(0);
+    expect(r.retryLikely).toBe(false);
+    expect(r.failureSummary).toContain("0 violations");
+  });
+
+  it("keeps a violation without isAdvisory blocking (#117)", () => {
+    const advisory = {
+      ...v("rate_limiting_required"),
+      isAdvisory: true,
+    } as HardOutputRuleViolation;
+    const r = mapFailuresToRetrievals([advisory, v("auth_on_every_endpoint", "no auth")]);
+    expect(r.correctiveRetrievals.map((c) => c.triggeringRule)).toEqual([
+      "auth_on_every_endpoint",
+    ]);
+    expect(r.retryLikely).toBe(true);
+  });
+
   it("recommends a retrieval for a retrievable category", () => {
     const r = mapFailuresToRetrievals([v("auth_on_every_endpoint", "no auth")]);
     expect(r.retryLikely).toBe(true);

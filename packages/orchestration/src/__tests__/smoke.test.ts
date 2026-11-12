@@ -213,16 +213,15 @@ describe("end-to-end smoke run", () => {
     // not stubbed with placeholder text, and the omission is recorded in
     // 00-run-notes.md instead. implementation_gate additionally writes
     // 10-verification-report.md before asking the implementation decision.
-    // technical_specification, data_model and api_specification are in the
-    // known failing baseline below: their failed drafts are not
-    // deliverables, so 02 and 03 are omitted and named in 00-run-notes.md,
-    // and no stage-5.affected_symbols.json is built from the failed
-    // technical_specification draft — an absent sidecar is the "extraction
-    // did not run" signal (ai-architect-mcp-codebase stages/stage-6.md §4.2,
-    // pinned at commit 92216cd90f8f26cb15348675fc6556b8293edfc1); the
-    // zero-claims sidecar of a section that passed is covered in
-    // file-export.test.ts (cdeust/ai-architect-mcp-spec#122).
-    // Total: 01,04,05,07(jira) + 00-run-notes + 10-verification-report = 6.
+    // Every scheduled section passes on the canned drafts since the lexicon
+    // checks became advisory (cdeust/ai-architect-mcp-spec#117): before, the
+    // drafts of technical_specification, data_model, api_specification,
+    // security_considerations and testing failed on missing vocabulary only.
+    // So 02 and 03 are written, and stage-5.affected_symbols.json is built
+    // from the passed technical_specification draft. That a failed draft is
+    // withheld and builds no sidecar (#122) is covered in file-export.test.ts.
+    // Total: 01,02,03,04,05,07(jira) + 00-run-notes + 10-verification-report
+    // + stage-5.affected_symbols.json = 9.
     const seed = newPipelineState({
       run_id: "smoke_file_count",
       feature_description: "build a feature for OAuth login",
@@ -234,20 +233,20 @@ describe("end-to-end smoke run", () => {
     expect(paths).toEqual(
       expect.arrayContaining([
         "01-prd.md",
+        "02-data-model.md",
+        "03-api-spec.md",
         "04-security.md",
         "05-testing.md",
         "07-jira-tickets.md",
         "00-run-notes.md",
         "10-verification-report.md",
+        "stage-5.affected_symbols.json",
       ]),
     );
-    expect(paths).not.toContain("stage-5.affected_symbols.json");
     expect(paths).not.toContain("06-deployment.md");
     expect(paths).not.toContain("08-source-code.md");
     expect(paths).not.toContain("09-test-code.md");
-    expect(paths).not.toContain("02-data-model.md");
-    expect(paths).not.toContain("03-api-spec.md");
-    expect(result.finalState.written_files.length).toBe(6);
+    expect(result.finalState.written_files.length).toBe(9);
   });
 
   it("loop terminates within the safety cap", () => {
@@ -282,21 +281,15 @@ describe("end-to-end smoke run", () => {
     //   was 5/12 silent failures) goes unobserved.
     //
     // The baseline below is what the canned-content harness produces against
-    // the live validator. These sections fail because their hard-output rules
-    // (e.g. clean-architecture in technical_specification, DDL referencing in
-    // data_model) cannot be satisfied by short canned drafts. The smoke
-    // harness verifies REGRESSION, not authorship quality — real LLM output
-    // is expected to clear these rules.
+    // the live validator: no section fails. Until #117 five sections failed
+    // (technical_specification, data_model, api_specification,
+    // security_considerations, testing), all on lexicon checks that only
+    // measured missing vocabulary; those checks are now advisory and do not
+    // fail a section. A section that starts failing again is a regression of
+    // a blocking (structural) rule and must be named here with its cause.
     //
-    // source: feynman+curie cross-audit pass-2 (2026-04). If a fake draft
-    // is added for one of these sections, remove it from this list.
-    const KNOWN_FAILING_SECTIONS = [
-      "technical_specification",
-      "data_model",
-      "api_specification",
-      "security_considerations",
-      "testing",
-    ] as const;
+    // source: feynman+curie cross-audit pass-2 (2026-04); issue #117.
+    const KNOWN_FAILING_SECTIONS: readonly string[] = [];
 
     const seed = newPipelineState({
       run_id: "smoke_section_failure_baseline",
@@ -536,7 +529,14 @@ describe("end-to-end smoke run", () => {
       expect(exec.assignment).toBeDefined();
       expect(exec.strategy).toBeTruthy();
       expect(exec.actualConfidenceGain).toBeGreaterThanOrEqual(0);
-      expect(exec.actualConfidenceGain).toBeLessThanOrEqual(1);
+      // The recorded gain is the selector's expectedImprovement on a pass
+      // and 0 on a failure (buildExecutionResults). expectedImprovement is a
+      // tier-weighted score (selectionWeight up to 3.0), not a probability,
+      // so it is not bounded by 1; the invariant is that the recorded gain
+      // never exceeds what the selector predicted.
+      expect(exec.actualConfidenceGain).toBeLessThanOrEqual(
+        exec.assignment.expectedImprovement,
+      );
       expect(typeof exec.wasCompliant).toBe("boolean");
     }
   });
