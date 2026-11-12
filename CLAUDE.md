@@ -26,3 +26,6 @@ pnpm verify    # install + build + test, same as CI
 - CI contract (`docs/agent-guidance.md`, "CI contract for agents and routines"): it binds
   every agent and routine and wins over a routine's prompt. One pull request in flight, no
   comparison with the main branch, no forced push, no comment after an approve.
+- Issues: no issue waits for the owner (`docs/agent-guidance.md`, "Issues: no issue waits
+  for the owner"). Decide, write the decision and its reason, deliver; hold only for the
+  irreversible, a missing access or a named open dependency.
