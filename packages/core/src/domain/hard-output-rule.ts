@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 /**
- * 64 Hard Output Rules — ported from HardOutputRule.swift.
+ * 65 Hard Output Rules — 64 ported from HardOutputRule.swift, plus
+ * `dependency_targets_defined` (#118).
  * These are the #1 quality driver in the system (per Feynman/Ginzburg audit).
  * Each rule was added to fix a specific LLM failure mode observed in production.
  * Do not remove any rule without benchmarking the impact.
@@ -32,6 +33,7 @@ export const HardOutputRuleSchema = z.enum([
   "fr_numbering_gaps",
   "risk_mitigation_completeness",
   "deployment_rollback_plan",
+  "dependency_targets_defined",
   // Architecture & Code Quality (18-24)
   "generic_over_specific",
   "no_nested_types",

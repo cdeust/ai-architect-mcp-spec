@@ -165,6 +165,7 @@ export const DOCUMENT_LEVEL_RULES = [
   "test_traceability_integrity",
   "fr_to_ac_coverage",
   "ac_to_test_coverage",
+  "dependency_targets_defined",
 ] as const satisfies readonly HardOutputRule[];
 
 /** A rule carried by DOCUMENT_LEVEL_RULES. */
