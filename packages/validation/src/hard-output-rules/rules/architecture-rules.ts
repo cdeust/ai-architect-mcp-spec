@@ -1,5 +1,9 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
-import { extractCodeBlocks, makeViolation } from "./helpers.js";
+import {
+  extractCodeBlocks,
+  makeAdvisoryViolation,
+  makeViolation,
+} from "./helpers.js";
 
 // Rule 12: Clean Architecture in Technical Spec
 export function checkCleanArchitecture(
@@ -23,7 +27,7 @@ export function checkCleanArchitecture(
 
   if (!hasArchPattern && !hasLayerSeparation) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "clean_architecture",
         sectionType,
         "Technical spec lacks ports/adapters architecture — must show domain layer with ports, adapter layer, and composition root",
@@ -138,7 +142,7 @@ export function checkGenericOverSpecific(
 
   if (categoriesPresent < 2) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "generic_over_specific",
         sectionType,
         "Technical spec lacks scalable design — must demonstrate parameterization (configurable values, defaults) AND extensibility (reusable abstractions, centralized components, design patterns). A solution that requires repeating the same fix across many files is not scalable.",

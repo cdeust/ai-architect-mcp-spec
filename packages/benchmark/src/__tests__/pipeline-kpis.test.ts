@@ -21,15 +21,14 @@ describe("pipeline KPIs", () => {
     // context never schedules deployment/timeline/risks or source/test
     // code). The omission is recorded in 00-run-notes.md instead, and
     // implementation_gate additionally writes 10-verification-report.md.
-    // technical_specification, data_model and api_specification fail
-    // validation on canned drafts, and a failed draft is not a deliverable
-    // (cdeust/ai-architect-mcp-spec#122), so 02 and 03 are omitted and no
-    // stage-5.affected_symbols.json is built from the failed
-    // technical_specification draft. Net: 01,04,05,07 (4 content files) +
-    // 00-run-notes + 10-verification-report = 6. See
-    // orchestration smoke.test.ts's "writes the expected deliverable files"
-    // for the exact accounting.
-    expect(kpis.written_files_count).toBe(6);
+    // Every scheduled section passes on the canned drafts since the lexicon
+    // checks became advisory (cdeust/ai-architect-mcp-spec#117), so 02 and 03
+    // are written and stage-5.affected_symbols.json is built from the passed
+    // technical_specification draft. Net: 01,02,03,04,05,07 (6 content
+    // files) + 00-run-notes + 10-verification-report + the stage-5 sidecar
+    // = 9. See orchestration smoke.test.ts's "writes the expected
+    // deliverable files" for the exact accounting.
+    expect(kpis.written_files_count).toBe(9);
     // Upper bound raised from 70 to 77 by PR 3b (design-phases-3-5.md): the
     // canned dispatcher answers the new `implementation_gate` ask_user with
     // "PRD only" (zero-regression default), which costs one extra
@@ -86,8 +85,9 @@ describe("pipeline KPIs", () => {
 
     expect(kpis.final_action_kind).toBe("done");
     // See the "trial+codebase canned-response baseline" test above for the
-    // 6-file accounting (root-cause fix 2026-07-15, failed drafts withheld #122).
-    expect(kpis.written_files_count).toBe(6);
+    // 9-file accounting (failed drafts withheld #122; lexicon checks
+    // advisory #117).
+    expect(kpis.written_files_count).toBe(9);
     // Upper bound — feature context schedules 11 sections; 7 iterations per
     // section (recall → draft → validate ×3 + finalize) is the worst-case
     // upper bound, plus pipeline overhead. 80 is conservative.

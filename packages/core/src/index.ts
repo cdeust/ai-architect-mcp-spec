@@ -59,6 +59,7 @@ export {
 
 export {
   HardOutputRuleViolationSchema,
+  isBlockingViolation,
   ValidationReportSchema,
   CrossRefValidationResultSchema,
   type HardOutputRuleViolation,

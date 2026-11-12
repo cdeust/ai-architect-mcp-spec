@@ -28,7 +28,11 @@ import { validateSection } from "@prd-gen/validation";
 // SectionType is not imported: every section type in this module arrives as
 // SectionStatus.section_type, which state/section-status.ts already types via
 // SectionTypeSchema.
-import { SECTION_DISPLAY_NAMES, type PRDContext } from "@prd-gen/core";
+import {
+  SECTION_DISPLAY_NAMES,
+  isBlockingViolation,
+  type PRDContext,
+} from "@prd-gen/core";
 import type { StrategyAssignment, ExecutionResult } from "@prd-gen/strategy";
 import { MAX_ATTEMPTS } from "../section-generation-constants.js";
 
@@ -196,7 +200,8 @@ export function failSection(
  *                is counted at the retrieving→generating transition, so the
  *                first call to validateAndAdvance has active.attempt = 1.
  * Postcondition: exactly one of three outcomes is produced:
- *                 (a) validation succeeded (violations=[]) → status="passed",
+ *                 (a) validation succeeded (no blocking violation; advisory
+ *                     ones are reported in the message) → status="passed",
  *                     content set.
  *                 (b) validation failed AND active.attempt >= effectiveMaxAttempts
  *                     → status="failed", error appended.
@@ -222,7 +227,17 @@ export function validateAndAdvance(
   ) => HandlerAction,
 ): { state: PipelineState; action: HandlerAction } {
   const report = validateSection(draft, active.section_type);
-  const violations = report.violations.map((v) => `[${v.rule}] ${v.message}`);
+  // Only blocking violations fail the section or are fed into a retry.
+  // Advisory ones (a lexicon found none of a topic's words) cannot tell
+  // whether the topic applies to the feature; retrying on them spends model
+  // calls and teaches the model to stuff keywords (issue #117). They are
+  // reported in the pass message instead.
+  const violations = report.violations
+    .filter(isBlockingViolation)
+    .map((v) => `[${v.rule}] ${v.message}`);
+  const advisories = report.violations
+    .filter((v) => !isBlockingViolation(v))
+    .map((v) => `[${v.rule}] ${v.message}`);
 
   // Record which violations were fed into this attempt BEFORE branching on outcome.
   // (Curie A2: instrumentation must observe behavior, not infer it.)
@@ -259,7 +274,11 @@ export function validateAndAdvance(
       state: stateWithSection,
       action: {
         kind: "emit_message",
-        message: `✓ ${SECTION_DISPLAY_NAMES[active.section_type]} passed validation (attempt ${active.attempt}).`,
+        message:
+          `✓ ${SECTION_DISPLAY_NAMES[active.section_type]} passed validation (attempt ${active.attempt}).` +
+          (advisories.length > 0
+            ? ` Advisory (${advisories.length}, not blocking): ${advisories.join("; ")}`
+            : ""),
       },
     };
   }

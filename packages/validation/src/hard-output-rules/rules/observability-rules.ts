@@ -1,5 +1,8 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
-import { findAbsenceViolation, makeViolation } from "./helpers.js";
+import {
+  findAbsenceViolation,
+  makeAdvisoryViolation,
+} from "./helpers.js";
 import {
   hasExplicitOptOut,
   matchCount,
@@ -20,7 +23,7 @@ export function checkStructuredLogging(
 
   if (!hasFormat && !hasLevels) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "structured_logging",
         sectionType,
         "Technical spec must define structured logging — specify log format (JSON/structured), log levels (DEBUG/INFO/WARN/ERROR), and what to log at each level.",
@@ -67,7 +70,7 @@ export function checkNoPIIInObservability(
 
   if (!hasProtection && !hasBroader) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "no_pii_in_observability",
         sectionType,
         "Technical spec must ensure no PII in observability — logs, metrics, traces, and dashboards must not contain sensitive personal data. Specify masking/redaction strategy.",

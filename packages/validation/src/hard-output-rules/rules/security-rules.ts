@@ -2,6 +2,7 @@ import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
 import {
   extractCodeBlocks,
   findAbsenceViolation,
+  makeAdvisoryViolation,
   makeViolation,
 } from "./helpers.js";
 import {
@@ -110,7 +111,7 @@ export function checkOutputEncodingInjectionPrevention(
 
   if (signalCount < 2) {
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "output_encoding_injection_prevention",
         sectionType,
         "Technical spec must address injection prevention — specify parameterized queries (SQL injection), output encoding (XSS), and input sanitization strategies.",
@@ -172,7 +173,7 @@ export function checkAuthOnEveryEndpoint(
     if (!hasAuthN) missing.push("authentication");
     if (!hasAuthZ) missing.push("authorization");
     return [
-      makeViolation(
+      makeAdvisoryViolation(
         "auth_on_every_endpoint",
         sectionType,
         `Technical spec must specify ${missing.join(" and ")} strategy — every endpoint/operation needs auth method, roles, and permission checks.`,
@@ -200,7 +201,7 @@ export function checkSecuritySafeErrorHandling(
       matchesAny(content, ["securityOrSensitiveTermSignals"]);
     if (!hasErrorSecurity) {
       return [
-        makeViolation(
+        makeAdvisoryViolation(
           "security_safe_error_handling",
           sectionType,
           "Technical spec must ensure errors don't leak implementation details — no stack traces, internal paths, DB schemas, or server versions in error responses to clients.",
@@ -230,7 +231,7 @@ export function checkCryptographicStandards(
 
   if (signalCount < 2) {
     violations.push(
-      makeViolation(
+      makeAdvisoryViolation(
         "cryptographic_standards",
         sectionType,
         "Technical spec must specify cryptographic standards — define encryption algorithms, hashing for passwords (bcrypt/argon2), minimum key sizes, and key management strategy.",
