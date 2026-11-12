@@ -8,7 +8,7 @@ is in two places, and this file pins both:
 - the two jobs keep the three runners and the shared shell in both pipelines:
   the Pipeline after merge lists them inline, and the pull request Pipeline
   takes its matrix from the `contract` job, which selects from the same three
-  (Cortex ADR-1133);
+  (Cortex ADR-1133; what the selector answers is `test_ci_platform_selection.py`);
 - `ci.json` starts the plugin there with node (no bash launcher), and on macOS
   and Windows also runs the test suite and the bundle checks that the `unit`
   and `e2e` jobs run on Linux only.
@@ -29,6 +29,8 @@ PIPELINES = (
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
 # source: the matrix line of the two jobs in pipeline.yml since Cortex ADR-1133.
 SELECTED = "os: ${{ fromJSON(needs.contract.outputs.platforms) }}"
+# source: the output of the `contract` job that carries the selector's answer.
+SELECTOR_OUTPUT = "      platforms: ${{ steps.platforms.outputs.platforms }}\n"
 # The steps the `unit` and `e2e` commands run on Linux, which the environment
 # command repeats on the two other systems.
 OFF_LINUX_STEPS = (
@@ -67,6 +69,7 @@ class PlatformJobsTest(unittest.TestCase):
                     body = job(workflow, name)
                     if workflow.endswith("/pipeline.yml"):
                         self.assertIn(SELECTED, body)
+                        self.assertIn(SELECTOR_OUTPUT, job(workflow, "contract"))
                         runners = selectable_runners(workflow)
                     else:
                         matrix = re.search(r"\n\s+os: \[([^\]]+)\]", body)
