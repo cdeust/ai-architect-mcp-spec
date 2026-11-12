@@ -174,20 +174,31 @@ const FENCE_LINE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 /** A list item: its indentation, then a bullet or an ordinal, then a space. */
 const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 /**
- * A total line: optional list bullet and emphasis, then the word Total, Sum or
- * Grand Total as the first word. Bounded prefix, so the match is linear.
+ * A total line: an optional bullet or ordinal, optional emphasis, then Total,
+ * Sum, Subtotal or Grand Total as the first word.
+ *
+ * Linear: each run of spaces can be matched by one loop only. The bullet
+ * group ends with its own `[ \t]+` and the emphasis group with its own
+ * `[ \t]*`, and both groups start with a non-space character, so no two
+ * whitespace loops are ever adjacent. The first version wrote
+ * `[*_]{0,2}[ \t]*` after the bullet group: with both groups empty, two
+ * loops split a run of n spaces in O(n²) ways when the match failed
+ * (measured 13 ms, 55 ms, 269 ms at 5k, 10k, 20k spaces; review of #228).
  */
-const PROSE_TOTAL_START = /^[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}[ \t]*(?:grand[ \t]+)?(?:total|sum)\b/i;
+const PROSE_TOTAL_START =
+  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:[*_]{1,2}[ \t]*)?(?:grand[ \t]+|sub-?)?(?:total|sum)\b/i;
 /**
  * A story-point amount with its unit. The number is at most nine digits and
  * one decimal part, so `Number()` is exact; the unit is required, so a total
  * of stories or of days is not read as points.
  */
 const SP_AMOUNT = /(?<![\d.])(\d{1,9}(?:\.\d{1,3})?)[ \t]*(?:SP|story[ \t]+points?)\b/gi;
+/** Emphasis markers, removed before an amount is read (`**1** SP`). */
+const EMPHASIS = /[*_]/g;
 
 /** The last story-point amount on a line, or null when it names none. */
 function lastSPAmount(line: string): number | null {
-  const amounts = [...line.matchAll(SP_AMOUNT)];
+  const amounts = [...line.replace(EMPHASIS, "").matchAll(SP_AMOUNT)];
   return amounts.length > 0 ? Number(amounts[amounts.length - 1]![1]) : null;
 }
 
@@ -215,45 +226,79 @@ function linesOutsideFences(content: string): string[] {
 /** Equal to the precision `SP_AMOUNT` reads (three decimals). */
 const sameAmount = (a: number, b: number): boolean => Math.abs(a - b) < 1e-6;
 
+/** A list item of the story list: its indentation and its amount, if any. */
+type StoryItem = { readonly indent: number; readonly amount: number | null };
+
+/** The total lines of a section, each with the list it closes. */
+interface TotalLine {
+  readonly amount: number;
+  readonly items: readonly StoryItem[];
+}
+
+/**
+ * Split a section into its total lines, each paired with the list items
+ * between it and the total line before it (or the start of the section).
+ * Items after the last total line belong to no total: a `Deferred` list
+ * written under the total is not counted in it.
+ */
+function totalLinesOf(content: string): TotalLine[] {
+  const totals: TotalLine[] = [];
+  let items: StoryItem[] = [];
+  for (const line of linesOutsideFences(content)) {
+    if (PROSE_TOTAL_START.test(line)) {
+      const amount = lastSPAmount(line);
+      if (amount !== null) totals.push({ amount, items });
+      items = [];
+      continue;
+    }
+    const item = LIST_ITEM.exec(line);
+    if (item) {
+      items.push({ indent: item[1]!.replace(/\t/g, "    ").length, amount: lastSPAmount(line) });
+    }
+  }
+  return totals;
+}
+
+/**
+ * The sum of the shallowest items of a list, or null when it cannot be read:
+ * no item, or an item at that level whose amount is not on its first line.
+ */
+function topLevelSum(items: readonly StoryItem[]): number | null {
+  if (items.length === 0) return null;
+  const top = items.reduce((min, i) => Math.min(min, i.indent), Infinity);
+  let sum = 0;
+  for (const i of items) {
+    if (i.indent !== top) continue;
+    if (i.amount === null) return null;
+    sum += i.amount;
+  }
+  return sum;
+}
+
 /**
  * Prose SP total (#118, seeded defect `wrong_number`): a user-story list whose
  * stated total differs from the sum of its stories.
  *
- * Reads the list items that carry a story-point amount (`- STORY-1: … — 2 SP`)
- * and the one line that starts with Total, Sum or Grand Total and carries an
- * amount (`Total: 5 SP`). Only the items at the shallowest indentation are
- * summed, so a story broken into indented tasks is counted once. A table row
- * starts with a pipe, so neither pattern reads it: rows are left to
- * `checkSPArithmetic`. Fenced blocks are skipped.
+ * The one line that starts with Total, Sum, Subtotal or Grand Total and
+ * carries an amount (`Total: 5 SP`) is compared with the list items above
+ * it (`- STORY-1: … — 2 SP`). Only the shallowest items are summed, so a story
+ * broken into indented tasks counts once. A table row starts with a pipe, so
+ * no pattern here reads it: rows are left to `checkSPArithmetic`. Fenced
+ * blocks are skipped.
  *
- * Fires only when exactly one total line is found: with several (subtotals
- * per epic, then a grand total), which stories each one covers is not
- * readable from the text, so nothing is reported rather than a guess.
+ * Nothing is reported, rather than a guess, when the text does not say what
+ * the total covers: several total lines (subtotals per epic), or a story of
+ * the list whose amount is not on its first line.
  */
 export function checkProseSPTotal(
   content: string,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
-  const totals: number[] = [];
-  const items: { indent: number; amount: number }[] = [];
-  for (const line of linesOutsideFences(content)) {
-    const amount = lastSPAmount(line);
-    if (amount === null) continue;
-    if (PROSE_TOTAL_START.test(line)) {
-      totals.push(amount);
-      continue;
-    }
-    const item = LIST_ITEM.exec(line);
-    if (item) items.push({ indent: item[1]!.replace(/\t/g, "    ").length, amount });
-  }
-  if (totals.length !== 1 || items.length === 0) return [];
-
-  const top = Math.min(...items.map((i) => i.indent));
-  const sum = items
-    .filter((i) => i.indent === top)
-    .reduce((acc, i) => acc + i.amount, 0);
-  const stated = totals[0]!;
-  if (sameAmount(sum, stated)) return [];
+  const totals = totalLinesOf(content);
+  if (totals.length !== 1) return [];
+  const { amount: stated, items } = totals[0]!;
+  const sum = topLevelSum(items);
+  if (sum === null || sameAmount(sum, stated)) return [];
   const shown = Number(sum.toFixed(3));
   return [
     makeViolation(

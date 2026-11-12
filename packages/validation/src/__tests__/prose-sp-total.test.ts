@@ -93,6 +93,43 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(messages(content)).toEqual([]);
   });
 
+  it("does not count a list written under the total (review of #228)", () => {
+    const content = [...STORIES, "Total: 3 SP", "", "### Deferred", "", "- STORY-3 — 5 SP"].join("\n");
+    expect(messages(content)).toEqual([]);
+  });
+
+  it("counts a grand total over lists under several headings", () => {
+    const content = ["### Epic A", "- STORY-1 — 2 SP", "### Epic B", "- STORY-2 — 1 SP", "", "Total: 4 SP"].join("\n");
+    expect(messages(content)).toEqual(["SP total line shows 4 but the stories sum to 3"]);
+  });
+
+  it("reads a subtotal bullet and an ordinal total as totals, not stories (review of #228)", () => {
+    // A subtotal makes two total lines, so nothing is reported.
+    expect(messages([...STORIES, "- Subtotal: 3 SP", "Total: 3 SP"].join("\n"))).toEqual([]);
+    expect(messages(["1. STORY-1 — 2 SP", "2. STORY-2 — 1 SP", "3. Total: 5 SP"].join("\n"))).toEqual([
+      "SP total line shows 5 but the stories sum to 3",
+    ]);
+  });
+
+  it("reads an emphasized amount (review of #228)", () => {
+    // Unread, the amount would make the story unreadable and the check abstain.
+    const content = ["- STORY-1 — 2 SP", "- STORY-2 — **1** SP", "Total: 4 SP"].join("\n");
+    expect(messages(content)).toEqual(["SP total line shows 4 but the stories sum to 3"]);
+    expect(messages(content.replace("Total: 4 SP", "Total: 3 SP"))).toEqual([]);
+  });
+
+  it("does not guess when a story's amount is not on its first line (review of #228)", () => {
+    const content = ["- STORY-1 — 2 SP", "- STORY-2: confirmation", "  Estimate: 1 SP", "Total: 9 SP"].join("\n");
+    expect(messages(content)).toEqual([]);
+  });
+
+  it("reads a list of more items than a spread argument list holds", () => {
+    // Math.min(...array) throws a RangeError beyond about 120k arguments.
+    const n = 200_000;
+    const content = [...Array.from({ length: n }, (_, i) => `- STORY-${i + 1} — 1 SP`), `Total: ${n + 1} SP`].join("\n");
+    expect(messages(content)).toEqual([`SP total line shows ${n + 1} but the stories sum to ${n}`]);
+  });
+
   it("reads decimal amounts and compares them exactly to three places", () => {
     const content = ["- STORY-1 — 0.5 SP", "- STORY-2 — 0.25 SP", "Total: 0.75 SP"].join("\n");
     expect(messages(content)).toEqual([]);
