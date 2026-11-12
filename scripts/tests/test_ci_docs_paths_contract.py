@@ -11,11 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github/workflows"
 # source: the heredoc opener of the ci.json validator in pipeline.yml.
 VALIDATOR = "          python3 - \"$GITHUB_WORKSPACE\" --github-output <<'PY'\n"
-# source: ci.json of this repository. Nothing the environment and install
-# commands run opens these paths, with one exception: the frozen-baseline guard
-# (scripts/tests/test_frozen_baseline_is_provenance.py, run by `pnpm test`)
-# scans the text files under docs/. It reads them as UTF-8 on every system, and
-# the unit job runs it on Linux for every pull request.
+# source: ci.json of this repository. What reads these paths in the environment
+# and install commands: two tests that `pnpm test` runs, the frozen-baseline
+# guard (scripts/tests/test_frozen_baseline_is_provenance.py scans the text
+# files under docs/) and the tool-prefix scan
+# (packages/validation/src/__tests__/mcp-tool-prefixes.test.ts reads every
+# tracked file). Both read as UTF-8 on every system, and the unit job runs
+# them on Linux for every pull request. The install command copies the
+# checkout, these paths included, and nothing opens them afterwards.
 DOCS = ["docs/", "CHANGELOG.md"]
 
 
