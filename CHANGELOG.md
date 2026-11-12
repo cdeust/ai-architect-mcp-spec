@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A regression fixture for the ten seeded defects of the #118 audit (`packages/validation/src/__tests__/seeded-defects.fixture.ts`). The audit's data set is not in the repository, so each of the ten categories the issue names is rebuilt as one mutation of the clean client-side PRD of #117; a seeded requirement comes with its acceptance criterion and test, so only the named defect differs. `seeded-defects-regression.test.ts` pins what `validate_prd_document` reports beyond the control, measured on this commit: 2 of 10 diagnosed (missing acceptance criterion as `fr_to_ac_coverage`, duplicate identifier as `duplicate_requirement_ids`); contradiction, unmeasurable requirement, prose total, dangling story dependency, scope creep, missing edge case, inconsistent terminology and untestable statement draw nothing. A wrong total is caught only as a `| Total |` row of a timeline table. The control's only findings are seven advisory testing-lexicon findings, the audit's seven boilerplate violations, with a score of 1.00. A check that learns to catch a defect updates its row; one that loses a diagnosis fails.
+
 ### Changed
 
 - Follow-up of #219 (#118). The frozen-baseline provenance test passes a 25 s `timeout` to `spawnSync`, under its 30 s test limit: `spawnSync` blocks the event loop, so the test limit alone could not stop a hung interpreter, which now ends as `ETIMEDOUT` in the failure message, as in `code-oracle.ts`. The README's "What you get" bullet no longer says that symbols are cross-checked against the codebase graph: with `codebase_path`, self-check sends the exported PRD to `validate_prd_against_graph` and records its advisory report, and the failure-mode table now names that call. The header says the `known_symbols` check reports inline-code symbols, not every symbol the spec names.
