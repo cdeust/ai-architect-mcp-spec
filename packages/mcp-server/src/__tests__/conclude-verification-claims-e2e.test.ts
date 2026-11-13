@@ -29,7 +29,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Claim, JudgeVerdict } from "@prd-gen/core";
 import { ClaimSchema } from "@prd-gen/core";
 import { concludeSection } from "@prd-gen/verification";
+import { isAbsolute } from "node:path";
 import { buildConcludeOpts } from "../build-conclude-opts.js";
+import { OBSERVATION_LOG_PATH } from "../observation-log-path.js";
 
 // ─── Mock @prd-gen/benchmark ──────────────────────────────────────────────────
 // Spy on appendObservationLog without disk I/O.
@@ -105,8 +107,7 @@ describe("conclude_verification claims param — Curie A2.3 MCP-tool-API closure
     //   The real mathOracle is invoked — this is an integration assertion.
     // Invariant: the oracle result does not abort the pipeline; log always written.
 
-    const { appendObservationLog, JUDGE_OBSERVATION_LOG_PATH } =
-      await import("@prd-gen/benchmark");
+    const { appendObservationLog } = await import("@prd-gen/benchmark");
 
     const claimsMap = buildClaimsMap([
       {
@@ -146,7 +147,10 @@ describe("conclude_verification claims param — Curie A2.3 MCP-tool-API closure
     expect(entry.oracle_resolved_truth).toBe(true);
     expect(typeof entry.oracle_evidence).toBe("string");
     expect((entry.oracle_evidence as string).length).toBeGreaterThan(0);
-    expect(calls[0][1]).toBe(JUDGE_OBSERVATION_LOG_PATH);
+    // The server's own path, beside its databases, not the benchmark's
+    // default, which is relative to the root of a clone (#243).
+    expect(calls[0][1]).toBe(OBSERVATION_LOG_PATH);
+    expect(isAbsolute(OBSERVATION_LOG_PATH)).toBe(true);
   });
 
   it("Test 2: mixed claims — grounded gets oracle_resolved_truth, ungrounded does not", async () => {
