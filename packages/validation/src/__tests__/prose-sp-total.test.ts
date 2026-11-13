@@ -232,6 +232,35 @@ describe("sp_arithmetic: prose total of a story list", () => {
     ]);
   });
 
+  it("table sp_arithmetic does not join a first cell without a closing pipe to the next line, whatever ends the line", () => {
+    // Review of #242: every test above ends its lines with `\n`, so a first
+    // cell of `[^|\n]+` still passed them. A lone `\r`, U+2028 or U+2029 ends a
+    // line for the `m` flag too; a first cell that crossed it read `Note | 40 |`
+    // as 40 SP (`rows sum to 43` against a right total of 3).
+    const rows = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "| draft", "Note | 40 |", "| **Total** | 3 |"];
+    for (const eol of ["\n", "\r\n", "\r", "\u2028", "\u2029"]) {
+      expect(checkSPArithmetic(rows.join(eol), "timeline")).toEqual([]);
+    }
+    // The rows are still read across those line ends: a wrong total is reported.
+    const wrong = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "| **Total** | 4 |"];
+    for (const eol of ["\r\n", "\r", "\u2028", "\u2029"]) {
+      expect(checkSPArithmetic(wrong.join(eol), "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 4 but individual rows sum to 3",
+      ]);
+    }
+  });
+
+  it("table sp_arithmetic counts a row whose first cell only starts with a total label", () => {
+    // Review of #242: without a word boundary after the label, the data row's
+    // lookahead skipped `Summary task` and `Totals carried` as total rows, so
+    // the sum missed them and a right total of 10 was reported as wrong.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Summary task | 5 |", "| Totals carried | 2 |", "| **Total** | 10 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    // A real total row is still skipped from the sum, bold or not.
+    const total = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Sum | 3 |", "| **Grand Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(total, "timeline")).toEqual([]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },

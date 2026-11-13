@@ -133,8 +133,14 @@ function trailingNumberIn(cellsText: string): number | null {
  */
 const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 
-/** The label of a total row, in optional bold: Total, Sum or Grand Total. */
-const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)`;
+/**
+ * The label of a total row, in optional bold: Total, Sum or Grand Total, as a
+ * whole word. Without the `\b`, the lookahead of the data row took any first
+ * cell that starts with one of them for a total and skipped the row, so
+ * `| Summary task | 5 |` or `| Totals carried | 2 |` was left out of the sum
+ * (review of #242).
+ */
+const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)\\b`;
 
 /**
  * The table rows of `checkSPArithmetic`, as sources: each call builds its own
@@ -156,11 +162,14 @@ const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)`;
  * space after its pipe; the first cell is not read (only the cells after it
  * carry the estimate).
  *
- * The first cell holds neither a pipe nor a line terminator. With `[^|]+` it
- * crossed the line end, so a line holding only `|` read the next line as the
+ * The first cell holds neither a pipe nor a line terminator (`\n`, `\r`,
+ * U+2028, U+2029). With `[^|]+` it crossed the line end, so a row whose first
+ * cell has no closing pipe (`|` alone, or `| draft`) read the next line as the
  * rest of its row, and the lookahead, which looks only after that pipe, did
  * not skip the next line when it was a total (review of #234). The other
- * loops of both rows are `.` or `INLINE_SPACE`, which stop at a line end.
+ * loops of both rows are `.`, `INLINE_SPACE` or the `\*{0,2}` of the bold
+ * markers, none of which matches a line terminator, so neither row pattern
+ * spans two lines (review of #242).
  */
 const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`;
 const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_LABEL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
