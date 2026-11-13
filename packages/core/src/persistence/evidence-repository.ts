@@ -5,6 +5,7 @@ import { mkdirSync, existsSync } from "node:fs";
 // (rules_checked / rules_passed / critical_violations, all INTEGER columns),
 // never rule identities. Those live on ValidationReport in the domain layer.
 import type { ThinkingStrategy, PRDContext } from "../index.js";
+import { createEvidenceSchema } from "./evidence-schema.js";
 import { makeAuditFlagsNullable } from "./quality-score-migration.js";
 
 /**
@@ -25,7 +26,7 @@ interface BetterSqlite3Database {
   exec(sql: string): void;
   pragma(stmt: string): unknown;
   close(): void;
-  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T;
+  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T & { immediate: T };
 }
 type BetterSqlite3Constructor = new (path: string) => BetterSqlite3Database;
 
@@ -131,9 +132,17 @@ export class EvidenceRepository {
     }
 
     this.db = new Database(resolvedPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.migrate();
+    try {
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      this.migrate();
+    } catch (error) {
+      // An open that fails must not keep the file open: the caller gets no
+      // repository to close, and Windows refuses to delete an open file
+      // (EBUSY, review of #239).
+      this.db.close();
+      throw error;
+    }
   }
 
   private defaultDbPath(): string {
@@ -141,50 +150,7 @@ export class EvidenceRepository {
   }
 
   private migrate(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS strategy_executions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL DEFAULT '',
-        strategy TEXT NOT NULL,
-        claim_characteristics TEXT NOT NULL,
-        complexity_tier TEXT NOT NULL,
-        expected_improvement REAL NOT NULL,
-        actual_confidence_gain REAL NOT NULL,
-        was_compliant INTEGER NOT NULL DEFAULT 1,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        prd_context TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS prd_quality_scores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        prd_id TEXT NOT NULL,
-        prd_context TEXT NOT NULL,
-        rules_checked INTEGER NOT NULL,
-        rules_passed INTEGER NOT NULL,
-        critical_violations INTEGER NOT NULL,
-        total_score REAL NOT NULL,
-        audit_flags_raised INTEGER,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS adaptive_thresholds (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        metric_name TEXT NOT NULL UNIQUE,
-        current_value REAL NOT NULL,
-        sample_count INTEGER NOT NULL DEFAULT 0,
-        last_updated TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_strategy_executions_strategy
-        ON strategy_executions(strategy);
-      CREATE INDEX IF NOT EXISTS idx_strategy_executions_context
-        ON strategy_executions(prd_context);
-      CREATE INDEX IF NOT EXISTS idx_prd_quality_scores_context
-        ON prd_quality_scores(prd_context);
-      CREATE INDEX IF NOT EXISTS idx_prd_quality_scores_prd_id
-        ON prd_quality_scores(prd_id);
-    `);
+    createEvidenceSchema(this.db);
     makeAuditFlagsNullable(this.db);
   }
 
@@ -299,7 +265,7 @@ export class EvidenceRepository {
       SELECT prd_id, prd_context, rules_checked, rules_passed,
              critical_violations, total_score, audit_flags_raised
       FROM prd_quality_scores
-      ORDER BY created_at DESC
+      ORDER BY id DESC
       LIMIT ?
     `,
       )

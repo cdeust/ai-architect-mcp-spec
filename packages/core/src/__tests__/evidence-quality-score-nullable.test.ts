@@ -10,9 +10,11 @@
  * unavailable (same contract as evidence-learning.test.ts).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tryCreateEvidenceRepository, type PRDQualityScore } from "../index.js";
 
 interface RawDatabase {
@@ -73,6 +75,37 @@ function notNullOf(db: RawDatabase, column: string): number {
   const columns = db.pragma("table_info(prd_quality_scores)") as Array<{ name: string; notnull: number }>;
   return columns.find((c) => c.name === column)!.notnull;
 }
+
+/**
+ * Another server opening the same database: it takes the write lock, says
+ * so by creating argv[3], keeps the lock 300 ms, rebuilds the table as
+ * makeAuditFlagsNullable does, commits, and writes the schema version it
+ * leaves to argv[4]. argv[1] is the better-sqlite3 module, argv[2] the
+ * database.
+ */
+const OTHER_SERVER = `
+  const fs = require("node:fs");
+  const [modulePath, dbPath, holding, versionFile] = process.argv.slice(1);
+  const db = new (require(modulePath))(dbPath);
+  db.exec("BEGIN IMMEDIATE");
+  fs.writeFileSync(holding, "");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+  db.exec(\`
+    CREATE TABLE prd_quality_scores_nullable (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, prd_id TEXT NOT NULL, prd_context TEXT NOT NULL,
+      rules_checked INTEGER NOT NULL, rules_passed INTEGER NOT NULL, critical_violations INTEGER NOT NULL,
+      total_score REAL NOT NULL, audit_flags_raised INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO prd_quality_scores_nullable SELECT * FROM prd_quality_scores;
+    DROP TABLE prd_quality_scores;
+    ALTER TABLE prd_quality_scores_nullable RENAME TO prd_quality_scores;
+    CREATE INDEX idx_prd_quality_scores_context ON prd_quality_scores(prd_context);
+    CREATE INDEX idx_prd_quality_scores_prd_id ON prd_quality_scores(prd_id);
+    COMMIT;
+  \`);
+  fs.writeFileSync(versionFile, String(db.pragma("schema_version", { simple: true })));
+  db.close();
+`;
 
 function schemaVersionOf(path: string): number {
   const db = new Raw!(path);
@@ -158,6 +191,12 @@ describe.skipIf(Raw === null)("quality scores without audit flags (#121)", () =>
     expect(tryCreateEvidenceRepository(path)).toBeNull();
     expect(String(stderr.mock.calls[0]![0])).toContain("FOREIGN KEY constraint failed");
     stderr.mockRestore();
+    // The open that failed closed its connection: SQLite removes the -wal and
+    // -shm files when the last connection closes. Left open, the database
+    // file cannot be deleted on Windows (EBUSY in the afterEach of this test
+    // on windows-latest, review of #239).
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
 
     const after = new Raw!(path);
     // Rolled back: the old table with its row, and no half-built copy.
@@ -173,6 +212,79 @@ describe.skipIf(Raw === null)("quality scores without audit flags (#121)", () =>
     const ids = after.prepare("SELECT prd_id FROM prd_quality_scores ORDER BY id").all();
     after.close();
     expect(ids).toEqual([{ prd_id: "run_old" }, { prd_id: "run_after" }]);
+  });
+
+  it("waits for another server that is rebuilding the table, and does not rebuild it again", async () => {
+    const path = tempDb();
+    // The database of an earlier server: every table of the schema, in WAL
+    // mode, with the scores table as it was. Opening it then changes the
+    // schema only if the table is rebuilt.
+    tryCreateEvidenceRepository(path)!.close();
+    const before = new Raw!(path);
+    before.exec(`DROP TABLE prd_quality_scores; ${OLD_SCHEMA}`);
+    before.exec(`
+      INSERT INTO prd_quality_scores
+        (prd_id, prd_context, rules_checked, rules_passed, critical_violations, total_score, audit_flags_raised)
+      VALUES ('run_old', 'bug', 7, 5, 0, 0.5, 2);
+    `);
+    expect(notNullOf(before, "audit_flags_raised")).toBe(1);
+    before.close();
+
+    const holding = join(dirname(path), "holding");
+    const versionFile = join(dirname(path), "schema-version");
+    const sqlite = createRequire(import.meta.url).resolve("better-sqlite3");
+    const other = spawn(process.execPath, ["-e", OTHER_SERVER, sqlite, path, holding, versionFile], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let otherStderr = "";
+    other.stderr!.on("data", (chunk: Buffer) => (otherStderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => other.once("exit", (code) => resolve(code)));
+    for (let waited = 0; !existsSync(holding) && waited < 5_000; waited += 20) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(existsSync(holding), `the other server did not take the lock: ${otherStderr}`).toBe(true);
+
+    // The schema this open reads still has the NOT NULL column: the other
+    // server has not committed. The rebuild waits for its lock.
+    const repo = tryCreateEvidenceRepository(path);
+    expect(await exited, otherStderr).toBe(0);
+    expect(repo).not.toBeNull();
+    repo!.recordQualityScore(score());
+    const history = repo!.getQualityHistory(10);
+    repo!.close();
+
+    expect(history.map((h) => h.prdId)).toEqual(["run_a", "run_old"]);
+    // The table is the one the other server left: this one did not rebuild it.
+    expect(schemaVersionOf(path)).toBe(Number(readFileSync(versionFile, "utf-8")));
+  });
+
+  it("opens a database that needs no rebuild while another connection is writing", () => {
+    const path = tempDb();
+    tryCreateEvidenceRepository(path)!.close();
+    const writer = new Raw!(path);
+    writer.exec("BEGIN IMMEDIATE");
+    // The check that the table needs no rebuild is made before any lock is
+    // asked for. Made inside the transaction only, this open waited for the
+    // writer's lock, then failed (better-sqlite3's busy timeout).
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const repo = tryCreateEvidenceRepository(path);
+    const reported = stderr.mock.calls.map((call) => String(call[0]));
+    stderr.mockRestore();
+    writer.exec("ROLLBACK");
+    writer.close();
+    expect(reported).toEqual([]);
+    expect(repo).not.toBeNull();
+    repo!.close();
+  });
+
+  it("returns the scores newest first, also when they were recorded in the same second", () => {
+    const repo = tryCreateEvidenceRepository(tempDb())!;
+    for (const prdId of ["run_1", "run_2", "run_3"]) repo.recordQualityScore(score({ prdId }));
+    const history = repo.getQualityHistory(2);
+    repo.close();
+    // created_at has one-second resolution: ordered by it, rows of the same
+    // second came back oldest first, and the limit kept the two oldest.
+    expect(history.map((h) => h.prdId)).toEqual(["run_3", "run_2"]);
   });
 
   it("leaves a database of the new schema as it is when it is opened again", () => {

@@ -310,10 +310,10 @@ export function registerPipelineTools(server) {
                 };
             }
             const out = step({ state: current, result });
-            // Drain strategy_executions BEFORE writing state — keeps the
-            // queue from accumulating on disk if the runStore is later
-            // backed by persistent storage. drainStrategyExecutions is a
-            // no-op when the queue is empty.
+            // Drain strategy_executions and quality_scores BEFORE writing
+            // state — keeps the queues from accumulating on disk if the
+            // runStore is later backed by persistent storage.
+            // drainEvidenceQueues is a no-op when both queues are empty.
             const drained = drainEvidenceQueues(out.state);
             runStore.set(drained);
             // Cache the UNBOUNDED action before it is potentially shed by

@@ -19,7 +19,16 @@
 interface QualityScoreDatabase {
   exec(sql: string): void;
   pragma(stmt: string): unknown;
-  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T;
+  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T & { immediate: T };
+}
+
+/** True when `audit_flags_raised` is still declared NOT NULL. */
+function auditFlagsAreRequired(db: QualityScoreDatabase): boolean {
+  const columns = db.pragma("table_info(prd_quality_scores)") as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  return columns.some((c) => c.name === "audit_flags_raised" && c.notnull === 1);
 }
 
 /**
@@ -28,15 +37,19 @@ interface QualityScoreDatabase {
  *                row it held is still there, unchanged. A table that
  *                already accepts NULL is left as it is. Throws, with the
  *                database unchanged, when a statement of the rebuild fails.
+ *
+ * The transaction is IMMEDIATE: it takes the write lock before it reads. Two
+ * servers can open the same database at once; the second waits for the lock
+ * (better-sqlite3's busy timeout), then finds the column rebuilt and leaves.
+ * Deferred, it read the schema first, and the write that followed failed
+ * with "database is locked" while the first server was rebuilding: the
+ * evidence store of the second was off until it restarted (review of #239;
+ * measured by the two-process test of evidence-quality-score-nullable).
  */
 export function makeAuditFlagsNullable(db: QualityScoreDatabase): void {
-  const columns = db.pragma("table_info(prd_quality_scores)") as Array<{
-    name: string;
-    notnull: number;
-  }>;
-  const column = columns.find((c) => c.name === "audit_flags_raised");
-  if (column === undefined || column.notnull === 0) return;
+  if (!auditFlagsAreRequired(db)) return;
   const rebuild = db.transaction(() => {
+    if (!auditFlagsAreRequired(db)) return;
     db.exec(`
       CREATE TABLE prd_quality_scores_nullable (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,5 +76,5 @@ export function makeAuditFlagsNullable(db: QualityScoreDatabase): void {
         ON prd_quality_scores(prd_id);
     `);
   });
-  rebuild();
+  rebuild.immediate();
 }
