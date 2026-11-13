@@ -8,6 +8,7 @@ import { validateDocument } from "../index.js";
 import {
   checkDocumentSPArithmetic,
   checkProseSPTotal,
+  checkSPArithmetic,
 } from "../hard-output-rules/rules/sp-rules.js";
 
 const STORIES = [
@@ -166,6 +167,26 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(messages(content)).toEqual([]);
     expect(messages(content.replace("0.75", "0.8"))).toEqual([
       "SP total line shows 0.8 but the stories sum to 0.75",
+    ]);
+  });
+
+  it("does not read a backtick line with a backtick in its info string as a fence", () => {
+    // Review of #231: as in CommonMark, "```npm i``` installs" is a code span
+    // in a paragraph. Read as a fence it opened a block that never closed and
+    // hid the total below it, so the check abstained on a wrong total.
+    const content = [...STORIES, "```npm i``` installs the tool.", "Total: 5 SP"].join("\n");
+    expect(messages(content)).toEqual(["SP total line shows 5 but the stories sum to 3"]);
+    // A tilde fence takes any info string, backticks included.
+    const tilde = [...STORIES, "~~~ `sh`", "- STORY-9 — 40 SP", "~~~", "Total: 5 SP"].join("\n");
+    expect(messages(tilde)).toEqual(["SP total line shows 5 but the stories sum to 3"]);
+  });
+
+  it("table sp_arithmetic still reads indented rows and rows after blank lines", () => {
+    // Review of #231: the row patterns now read horizontal space only before
+    // the leading pipe; a row on its own line, indented or not, is still read.
+    const table = ["| Story | SP |", "|---|---|", "  | STORY-1 | 2 |", "", "", "| STORY-2 | 1 |", "\t| **Total** | 5 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 5 but individual rows sum to 3",
     ]);
   });
 

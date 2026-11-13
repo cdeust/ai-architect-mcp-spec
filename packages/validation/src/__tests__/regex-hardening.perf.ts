@@ -29,7 +29,7 @@
 
 import { describe, expect, it } from "vitest";
 import { validateSection } from "../index.js";
-import { checkProseSPTotal } from "../hard-output-rules/rules/sp-rules.js";
+import { checkProseSPTotal, checkSPArithmetic } from "../hard-output-rules/rules/sp-rules.js";
 import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
 
 /**
@@ -157,6 +157,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   it("space runs before a story-point amount (prose sp_arithmetic)", () => {
     const build = (n: number): string => " ".repeat(n) + "x 1 SP";
     const run = (input: string): void => void checkProseSPTotal(input, "user_stories");
+    const small = build(64000);
+    const large = build(128000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
+  // Review of #231: the table rows of sp_arithmetic were found with `^\s*\|`
+  // under the `m` flag, so `\s` ran across a run of blank lines from each line
+  // start (20, 88 and 362 ms at 5k, 10k and 20k blank lines).
+  it("blank-line runs before a table row (table sp_arithmetic)", () => {
+    const build = (n: number): string => "\n".repeat(n) + "|";
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
     const small = build(64000);
     const large = build(128000);
     run(small);

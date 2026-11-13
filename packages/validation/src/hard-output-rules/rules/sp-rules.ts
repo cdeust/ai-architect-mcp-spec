@@ -129,10 +129,15 @@ export function checkSPArithmetic(
   content: string,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
+  // Horizontal space only around the leading pipe. With the `m` flag, `^\s*`
+  // let `\s` run across newlines: each line start of a run of n blank lines
+  // rescanned the rest of the run before failing, an O(n²) scan (measured 20,
+  // 88 and 362 ms at 5k, 10k and 20k blank lines; review of #231). A table row
+  // starts on its own line, so `[ \t]*` reads every row the old pattern read.
   const totalRowPattern =
-    /^\s*\|\s*(?:\*{0,2})(?:Total|Sum|Grand\s+Total)(?:\*{0,2})\s*\|(.+)\|/gim;
+    /^[ \t]*\|[ \t]*(?:\*{0,2})(?:Total|Sum|Grand\s+Total)(?:\*{0,2})[ \t]*\|(.+)\|/gim;
   const dataRowPattern =
-    /^\s*\|\s*(?!\s*(?:-|(?:\*{0,2})(?:Total|Sum|Grand\s+Total)))([^|]+)\|(.+)\|/gim;
+    /^[ \t]*\|[ \t]*(?![ \t]*(?:-|(?:\*{0,2})(?:Total|Sum|Grand\s+Total)))([^|]+)\|(.+)\|/gim;
 
   // Collect individual SP values from data rows
   const individualSPs: number[] = [];
@@ -218,10 +223,12 @@ interface TotalLine {
 }
 
 /**
- * Split a section into its total lines, each paired with the list items
- * between it and the total line before it (or the start of the section).
- * Items after the last total line belong to no total: a `Deferred` list
- * written under the total is not counted in it.
+ * Split a section into its total lines that carry an amount, each paired
+ * with the list items between it and the previous total line that carries an
+ * amount (or the start of the section). A total line without an amount
+ * (`Subtotal: 1 story`) neither closes nor empties the list. Items after the
+ * last such total line belong to no total: a `Deferred` list written under
+ * the total is not counted in it.
  */
 function totalLinesOf(content: string): TotalLine[] {
   const totals: TotalLine[] = [];
