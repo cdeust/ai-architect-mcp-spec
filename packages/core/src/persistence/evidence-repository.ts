@@ -52,9 +52,9 @@ try {
 // ─── Retention constant (bounded-I/O Phase 3) ────────────────────────────────
 
 /**
- * Max strategy_executions rows retained by pruneToRetention(). This table is
- * the only run-keyed, monotonically-growing evidence table; without a cap it
- * grows one row per strategy execution per run forever.
+ * Max strategy_executions rows retained by pruneToRetention(). Without a cap
+ * this table grows one row per strategy execution per run forever. (Since
+ * #121 prd_quality_scores grows one row per run, uncapped: pruneRunEvidence.)
  *
  * The retention floor is functional, not cosmetic: getStrategyPerformance() and
  * getHistoricalAdjustments() require minExecutions = 10 per strategy before a
@@ -400,10 +400,10 @@ export class EvidenceRepository {
    * postcondition: every strategy_executions row with session_id = runId is
    *   removed; returns the number of rows deleted (observable, never silent).
    *
-   * Note: prd_quality_scores and adaptive_thresholds are NOT run-scoped (no
-   * session_id column) — they are cross-run learning aggregates and are bounded
-   * separately by pruneToRetention(). source: schema in migrate() — only
-   * strategy_executions carries session_id.
+   * Note: prd_quality_scores is kept, it is the history across runs: one row
+   * per run since #121, 119 bytes on disk each (measured on 10,000 rows with
+   * both indexes, 2026-11-13). Nothing prunes it: pruneToRetention() bounds
+   * strategy_executions only. adaptive_thresholds holds one row per metric.
    */
   pruneRunEvidence(runId: string): number {
     if (runId === "") return 0;
