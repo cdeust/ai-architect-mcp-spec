@@ -42,6 +42,10 @@ export interface StdioServerOptions {
   readonly entry?: string;
   /** Variables removed from the server's environment. */
   readonly unset?: readonly string[];
+  /** Variables set in the server's environment, after `unset`. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** The server's working directory; this process's when absent. */
+  readonly cwd?: string;
 }
 
 /**
@@ -59,7 +63,12 @@ export async function startStdioServer(
   prepare?.(evidenceDbPath);
   const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: evidenceDbPath };
   for (const name of options.unset ?? []) delete env[name];
-  const child = spawn(process.execPath, [options.entry ?? ENTRY], { env, stdio: ["pipe", "pipe", "pipe"] });
+  Object.assign(env, options.env ?? {});
+  const child = spawn(process.execPath, [options.entry ?? ENTRY], {
+    env,
+    cwd: options.cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>();
   let stderr = "";
   let buffer = "";

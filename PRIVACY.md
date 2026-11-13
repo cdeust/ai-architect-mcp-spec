@@ -17,11 +17,30 @@ and does not phone home.
 
 ## What data it stores
 
-- A **local SQLite database** at `~/.prd-gen/evidence.db` by default, or at the
-  absolute path in `PRD_GEN_EVIDENCE_DB` when you set it. This database holds quality scores, strategy-execution
-  records, and calibration data accumulated from your local pipeline runs. It exists
-  solely on your machine.
-- The database is created on first run and is never synced or uploaded anywhere.
+Three files, all on your machine, in `~/.prd-gen/`. None is synced or uploaded
+anywhere.
+
+- `~/.prd-gen/evidence.db`, a **SQLite database**, or the absolute path in
+  `PRD_GEN_EVIDENCE_DB` when you set it. It holds the quality score of each
+  pipeline run and strategy-execution records. It is created the first time
+  a tool reads it or a pipeline run writes to it.
+- `~/.prd-gen/reliability.db`, a **SQLite database**. It holds, per judge and
+  per type of claim, counts of how often the judge's verdict agreed with the
+  outcome retained for the claim. It is created when the server starts, and
+  written when a verification concludes with the types of its claims
+  (`conclude_verification` called with `claim_types`).
+- `~/.prd-gen/judge-observation-log.jsonl`, a **text log**, one line per
+  judge verdict, created and written at the moment `reliability.db` is
+  written. A line holds the judge's name, the claim's identifier and type,
+  the verdict and the outcome as booleans, the run identifier and a
+  timestamp; for a claim that carries an external check, also that check's
+  result and the evidence string it returned. It holds no section text.
+
+In versions up to 0.9.0 the log was written at a path relative to the
+directory the server was started in,
+`packages/benchmark/calibration/data/judge-observation-log.jsonl`. If a host
+started the server in one of your projects and called `conclude_verification`
+with `claim_types`, that directory may exist there; it can be deleted.
 
 ## What data leaves your machine
 
@@ -39,9 +58,11 @@ optional `better-sqlite3` native addon, which executes locally).
 
 ## Data retention
 
-The evidence database persists until you delete it. It contains only data your own
-pipeline runs produced. You can delete that file (`~/.prd-gen/evidence.db` by default) at any time with no
-consequence other than losing historical calibration data.
+The three files persist until you delete them. They contain only data your own
+runs produced. You can delete any of them at any time: without `evidence.db`
+you lose the quality history and the strategy records, without
+`reliability.db` the consensus goes back to its default weights, and the log
+is only read by calibration tooling.
 
 ## Contact
 
