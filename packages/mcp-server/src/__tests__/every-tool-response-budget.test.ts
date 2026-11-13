@@ -22,7 +22,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   PRDContextSchema,
-  SectionTypeSchema,
   ThinkingStrategySchema,
   tryCreateEvidenceRepository,
 } from "@prd-gen/core";
@@ -264,15 +263,6 @@ const CASES: Record<string, () => Promise<void>> = {
   get_prd_context_info: async () => {
     for (const context of PRDContextSchema.options) {
       await measuredOk("get_prd_context_info", context, { context });
-    }
-  },
-  coordinate_context_budget: async () => {
-    for (const prd_context of PRDContextSchema.options) {
-      await measuredOk("coordinate_context_budget", `${prd_context}, nothing completed`, { prd_context });
-      await measuredOk("coordinate_context_budget", `${prd_context}, every section completed`, {
-        prd_context,
-        completed_sections: [...SectionTypeSchema.options],
-      });
     }
   },
   validate_prd_section: async () => {

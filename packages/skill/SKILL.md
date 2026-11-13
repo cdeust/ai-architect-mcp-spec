@@ -16,7 +16,7 @@ mcp_tools_legacy:
   - check_health, get_prd_context_info, list_available_strategies
   - validate_prd_section, validate_prd_document
   - get_quality_history, get_strategy_effectiveness
-  - coordinate_context_budget, map_failure_to_retrieval
+  - map_failure_to_retrieval
 ecosystem:
   - ai-architect-mcp-codebase (Rust MCP) — codebase indexing, graph queries, impact, semantic-diff
   - cortex (Python MCP) — persistent memory, recall, methodology, narrative

@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cdeust/ai-architect-mcp-spec",
-  "description": "PRD verification and host-driven generation with multi-judge consensus across 17 MCP tools.",
+  "description": "PRD verification and host-driven generation with multi-judge consensus across 16 MCP tools.",
   "repository": {
     "url": "https://github.com/cdeust/ai-architect-mcp-spec",
     "source": "github"

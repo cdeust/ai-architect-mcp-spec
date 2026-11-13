@@ -1,7 +1,7 @@
 /**
  * MCP tool profiles for prd-gen (issue #28).
  *
- * prd-gen is a staged pipeline whose 17 tools split along a boundary that
+ * prd-gen is a staged pipeline whose 16 tools split along a boundary that
  * already exists in the design: agent-facing generation/verification tools vs
  * internal diagnostics/telemetry tools. A profile narrows the advertised
  * surface for the common generation session without removing any tool from the
@@ -109,7 +109,7 @@ function flagValueOf(argv) {
 const FULL_INSTRUCTIONS = "prd-gen — staged PRD generation + verification MCP ('full' profile: every " +
     "tool; the default). The tools are a pipeline and the order is the product; " +
     "calling them out of order does not error, it leaves the pipeline in a wrong " +
-    "state. Generation loop: coordinate_context_budget → start_pipeline → " +
+    "state. Generation loop: start_pipeline → " +
     "get_pipeline_state → submit_action_result (repeat until done). Verification: " +
     "plan_document_verification / plan_section_verification → submit_action_result " +
     "→ conclude_verification. Deterministic checks: validate_prd_section, " +
@@ -121,7 +121,7 @@ const FULL_INSTRUCTIONS = "prd-gen — staged PRD generation + verification MCP 
 const AGENT_INSTRUCTIONS = "prd-gen — staged PRD generation + verification MCP ('agent' profile: the " +
     "agent-facing generation/verification surface). The tools are a pipeline and " +
     "the order is the product; calling them out of order leaves the pipeline in a " +
-    "wrong state, not an error. Generation loop: coordinate_context_budget → " +
+    "wrong state, not an error. Generation loop: " +
     "start_pipeline → get_pipeline_state → submit_action_result (repeat until " +
     "done). Verification: plan_document_verification / plan_section_verification → " +
     "submit_action_result → conclude_verification, with validate_prd_section / " +

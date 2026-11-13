@@ -230,7 +230,6 @@
         "validate_prd_document",
         "get_quality_history",
         "get_strategy_effectiveness",
-        "coordinate_context_budget",
         "map_failure_to_retrieval",
         "start_pipeline",
         "submit_action_result",

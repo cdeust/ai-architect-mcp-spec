@@ -44,7 +44,6 @@ const PRD_CONTEXTS = [
 // ─── Prompt catalog (ordering only; summaries come from the tool schemas) ───
 
 const RUN_PIPELINE_STEPS: readonly Step[] = [
-  { tool: "coordinate_context_budget", guidance: "Allocate the per-section token budget BEFORE generating anything." },
   { tool: "start_pipeline", guidance: "Initialize the run; it returns the first NextAction to execute." },
   { tool: "get_pipeline_state", guidance: "Read the current state by run_id whenever you need to re-orient." },
   { tool: "submit_action_result", guidance: "Feed each executed action's result back; repeat until the action is `done`." },
@@ -129,7 +128,7 @@ export function registerPrompts(
         renderBody(
           `Generate a "${context}" PRD for: ${request}`,
           RUN_PIPELINE_STEPS,
-          "Never skip coordinate_context_budget or submit out of order — the reducer " +
+          "Never submit out of order — the reducer " +
             "advances one NextAction at a time and a skipped stage silently mis-states the run.",
           summaryOf,
         ),

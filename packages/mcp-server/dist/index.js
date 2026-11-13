@@ -11,7 +11,7 @@ import { getEvidenceRepo } from "./evidence-db-path.js";
 import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { REPORT_PAGING_DESCRIPTION, reportPageResult } from "./page-validation-report.js";
-import { registerBudgetTools } from "./budget-tools.js";
+import { registerFeedbackTools } from "./feedback-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
 import { resolveProfile, instructions as profileInstructions, isAllowed, } from "./tool-profiles.js";
@@ -26,7 +26,7 @@ export { getConsensusReliabilityProvider } from "./reliability-wiring.js";
 /**
  * PRD Generator MCP Server — native TypeScript.
  *
- * 17 tools: 5 diagnostics + 2 validation + 2 evidence + 8 pipeline/verification/budget.
+ * 16 tools: 5 diagnostics + 2 validation + 2 evidence + 7 pipeline/verification/feedback.
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // ─── Config Loading ──────────────────────────────────────────────────────────
@@ -272,8 +272,8 @@ const toolStrategyEffectiveness = server.tool("get_strategy_effectiveness", "Get
         ],
     };
 });
-// ─── Budget + feedback tools (extracted to budget-tools.ts) ──────────────────
-const budgetHandles = registerBudgetTools(server);
+// ─── Feedback tool (extracted to feedback-tools.ts) ──────────────────────────
+const feedbackHandles = registerFeedbackTools(server);
 // Legacy tools (initialize_pipeline / update_pipeline_state) were removed
 // in v3.0.0. The pipeline tools (start_pipeline / submit_action_result /
 // get_pipeline_state, registered below via registerPipelineTools) are the
@@ -294,7 +294,7 @@ const ALL_TOOL_HANDLES = {
     validate_prd_document: toolValidateDocument,
     get_quality_history: toolQualityHistory,
     get_strategy_effectiveness: toolStrategyEffectiveness,
-    ...budgetHandles,
+    ...feedbackHandles,
     ...pipelineHandles,
 };
 // Prompt bodies pull each step's one-line summary from the live tool

@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Node-20.x_·_22.x-339933.svg" alt="Node 20/22">
   <img src="https://img.shields.io/badge/Tests-1903_passing-brightgreen" alt="1903 passing">
   <img src="https://img.shields.io/badge/Packages-10-orange" alt="10 packages">
-  <img src="https://img.shields.io/badge/MCP_Tools-17-8A2BE2" alt="17 MCP tools">
+  <img src="https://img.shields.io/badge/MCP_Tools-16-8A2BE2" alt="16 MCP tools">
   <img src="https://img.shields.io/badge/Validators-Hard_Output_Rules-red" alt="Hard Output Rules">
   <img src="https://img.shields.io/badge/Calibration-Closed_Loop-success" alt="Closed-loop reliability calibration">
   <a href="https://www.bestpractices.dev/projects/13832"><img src="https://www.bestpractices.dev/projects/13832/badge" alt="OpenSSF Best Practices"></a>
@@ -56,7 +56,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
 
-**10 packages. 17 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1903 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
+**10 packages. 16 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1903 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
 ---
 
@@ -105,10 +105,6 @@ validate_prd_document(sections[], known_symbols?, item_offset?)
     test traceability. Catches what per-section validation misses.
   → paged like validate_prd_section.
 
-coordinate_context_budget(prd_context, completed_sections[])
-  → per-section retrieval/generation token budgets so Cortex recall and
-    section drafting don't fight over the same context window.
-
 map_failure_to_retrieval(violations[])
   → closes the validation→retrieval feedback loop. When a section fails
     validation, this returns the corrective Cortex query that would
@@ -144,7 +140,7 @@ claude plugin marketplace add cdeust/ai-architect-mcp-spec
 claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
 ```
 
-Restart your Claude Code session. The 17 MCP tools register on first
+Restart your Claude Code session. The 16 MCP tools register on first
 stdio handshake. `/generate-prd` also needs Cortex and zetetic-team-subagents
 installed: without them it stops at `preflight` or produces no section (see
 [Requirements](#requirements) and [Companion ecosystem](#companion-ecosystem)).
@@ -320,7 +316,7 @@ gemini extensions install https://github.com/cdeust/ai-architect-mcp-spec
 
 Both manifests launch `mcp-server/index.js` with `--profile verifier`. The
 existing Claude manifest passes no profile and therefore retains the default
-17-tool `full` surface.
+16-tool `full` surface.
 
 A zero-violation result means that the document satisfies the implemented
 structural rules. It does **not** prove factual accuracy, product value,
@@ -392,7 +388,7 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 | **4** | `input_analysis` | Calls `index_codebase` (ai-architect-mcp-codebase) when a path is provided; sets `codebase_graph_path` |
 | **5** | `feasibility_gate` | Detects epic-scope inputs (≥2 EPIC_SIGNALS); asks user to focus |
 | **6** | `clarification` | Compose-then-answer rounds (4–10 depending on tier); short-circuits on "proceed" |
-| **7** | `budget` | Per-section retrieval/generation token allocation via Cortex paper's 60/30/10 split |
+| **7** | `budget` | Checks that clarification ended cleanly, then moves to section generation. It allocates nothing: the name is kept for hosts and stored runs |
 | **8** | `section_generation` | One section at a time: Cortex recall → engineer draft → validate → (retry up to 3) |
 | **9** | `jira_generation` | Synthesises JIRA tickets from requirements + user_stories + acceptance_criteria |
 | **10** | `file_export` | Writes the PRD files of the run's context profile, plus `00-run-notes.md` for each skipped file or withheld failed section (see [Exported files per context profile](#exported-files-per-context-profile)) |
@@ -427,7 +423,7 @@ The files a run writes depend on its PRD context: a companion file is written on
 ## The MCP tools
 
 Three surfaces. The reducer drives the full pipeline; the validation + verification
-+ budget tools can be consumed directly by other systems without entering the
++ feedback tools can be consumed directly by other systems without entering the
 pipeline; the diagnostics surface exposes config + health + history.
 
 ```
@@ -449,8 +445,7 @@ Verification (3):
                              truth can replace LLM-only consensus where
                              schema/math/code/spec oracles are available
 
-Budget + feedback (2):
-  coordinate_context_budget  Per-section token allocation
+Feedback (1):
   map_failure_to_retrieval   Validation failure → corrective Cortex query
 
 Diagnostics (7):
@@ -545,7 +540,7 @@ orchestration     ← stateless reducer, 20 step handlers, runner
 ecosystem-adapters← StdioMcpClient, AiArchitectCodebaseClient, CortexClient
                     │  the only package allowed to do I/O
                     ▼
-mcp-server        ← composition root; 17 tools registered;
+mcp-server        ← composition root; 16 tools registered;
                     │  evidence repository (better-sqlite3, optional)
                     ▼
 benchmark         ← pipeline KPI measurements + golden-fixture HOR scoring
@@ -583,7 +578,6 @@ A cross-audit found and fixed two layer violations:
 | **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
 | **Tests claiming "comprehensive" without listing what they cover** | Test-traceability rule: every section's claimed test must reference an FR or AC ID |
 | **Retries that use the same context as the failure** | `map_failure_to_retrieval` closes the validator→Cortex feedback loop; corrective queries before retry |
-| **Magic-number budgets ("we'll use 4K tokens for retrieval")** | `coordinate_context_budget` produces per-section allocations from the canonical SECTIONS_BY_CONTEXT plan |
 
 ---
 
@@ -699,7 +693,7 @@ packages/
 ├── strategy/              Thinking-strategy selector
 ├── orchestration/         Stateless reducer · 20 step handlers · runner · canned-dispatcher
 ├── ecosystem-adapters/    StdioMcpClient · AiArchitectCodebaseClient · CortexClient
-├── mcp-server/            Composition root · 17 MCP tools registered
+├── mcp-server/            Composition root · 16 MCP tools registered
 ├── benchmark/             Pipeline KPI measurement · golden-fixture HOR scoring
 │   └── calibration/       ReliabilityRepository · KM survival ·
 │                          Clopper-Pearson · XmR · paired-bootstrap ·

@@ -83,12 +83,12 @@ const PREPARE_CORRELATION_ID = "input_analysis_prepare_prd_input";
 const GLOBAL_RECALL_CORRELATION_ID = "input_analysis_global_recall";
 
 /**
- * source: reuses the per-section recall budget (section-generation.ts
+ * source: reuses the per-section recall size (section-generation.ts
  * recallAction) for consistency — one Cortex recall query, same result
- * size, whether it is run-level or section-level. 8 results × ~500
- * tokens/memory ≈ 4K tokens, which fits the retrieval budget computed by
- * mcp-server/context-budget.ts. Cross-audit code-reviewer H6 (Phase 3+4,
- * 2026-04), reapplied at the global-recall call site Phase 1a (2026-07-14).
+ * size, whether it is run-level or section-level. That size is a
+ * provisional heuristic, as said there. Cross-audit code-reviewer H6
+ * (Phase 3+4, 2026-04), reapplied at the global-recall call site Phase 1a
+ * (2026-07-14).
  */
 const GLOBAL_RECALL_MAX_RESULTS = 8;
 

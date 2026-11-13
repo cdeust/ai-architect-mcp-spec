@@ -1,7 +1,7 @@
 /**
  * MCP tool profiles for prd-gen (issue #28).
  *
- * prd-gen is a staged pipeline whose 17 tools split along a boundary that
+ * prd-gen is a staged pipeline whose 16 tools split along a boundary that
  * already exists in the design: agent-facing generation/verification tools vs
  * internal diagnostics/telemetry tools. A profile narrows the advertised
  * surface for the common generation session without removing any tool from the

@@ -38,7 +38,7 @@
 # Exit 1 with the transcript otherwise.
 set -euo pipefail
 
-EXPECTED_TOOLS="${EXPECTED_TOOLS:-17}"
+EXPECTED_TOOLS="${EXPECTED_TOOLS:-16}"
 # The components the .mcpb does not carry, space-separated (see above).
 EXPECTED_DEGRADED="${EXPECTED_DEGRADED:-skillAvailable evidenceDbHealthy}"
 STAGE_ROOT="$(mktemp -d)"
