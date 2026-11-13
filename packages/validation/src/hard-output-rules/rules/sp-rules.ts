@@ -132,33 +132,38 @@ function trailingNumberIn(cellsText: string): number | null {
  */
 const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 
+/**
+ * The table rows of `checkSPArithmetic`, as sources: each call builds its own
+ * objects (see `NUMBER_PATTERN`).
+ *
+ * Inline space only around the leading pipe. With the `m` flag, `^\s*` let
+ * `\s` run across newlines: each line start of a run of n blank lines rescanned
+ * the rest of the run before failing, an O(n²) scan (measured 20, 88 and
+ * 362 ms at 5k, 10k and 20k blank lines; review of #231). `INLINE_SPACE` is
+ * `\s` without the line terminators, so a row indented with a tab, a no-break
+ * space, `\f` or `\v` is read as it was with `\s*`.
+ *
+ * The data row has no space loop between its pipe and its first cell: the
+ * cell `[^|]+` starts at the pipe and reads the spaces itself. With a
+ * `[ \t]*` there, both loops matched a run of spaces, so a `|` followed by n
+ * spaces and no closing pipe split the run in O(n²) ways before failing (50,
+ * 206 and 856 ms at 5k, 10k and 20k spaces; review of #232). The lookahead
+ * keeps its own space loop, so a separator or a total row is still skipped
+ * whatever the space after its pipe; the first cell is not read (only the
+ * cells after it carry the estimate).
+ */
+const TOTAL_LABEL = "(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)";
+const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_LABEL}))([^|]+)\\|(.+)\\|`;
+
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(
   content: string,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
-  // Horizontal space only around the leading pipe. With the `m` flag, `^\s*`
-  // let `\s` run across newlines: each line start of a run of n blank lines
-  // rescanned the rest of the run before failing, an O(n²) scan (measured 20,
-  // 88 and 362 ms at 5k, 10k and 20k blank lines; review of #231). `INLINE_SPACE`
-  // is `\s` without the line terminators, so a row indented with a tab, a
-  // no-break space, `\f` or `\v` is read as it was with `\s*`.
-  //
-  // The data row has no space loop between its pipe and its first cell: the
-  // cell `[^|]+` starts at the pipe and reads the spaces itself. With a
-  // `[ \t]*` there, both loops matched a run of spaces, so a `|` followed by n
-  // spaces and no closing pipe split the run in O(n²) ways before failing
-  // (review of #232). The lookahead keeps its own space loop, so a separator
-  // or a total row is still skipped whatever its indentation; the first cell
-  // is not read (only the cells after it carry the estimate).
-  const totalRowPattern = new RegExp(
-    `^${INLINE_SPACE}*\\|${INLINE_SPACE}*(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`,
-    "gim",
-  );
-  const dataRowPattern = new RegExp(
-    `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)))([^|]+)\\|(.+)\\|`,
-    "gim",
-  );
+  // Fresh objects per call: `.exec` in a loop advances `lastIndex`.
+  const totalRowPattern = new RegExp(TOTAL_ROW_SOURCE, "gim");
+  const dataRowPattern = new RegExp(DATA_ROW_SOURCE, "gim");
 
   // Collect individual SP values from data rows
   const individualSPs: number[] = [];
