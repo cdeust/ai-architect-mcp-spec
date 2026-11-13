@@ -108,7 +108,8 @@ describe("numbering rules on a wide gap", () => {
 describe("identifier numbers past nine digits", () => {
   // Review of #236: past 2^53 a number cannot be told from its neighbour, so
   // these two named AC-9007199254740992, which is present, as missing twenty
-  // times; a run of 309 digits read as Infinity ("and Infinity more").
+  // times; a number past the largest double, 309 nines here, read as
+  // Infinity ("and Infinity more").
   it("does not read a longer run of digits as an identifier", () => {
     const report = validateSection("- AC-9007199254740992: a\n- AC-9007199254740994: b", "acceptance_criteria");
     expect(report.violations.filter((v) => v.rule === "ac_numbering")).toEqual([]);
@@ -117,6 +118,12 @@ describe("identifier numbers past nine digits", () => {
   it("keeps the identifiers it can read when another is too long", () => {
     const report = validateSection(`- AC-1: a\n- AC-3: b\n- AC-${"9".repeat(309)}: c`, "acceptance_criteria");
     expect(messageOf(report, "ac_numbering")).toBe("AC numbering has gaps: missing AC-2");
+  });
+
+  it("does not read ten digits: the bound is nine, not more", () => {
+    // Review of #237: nothing held the bound from above.
+    const report = validateSection("- AC-1: a\n- AC-2: b\n- AC-1000000000: c", "acceptance_criteria");
+    expect(report.violations.filter((v) => v.rule === "ac_numbering")).toEqual([]);
   });
 
   it("still reads a nine-digit identifier", () => {
