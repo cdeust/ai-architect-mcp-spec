@@ -19,6 +19,17 @@ export const LINE_BREAK = /\r?\n/;
 export const FENCE_LINE = /^[ \t]*(`{3,}|~{3,})([\s\S]*)$/;
 
 /**
+ * Whether a fence line opens a block. As in CommonMark, the info string of a
+ * backtick fence cannot contain a backtick: ```` ```npm i``` installs ```` is
+ * a code span in a paragraph, not a fence. Read as a fence it opened a block
+ * that never closed and hid the rest of the section from both blocking rules
+ * (review of #231). A tilde fence takes any info string.
+ */
+function opensBlock(fence: RegExpExecArray): boolean {
+  return fence[1]![0] !== "`" || !fence[2]!.includes("`");
+}
+
+/**
  * The lines of a section outside its fenced blocks, which show proposed code.
  * As in CommonMark, a block closes only on a fence of the same character, at
  * least as long as the opening one and with nothing after it, so a shorter or
@@ -30,7 +41,7 @@ export function linesOutsideFences(content: string): string[] {
   for (const line of content.split(LINE_BREAK)) {
     const fence = FENCE_LINE.exec(line);
     if (open === null) {
-      if (fence) open = fence[1]!;
+      if (fence && opensBlock(fence)) open = fence[1]!;
       else kept.push(line);
     } else if (
       fence &&
