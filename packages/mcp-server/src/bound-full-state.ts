@@ -120,7 +120,11 @@ export interface BoundedFullState {
   readonly __bounded: {
     /** Measured serialized size of the state BEFORE degradation, without `__bounded`. */
     readonly original_chars: number;
-    /** Serialized size of this response, `__bounded` included (≤ MAX_RESPONSE_CHARS). */
+    /**
+     * Serialized size of this response, `__bounded` included. It is within
+     * MAX_RESPONSE_CHARS unless the state, shed to its floor, is still over
+     * it (postcondition of boundFullStateResponse).
+     */
     readonly final_chars: number;
     /** The budget the payload was fitted to. */
     readonly budget_chars: number;
@@ -202,12 +206,15 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     );
   const fits = (): boolean => shippedChars() <= budget;
 
-  if (fits()) {
+  // Measured once on the common path: a state that fits is serialized for
+  // original_chars and for this, not a third time (review of #236).
+  const untouched = shippedChars();
+  if (untouched <= budget) {
     return {
       state: work,
       __bounded: {
         original_chars: originalChars,
-        final_chars: shippedChars(),
+        final_chars: untouched,
         budget_chars: budget,
         applied,
       },

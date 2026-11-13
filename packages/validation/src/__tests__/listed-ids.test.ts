@@ -80,11 +80,12 @@ describe("numbering rules on a wide gap", () => {
     expect(largestViolation(report)).toBeLessThan(1_000);
   });
 
-  it("answers a gap of two billion", () => {
+  it("answers the widest gap an identifier can open", () => {
     // The range was walked number by number and every missing one stored:
-    // this input threw `RangeError: Invalid array length` after about 2 s.
-    const report = validateSection("- AC-1: a\n- AC-2000000000: b", "acceptance_criteria");
-    expect(messageOf(report, "ac_numbering")).toMatch(/AC-21 and 1999999978 more$/);
+    // a gap of two billion threw `RangeError: Invalid array length` after
+    // about 2 s. Nine digits is the longest number read as an identifier.
+    const report = validateSection("- AC-1: a\n- AC-999999999: b", "acceptance_criteria");
+    expect(messageOf(report, "ac_numbering")).toMatch(/AC-21 and 999999977 more$/);
   });
 
   it("the document-level rule is bounded too", () => {
@@ -101,6 +102,36 @@ describe("numbering rules on a wide gap", () => {
     const violation = report.violations.find((v) => v.rule === "ac_numbering")!;
     expect(violation.message).toBe("AC numbering has gaps: missing AC-2, AC-3");
     expect(violation.offendingContent).toBe("Found: AC-1, AC-4");
+  });
+});
+
+describe("identifier numbers past nine digits", () => {
+  // Review of #236: past 2^53 a number cannot be told from its neighbour, so
+  // these two named AC-9007199254740992, which is present, as missing twenty
+  // times; a run of 309 digits read as Infinity ("and Infinity more").
+  it("does not read a longer run of digits as an identifier", () => {
+    const report = validateSection("- AC-9007199254740992: a\n- AC-9007199254740994: b", "acceptance_criteria");
+    expect(report.violations.filter((v) => v.rule === "ac_numbering")).toEqual([]);
+  });
+
+  it("keeps the identifiers it can read when another is too long", () => {
+    const report = validateSection(`- AC-1: a\n- AC-3: b\n- AC-${"9".repeat(309)}: c`, "acceptance_criteria");
+    expect(messageOf(report, "ac_numbering")).toBe("AC numbering has gaps: missing AC-2");
+  });
+
+  it("still reads a nine-digit identifier", () => {
+    const report = validateSection("- AC-999999998: a\n- AC-999999999: b\n- AC-999999990: c", "acceptance_criteria");
+    expect(messageOf(report, "ac_numbering")).toMatch(/^AC numbering has gaps: missing AC-999999991, .*AC-999999997$/);
+  });
+
+  it("applies to requirements and to the document rule", () => {
+    const section = validateSection("- FR-9007199254740992: a\n- FR-9007199254740994: b", "requirements");
+    expect(section.violations.filter((v) => v.rule === "fr_numbering_gaps")).toEqual([]);
+    const document = validateDocument([
+      { type: "acceptance_criteria", content: "- AC-9007199254740992: a" },
+      { type: "testing", content: "- AC-9007199254740994 is tested." },
+    ]);
+    expect(document.violations.filter((v) => v.rule === "ac_numbering")).toEqual([]);
   });
 });
 

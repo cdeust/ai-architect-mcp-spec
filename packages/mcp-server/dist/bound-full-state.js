@@ -148,12 +148,15 @@ export function boundFullStateResponse(state) {
         },
     }));
     const fits = () => shippedChars() <= budget;
-    if (fits()) {
+    // Measured once on the common path: a state that fits is serialized for
+    // original_chars and for this, not a third time (review of #236).
+    const untouched = shippedChars();
+    if (untouched <= budget) {
         return {
             state: work,
             __bounded: {
                 original_chars: originalChars,
-                final_chars: shippedChars(),
+                final_chars: untouched,
                 budget_chars: budget,
                 applied,
             },
