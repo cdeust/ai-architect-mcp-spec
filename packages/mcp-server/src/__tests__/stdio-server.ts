@@ -37,6 +37,13 @@ interface RpcMessage {
   error?: { message?: string };
 }
 
+export interface StdioServerOptions {
+  /** The entry point to start instead of the workspace build. */
+  readonly entry?: string;
+  /** Variables removed from the server's environment. */
+  readonly unset?: readonly string[];
+}
+
 /**
  * precondition:  `prepare`, when given, writes what the server must find at
  *                start in the evidence database whose path it receives.
@@ -45,12 +52,14 @@ interface RpcMessage {
  */
 export async function startStdioServer(
   prepare?: (evidenceDbPath: string) => void,
+  options: StdioServerOptions = {},
 ): Promise<StdioServer> {
   const scratch = mkdtempSync(join(tmpdir(), "prd-gen-stdio-"));
   const evidenceDbPath = join(scratch, "evidence.db");
   prepare?.(evidenceDbPath);
   const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: evidenceDbPath };
-  const child = spawn(process.execPath, [ENTRY], { env, stdio: ["pipe", "pipe", "pipe"] });
+  for (const name of options.unset ?? []) delete env[name];
+  const child = spawn(process.execPath, [options.entry ?? ENTRY], { env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>();
   let stderr = "";
   let buffer = "";

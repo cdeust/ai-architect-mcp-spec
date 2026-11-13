@@ -18,6 +18,7 @@ import { resolveProfile, instructions as profileInstructions, isAllowed, } from 
 import { checkReliabilityHealth, closeReliabilityRepo, } from "./reliability-wiring.js";
 import { resolveServerVersion } from "./server-version.js";
 import { healthStatus } from "./health-status.js";
+import { resolvePluginRoot } from "./plugin-root.js";
 // ─── Reliability wiring (D2.4 / D2.6) ───────────────────────────────────────
 // Re-exported so pipeline-tools and other callers can inject the provider into
 // ConsensusConfig.reliabilityProvider without importing benchmark directly.
@@ -29,7 +30,7 @@ export { getConsensusReliabilityProvider } from "./reliability-wiring.js";
  */
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // ─── Config Loading ──────────────────────────────────────────────────────────
-const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT ?? join(__dirname, "..", "..", "..");
+const PLUGIN_ROOT = resolvePluginRoot(__dirname, process.env);
 // Marks the fallback config. The fallback also carries `version`, so
 // check_health tests this marker, not `version` (#124).
 const CONFIG_NOT_FOUND = "config_not_found";
