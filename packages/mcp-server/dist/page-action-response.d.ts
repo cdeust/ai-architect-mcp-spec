@@ -3,9 +3,10 @@
  *
  * THE BUG THIS FIXES
  * -------------------
- * `boundEnvelopeResponse` strips every `spawn_subagents` prompt from an
- * oversized `start_pipeline` / `submit_action_result` envelope and points the
- * host at `get_pipeline_state(run_id, format:"action")` to recover them. That
+ * `boundEnvelopeResponse` sheds the `spawn_subagents` prompts that do not fit
+ * from an oversized `start_pipeline` / `submit_action_result` envelope and
+ * points the host at `get_pipeline_state(run_id, format:"action")` to recover
+ * them (when this was written it shed every prompt of the batch). That
  * recovery path returned the whole unbounded action in one response, so a
  * judge batch whose envelope overshot the 100,000-char budget overshot it
  * again on the refetch: the 2026-10-10 audit of v0.8.0 measured about 112k
@@ -18,8 +19,9 @@
  * contiguous slice of `invocations`, starting at `invocation_offset`: the
  * longest slice whose serialized response stays within MAX_RESPONSE_CHARS.
  * The host refetches when the normal envelope's `__bounded.applied` records
- * `action.invocations[].prompt` (the prompts arrive as `omitted` stubs);
- * `__bounded` itself is present on every envelope.
+ * `action.invocations[].prompt`: the prompts from that record's `next_offset`
+ * on arrive as `omitted` stubs, and `next_offset` is the `invocation_offset`
+ * to read them from. `__bounded` itself is present on every envelope.
  * Prompts are never cut: a host needs each prompt whole, so the unit of a page
  * is one invocation. A `__page` marker states where the slice sits in the
  * batch (`offset`, `count`, `total`, `next_offset`) and its measured size; the

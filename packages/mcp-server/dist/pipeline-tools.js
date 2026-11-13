@@ -332,7 +332,8 @@ export function registerPipelineTools(server) {
         "overshoots); format:'action' returns the last action emitted for this run with " +
         "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
         "submit_action_result response's __bounded.applied records action.invocations[]." +
-        "prompt (its prompts are omitted stubs). It is " +
+        "prompt: the prompts from that record's next_offset on are omitted stubs, and " +
+        "next_offset is the invocation_offset to read them from. It is " +
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
         "page, null on the last one.", {
