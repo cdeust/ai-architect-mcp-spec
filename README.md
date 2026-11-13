@@ -89,13 +89,15 @@ submit_action_result(run_id, result)
      write_file, done, failed). emit_message is coalesced into the
      messages array; the host never has to "advance past" a banner.
 
-validate_prd_section(content, section_type)
+validate_prd_section(content, section_type, known_symbols?, item_offset?)
   → deterministic Hard Output Rules — zero LLM calls, pure regex/parsing.
-  → returns: violations[], hasCriticalViolations, totalScore.
-  → paged under the 100,000-char budget by whole violations:
-    __page.next_offset is the next item_offset, null on the last page.
+  → returns: violations[], hasCriticalViolations, totalScore, and with
+    known_symbols the unresolved symbols (symbolExistence).
+  → paged under the 100,000-char budget by whole items, the violations
+    and then the unresolved symbols: __page.next_offset is the next
+    item_offset, null on the last page.
 
-validate_prd_document(sections[])
+validate_prd_document(sections[], known_symbols?, item_offset?)
   → cross-section checks: SP arithmetic, AC numbering, FR-AC coverage,
     test traceability. Catches what per-section validation misses.
   → paged like validate_prd_section.
