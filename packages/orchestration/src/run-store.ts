@@ -1,9 +1,11 @@
 /**
  * In-memory store of pipeline runs, keyed by run_id.
  *
- * The MCP server is per-session, so a single in-memory map is correct for
- * one host. If we ever need multi-host or persistent runs, swap this for a
- * SQLite-backed store — the contract is just `get` / `set` / `delete`.
+ * This is the memory side only. Since #121 the composition root keeps each
+ * run in a file as well, so that a restart of the server does not lose it
+ * (mcp-server, kept-runs.ts): it writes the file when it sets a run here,
+ * reads it when a run is not here, and removes it when this store evicts
+ * the run. The two bounds below are exported for that file side.
  *
  * Bounded-I/O (Phase 3): without eviction the map grows once per
  * start_pipeline for the life of the process — a long-lived MCP host that
@@ -46,7 +48,7 @@ export type Clock = () => number;
  *
  * source: PipelineStepSchema terminal value "complete" in state.ts.
  */
-function isTerminal(state: PipelineState): boolean {
+export function isTerminalRun(state: Pick<PipelineState, "current_step">): boolean {
   return state.current_step === "complete";
 }
 
@@ -65,7 +67,7 @@ function isTerminal(state: PipelineState): boolean {
  * so 30 min is chosen as a conservative upper bound on an interactive host's
  * post-completion read window.
  */
-const DEFAULT_TTL_MS = 30 * 60 * 1_000; // 30 min — see source note above
+export const RUN_STORE_TTL_MS = 30 * 60 * 1_000; // 30 min — see source note above
 
 /**
  * Max runs retained in the store. Each PipelineState is bounded to the
@@ -84,14 +86,14 @@ const DEFAULT_TTL_MS = 30 * 60 * 1_000; // 30 min — see source note above
  * Resident ceiling ≈ MAX_RUNS_MULTIPLIER × MAX_RESPONSE_CHARS chars.
  */
 const MAX_RUNS_MULTIPLIER = 64; // engineering default — see source note above
-const DEFAULT_MAX_RUNS = MAX_RUNS_MULTIPLIER;
+export const RUN_STORE_MAX_RUNS = MAX_RUNS_MULTIPLIER;
 /**
  * Worst-case resident chars if every retained run is at the per-run budget.
  * Exported so the composition root and tests can assert the ceiling is bounded
  * rather than re-deriving the product. ≈ 6.4M chars ≈ 12.8 MB UTF-16.
  */
 export const RUN_STORE_RESIDENT_CHAR_CEILING =
-  DEFAULT_MAX_RUNS * MAX_RESPONSE_CHARS;
+  RUN_STORE_MAX_RUNS * MAX_RESPONSE_CHARS;
 
 export interface RunStoreOptions {
   readonly ttlMs?: number;
@@ -124,8 +126,8 @@ export class InMemoryRunStore implements RunStore {
   private _evicted = 0;
 
   constructor(options: RunStoreOptions = {}) {
-    this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-    this.maxRuns = options.maxRuns ?? DEFAULT_MAX_RUNS;
+    this.ttlMs = options.ttlMs ?? RUN_STORE_TTL_MS;
+    this.maxRuns = options.maxRuns ?? RUN_STORE_MAX_RUNS;
     this.clock = options.clock ?? Date.now;
     this.onEvict = options.onEvict;
   }
@@ -179,12 +181,12 @@ export class InMemoryRunStore implements RunStore {
   /**
    * Evict terminal runs whose age since lastAccess exceeds ttlMs.
    * In-flight runs are skipped regardless of age (a slow host loop is not a
-   * leak — the run is still active). source: see DEFAULT_TTL_MS.
+   * leak — the run is still active). source: see RUN_STORE_TTL_MS.
    */
   private sweepExpired(): void {
     const now = this.clock();
     for (const [runId, entry] of this.runs) {
-      if (!isTerminal(entry.state)) continue;
+      if (!isTerminalRun(entry.state)) continue;
       if (now - entry.lastAccess >= this.ttlMs) {
         this.evict(runId);
       }
@@ -195,7 +197,7 @@ export class InMemoryRunStore implements RunStore {
    * Evict terminal runs LRU-first until size <= maxRuns. If only in-flight runs
    * remain, the store stays over cap rather than dropping an active run — the
    * overflow is bounded by the host's real concurrency, not unbounded growth.
-   * source: see DEFAULT_MAX_RUNS.
+   * source: see RUN_STORE_MAX_RUNS.
    */
   private evictOverCap(): void {
     while (this.runs.size > this.maxRuns) {
@@ -210,7 +212,7 @@ export class InMemoryRunStore implements RunStore {
     let oldestId: string | null = null;
     let oldestAccess = Infinity;
     for (const [runId, entry] of this.runs) {
-      if (!isTerminal(entry.state)) continue;
+      if (!isTerminalRun(entry.state)) continue;
       if (entry.lastAccess < oldestAccess) {
         oldestAccess = entry.lastAccess;
         oldestId = runId;

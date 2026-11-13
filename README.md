@@ -88,6 +88,9 @@ submit_action_result(run_id, result)
     (ask_user, call_pipeline_tool, call_cortex_tool, spawn_subagents,
      write_file, done, failed). emit_message is coalesced into the
      messages array; the host never has to "advance past" a banner.
+  → a run is kept in ~/.prd-gen/runs/<run_id>.json and survives a restart
+    of the server: get_pipeline_state(run_id, format:"action") returns the
+    action the run is waiting on, and the loop goes on from there.
 
 validate_prd_section(content, section_type, known_symbols?, item_offset?)
   → deterministic Hard Output Rules — zero LLM calls, pure regex/parsing.

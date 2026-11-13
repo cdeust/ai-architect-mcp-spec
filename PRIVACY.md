@@ -17,8 +17,8 @@ and does not phone home.
 
 ## What data it stores
 
-Three files, all on your machine, in `~/.prd-gen/`. None is synced or uploaded
-anywhere.
+Three files and one directory, all on your machine, in `~/.prd-gen/`. None is
+synced or uploaded anywhere.
 
 - `~/.prd-gen/evidence.db`, a **SQLite database**, or the absolute path in
   `PRD_GEN_EVIDENCE_DB` when you set it. It holds the quality score of each
@@ -32,9 +32,11 @@ anywhere.
   claims at least two judges ruled on, and when `conclude_verification` is
   called with `claim_types`. With the default settings a pipeline run sends
   at most two judges to an architecture claim and at most one to any other
-  claim, and none to a claim its rules settle: it writes for architecture
-  claims, and for none of them when the cap on judge invocations has left
-  each one judge.
+  claim, and none to a claim its rules settle: it can write for an
+  architecture claim only, and does when both judges of the claim gave a
+  verdict. It writes for none when the cap on judge invocations has left
+  each claim one judge, or when the answer of one of the two could not be
+  read.
 - `~/.prd-gen/judge-observation-log.jsonl`, a **text log**, one line per
   judge verdict, created and written at the moment `reliability.db` is
   written. A line holds the judge's name, the claim's identifier and type,
@@ -55,8 +57,24 @@ anywhere.
   `conclude_verification` it is the identifier the host sends. Apart from
   the identifier and the evidence string, a line holds no text of your PRD.
 
+- `~/.prd-gen/runs/`, a **directory** with one file per pipeline run,
+  `<run id>.json`, readable by your account only. The file holds the state
+  of the run: the feature description and the codebase path you gave, your
+  answers to the clarification questions, the sections of the PRD as they
+  were generated and checked, what the host sent back from the tools and
+  agents the run asked it to call (codebase grounding, memory recall, git
+  history, the check of the PRD against the code graph), the plan of its
+  self-check, and the action the host has to execute next, with its
+  prompts. It is written each time the run advances, so that a
+  restart of the server, or a reload of the plugin, does not lose the run.
+  The file of a finished run is removed 30 minutes after the run was last
+  read or advanced, while the server that ran it is still running. A server
+  that starts removes the files of finished runs written more than 30
+  minutes earlier, and then the oldest files beyond 64. A run that was never
+  finished stays until that cap removes it, or until you delete it.
+
 `reliability.db` and the log are not written when the optional
-`better-sqlite3` addon cannot be loaded.
+`better-sqlite3` addon cannot be loaded. The run files do not need it.
 
 In versions up to 0.9.0 the log was written at a path relative to the
 directory the server was started in,
@@ -86,6 +104,11 @@ you lose the quality history and the strategy records, without
 `reliability.db` the consensus goes back to its default weights, and nothing
 in the server reads the log: it is a record you can hand to calibration
 tooling.
+
+The run files are removed by the server as said above. You can delete
+`~/.prd-gen/runs/`, or a file in it, at any time: a run whose file is gone
+goes on while the server that holds it is running, and is lost when that
+server stops.
 
 ## Contact
 

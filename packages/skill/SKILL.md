@@ -254,14 +254,17 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 
 ## ERROR TRANSPORT
 
-`submit_action_result` itself can return `isError: true` from the MCP layer. Two cases:
+`submit_action_result` itself can return `isError: true` from the MCP layer. Three cases:
 
 | Cause | Recovery |
 |---|---|
 | Concurrent submission rejected — you called `submit_action_result` for the same `run_id` while a previous call was still in flight | The host implementation has a bug. Wait for the in-flight call to return, then submit ONCE. Do not retry blindly. |
-| Unknown `run_id` | The MCP server process restarted and lost in-memory state. The pipeline cannot be resumed — call `start_pipeline` to begin a new run. |
+| Unknown `run_id` | The server holds no run under that id and has no file for it. A run is kept in `~/.prd-gen/runs/` and survives a restart of the server, so the id is wrong, the run is a finished one the server dropped 30 minutes after its last use, or its file was deleted. Call `start_pipeline` to begin a new run. |
+| The state kept for the `run_id` cannot be read | The file of the run is damaged. Tell the user which run, and call `start_pipeline` to begin a new run. |
 
-In both cases, display the `error` field from the response to the user and stop.
+In these cases, display the `error` field from the response to the user and stop.
+
+A restart of the server while a run is in progress is not one of them: the run is still there. Call `get_pipeline_state({ run_id, format: "action" })`, execute the action it returns, and submit its result. Do not resubmit the result you were sending when the connection dropped without that check.
 
 ---
 

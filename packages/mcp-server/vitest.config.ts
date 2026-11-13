@@ -29,5 +29,9 @@ export default defineConfig({
     // transform 201 s / import 242 s across the parallel suite; the same two
     // files complete in well under a second when run alone.
     hookTimeout: 60_000,
+
+    // A home directory per test file: the server writes under `~/.prd-gen/`
+    // (see the file).
+    setupFiles: ["src/__tests__/home-of-its-own.setup.ts"],
   },
 });
