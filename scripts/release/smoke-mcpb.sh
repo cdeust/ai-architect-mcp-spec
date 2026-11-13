@@ -20,12 +20,27 @@
 # releases while the manifest shipped 0.6.1, in CI, in green. A number nobody
 # compares is a number nobody maintains.
 #
+# The health assertion pins a third one (#124): the audit of the v0.8.0 .mcpb
+# read `check_health` on it and found two components false under a status
+# "ok". The status now follows the components; what this script adds is that
+# the archive is in the state its description announces. The .mcpb ships the
+# server and its configuration, not SKILL.md (stage-mcpb.sh copies only
+# skill-config.json) and not better-sqlite3 (stage-mcpb.sh: --omit=optional,
+# a native addon built on the release runner would be wrong for most
+# platforms). So `check_health` on it answers `degraded` with exactly
+# skillAvailable and evidenceDbHealthy false. One component more or one fewer
+# fails here: an archive that lost its configuration, or one that started to
+# ship a component its description says it does not carry.
+#
 # Exit 0 iff: initialize returns a serverInfo whose version is the one
-# manifest.json declares, AND tools/list returns the expected tool count.
+# manifest.json declares, tools/list returns the expected tool count, AND
+# check_health names exactly the expected components as degraded.
 # Exit 1 with the transcript otherwise.
 set -euo pipefail
 
 EXPECTED_TOOLS="${EXPECTED_TOOLS:-17}"
+# The components the .mcpb does not carry, space-separated (see above).
+EXPECTED_DEGRADED="${EXPECTED_DEGRADED:-skillAvailable evidenceDbHealthy}"
 STAGE_ROOT="$(mktemp -d)"
 # Git Bash: mktemp answers an MSYS path (/tmp/…) that node, a native program,
 # cannot open when it reaches it inside an argument or a variable MSYS does
@@ -54,9 +69,14 @@ RESPONSES="$(
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke-mcpb","version":"0"}}}' \
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-  | PRD_GEN_SKILL_CONFIG="${STAGE_DIR}/packages/skill/skill-config.json" \
+    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check_health","arguments":{}}}' \
+  | env -u CLAUDE_PLUGIN_ROOT \
+    PRD_GEN_SKILL_CONFIG="${STAGE_DIR}/packages/skill/skill-config.json" \
     "${COMMAND}" "${ARGS[@]}" 2>"${STAGE_ROOT}/stderr.log" || true
 )"
+# CLAUDE_PLUGIN_ROOT is removed from the server's environment: a .mcpb host
+# does not set it, and a shell that has it (a Claude Code session) would make
+# the server read the SKILL.md of the plugin it points at.
 
 # Read from manifest.json, like COMMAND above: the version a host is told at
 # handshake has to be the version the artifact declares, and neither number is
@@ -68,13 +88,15 @@ EXPECTED_VERSION="$(node -e 'console.log(require("./manifest.json").version)')"
 # every $ inside it belongs to JavaScript, and the three values it needs arrive
 # via the EXPECTED_TOOLS / EXPECTED_VERSION env vars and argv, not via shell
 # interpolation.
-EXPECTED_TOOLS="${EXPECTED_TOOLS}" EXPECTED_VERSION="${EXPECTED_VERSION}" node -e '
+EXPECTED_TOOLS="${EXPECTED_TOOLS}" EXPECTED_VERSION="${EXPECTED_VERSION}" \
+EXPECTED_DEGRADED="${EXPECTED_DEGRADED}" node -e '
 const expected = Number(process.env.EXPECTED_TOOLS);
 const expectedVersion = process.env.EXPECTED_VERSION;
+const expectedDegraded = process.env.EXPECTED_DEGRADED.split(" ").filter(Boolean).sort();
 const lines = process.argv[1].split("\n").filter(Boolean);
-let init = null, tools = null;
+let init = null, tools = null, health = null;
 for (const l of lines) { try { const j = JSON.parse(l);
-  if (j.id === 1) init = j; if (j.id === 2) tools = j; } catch {} }
+  if (j.id === 1) init = j; if (j.id === 2) tools = j; if (j.id === 3) health = j; } catch {} }
 
 const fail = (m) => { console.error("SMOKE FAIL: " + m); process.exit(1); };
 if (!init) fail("no response to initialize — the server did not start");
@@ -87,7 +109,16 @@ if (!tools) fail("no response to tools/list");
 if (tools.error) fail("tools/list returned an error: " + JSON.stringify(tools.error));
 const n = (tools.result?.tools || []).length;
 if (n !== expected) fail(`tools/list returned ${n} tools, expected ${expected}`);
-console.log(`SMOKE OK: ${init.result.serverInfo.name} ${init.result.serverInfo.version}, ${n} tools`);
+if (!health) fail("no response to check_health");
+if (health.error || health.result?.isError) fail("check_health returned an error: " + JSON.stringify(health.error ?? health.result));
+let report;
+try { report = JSON.parse(health.result.content[0].text); } catch { fail("check_health did not answer JSON: " + JSON.stringify(health.result)); }
+const degraded = [...(report.degraded ?? [])].sort();
+if (JSON.stringify(degraded) !== JSON.stringify(expectedDegraded))
+  fail(`check_health names [${degraded.join(", ")}] as degraded, the .mcpb is expected to lack exactly [${expectedDegraded.join(", ")}]`);
+const expectedStatus = expectedDegraded.length === 0 ? "ok" : "degraded";
+if (report.status !== expectedStatus) fail(`check_health status is ${report.status}, expected ${expectedStatus}`);
+console.log(`SMOKE OK: ${init.result.serverInfo.name} ${init.result.serverInfo.version}, ${n} tools, health ${report.status} (${degraded.join(", ")})`);
 ' "${RESPONSES}" || {
   echo "--- server stderr ---" >&2
   head -20 "${STAGE_ROOT}/stderr.log" >&2

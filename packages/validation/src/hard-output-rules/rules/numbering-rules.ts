@@ -10,8 +10,11 @@ import { listedIds, missingNumbers } from "./listed-ids.js";
  * The number of an identifier: at most nine digits, not followed by another.
  * A longer run of digits is not read as an identifier at all. Past 2^53 a
  * number cannot be told from its neighbour, so two such identifiers named the
- * same one as missing twenty times, and 309 digits read as Infinity (review
- * of #236). Nine digits is the bound `dependency_targets_defined` uses.
+ * same one as missing twenty times, and a number past the largest double
+ * (309 nines, say) read as Infinity (review of #236). Nine digits is the
+ * digit count `dependency_targets_defined` uses; that rule also asks for a
+ * word boundary on both sides, which these patterns do not: they still read
+ * `AC-12a`, and `FR-5` inside `NFR-5`, as they did before.
  */
 const ID_NUMBER = String.raw`(\d{1,9})(?!\d)`;
 
