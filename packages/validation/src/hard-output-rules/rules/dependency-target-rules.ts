@@ -3,6 +3,7 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { LINE_BREAK, linesOutsideFences } from "./fenced-blocks.js";
 
 // Document-Level Rule: Dependency Targets Defined
 //
@@ -65,41 +66,6 @@ const PROSE_DEPENDENCY_PATTERN = /\b(?:depends[ \t]+on|blocked[ \t]+by)\b([^|\n.
 
 /** A table header cell that names a dependency column. */
 const DEPENDENCY_HEADER = /^(?:depends[ \t]+on|dependencies|dependency|blocked[ \t]+by)$/i;
-
-/**
- * A fence line: three or more backticks or tildes after any indentation, so a
- * fence nested in a list item (indented four spaces or more) is still one.
- */
-const FENCE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
-
-/** Lines of a section, with CRLF and LF endings alike. */
-const LINE_BREAK = /\r?\n/;
-
-/**
- * The document without its fenced blocks, which show proposed code. As in
- * CommonMark, a block closes only on a fence of the same character, at least
- * as long as the opening one and with nothing after it, so a shorter or other
- * fence inside the block (a nested example) stays inside it.
- */
-function withoutFencedBlocks(content: string): string {
-  const kept: string[] = [];
-  let open: string | null = null;
-  for (const line of content.split(LINE_BREAK)) {
-    const fence = FENCE.exec(line);
-    if (open === null) {
-      if (fence) open = fence[1]!;
-      else kept.push(line);
-    } else if (
-      fence &&
-      fence[1]![0] === open[0] &&
-      fence[1]!.length >= open.length &&
-      fence[2]!.trim() === ""
-    ) {
-      open = null;
-    }
-  }
-  return kept.join("\n");
-}
 
 function idsIn(text: string): string[] {
   return text.match(new RegExp(DEP_ID_SOURCE, "g")) ?? [];
@@ -193,7 +159,7 @@ export function checkDocumentDependencyTargetsDefined(
 ): HardOutputRuleViolation[] {
   // Fences are removed per section: a section ends any block it opened, so
   // an unclosed fence cannot hide the sections after it.
-  const content = sections.map((s) => withoutFencedBlocks(s.content)).join("\n\n");
+  const content = sections.map((s) => linesOutsideFences(s.content).join("\n")).join("\n\n");
 
   const defined = new Set<string>();
   const definitionPattern = new RegExp(DEFINITION_PATTERN.source, DEFINITION_PATTERN.flags);

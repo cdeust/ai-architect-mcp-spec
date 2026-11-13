@@ -3,6 +3,7 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { linesOutsideFences } from "./fenced-blocks.js";
 
 /** A line is a table row when its first non-indent character is `|`. */
 const TABLE_ROW_START = /^[ \t]*\|/;
@@ -167,10 +168,6 @@ export function checkSPArithmetic(
   return violations;
 }
 
-/** Lines of a section, with CRLF and LF endings alike. */
-const LINE_BREAK = /\r?\n/;
-/** A fence line: three or more backticks or tildes after any indentation. */
-const FENCE_LINE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 /** A list item: its indentation, then a bullet or an ordinal, then a space. */
 const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 /**
@@ -196,31 +193,16 @@ const SP_AMOUNT = /(?<![\d.])(\d{1,9}(?:\.\d{1,3})?)[ \t]*(?:SP|story[ \t]+point
 /** Emphasis markers, removed before an amount is read (`**1** SP`). */
 const EMPHASIS = /[*_]/g;
 
-/** The last story-point amount on a line, or null when it names none. */
-function lastSPAmount(line: string): number | null {
+/**
+ * The first or last story-point amount on a line, or null when it names none.
+ * A story states its estimate last (`- STORY-1: … (3 SP stretch) — 2 SP`); a
+ * total states its own amount first (`Total: 3 SP of 5 SP capacity`; review
+ * of #228: the last amount read that total as 5).
+ */
+function spAmount(line: string, which: "first" | "last"): number | null {
   const amounts = [...line.replace(EMPHASIS, "").matchAll(SP_AMOUNT)];
-  return amounts.length > 0 ? Number(amounts[amounts.length - 1]![1]) : null;
-}
-
-/** The lines of a section outside its fenced blocks (CommonMark closing rule). */
-function linesOutsideFences(content: string): string[] {
-  const kept: string[] = [];
-  let open: string | null = null;
-  for (const line of content.split(LINE_BREAK)) {
-    const fence = FENCE_LINE.exec(line);
-    if (open === null) {
-      if (fence) open = fence[1]!;
-      else kept.push(line);
-    } else if (
-      fence &&
-      fence[1]![0] === open[0] &&
-      fence[1]!.length >= open.length &&
-      fence[2]!.trim() === ""
-    ) {
-      open = null;
-    }
-  }
-  return kept;
+  if (amounts.length === 0) return null;
+  return Number(amounts[which === "first" ? 0 : amounts.length - 1]![1]);
 }
 
 /** Equal to the precision `SP_AMOUNT` reads (three decimals). */
@@ -246,14 +228,19 @@ function totalLinesOf(content: string): TotalLine[] {
   let items: StoryItem[] = [];
   for (const line of linesOutsideFences(content)) {
     if (PROSE_TOTAL_START.test(line)) {
-      const amount = lastSPAmount(line);
-      if (amount !== null) totals.push({ amount, items });
-      items = [];
+      // A total line without an amount (`Subtotal: 1 story`) closes nothing:
+      // the stories above it still belong to the next total (review of #228;
+      // emptying the list here made a right total read as wrong).
+      const amount = spAmount(line, "first");
+      if (amount !== null) {
+        totals.push({ amount, items });
+        items = [];
+      }
       continue;
     }
     const item = LIST_ITEM.exec(line);
     if (item) {
-      items.push({ indent: item[1]!.replace(/\t/g, "    ").length, amount: lastSPAmount(line) });
+      items.push({ indent: item[1]!.replace(/\t/g, "    ").length, amount: spAmount(line, "last") });
     }
   }
   return totals;

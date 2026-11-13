@@ -30,6 +30,7 @@
 import { describe, expect, it } from "vitest";
 import { validateSection } from "../index.js";
 import { checkProseSPTotal } from "../hard-output-rules/rules/sp-rules.js";
+import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -161,5 +162,23 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     run(small);
     run(large);
     expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
+  // Review 2 of #228: FENCE_LINE read the rest of the line with `.*`, which
+  // stops at a lone `\r`, so a run of backticks followed by one failed after
+  // O(n²) backtracking (10, 41 and 170 ms at 5k, 10k and 20k backticks). Both
+  // document rules that skip fenced blocks share the pattern.
+  it("backtick runs before a lone carriage return (fenced blocks, both rules)", () => {
+    const build = (n: number): string => "`".repeat(n) + "\r";
+    const prose = (input: string): void => void checkProseSPTotal(input, "user_stories");
+    const deps = (input: string): void =>
+      void checkDocumentDependencyTargetsDefined([{ type: "user_stories", content: input }]);
+    const small = build(64000);
+    const large = build(128000);
+    for (const run of [prose, deps]) {
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
   });
 });
