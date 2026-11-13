@@ -31,7 +31,10 @@ anywhere.
   self-check of a pipeline run that concludes on judge verdicts, for the
   claims at least two judges ruled on, and when `conclude_verification` is
   called with `claim_types`. With the default settings a pipeline run sends
-  two judges to its architecture claims and one to the others.
+  at most two judges to an architecture claim and at most one to any other
+  claim, and none to a claim its rules settle: it writes for architecture
+  claims, and for none of them when the cap on judge invocations has left
+  each one judge.
 - `~/.prd-gen/judge-observation-log.jsonl`, a **text log**, one line per
   judge verdict, created and written at the moment `reliability.db` is
   written. A line holds the judge's name, the claim's identifier and type,

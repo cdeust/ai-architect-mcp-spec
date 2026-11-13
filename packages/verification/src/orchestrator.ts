@@ -33,6 +33,7 @@ import {
   type ConsensusConfig,
   type ConsensusVerdict,
 } from "./consensus.js";
+import { verdictToDirection } from "./consensus-strategy.js";
 
 export interface VerificationPlan {
   /** Every claim extracted from the document/section, both tiers. */
@@ -269,22 +270,27 @@ export function concludeDocument(
 }
 
 /**
- * Determine verdict direction for an observation from a binary PASS/FAIL
- * ground-truth label.
+ * Whether a verdict is FAIL-class, for an observation: the class of the
+ * consensus is the ground truth, and a judge was correct when its verdict is
+ * of that class.
  *
- * Precondition: groundTruthIsFail is a boolean.
- * Postcondition:
- *   - groundTruthIsFail = true  → sensitivity_arm
- *   - groundTruthIsFail = false → specificity_arm
+ * One rule for both, and it is the reader's: `verdictToDirection` puts PASS
+ * and SPEC-COMPLETE on the specificity arm and the three others on the
+ * sensitivity arm, and that arm is where `resolveReliability` looks up the
+ * estimate a judge's verdict is weighed with. An observation written with
+ * another rule lands in a cell the reader uses for something else.
  *
- * source: docs/PHASE_4_PLAN.md §4.1 sensitivity/specificity split.
+ * Until #247 the consensus was classed apart, every verdict but PASS being
+ * FAIL-class, while a judge's SPEC-COMPLETE was PASS-class: two judges that
+ * agreed on SPEC-COMPLETE were both recorded as wrong. The rule cited
+ * `docs/PHASE_4_PLAN.md` §4.1, "PASS-class: PASS only"; the plan has no
+ * such sentence. It defines the two rates on a binary truth and does not
+ * place SPEC-COMPLETE.
+ *
+ * postcondition: true for FAIL, NEEDS-RUNTIME and INCONCLUSIVE.
  */
-function groundTruthToIsFail(verdict: Verdict): boolean {
-  // Conservative mapping: any non-PASS verdict is "FAIL-class" ground truth.
-  // SPEC-COMPLETE, NEEDS-RUNTIME, INCONCLUSIVE are treated as "failed to pass"
-  // for the purpose of sensitivity calibration.
-  // source: docs/PHASE_4_PLAN.md §4.1 — "PASS-class: PASS only."
-  return verdict !== "PASS";
+function isFailClass(verdict: Verdict): boolean {
+  return verdictToDirection(verdict) === "sensitivity_arm";
 }
 
 /**
@@ -334,15 +340,13 @@ function concludeFromVerdicts(
     // enabling the composition root to invoke the oracle and break circularity.
     // Best-effort: flusher errors must not abort the pipeline.
     if (options.onObservation !== undefined && claimType !== undefined) {
-      const groundTruthIsFail = groundTruthToIsFail(result.verdict);
+      const groundTruthIsFail = isFailClass(result.verdict);
       // Wave F: look up external_grounding from the claim index if provided.
       const claim = options.claims?.get(claim_id);
       const external_grounding = claim?.external_grounding;
       for (const jv of vs) {
         if (!isJudgement(jv)) continue;
-        const judgeWasCorrect = groundTruthIsFail
-          ? jv.verdict !== "PASS" && jv.verdict !== "SPEC-COMPLETE"
-          : jv.verdict === "PASS" || jv.verdict === "SPEC-COMPLETE";
+        const judgeWasCorrect = isFailClass(jv.verdict) === groundTruthIsFail;
         try {
           options.onObservation({
             claim_id,

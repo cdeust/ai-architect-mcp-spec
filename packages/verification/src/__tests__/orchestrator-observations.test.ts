@@ -10,7 +10,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { concludeSection } from "../orchestrator.js";
-import type { JudgeVerdict, AgentIdentity } from "@prd-gen/core";
+import { verdictToDirection } from "../consensus-strategy.js";
+import { VerdictSchema, type JudgeVerdict, type AgentIdentity, type Verdict } from "@prd-gen/core";
 import type { ClaimObservationFlushed, ConcludeOptions } from "../orchestrator.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -197,5 +198,59 @@ describe("concludeSection — observation flush hook (D2.B)", () => {
     ).not.toThrow();
 
     expect(flusher).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── #247: one rule classes the consensus and each judge's verdict ───────────
+
+describe("the class of a verdict in an observation (#247)", () => {
+  const ALL = VerdictSchema.options;
+  // The reader's rule, written out: `verdictToDirection` puts these two on
+  // the specificity arm, and `resolveReliability` weighs a judge's verdict
+  // with the estimate of its arm.
+  const PASS_CLASS: readonly Verdict[] = ["PASS", "SPEC-COMPLETE"];
+  const failClass = (v: Verdict) => !PASS_CLASS.includes(v);
+
+  function observe(first: Verdict, second: Verdict) {
+    const observations: ClaimObservationFlushed[] = [];
+    const report = concludeSection("overview", [verdict("C-1", "alice", first), verdict("C-1", "bob", second)], {
+      claimTypes: new Map([["C-1", "nfr_performance"]]),
+      onObservation: (obs) => observations.push(obs),
+    });
+    return { consensus: report.results[0]!.verdict, observations };
+  }
+
+  it("is the class the reader gives it", () => {
+    expect(ALL.filter((v) => verdictToDirection(v) === "specificity_arm")).toEqual(PASS_CLASS);
+  });
+
+  it("records two judges that agree on SPEC-COMPLETE as correct, on a PASS-class truth", () => {
+    // The judge prompt forbids PASS on a performance claim: SPEC-COMPLETE is
+    // the best verdict it can get. Before #247 both judges were recorded as
+    // wrong, against a FAIL-class truth.
+    const { consensus, observations } = observe("SPEC-COMPLETE", "SPEC-COMPLETE");
+    expect(consensus).toBe("SPEC-COMPLETE");
+    expect(observations.map((o) => o.observation)).toEqual([
+      { groundTruthIsFail: false, judgeWasCorrect: true },
+      { groundTruthIsFail: false, judgeWasCorrect: true },
+    ]);
+  });
+
+  it("records a judge as correct exactly when its verdict is of the class of the consensus, for the 25 pairs", () => {
+    for (const first of ALL) {
+      for (const second of ALL) {
+        const { consensus, observations } = observe(first, second);
+        const pair = `${first} + ${second} → ${consensus}`;
+        expect(observations, pair).toHaveLength(2);
+        expect(observations.map((o) => o.observation.groundTruthIsFail), pair).toEqual([
+          failClass(consensus),
+          failClass(consensus),
+        ]);
+        expect(observations.map((o) => o.observation.judgeWasCorrect), pair).toEqual([
+          failClass(first) === failClass(consensus),
+          failClass(second) === failClass(consensus),
+        ]);
+      }
+    }
   });
 });

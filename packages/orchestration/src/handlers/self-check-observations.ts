@@ -14,7 +14,12 @@
  * A judge alone on a claim is not queued. The outcome retained for a claim
  * is the consensus of its verdicts, so a lone judge is compared with its own
  * verdict: it is "correct" by construction, and recording that raises its
- * estimate with no information. The default budget sends one judge per claim
+ * estimate with no information. (By construction since #247: until then a
+ * lone SPEC-COMPLETE was recorded as wrong, the consensus and the judge's
+ * verdict being classed by two rules.) A pair is not free of this: when
+ * its two verdicts are of different classes, the judge the consensus
+ * follows is "correct" and the other "wrong", whatever the claim is worth.
+ * What a pair adds is whether the two agreed. The default budget sends one judge per claim
  * (self-check-verify-budget.ts), so without this rule most observations of a
  * run would be of that kind (review 1 of #245). `conclude_verification`
  * keeps its own rule: what a host sends it is flushed as before.
