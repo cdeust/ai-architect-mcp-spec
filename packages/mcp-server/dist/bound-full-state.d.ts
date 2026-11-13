@@ -113,9 +113,9 @@ export interface Degradation {
 export interface BoundedFullState {
     readonly state: Record<string, unknown>;
     readonly __bounded: {
-        /** Measured serialized size of the payload BEFORE degradation. */
+        /** Measured serialized size of the state BEFORE degradation, without `__bounded`. */
         readonly original_chars: number;
-        /** Measured serialized size AFTER degradation (≤ MAX_RESPONSE_CHARS). */
+        /** Serialized size of this response, `__bounded` included (≤ MAX_RESPONSE_CHARS). */
         readonly final_chars: number;
         /** The budget the payload was fitted to. */
         readonly budget_chars: number;

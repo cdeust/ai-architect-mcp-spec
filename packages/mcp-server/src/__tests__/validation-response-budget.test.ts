@@ -18,6 +18,10 @@ import type { ValidationReport } from "@prd-gen/core";
 import { MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
 import { checkSymbolExistence, validateDocument, validateSection } from "@prd-gen/validation";
 import type { ReportPage } from "../page-validation-report.js";
+import {
+  SELF_DEPENDENT_STORIES as STORIES,
+  UNRESOLVED_SYMBOL_REFERENCES as SYMBOLS,
+} from "./large-inputs.js";
 import { startStdioServer, type StdioServer } from "./stdio-server.js";
 
 // Above vitest's 5 s default: each page is a validator call on a section of
@@ -33,15 +37,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.close();
 });
-
-/** 1,500 stories that each depend on themselves: one violation per story. */
-const STORIES = Array.from(
-  { length: 1_500 },
-  (_, i) => `- STORY-${i}: as a user I want ${i} — ${i % 7} SP. Depends On: STORY-${i}, FR-${9_000 + i}`,
-).join("\n");
-
-/** 4,000 inline-code references to symbols no graph entry resolves. */
-const SYMBOLS = "## Tech\n\n" + Array.from({ length: 4_000 }, (_, i) => `\`Service${i}.run()\``).join(" ");
 
 /** Follows `__page.next_offset` from 0; returns every response text. */
 async function walk(tool: string, args: Record<string, unknown>): Promise<string[]> {

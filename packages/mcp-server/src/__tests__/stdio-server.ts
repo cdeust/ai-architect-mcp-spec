@@ -38,12 +38,18 @@ interface RpcMessage {
 }
 
 /**
+ * precondition:  `prepare`, when given, writes what the server must find at
+ *                start in the evidence database whose path it receives.
  * postcondition: a started and initialized server whose evidence database
  *                lives in a scratch directory of its own.
  */
-export async function startStdioServer(): Promise<StdioServer> {
+export async function startStdioServer(
+  prepare?: (evidenceDbPath: string) => void,
+): Promise<StdioServer> {
   const scratch = mkdtempSync(join(tmpdir(), "prd-gen-stdio-"));
-  const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: join(scratch, "evidence.db") };
+  const evidenceDbPath = join(scratch, "evidence.db");
+  prepare?.(evidenceDbPath);
+  const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: evidenceDbPath };
   const child = spawn(process.execPath, [ENTRY], { env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>();
   let stderr = "";

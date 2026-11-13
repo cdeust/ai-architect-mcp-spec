@@ -82,6 +82,7 @@
  *   ContextDecomposer, commit 462de01.
  */
 import { MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
+import { selfMeasuredChars } from "./fit-page.js";
 /** Compact-JSON serialized size of a value, in chars (= host's chars unit). */
 function serializedChars(value) {
     return JSON.stringify(value).length;
@@ -131,7 +132,13 @@ export function boundFullStateResponse(state) {
     // a marker preview with the running `applied` list so the measurement
     // includes the observability overhead it will ship with.
     const originalChars = wireChars({ state: work });
-    const fits = () => wireChars({
+    // The size of the response as it ships. final_chars is part of the payload
+    // it measures: the payload is serialized once with a 0 placeholder and the
+    // shipped size follows (fit-page.ts). Comparing the placeholder size with
+    // the budget let a response through at up to 5 chars over it: 100,003 chars
+    // at the file_export step of a run with 7,250-char sections (#125, measured
+    // 2026-11-13).
+    const shippedChars = () => selfMeasuredChars(wireChars({
         state: work,
         __bounded: {
             original_chars: originalChars,
@@ -139,13 +146,14 @@ export function boundFullStateResponse(state) {
             budget_chars: budget,
             applied,
         },
-    }) <= budget;
+    }));
+    const fits = () => shippedChars() <= budget;
     if (fits()) {
         return {
             state: work,
             __bounded: {
                 original_chars: originalChars,
-                final_chars: originalChars,
+                final_chars: shippedChars(),
                 budget_chars: budget,
                 applied,
             },
@@ -223,20 +231,11 @@ export function boundFullStateResponse(state) {
             });
         }
     }
-    const finalChars = wireChars({
-        state: work,
-        __bounded: {
-            original_chars: originalChars,
-            final_chars: 0,
-            budget_chars: budget,
-            applied,
-        },
-    });
     return {
         state: work,
         __bounded: {
             original_chars: originalChars,
-            final_chars: finalChars,
+            final_chars: shippedChars(),
             budget_chars: budget,
             applied,
         },

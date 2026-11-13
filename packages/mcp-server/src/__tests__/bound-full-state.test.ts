@@ -187,8 +187,57 @@ describe("boundFullStateResponse — aggregate overshoot fix", () => {
     const bounded = boundFullStateResponse(small);
     expect(bounded.__bounded.applied).toEqual([]);
     expect(bounded.state.codebase_grounding).toBe(null);
-    expect(bounded.__bounded.final_chars).toBe(bounded.__bounded.original_chars);
+    expect(bounded.__bounded.original_chars).toBe(wireChars({ state: small }));
+    // final_chars is the size of the response as shipped, __bounded included.
+    expect(bounded.__bounded.final_chars).toBe(wireChars(bounded));
     expect(wireChars(bounded)).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+  });
+
+  it("reports the shipped size once degraded", () => {
+    const bounded = boundFullStateResponse(worstCaseState());
+    expect(bounded.__bounded.final_chars).toBe(wireChars(bounded));
+  });
+
+  it("a state just under the budget does not ship over it once final_chars is written (#125)", () => {
+    // One section whose content brings the response to the budget, one char
+    // at a time. Before #125 the size was compared with final_chars at 0 and
+    // shipped with final_chars written: up to 5 chars more, 100,003 measured
+    // at the file_export step of a run with 7,250-char sections.
+    const stateWith = (contentChars: number): PipelineState => {
+      const base = newPipelineState({
+        run_id: "run_boundary",
+        feature_description: "boundary",
+        skip_preflight: true,
+      });
+      return PipelineStateSchema.parse({
+        ...base,
+        sections: [
+          {
+            section_type: SectionTypeSchema.options[0]!,
+            status: "passed" as const,
+            attempt: 1,
+            violation_count: 0,
+            last_violations: [],
+            content: bigString(contentChars),
+            attempt_log: [],
+          },
+        ],
+      });
+    };
+    const empty = wireChars(boundFullStateResponse(stateWith(0)));
+    const edge = MAX_RESPONSE_CHARS - empty;
+    let whole = 0;
+    let degraded = 0;
+    for (let contentChars = edge - 30; contentChars <= edge + 30; contentChars++) {
+      const bounded = boundFullStateResponse(stateWith(contentChars));
+      expect(wireChars(bounded), `content of ${contentChars}`).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+      expect(bounded.__bounded.final_chars, `content of ${contentChars}`).toBe(wireChars(bounded));
+      if (bounded.__bounded.applied.length === 0) whole++;
+      else degraded++;
+    }
+    // The sweep crosses the boundary: states that fit whole, then states degraded.
+    expect(whole).toBeGreaterThan(0);
+    expect(degraded).toBeGreaterThan(0);
   });
 
   it("bounds format:'grounding' when grounding+validation overshoot together", () => {

@@ -83,6 +83,7 @@
  */
 
 import { MAX_RESPONSE_CHARS, type PipelineState } from "@prd-gen/orchestration";
+import { selfMeasuredChars } from "./fit-page.js";
 
 /**
  * A shed marker left in place of an omitted blob field. Observable: the caller
@@ -117,9 +118,9 @@ export interface Degradation {
 export interface BoundedFullState {
   readonly state: Record<string, unknown>;
   readonly __bounded: {
-    /** Measured serialized size of the payload BEFORE degradation. */
+    /** Measured serialized size of the state BEFORE degradation, without `__bounded`. */
     readonly original_chars: number;
-    /** Measured serialized size AFTER degradation (≤ MAX_RESPONSE_CHARS). */
+    /** Serialized size of this response, `__bounded` included (≤ MAX_RESPONSE_CHARS). */
     readonly final_chars: number;
     /** The budget the payload was fitted to. */
     readonly budget_chars: number;
@@ -181,23 +182,32 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
   // includes the observability overhead it will ship with.
   const originalChars = wireChars({ state: work });
 
-  const fits = (): boolean =>
-    wireChars({
-      state: work,
-      __bounded: {
-        original_chars: originalChars,
-        final_chars: 0,
-        budget_chars: budget,
-        applied,
-      },
-    }) <= budget;
+  // The size of the response as it ships. final_chars is part of the payload
+  // it measures: the payload is serialized once with a 0 placeholder and the
+  // shipped size follows (fit-page.ts). Comparing the placeholder size with
+  // the budget let a response through at up to 5 chars over it: 100,003 chars
+  // at the file_export step of a run with 7,250-char sections (#125, measured
+  // 2026-11-13).
+  const shippedChars = (): number =>
+    selfMeasuredChars(
+      wireChars({
+        state: work,
+        __bounded: {
+          original_chars: originalChars,
+          final_chars: 0,
+          budget_chars: budget,
+          applied,
+        },
+      }),
+    );
+  const fits = (): boolean => shippedChars() <= budget;
 
   if (fits()) {
     return {
       state: work,
       __bounded: {
         original_chars: originalChars,
-        final_chars: originalChars,
+        final_chars: shippedChars(),
         budget_chars: budget,
         applied,
       },
@@ -278,21 +288,11 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     }
   }
 
-  const finalChars = wireChars({
-    state: work,
-    __bounded: {
-      original_chars: originalChars,
-      final_chars: 0,
-      budget_chars: budget,
-      applied,
-    },
-  });
-
   return {
     state: work,
     __bounded: {
       original_chars: originalChars,
-      final_chars: finalChars,
+      final_chars: shippedChars(),
       budget_chars: budget,
       applied,
     },
