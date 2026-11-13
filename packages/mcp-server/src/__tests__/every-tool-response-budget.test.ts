@@ -290,6 +290,15 @@ const CASES: Record<string, () => Promise<void>> = {
       "item_offset",
     );
     expect(symbols).toBeGreaterThan(1);
+    // 23 chars in, one violation: it was 189,370 chars out before the rules
+    // named the first missing numbers and counted the rest (listed-ids.ts).
+    const wideGap = await measuredWalk(
+      "validate_prd_section",
+      "two criteria numbered 1 and 20000",
+      { content: "- AC-1: a\n- AC-20000: b", section_type: "acceptance_criteria" },
+      "item_offset",
+    );
+    expect(wideGap).toBe(1);
   },
   validate_prd_document: async () => {
     const pages = await measuredWalk(
