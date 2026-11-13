@@ -56,7 +56,7 @@ const VERIFY_DOCUMENT_STEPS: readonly Step[] = [
   { tool: "get_pipeline_state", guidance: "Load the run's current sections by run_id." },
   { tool: "plan_document_verification", guidance: "Emit the cross-section JudgeRequest[] to execute; follow __page.next_offset (request_offset) to the last page." },
   { tool: "submit_action_result", guidance: "Return each judge batch's verdicts to the reducer." },
-  { tool: "validate_prd_document", guidance: "Run the deterministic Hard Output Rules pass (SP arithmetic, AC numbering, coverage)." },
+  { tool: "validate_prd_document", guidance: "Run the deterministic Hard Output Rules pass (SP arithmetic, AC numbering, coverage); follow __page.next_offset (item_offset) to the last page." },
   { tool: "conclude_verification", guidance: "Aggregate verdicts into the VerificationReport." },
 ];
 

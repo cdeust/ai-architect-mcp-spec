@@ -153,24 +153,40 @@ type Seal = (
   applied: ReadonlyArray<Degradation | PromptOmission>,
 ) => BoundedEnvelope;
 
+/** An oversized batch, with what the search needs about each prompt. */
+interface Batch {
+  readonly payload: EnvelopePayload;
+  readonly action: SpawnAction;
+  /**
+   * Serialized size of each invocation's prompt, 0 when there is nothing to
+   * shed (not a string, or empty). Measured once: every probe of the search
+   * sheds a different tail of the same prompts, and measuring them again on
+   * each probe serialized 5.03 times the payload in one call (3.3 MB batch of
+   * 89 prompts, measured 2026-11-13; review of #233).
+   */
+  readonly promptChars: readonly number[];
+}
+
+function batchOf(payload: EnvelopePayload, action: SpawnAction): Batch {
+  const promptChars = action.invocations.map((inv) =>
+    typeof inv.prompt === "string" && inv.prompt.length > 0 ? wireChars(inv.prompt) : 0,
+  );
+  return { payload, action, promptChars };
+}
+
 /**
- * precondition:  0 <= kept <= action.invocations.length.
+ * precondition:  0 <= kept <= batch.action.invocations.length.
  * postcondition: the envelope whose invocations [0, kept) are unchanged and
  *                whose later invocations carry a stub in place of a non-empty
  *                string prompt; `null` when no later invocation has such a
  *                prompt (nothing would be shed).
  */
-function withPromptsKept(
-  payload: EnvelopePayload,
-  action: SpawnAction,
-  kept: number,
-  seal: Seal,
-): BoundedEnvelope | null {
+function withPromptsKept(batch: Batch, kept: number, seal: Seal): BoundedEnvelope | null {
+  const { payload, action, promptChars } = batch;
   let reclaimed = 0;
   const invocations = action.invocations.map((inv, index) => {
-    const prompt = inv.prompt;
-    if (index < kept || typeof prompt !== "string" || prompt.length === 0) return inv;
-    const chars = wireChars(prompt);
+    const chars = promptChars[index];
+    if (index < kept || chars === 0) return inv;
     reclaimed += chars;
     return { ...inv, prompt: stubFor(chars, kept) };
   });
@@ -200,8 +216,8 @@ function withPromptsKept(
  *                payload's own and every later non-empty prompt is a stub;
  *                `next_offset` is the largest such prefix the page search
  *                finds, which is the largest that fits when no shed prompt
- *                is shorter than its stub (a stub is under 300 chars, a
- *                judge prompt is multi-KB). The full action stays
+ *                is shorter than its stub (a stub is about 320 chars in
+ *                place, a judge prompt is multi-KB). The full action stays
  *                recoverable via
  *                `get_pipeline_state(run_id, format:"action")`, paged by
  *                `invocation_offset`.
@@ -223,7 +239,8 @@ export function boundEnvelopeResponse(
   const action = payload.action;
   if (!isSpawnAction(action)) return whole;
 
-  const bounded = (kept: number) => withPromptsKept(payload, action, kept, seal);
+  const batch = batchOf(payload, action);
+  const bounded = (kept: number) => withPromptsKept(batch, kept, seal);
   const noPrompt = bounded(0);
   if (noPrompt === null) return whole;
   // The search needs at least one prefix to try: a batch of one has none.

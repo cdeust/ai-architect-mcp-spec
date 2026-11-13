@@ -11,7 +11,7 @@ Use the `prd-spec-verifier` MCP server for a focused structural check.
 
 1. Read the section without rewriting it.
 2. Select the closest `section_type` accepted by the `validate_prd_section` tool schema. Ask for clarification if the section's role is ambiguous.
-3. Call `validate_prd_section` with the exact content and selected type.
+3. Call `validate_prd_section` with the exact content and selected type. The report is paged: while `__page.next_offset` is not `null`, call again with the same arguments and `item_offset` set to it, and read the violations of every page.
 4. Report rule identifiers, severities, evidence, and the returned score. Separate violations from checks that passed.
 5. State the scope limit: the validator checks implemented formatting, traceability, and consistency rules. It does not prove that claims are true, requirements are desirable, code exists, or the design is feasible.
 

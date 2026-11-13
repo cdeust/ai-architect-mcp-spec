@@ -23,6 +23,7 @@ import { getEvidenceRepo } from "./evidence-db-path.js";
 
 import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
+import { REPORT_PAGING_DESCRIPTION, reportPageResult } from "./page-validation-report.js";
 import { registerBudgetTools } from "./budget-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
@@ -252,27 +253,34 @@ const toolListStrategies = server.tool(
 
 // ─── Tool 6: validate_prd_section ────────────────────────────────────────────
 
+/** Page of a validation report: see page-validation-report.ts (#125). */
+const ItemOffsetSchema = z
+  .number()
+  .int()
+  .min(0)
+  .default(0)
+  .describe("Index of the first report item (violations, then unresolved symbols) of the page to return");
+
 const toolValidateSection = server.tool(
   "validate_prd_section",
-  "Run deterministic Hard Output Rules validation on a single PRD section. Returns violations found — zero LLM calls, pure regex/parsing.",
+  "Run deterministic Hard Output Rules validation on a single PRD section. Returns violations found — zero LLM calls, pure regex/parsing." +
+    REPORT_PAGING_DESCRIPTION,
   {
     content: z.string().describe("The markdown content of the PRD section"),
     section_type: SectionTypeSchema.describe(
       "The type of PRD section being validated",
     ),
     known_symbols: KnownSymbolsSchema,
+    item_offset: ItemOffsetSchema,
   },
   { readOnlyHint: true },
-  async ({ content, section_type, known_symbols }) => {
+  async ({ content, section_type, known_symbols, item_offset }) => {
     // section_type is already validated by SectionTypeSchema at the MCP
     // boundary above. No cast required (cross-audit code-reviewer H5,
     // Phase 3+4, 2026-04).
     const report = withSymbolCheck(validateSection(content, section_type), content, known_symbols);
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify(report, null, 2) },
-      ],
-    };
+    // Paged under MAX_RESPONSE_CHARS (#125). source: page-validation-report.ts.
+    return reportPageResult(report, item_offset);
   },
 );
 
@@ -280,7 +288,8 @@ const toolValidateSection = server.tool(
 
 const toolValidateDocument = server.tool(
   "validate_prd_document",
-  "Run full document validation including cross-section checks (SP arithmetic, AC numbering, FR-AC coverage, test traceability). Returns comprehensive validation report.",
+  "Run full document validation including cross-section checks (SP arithmetic, AC numbering, FR-AC coverage, test traceability). Returns comprehensive validation report." +
+    REPORT_PAGING_DESCRIPTION,
   {
     sections: z
       .array(
@@ -294,16 +303,14 @@ const toolValidateDocument = server.tool(
       )
       .describe("Array of PRD sections to validate"),
     known_symbols: KnownSymbolsSchema,
+    item_offset: ItemOffsetSchema,
   },
   { readOnlyHint: true },
-  async ({ sections, known_symbols }) => {
+  async ({ sections, known_symbols, item_offset }) => {
     const contents = sections.map((s) => s.content);
     const report = withSymbolCheck(validateDocument(sections), contents, known_symbols);
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify(report, null, 2) },
-      ],
-    };
+    // Paged under MAX_RESPONSE_CHARS (#125). source: page-validation-report.ts.
+    return reportPageResult(report, item_offset);
   },
 );
 
