@@ -28,4 +28,4 @@ pnpm verify    # install + build + test, same as CI
   comparison with the main branch, no forced push, no comment after an approve.
 - Issues: no issue waits for the owner (`docs/agent-guidance.md`, "Issues: no issue waits
   for the owner"). Decide, write the decision and its reason, deliver; hold only for the
-  irreversible, a missing access or a named open dependency.
+  irreversible, a missing access, a named open dependency or the attempt cap.
