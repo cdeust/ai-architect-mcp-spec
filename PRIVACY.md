@@ -70,8 +70,10 @@ synced or uploaded anywhere.
   The file of a finished run is removed 30 minutes after the run was last
   read or advanced, while the server that ran it is still running. A server
   that starts removes the files of finished runs written more than 30
-  minutes earlier, and then the oldest files beyond 64. A run that was never
-  finished stays until that cap removes it, or until you delete it.
+  minutes earlier. If more than 64 files are left, it removes the oldest
+  finished runs, and after them the oldest runs that were never finished,
+  until 64 are left. A run that was never finished stays until that cap
+  removes it, or until you delete it.
 
 `reliability.db` and the log are not written when the optional
 `better-sqlite3` addon cannot be loaded. The run files do not need it.
@@ -106,9 +108,11 @@ in the server reads the log: it is a record you can hand to calibration
 tooling.
 
 The run files are removed by the server as said above. You can delete
-`~/.prd-gen/runs/`, or a file in it, at any time: a run whose file is gone
-goes on while the server that holds it is running, and is lost when that
-server stops.
+`~/.prd-gen/runs/`, or a file in it, at any time. While the server that
+holds a run is running, the run goes on and its file is written again the
+next time the run advances: to take the text of a run off the disk, delete
+its file once the run is finished or its server is stopped. A run whose
+file is gone when its server stops is lost.
 
 ## Contact
 
