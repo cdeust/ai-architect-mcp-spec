@@ -5,6 +5,7 @@ import { mkdirSync, existsSync } from "node:fs";
 // (rules_checked / rules_passed / critical_violations, all INTEGER columns),
 // never rule identities. Those live on ValidationReport in the domain layer.
 import type { ThinkingStrategy, PRDContext } from "../index.js";
+import { makeAuditFlagsNullable } from "./quality-score-migration.js";
 
 /**
  * Minimal structural interface for the better-sqlite3 Database constructor
@@ -92,7 +93,8 @@ export interface PRDQualityScore {
   readonly rulesPassed: number;
   readonly criticalViolations: number;
   readonly totalScore: number;
-  readonly auditFlagsRaised: number;
+  /** `null` when no audit-flag pass ran, as in the pipeline (#121); 0 says one ran and raised nothing. */
+  readonly auditFlagsRaised: number | null;
 }
 
 export interface AdaptiveThreshold {
@@ -162,7 +164,7 @@ export class EvidenceRepository {
         rules_passed INTEGER NOT NULL,
         critical_violations INTEGER NOT NULL,
         total_score REAL NOT NULL,
-        audit_flags_raised INTEGER NOT NULL DEFAULT 0,
+        audit_flags_raised INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
@@ -183,6 +185,7 @@ export class EvidenceRepository {
       CREATE INDEX IF NOT EXISTS idx_prd_quality_scores_prd_id
         ON prd_quality_scores(prd_id);
     `);
+    makeAuditFlagsNullable(this.db);
   }
 
   // ─── Strategy Executions ─────────────────────────────────────────────────
@@ -307,7 +310,7 @@ export class EvidenceRepository {
       rules_passed: number;
       critical_violations: number;
       total_score: number;
-      audit_flags_raised: number;
+      audit_flags_raised: number | null;
     }>;
 
     return rows.map((row) => ({

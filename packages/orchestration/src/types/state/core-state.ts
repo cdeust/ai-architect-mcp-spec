@@ -10,6 +10,21 @@ import { PostSpecsStateSchema } from "./post-specs-state.js";
 import { VerifyBudgetConfigSchema } from "./verify-budget.js";
 import { VerificationPolicySchema } from "./verification-policy.js";
 
+/**
+ * What a concluded self-check knows about the quality of its document: the
+ * figures of `validateDocument`. The run id and the audit flags are not here:
+ * the composition root adds the first, and no audit-flag pass runs in the
+ * pipeline (#121).
+ */
+export const QualityScoreRecordSchema = z.object({
+  prd_context: PRDContextSchema,
+  rules_checked: z.number().int().nonnegative(),
+  rules_passed: z.number().int().nonnegative(),
+  critical_violations: z.number().int().nonnegative(),
+  total_score: z.number().min(0).max(1),
+});
+export type QualityScoreRecord = z.infer<typeof QualityScoreRecordSchema>;
+
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
   question: z.string(),
@@ -239,6 +254,14 @@ export const PipelineStateSchema = z.object({
    * source: Phase 4 strategy-wiring (2026-04).
    */
   strategy_executions: z.array(ExecutionResultSchema).default([]),
+  /**
+   * Quality scores awaiting persistence: one per self-check that concluded,
+   * queued by `handlers/self-check.ts` and drained by the composition root
+   * (mcp-server) into `EvidenceRepository.recordQualityScore`, as
+   * `strategy_executions` is. Until #121 nothing called
+   * `recordQualityScore`, so `get_quality_history` could never return data.
+   */
+  quality_scores: z.array(QualityScoreRecordSchema).default([]),
   /**
    * Global Cortex memory-recall summary for the whole run, fetched ONCE
    * (query = feature_description) at the start of input_analysis — before

@@ -37,6 +37,7 @@ export function newPipelineState(input: {
     written_files: [],
     verification_plan: null,
     strategy_executions: [],
+    quality_scores: [],
   });
 }
 

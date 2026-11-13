@@ -168,8 +168,9 @@ describe("evidence repository wiring", () => {
   it("both composition roots take the repository from getEvidenceRepo()", () => {
     // Exact call counts: one remaining call must not hide a removed one
     // (index.ts: check_health, get_quality_history, get_strategy_effectiveness;
-    // pipeline-tools.ts: eviction prune, strategy-execution tracker).
-    const expected: Record<string, number> = { "index.ts": 3, "pipeline-tools.ts": 2 };
+    // pipeline-tools.ts: eviction prune, strategy-execution tracker, quality
+    // scores, #121).
+    const expected: Record<string, number> = { "index.ts": 3, "pipeline-tools.ts": 3 };
     for (const f of Object.keys(expected)) {
       // Comments stripped first: a comment naming getEvidenceRepo() must not
       // satisfy this (review r4502015550).
