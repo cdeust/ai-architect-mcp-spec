@@ -134,13 +134,22 @@ function trailingNumberIn(cellsText: string): number | null {
 const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 
 /**
- * The label of a total row, in optional bold: Total, Sum or Grand Total, as a
- * whole word. Without the `\b`, the lookahead of the data row took any first
- * cell that starts with one of them for a total and skipped the row, so
- * `| Summary task | 5 |` or `| Totals carried | 2 |` was left out of the sum
+ * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
+ * Grand Total or Grand Totals, in optional bold, and nothing else.
+ *
+ * The total row and the lookahead of the data row share this one definition,
+ * so every row is either a total or a data row. With a label prefix in the
+ * lookahead (`Total|Sum` then `\b`) and the whole cell in the total row, the
+ * two disagreed: `| Totals | 10 |` was counted as data and never read as a
+ * total, so beside `| **Grand Total** | 10 |` a right total was reported as
+ * `sum to 20`, and `| Total SP |`, `| Sum-up task |` or `| Totalité |` was
+ * skipped from the sum without being read as a total (`\b` is ASCII only and
+ * stops at any non-word character; review of #246). A first cell that only
+ * starts with a label (`| Summary task |`, `| Totals carried |`) is data
  * (review of #242).
  */
-const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)\\b`;
+const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)`;
+const TOTAL_CELL = `${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|`;
 
 /**
  * The table rows of `checkSPArithmetic`, as sources: each call builds its own
@@ -171,8 +180,8 @@ const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)\\b`;
  * markers, none of which matches a line terminator, so neither row pattern
  * spans two lines (review of #242).
  */
-const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`;
-const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_LABEL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
+const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_CELL}(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_CELL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
 
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(

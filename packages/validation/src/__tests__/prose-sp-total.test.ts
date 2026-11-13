@@ -233,7 +233,7 @@ describe("sp_arithmetic: prose total of a story list", () => {
   });
 
   it("table sp_arithmetic does not join a first cell without a closing pipe to the next line, whatever ends the line", () => {
-    // Review of #242: every test above ends its lines with `\n`, so a first
+    // Review of #242: every table test above ends its lines with `\n`, so a first
     // cell of `[^|\n]+` still passed them. A lone `\r`, U+2028 or U+2029 ends a
     // line for the `m` flag too; a first cell that crossed it read `Note | 40 |`
     // as 40 SP (`rows sum to 43` against a right total of 3).
@@ -259,6 +259,30 @@ describe("sp_arithmetic: prose total of a story list", () => {
     // A real total row is still skipped from the sum, bold or not.
     const total = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Sum | 3 |", "| **Grand Total** | 3 |"].join("\n");
     expect(checkSPArithmetic(total, "timeline")).toEqual([]);
+  });
+
+  it("table sp_arithmetic reads a plural total row as a total and not as data", () => {
+    // Review of #246: `| Totals | 10 |` was counted as a story and never read
+    // as a total, so beside a grand total of 10 the rows summed to 20.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| STORY-2 | 7 |", "| Totals | 10 |", "| **Grand Total** | 10 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    const wrong = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| STORY-2 | 7 |", "| **Totals** | 11 |", "| Grand Totals | 10 |"].join("\n");
+    expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 11 but individual rows sum to 10",
+    ]);
+  });
+
+  it("table sp_arithmetic counts every row that is not a total row", () => {
+    // Review of #246: the data row skipped any first cell that starts with a
+    // label then a non-word character (`\b` is ASCII only), while the total
+    // row reads only a cell that is a label, so `Total SP`, `Sum-up task` and
+    // `Totalité` were neither counted nor read as a total.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 1 |", "| Total SP | 2 |", "| Sum-up task | 3 |", "| Totalité | 4 |", "| **Total** | 10 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    const wrong = table.replace("| **Total** | 10 |", "| **Total** | 1 |");
+    expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 1 but individual rows sum to 10",
+    ]);
   });
 
   it("the document check reads user_stories once and no other prose section", () => {
