@@ -9,7 +9,7 @@
  * Real better-sqlite3 against temp files; skipped if the native module is
  * unavailable (same contract as evidence-learning.test.ts).
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import { tryCreateEvidenceRepository, type PRDQualityScore } from "../index.js";
 interface RawDatabase {
   exec(sql: string): void;
   pragma(source: string): unknown;
+  prepare(sql: string): { all(): unknown[] };
   close(): void;
 }
 type RawConstructor = new (path: string) => RawDatabase;
@@ -135,6 +136,43 @@ describe.skipIf(Raw === null)("quality scores without audit flags (#121)", () =>
       "critical_violations", "total_score", "audit_flags_raised", "created_at",
     ]);
     after.close();
+  });
+
+  it("leaves the database as it was, and writable, when the rebuild fails", () => {
+    const path = tempDb();
+    const before = new Raw!(path);
+    before.exec(OLD_SCHEMA);
+    // A table this schema does not have, to make the rebuild fail after its
+    // first statements: the repository opens with foreign_keys ON, so
+    // dropping the old table, which a note refers to, is refused.
+    before.exec(`
+      INSERT INTO prd_quality_scores
+        (prd_id, prd_context, rules_checked, rules_passed, critical_violations, total_score, audit_flags_raised)
+      VALUES ('run_old', 'bug', 7, 5, 0, 0.5, 2);
+      CREATE TABLE score_notes (score_id INTEGER NOT NULL REFERENCES prd_quality_scores(id));
+      INSERT INTO score_notes (score_id) VALUES (1);
+    `);
+    before.close();
+
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(tryCreateEvidenceRepository(path)).toBeNull();
+    expect(String(stderr.mock.calls[0]![0])).toContain("FOREIGN KEY constraint failed");
+    stderr.mockRestore();
+
+    const after = new Raw!(path);
+    // Rolled back: the old table with its row, and no half-built copy.
+    expect(notNullOf(after, "audit_flags_raised")).toBe(1);
+    expect(after.pragma("table_info(prd_quality_scores_nullable)")).toEqual([]);
+    // No write lock is left by the connection that failed: this insert
+    // would wait for it, then fail with SQLITE_BUSY.
+    after.exec(`
+      INSERT INTO prd_quality_scores
+        (prd_id, prd_context, rules_checked, rules_passed, critical_violations, total_score)
+      VALUES ('run_after', 'feature', 1, 1, 0, 1);
+    `);
+    const ids = after.prepare("SELECT prd_id FROM prd_quality_scores ORDER BY id").all();
+    after.close();
+    expect(ids).toEqual([{ prd_id: "run_old" }, { prd_id: "run_after" }]);
   });
 
   it("leaves a database of the new schema as it is when it is opened again", () => {
