@@ -97,6 +97,19 @@ describe("dependency_targets_defined", () => {
     expect(messages([section])).toEqual([]);
   });
 
+  it("does not read a backtick line with a backtick in its info string as a fence", () => {
+    // Review of #232: as in CommonMark, "```npm i``` installs" is a code span
+    // in a paragraph. Read as a fence it opened a block that never closed and
+    // hid the dependency below it.
+    const section: Section = {
+      type: "technical_specification",
+      content: ["```npm i``` installs the tool.", "- STORY-1: depends on FR-404"].join("\n"),
+    };
+    expect(messages([section])).toEqual([
+      "1 dependency target(s) are defined nowhere in the document: FR-404",
+    ]);
+  });
+
   it("keeps the dependency column in place when a cell holds an escaped pipe", () => {
     const section: Section = {
       type: "requirements",

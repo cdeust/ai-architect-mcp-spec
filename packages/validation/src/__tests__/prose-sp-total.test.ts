@@ -190,6 +190,20 @@ describe("sp_arithmetic: prose total of a story list", () => {
     ]);
   });
 
+  it("table sp_arithmetic reads a row indented with a no-break space, a form feed or a vertical tab", () => {
+    // Review of #232: `\s*` read these indentations before #232 narrowed the
+    // patterns to `[ \t]*`; the line-bounded space class reads them again.
+    const table = ["| Story | SP |", "|---|---|", "\u00a0| STORY-1 | 2 |", "\f| STORY-2 | 1 |", "\v| **Total** | 5 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 5 but individual rows sum to 3",
+    ]);
+  });
+
+  it("table sp_arithmetic skips a separator or total row whatever the space after its pipe", () => {
+    const table = ["| Story | SP |", "|   ---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "|\u00a0 **Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },

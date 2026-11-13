@@ -177,6 +177,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 
+  // Review of #232: the data row read `\|[ \t]*` then the cell `([^|]+)`, two
+  // loops that both match spaces, so a pipe followed by a run of spaces and no
+  // closing pipe split the run in O(n²) ways before failing.
+  it("a pipe followed by a run of spaces and no closing pipe (table sp_arithmetic)", () => {
+    const build = (n: number): string => "|" + " ".repeat(n);
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    const small = build(16000);
+    const large = build(32000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
   // Review 2 of #228: FENCE_LINE read the rest of the line with `.*`, which
   // stops at a lone `\r`, so a run of backticks followed by one failed after
   // O(n²) backtracking (10, 41 and 170 ms at 5k, 10k and 20k backticks). Both
