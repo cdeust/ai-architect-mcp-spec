@@ -94,20 +94,24 @@ function stubFor(chars, nextOffset) {
             `follow __page.next_offset as invocation_offset until it is null`,
     };
 }
+function batchOf(payload, action) {
+    const promptChars = action.invocations.map((inv) => typeof inv.prompt === "string" && inv.prompt.length > 0 ? wireChars(inv.prompt) : 0);
+    return { payload, action, promptChars };
+}
 /**
- * precondition:  0 <= kept <= action.invocations.length.
+ * precondition:  0 <= kept <= batch.action.invocations.length.
  * postcondition: the envelope whose invocations [0, kept) are unchanged and
  *                whose later invocations carry a stub in place of a non-empty
  *                string prompt; `null` when no later invocation has such a
  *                prompt (nothing would be shed).
  */
-function withPromptsKept(payload, action, kept, seal) {
+function withPromptsKept(batch, kept, seal) {
+    const { payload, action, promptChars } = batch;
     let reclaimed = 0;
     const invocations = action.invocations.map((inv, index) => {
-        const prompt = inv.prompt;
-        if (index < kept || typeof prompt !== "string" || prompt.length === 0)
+        const chars = promptChars[index];
+        if (index < kept || chars === 0)
             return inv;
-        const chars = wireChars(prompt);
         reclaimed += chars;
         return { ...inv, prompt: stubFor(chars, kept) };
     });
@@ -137,8 +141,8 @@ function withPromptsKept(payload, action, kept, seal) {
  *                payload's own and every later non-empty prompt is a stub;
  *                `next_offset` is the largest such prefix the page search
  *                finds, which is the largest that fits when no shed prompt
- *                is shorter than its stub (a stub is under 300 chars, a
- *                judge prompt is multi-KB). The full action stays
+ *                is shorter than its stub (a stub is about 320 chars in
+ *                place, a judge prompt is multi-KB). The full action stays
  *                recoverable via
  *                `get_pipeline_state(run_id, format:"action")`, paged by
  *                `invocation_offset`.
@@ -157,7 +161,8 @@ export function boundEnvelopeResponse(payload, budgetChars = MAX_RESPONSE_CHARS)
     const action = payload.action;
     if (!isSpawnAction(action))
         return whole;
-    const bounded = (kept) => withPromptsKept(payload, action, kept, seal);
+    const batch = batchOf(payload, action);
+    const bounded = (kept) => withPromptsKept(batch, kept, seal);
     const noPrompt = bounded(0);
     if (noPrompt === null)
         return whole;

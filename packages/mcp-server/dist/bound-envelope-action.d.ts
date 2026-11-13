@@ -104,8 +104,8 @@ export interface BoundedEnvelope extends EnvelopePayload {
  *                payload's own and every later non-empty prompt is a stub;
  *                `next_offset` is the largest such prefix the page search
  *                finds, which is the largest that fits when no shed prompt
- *                is shorter than its stub (a stub is under 300 chars, a
- *                judge prompt is multi-KB). The full action stays
+ *                is shorter than its stub (a stub is about 320 chars in
+ *                place, a judge prompt is multi-KB). The full action stays
  *                recoverable via
  *                `get_pipeline_state(run_id, format:"action")`, paged by
  *                `invocation_offset`.

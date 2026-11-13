@@ -138,12 +138,14 @@ loading throughout — the detail is never lost, just fetched on demand.
 
 Every `start_pipeline` / `submit_action_result` response carries a `__bounded`
 marker. When its `applied` list records `action.invocations[].prompt`, the
-`spawn_subagents` prompts were replaced by `omitted` stubs to fit the budget.
-Fetch them with
-`get_pipeline_state({ run_id, format: "action" })`: the response is paged by whole
-invocations under the same budget. Call again with
+`spawn_subagents` batch did not fit the budget: the response carries the prompts
+of the invocations before that record's `next_offset`, and the prompts from
+`next_offset` on were replaced by `omitted` stubs. Fetch those with
+`get_pipeline_state({ run_id, format: "action", invocation_offset: next_offset })`:
+the response is paged by whole invocations under the same budget. Call again with
 `invocation_offset: __page.next_offset` until `next_offset` is `null`, then
-dispatch the full batch.
+dispatch the full batch: the invocations whose prompts the response carried,
+followed by those of every page, in that order.
 
 `get_pipeline_state` is **read-only** and does not advance the pipeline. Use it
 for diagnosis only, except `format: "action"`, which is the required recovery
