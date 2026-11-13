@@ -62,7 +62,14 @@ ARGS=()
 while IFS= read -r arg; do
   ARGS+=("${arg//\$\{__dirname\}/${STAGE_DIR}}")
 done < <(node -e 'for (const a of require("./manifest.json").server.mcp_config.args) console.log(a)')
-echo "launching: ${COMMAND} ${ARGS[*]}" >&2
+# The environment is read from manifest.json too (review of #238): a host
+# sets what `server.mcp_config.env` declares, so a manifest that loses a
+# variable must fail here as it would there. ENV_VARS holds NAME=value pairs.
+ENV_VARS=()
+while IFS= read -r pair; do
+  ENV_VARS+=("${pair//\$\{__dirname\}/${STAGE_DIR}}")
+done < <(node -e 'for (const [name, value] of Object.entries(require("./manifest.json").server.mcp_config.env ?? {})) console.log(`${name}=${value}`)')
+echo "launching: ${COMMAND} ${ARGS[*]} (environment: ${ENV_VARS[*]-})" >&2
 
 RESPONSES="$(
   printf '%s\n' \
@@ -70,13 +77,16 @@ RESPONSES="$(
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check_health","arguments":{}}}' \
-  | env -u CLAUDE_PLUGIN_ROOT \
-    PRD_GEN_SKILL_CONFIG="${STAGE_DIR}/packages/skill/skill-config.json" \
+  | env -u CLAUDE_PLUGIN_ROOT -u PRD_GEN_SKILL_CONFIG \
+    ${ENV_VARS[@]+"${ENV_VARS[@]}"} \
     "${COMMAND}" "${ARGS[@]}" 2>"${STAGE_ROOT}/stderr.log" || true
 )"
 # CLAUDE_PLUGIN_ROOT is removed from the server's environment: a .mcpb host
 # does not set it, and a shell that has it (a Claude Code session) would make
-# the server read the SKILL.md of the plugin it points at.
+# the server read the SKILL.md of the plugin it points at. PRD_GEN_SKILL_CONFIG
+# is removed for the same reason, then set from the manifest when the manifest
+# declares it: a value inherited from the shell must not stand in for it.
+# ${ENV_VARS[@]+…}: bash 3.2 (macOS) treats an empty array as unset under -u.
 
 # Read from manifest.json, like COMMAND above: the version a host is told at
 # handshake has to be the version the artifact declares, and neither number is

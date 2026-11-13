@@ -20,6 +20,7 @@ import { SectionTypeSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTy
 import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
 import { getEvidenceRepo } from "./evidence-db-path.js";
+import { drainQualityScores } from "./quality-score-drain.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
 import { boundFullStateResponse, boundGroundingResponse, } from "./bound-full-state.js";
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
@@ -118,6 +119,16 @@ function drainStrategyExecutions(state) {
         }
     }
     return { ...state, strategy_executions: [] };
+}
+/**
+ * Both queues the reducer fills for the evidence store, emptied before a
+ * state is stored. The repository is asked for only when a score waits.
+ */
+function drainEvidenceQueues(state) {
+    const drained = drainStrategyExecutions(state);
+    if (drained.quality_scores.length === 0)
+        return drained;
+    return drainQualityScores(drained, getEvidenceRepo());
 }
 /**
  * Per-run_id in-flight guard for submit_action_result. The reducer pattern
@@ -246,7 +257,7 @@ export function registerPipelineTools(server) {
         // an empty queue" must hold at every storage boundary or the queue
         // grows silently when future handlers move toward the entry point
         // (cross-audit feynman CRIT-1 + dijkstra H2, Phase 4 wiring, 2026-04).
-        const drained = drainStrategyExecutions(state);
+        const drained = drainEvidenceQueues(state);
         runStore.set(drained);
         // Cache the UNBOUNDED action before it is potentially shed by
         // boundEnvelopeResponse — the recovery path for a spawn_subagents
@@ -299,11 +310,11 @@ export function registerPipelineTools(server) {
                 };
             }
             const out = step({ state: current, result });
-            // Drain strategy_executions BEFORE writing state — keeps the
-            // queue from accumulating on disk if the runStore is later
-            // backed by persistent storage. drainStrategyExecutions is a
-            // no-op when the queue is empty.
-            const drained = drainStrategyExecutions(out.state);
+            // Drain strategy_executions and quality_scores BEFORE writing
+            // state — keeps the queues from accumulating on disk if the
+            // runStore is later backed by persistent storage.
+            // drainEvidenceQueues is a no-op when both queues are empty.
+            const drained = drainEvidenceQueues(out.state);
             runStore.set(drained);
             // Cache the UNBOUNDED action before it is potentially shed by
             // boundEnvelopeResponse — see start_pipeline's identical comment.

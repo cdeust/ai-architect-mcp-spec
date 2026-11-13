@@ -49,6 +49,7 @@ import {
   assignJudgeModels,
 } from "./self-check-verify-budget.js";
 import { handlePrdValidation } from "./self-check-prd-validation.js";
+import { withDocumentScore } from "./self-check-quality-score.js";
 import {
   invocationIdFor,
   buildJudgeIndex,
@@ -208,6 +209,7 @@ function finalize(
   return {
     state: {
       ...state,
+      quality_scores: withDocumentScore(state, docReport),
       pending_completion: {
         summary,
         artifacts: state.sections.map((s) => `${s.section_type}: ${s.status}`),

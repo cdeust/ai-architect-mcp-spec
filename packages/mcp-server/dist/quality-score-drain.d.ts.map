@@ -1,0 +1,1 @@
+{"version":3,"file":"quality-score-drain.d.ts","sourceRoot":"","sources":["../src/quality-score-drain.ts"],"names":[],"mappings":"AAAA;;;;;;GAMG;AACH,OAAO,KAAK,EAAE,kBAAkB,EAAE,MAAM,eAAe,CAAC;AACxD,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,wBAAwB,CAAC;AAE5D;;;;;;;;;;;;;GAaG;AACH,wBAAgB,kBAAkB,CAChC,KAAK,EAAE,aAAa,EACpB,IAAI,EAAE,IAAI,CAAC,kBAAkB,EAAE,oBAAoB,CAAC,GAAG,IAAI,GAC1D,aAAa,CAmBf"}
