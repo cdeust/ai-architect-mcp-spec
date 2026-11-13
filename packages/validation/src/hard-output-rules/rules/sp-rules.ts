@@ -133,6 +133,9 @@ function trailingNumberIn(cellsText: string): number | null {
  */
 const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 
+/** The label of a total row, in optional bold: Total, Sum or Grand Total. */
+const TOTAL_LABEL = `(?:\\*{0,2})(?:Total|Sum|Grand${INLINE_SPACE}+Total)`;
+
 /**
  * The table rows of `checkSPArithmetic`, as sources: each call builds its own
  * objects (see `NUMBER_PATTERN`).
@@ -145,17 +148,22 @@ const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
  * space, `\f` or `\v` is read as it was with `\s*`.
  *
  * The data row has no space loop between its pipe and its first cell: the
- * cell `[^|]+` starts at the pipe and reads the spaces itself. With a
- * `[ \t]*` there, both loops matched a run of spaces, so a `|` followed by n
- * spaces and no closing pipe split the run in O(n²) ways before failing (50,
- * 206 and 856 ms at 5k, 10k and 20k spaces; review of #232). The lookahead
- * keeps its own space loop, so a separator or a total row is still skipped
- * whatever the space after its pipe; the first cell is not read (only the
- * cells after it carry the estimate).
+ * cell starts at the pipe and reads the spaces itself. With a `[ \t]*` there,
+ * both loops matched a run of spaces, so a `|` followed by n spaces and no
+ * closing pipe split the run in O(n²) ways before failing (50, 206 and 856 ms
+ * at 5k, 10k and 20k spaces; review of #232). The lookahead keeps its own
+ * space loop, so a separator or a total row is still skipped whatever the
+ * space after its pipe; the first cell is not read (only the cells after it
+ * carry the estimate).
+ *
+ * The first cell holds neither a pipe nor a line terminator. With `[^|]+` it
+ * crossed the line end, so a line holding only `|` read the next line as the
+ * rest of its row, and the lookahead, which looks only after that pipe, did
+ * not skip the next line when it was a total (review of #234). The other
+ * loops of both rows are `.` or `INLINE_SPACE`, which stop at a line end.
  */
-const TOTAL_LABEL = "(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)";
 const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`;
-const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_LABEL}))([^|]+)\\|(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_LABEL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
 
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(

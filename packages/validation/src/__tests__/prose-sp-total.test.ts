@@ -204,6 +204,34 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(checkSPArithmetic(table, "timeline")).toEqual([]);
   });
 
+  it("table sp_arithmetic reads a total row with a no-break space after its pipe as the total", () => {
+    // Review of #234: with a right total the test above passes even if the
+    // total pattern stopped reading the space, since an unread total reports
+    // nothing. A wrong total pins both patterns: unread by the total pattern,
+    // nothing is reported; read as a data row, its 4 joins the sum.
+    const table = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "|\u00a0 **Total** | 4 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 4 but individual rows sum to 3",
+    ]);
+  });
+
+  it("table sp_arithmetic does not join a line holding only a pipe to the next line", () => {
+    // Review of #234: the first cell `[^|]+` crossed the line end, so a lone
+    // `|` read the next line as the rest of its row (here 40 SP of prose),
+    // and the lookahead that skips a separator or a total never saw that line.
+    const table = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "|", "Note | 40 |", "| **Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    const total = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "|", "Total | 9 |", "| **Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(total, "timeline")).toEqual([]);
+    // Nor does "Grand Total" span two lines: `\s+` between the words did.
+    const grand = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "| Grand", "Total | 9 |"].join("\n");
+    expect(checkSPArithmetic(grand, "timeline")).toEqual([]);
+    const sameLine = ["| Story | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 1 |", "| **Grand\u00a0 Total** | 9 |"].join("\n");
+    expect(checkSPArithmetic(sameLine, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 9 but individual rows sum to 3",
+    ]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },
