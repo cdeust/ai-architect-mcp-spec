@@ -142,6 +142,40 @@ describe("concludeSection — observation flush hook (D2.B)", () => {
     expect(charlieObs!.observation.judgeWasCorrect).toBe(false);
   });
 
+  it.each(["parse_error", "judge_invocation_failed", "plan_mismatch"])(
+    "#121: a verdict that carries %s is not flushed, and the claim still concludes on every verdict",
+    (caveat) => {
+      // docs/PHASE_4_PLAN.md, "Parse-failure rate as a separate special-cause
+      // signal": such verdicts "are NOT included in the reliability
+      // calculation". They stand for a failure of the machinery, not for
+      // what the judge concluded.
+      const observations: ClaimObservationFlushed[] = [];
+      const failed: JudgeVerdict = { ...verdict("C-1", "carol", "INCONCLUSIVE", 0), caveats: [caveat] };
+      const verdicts = [verdict("C-1", "alice", "PASS"), verdict("C-1", "bob", "PASS"), failed];
+      const options: ConcludeOptions = { claimTypes: new Map([["C-1", "correctness"]]) };
+
+      const report = concludeSection("overview", verdicts, {
+        ...options,
+        onObservation: (obs) => observations.push(obs),
+      });
+
+      expect(observations.map((o) => o.judge.name)).toEqual(["alice", "bob"]);
+      // The consensus is the one of the three verdicts: only the flush changes.
+      expect(report).toEqual(concludeSection("overview", verdicts, options));
+      expect(report.judges_invoked).toBe(3);
+    },
+  );
+
+  it("#121: another caveat does not keep a verdict out of the flush", () => {
+    const observations: ClaimObservationFlushed[] = [];
+    const hedged: JudgeVerdict = { ...verdict("C-1", "carol", "PASS"), caveats: ["depends on the runtime"] };
+    concludeSection("overview", [verdict("C-1", "alice", "PASS"), hedged], {
+      claimTypes: new Map([["C-1", "correctness"]]),
+      onObservation: (obs) => observations.push(obs),
+    });
+    expect(observations.map((o) => o.judge.name)).toEqual(["alice", "carol"]);
+  });
+
   it("D2.D-11: observation flusher errors are not propagated (best-effort)", () => {
     // The flusher throws; the pipeline must not abort (best-effort semantics).
     // Named failure mode (coding-standards §6.1): "flusher throws on DB error

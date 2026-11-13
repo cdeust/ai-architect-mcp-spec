@@ -287,6 +287,24 @@ function groundTruthToIsFail(verdict: Verdict): boolean {
   return verdict !== "PASS";
 }
 
+/**
+ * The caveats of a verdict that no judge reached: the judge could not be
+ * invoked, its answer could not be parsed, or the plan it was sent under had
+ * changed by the time it answered (the self-check's synthetic verdict).
+ *
+ * source: docs/PHASE_4_PLAN.md, "Parse-failure rate as a separate
+ * special-cause signal": verdicts whose caveats contain `parse_error` or
+ * `judge_invocation_failed` "are NOT included in the reliability
+ * calculation". `plan_mismatch` is written by
+ * orchestration/handlers/self-check.ts on a verdict it makes up itself.
+ */
+const NOT_A_JUDGEMENT: readonly string[] = ["parse_error", "judge_invocation_failed", "plan_mismatch"];
+
+/** False for a verdict that stands for a failure of the machinery, not for what a judge concluded. */
+function isJudgement(verdict: JudgeVerdict): boolean {
+  return !verdict.caveats.some((caveat) => NOT_A_JUDGEMENT.includes(caveat));
+}
+
 function concludeFromVerdicts(
   scope: SectionType | "document",
   verdicts: readonly JudgeVerdict[],
@@ -321,6 +339,7 @@ function concludeFromVerdicts(
       const claim = options.claims?.get(claim_id);
       const external_grounding = claim?.external_grounding;
       for (const jv of vs) {
+        if (!isJudgement(jv)) continue;
         const judgeWasCorrect = groundTruthIsFail
           ? jv.verdict !== "PASS" && jv.verdict !== "SPEC-COMPLETE"
           : jv.verdict === "PASS" || jv.verdict === "SPEC-COMPLETE";
