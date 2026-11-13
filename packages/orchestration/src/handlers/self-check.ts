@@ -29,13 +29,13 @@ import {
 import { validateDocument } from "@prd-gen/validation";
 import {
   planDocumentVerification,
-  concludeDocument,
   buildJudgePrompt,
   buildMechanicalVerdicts,
 } from "@prd-gen/verification";
 import {
   agentSubagentType,
   isBlockingViolation,
+  type Claim,
   type JudgeRequest,
   type JudgeVerdict,
 } from "@prd-gen/core";
@@ -50,6 +50,7 @@ import {
 } from "./self-check-verify-budget.js";
 import { handlePrdValidation } from "./self-check-prd-validation.js";
 import { withDocumentScore } from "./self-check-quality-score.js";
+import { concludeWithObservations } from "./self-check-observations.js";
 import {
   invocationIdFor,
   buildJudgeIndex,
@@ -159,10 +160,11 @@ function finalize(
   state: PipelineState,
   verdicts: readonly JudgeVerdict[] = [],
   totalSubjectiveClaims = 0,
+  judgedClaims: readonly Claim[] = [],
 ) {
   const sections = gatherSections(state);
   const docReport = validateDocument(sections);
-  const verificationReport = concludeDocument(verdicts);
+  const { report: verificationReport, observations } = concludeWithObservations(verdicts, judgedClaims);
 
   const sectionsPassed = state.sections.filter((s) => s.status === "passed")
     .length;
@@ -210,6 +212,7 @@ function finalize(
     state: {
       ...state,
       quality_scores: withDocumentScore(state, docReport),
+      reliability_observations: [...state.reliability_observations, ...observations],
       pending_completion: {
         summary,
         artifacts: state.sections.map((s) => `${s.section_type}: ${s.status}`),
@@ -375,9 +378,8 @@ function handleSelfCheckPhaseB(
   // Recomputed (not persisted in the snapshot) — pure function of
   // `state.sections`, unchanged since Phase A, same rederivation strategy
   // `parseVerdictsFromSnapshot` already relies on below.
-  const totalSubjectiveClaims = countSubjectiveClaims(
-    planDocumentVerification(sections).judge_requests,
-  );
+  const judgeRequests = planDocumentVerification(sections).judge_requests;
+  const totalSubjectiveClaims = countSubjectiveClaims(judgeRequests);
   const snapshot = state.verification_plan;
   if (!snapshot || snapshot.batch_id !== VERIFY_BATCH_ID) {
     return finalize(state, computeMechanicalVerdicts(sections), totalSubjectiveClaims);
@@ -410,7 +412,11 @@ function handleSelfCheckPhaseB(
     }
   }
 
-  return finalize(stateAfter, [...mechanicalVerdicts, ...verdicts], totalSubjectiveClaims);
+  // The claims that went to judges, with their types: what the orchestrator
+  // needs to hand one observation per judge verdict to the reliability
+  // store (#121). The other paths to finalize() carry no judge verdict.
+  const judgedClaims = judgeRequests.map((request) => request.claim);
+  return finalize(stateAfter, [...mechanicalVerdicts, ...verdicts], totalSubjectiveClaims, judgedClaims);
 }
 
 export const handleSelfCheck: StepHandler = ({ state, result }) => {

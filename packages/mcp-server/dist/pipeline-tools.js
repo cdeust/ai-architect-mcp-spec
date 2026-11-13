@@ -21,6 +21,8 @@ import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
 import { getEvidenceRepo } from "./evidence-db-path.js";
 import { drainQualityScores } from "./quality-score-drain.js";
+import { drainReliabilityObservations } from "./reliability-observation-drain.js";
+import { getReliabilityRepo } from "./reliability-wiring.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
 import { boundFullStateResponse, boundGroundingResponse, } from "./bound-full-state.js";
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
@@ -121,14 +123,16 @@ function drainStrategyExecutions(state) {
     return { ...state, strategy_executions: [] };
 }
 /**
- * Both queues the reducer fills for the evidence store, emptied before a
- * state is stored. The repository is asked for only when a score waits.
+ * The three queues the reducer fills for the evidence and reliability
+ * stores, emptied before a state is stored. A repository is asked for only
+ * when its queue holds something.
  */
 function drainEvidenceQueues(state) {
     const drained = drainStrategyExecutions(state);
-    if (drained.quality_scores.length === 0)
-        return drained;
-    return drainQualityScores(drained, getEvidenceRepo());
+    const scored = drained.quality_scores.length === 0 ? drained : drainQualityScores(drained, getEvidenceRepo());
+    if (scored.reliability_observations.length === 0)
+        return scored;
+    return drainReliabilityObservations(scored, getReliabilityRepo());
 }
 /**
  * Per-run_id in-flight guard for submit_action_result. The reducer pattern

@@ -27,8 +27,9 @@ anywhere.
 - `~/.prd-gen/reliability.db`, a **SQLite database**. It holds, per judge and
   per type of claim, counts of how often the judge's verdict agreed with the
   outcome retained for the claim. It is created when the server starts, and
-  written when a verification concludes with the types of its claims
-  (`conclude_verification` called with `claim_types`).
+  written when a verification concludes with the types of its claims: at the
+  self-check of each pipeline run, and when `conclude_verification` is called
+  with `claim_types`.
 - `~/.prd-gen/judge-observation-log.jsonl`, a **text log**, one line per
   judge verdict, created and written at the moment `reliability.db` is
   written. A line holds the judge's name, the claim's identifier and type,
