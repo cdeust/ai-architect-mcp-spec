@@ -75,6 +75,9 @@ export {
   type RunStoreOptions,
   type Clock,
   RUN_STORE_RESIDENT_CHAR_CEILING,
+  RUN_STORE_TTL_MS,
+  RUN_STORE_MAX_RUNS,
+  isTerminalRun,
 } from "./run-store.js";
 
 // Section-generation constants (exported for benchmark layer — benchmark → orchestration direction per §2.2)

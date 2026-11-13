@@ -214,7 +214,7 @@ describe("the class of a verdict in an observation (#247)", () => {
   function observe(first: Verdict, second: Verdict) {
     const observations: ClaimObservationFlushed[] = [];
     const report = concludeSection("overview", [verdict("C-1", "alice", first), verdict("C-1", "bob", second)], {
-      claimTypes: new Map([["C-1", "nfr_performance"]]),
+      claimTypes: new Map([["C-1", "performance"]]),
       onObservation: (obs) => observations.push(obs),
     });
     return { consensus: report.results[0]!.verdict, observations };

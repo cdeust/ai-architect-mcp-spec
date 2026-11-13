@@ -14,7 +14,7 @@
  * call submit_action_result with the result, repeat until `done`.
  */
 import { z } from "zod";
-import { newPipelineState, step, InMemoryRunStore, ActionResultSchema, } from "@prd-gen/orchestration";
+import { newPipelineState, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
 import { SectionTypeSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
@@ -28,6 +28,8 @@ import { boundFullStateResponse, boundGroundingResponse, } from "./bound-full-st
 import { boundEnvelopeResponse } from "./bound-envelope-action.js";
 import { pageActionResponse } from "./page-action-response.js";
 import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js";
+import { KeptRuns } from "./kept-runs.js";
+import { RunFiles, RUNS_DIR } from "./run-files.js";
 /**
  * Global run semaphore cap — max pipeline runs in flight at once.
  *
@@ -39,7 +41,7 @@ import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js
  *
  * source: engineering default pending measurement; calibrate by the observed
  * peak concurrent in-flight run count on a real interactive host (instrument
- * inFlightRunCount() at each start_pipeline and set MAX_CONCURRENT_RUNS to
+ * runs.inFlightCount() at each start_pipeline and set MAX_CONCURRENT_RUNS to
  * p99 + headroom). 8 is chosen conservatively: an interactive Claude Code host
  * drives one pipeline at a time in the common case, so 8 leaves generous room
  * for overlap while bounding fan-out. It is well under the RunStore max-runs cap
@@ -47,31 +49,36 @@ import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js
  * hits, yielding a clear structured rejection instead of silent eviction.
  */
 const MAX_CONCURRENT_RUNS = Number(process.env.PRD_MAX_CONCURRENT_RUNS ?? 8); // env-configurable; default 8 — see source note above
-const runStore = new InMemoryRunStore({
-    // When a terminal run is evicted (TTL or max-runs), release its persisted
-    // strategy-execution evidence so disk growth tracks live runs. Best-effort:
-    // onEvict must not throw (InMemoryRunStore swallows throws), and a missing
-    // repo is a no-op. source: evidence-repository.ts pruneRunEvidence.
-    onEvict: (runId) => {
+/**
+ * The runs of this server: in memory, and each in its file under
+ * `~/.prd-gen/runs/` so that a restart does not lose them (#121,
+ * kept-runs.ts). Beside the state, a run keeps the last UNBOUNDED action
+ * `step()` emitted, before `boundEnvelopeResponse` sheds the `spawn_subagents`
+ * prompts that do not fit: it serves `get_pipeline_state(run_id,
+ * format:"action")`, the path a host follows when it sees a `__bounded` marker
+ * on an envelope, or when it comes back to a run after a restart (source:
+ * e2e run_mrlqa0aj_u2rh15, 2026-07-15, bound-envelope-action.ts).
+ *
+ * When a finished run is dropped (TTL or max-runs), its persisted
+ * strategy-execution evidence is released so disk growth tracks live runs.
+ * Best-effort: a missing repo is a no-op. source: evidence-repository.ts
+ * pruneRunEvidence.
+ */
+const runs = new KeptRuns(new RunFiles(RUNS_DIR), {
+    onDrop: (runId) => {
         getEvidenceRepo()?.pruneRunEvidence(runId);
-        lastActionByRun.delete(runId);
     },
 });
 /**
- * Count runs currently in flight (not terminal). The semaphore admits a new
- * start_pipeline only while this is below MAX_CONCURRENT_RUNS.
- *
- * precondition: none.
- * postcondition: returns the number of runStore runs whose current_step is not
- *   "complete". Terminal runs awaiting eviction do not count against the cap.
+ * postcondition: the tool error for a run id that names no run the server
+ *                can go on with: `unknown run_id`, or, when the run has a
+ *                file that cannot be read as a run, that fact and the reason.
  */
-function inFlightRunCount() {
-    let n = 0;
-    for (const s of runStore.list()) {
-        if (s.current_step !== "complete")
-            n += 1;
-    }
-    return n;
+function runNotFound(runId, found) {
+    const error = found.kind === "unknown"
+        ? `unknown run_id: ${runId}`
+        : `the state kept for run_id ${runId} cannot be read: ${found.reason}`;
+    return { content: [{ type: "text", text: JSON.stringify({ error }) }], isError: true };
 }
 /**
  * Lazy EvidenceRepository + EffectivenessTracker. Both are optional —
@@ -142,21 +149,6 @@ function drainEvidenceQueues(state) {
  * run_id, providing defense-in-depth if the runtime ever changes.
  */
 const inFlight = new Set();
-/**
- * Per-run cache of the last UNBOUNDED action emitted by `step()`. Updated on
- * every start_pipeline/submit_action_result call BEFORE `boundEnvelopeResponse`
- * strips oversized `spawn_subagents` prompts. Serves
- * `get_pipeline_state(run_id, format:"action")` — the observable, no-silent-
- * loss recovery path a host follows when it sees a `__bounded` marker on a
- * spawn_subagents envelope. A plain Map (not persisted, not TTL'd) mirrors
- * `runStore`'s in-memory composition-root scope; entries are naturally
- * superseded on each step and there is no unbounded growth risk beyond what
- * `runStore`'s own run cap already bounds (one entry per known run_id).
- *
- * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15) — see bound-envelope-action.ts
- * module doc.
- */
-const lastActionByRun = new Map();
 function generateRunId() {
     return ("run_" +
         Date.now().toString(36) +
@@ -204,7 +196,7 @@ export function registerPipelineTools(server) {
         // request/response, so a bounded queue would just move the wait onto a
         // held connection; an explicit retry signal is the honest contract.
         // source: MAX_CONCURRENT_RUNS in this file.
-        const inFlightCount = inFlightRunCount();
+        const inFlightCount = runs.inFlightCount();
         if (inFlightCount >= MAX_CONCURRENT_RUNS) {
             return {
                 content: [
@@ -262,11 +254,9 @@ export function registerPipelineTools(server) {
         // grows silently when future handlers move toward the entry point
         // (cross-audit feynman CRIT-1 + dijkstra H2, Phase 4 wiring, 2026-04).
         const drained = drainEvidenceQueues(state);
-        runStore.set(drained);
-        // Cache the UNBOUNDED action before it is potentially shed by
-        // boundEnvelopeResponse — the recovery path for a spawn_subagents
-        // envelope whose prompts were omitted. source: bound-envelope-action.ts.
-        lastActionByRun.set(drained.run_id, action);
+        // The state, with the UNBOUNDED action: kept before boundEnvelopeResponse
+        // potentially sheds its prompts. source: bound-envelope-action.ts.
+        runs.keep(drained, action);
         return {
             content: [
                 {
@@ -301,28 +291,17 @@ export function registerPipelineTools(server) {
         }
         inFlight.add(run_id);
         try {
-            const current = runStore.get(run_id);
-            if (!current) {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: JSON.stringify({ error: `unknown run_id: ${run_id}` }),
-                        },
-                    ],
-                    isError: true,
-                };
-            }
-            const out = step({ state: current, result });
-            // Drain strategy_executions and quality_scores BEFORE writing
-            // state — keeps the queues from accumulating on disk if the
-            // runStore is later backed by persistent storage.
-            // drainEvidenceQueues is a no-op when both queues are empty.
+            const found = runs.find(run_id);
+            if (found.kind !== "found")
+                return runNotFound(run_id, found);
+            const out = step({ state: found.run.state, result });
+            // Drain the evidence queues BEFORE the state is kept: a state on
+            // disk has empty queues, so a run that comes back after a restart
+            // writes nothing twice. drainEvidenceQueues is a no-op when the
+            // queues are empty.
             const drained = drainEvidenceQueues(out.state);
-            runStore.set(drained);
-            // Cache the UNBOUNDED action before it is potentially shed by
-            // boundEnvelopeResponse — see start_pipeline's identical comment.
-            lastActionByRun.set(drained.run_id, out.action);
+            // With the UNBOUNDED action: see start_pipeline's identical comment.
+            runs.keep(drained, out.action);
             return {
                 content: [
                     {
@@ -358,18 +337,10 @@ export function registerPipelineTools(server) {
             .default("summary"),
         invocation_offset: z.number().int().min(0).default(0),
     }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset }) => {
-        const state = runStore.get(run_id);
-        if (!state) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify({ error: `unknown run_id: ${run_id}` }),
-                    },
-                ],
-                isError: true,
-            };
-        }
+        const found = runs.find(run_id);
+        if (found.kind !== "found")
+            return runNotFound(run_id, found);
+        const state = found.run.state;
         let payload;
         if (format === "full") {
             // Bound the full-state serialization to the 100,000-char MCP budget.
@@ -406,10 +377,9 @@ export function registerPipelineTools(server) {
             // submit_action_result envelope's __bounded.applied records
             // action.invocations[].prompt. Paged by whole invocations under
             // MAX_RESPONSE_CHARS: the unpaged refetch measured ~112k chars in the
-            // 2026-10-10 audit (#125). `?? null` is defensive: an evicted run has
-            // already returned `unknown run_id` above (lastActionByRun is cleared
-            // in lockstep with runStore via onEvict). source: page-action-response.ts.
-            const page = pageActionResponse(state.run_id, lastActionByRun.get(run_id) ?? null, 
+            // 2026-10-10 audit (#125). The action is the one kept with the state,
+            // in memory or in the run's file. source: page-action-response.ts.
+            const page = pageActionResponse(state.run_id, found.run.action, 
             // zod applies the default over MCP; a direct handler call (tests,
             // in-process hosts) may omit the field.
             invocation_offset ?? 0);

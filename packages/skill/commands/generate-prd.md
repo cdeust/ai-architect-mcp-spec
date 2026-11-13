@@ -89,7 +89,9 @@ If `submit_action_result` itself returns `isError: true`:
 - Display the error string from the response to the user.
 - Do not retry. Stop the loop.
 - If the message says "concurrent submission rejected", you have a host-side bug in your loop logic. Fix the loop before re-running.
-- If the message says "unknown run_id", the MCP server restarted and lost state. Begin a new run with `start_pipeline`.
+- If the message says "unknown run_id", the server holds no run under that id and has no file for it: a run is kept in `~/.prd-gen/runs/` and survives a restart of the server, so the id is wrong, the run is a finished one the server dropped 30 minutes after its last use, or its file was deleted. Begin a new run with `start_pipeline`.
+- If the message says the state kept for the run "cannot be read", the file of the run is damaged. Tell the user which file, and begin a new run.
+- If the server restarted while a run was in progress (the connection dropped, or the plugin was reloaded), do not begin a new run. Call `get_pipeline_state({ run_id, format: "action" })` first: it returns the action the run is waiting on. Execute that action and submit its result. Do not resubmit the result you were sending when the connection dropped without that check: the server may have stored it before it stopped, and the run would then take it as the answer to the next action.
 
 ---
 
