@@ -124,6 +124,14 @@ function trailingNumberIn(cellsText: string): number | null {
   return numbers.length > 0 ? numbers[numbers.length - 1] : null;
 }
 
+/**
+ * One character of `\s` that does not end a line: `\s` minus `\n`, `\r`,
+ * U+2028 and U+2029, the line terminators of the `m` flag. A loop over it
+ * cannot cross a line, so a row pattern anchored with `^` stays linear on a
+ * run of blank lines.
+ */
+const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
+
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(
   content: string,
@@ -132,12 +140,25 @@ export function checkSPArithmetic(
   // Horizontal space only around the leading pipe. With the `m` flag, `^\s*`
   // let `\s` run across newlines: each line start of a run of n blank lines
   // rescanned the rest of the run before failing, an O(n²) scan (measured 20,
-  // 88 and 362 ms at 5k, 10k and 20k blank lines; review of #231). A table row
-  // starts on its own line, so `[ \t]*` reads every row the old pattern read.
-  const totalRowPattern =
-    /^[ \t]*\|[ \t]*(?:\*{0,2})(?:Total|Sum|Grand\s+Total)(?:\*{0,2})[ \t]*\|(.+)\|/gim;
-  const dataRowPattern =
-    /^[ \t]*\|[ \t]*(?![ \t]*(?:-|(?:\*{0,2})(?:Total|Sum|Grand\s+Total)))([^|]+)\|(.+)\|/gim;
+  // 88 and 362 ms at 5k, 10k and 20k blank lines; review of #231). `INLINE_SPACE`
+  // is `\s` without the line terminators, so a row indented with a tab, a
+  // no-break space, `\f` or `\v` is read as it was with `\s*`.
+  //
+  // The data row has no space loop between its pipe and its first cell: the
+  // cell `[^|]+` starts at the pipe and reads the spaces itself. With a
+  // `[ \t]*` there, both loops matched a run of spaces, so a `|` followed by n
+  // spaces and no closing pipe split the run in O(n²) ways before failing
+  // (review of #232). The lookahead keeps its own space loop, so a separator
+  // or a total row is still skipped whatever its indentation; the first cell
+  // is not read (only the cells after it carry the estimate).
+  const totalRowPattern = new RegExp(
+    `^${INLINE_SPACE}*\\|${INLINE_SPACE}*(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)(?:\\*{0,2})${INLINE_SPACE}*\\|(.+)\\|`,
+    "gim",
+  );
+  const dataRowPattern = new RegExp(
+    `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|(?:\\*{0,2})(?:Total|Sum|Grand\\s+Total)))([^|]+)\\|(.+)\\|`,
+    "gim",
+  );
 
   // Collect individual SP values from data rows
   const individualSPs: number[] = [];
