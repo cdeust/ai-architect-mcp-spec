@@ -239,9 +239,13 @@ test("the .mcpb descriptions name every component its smoke test expects to be m
   assert.ok(declared, "smoke-mcpb.sh declares no default EXPECTED_DEGRADED");
   const components = declared[1].split(" ").filter(Boolean);
   assert.deepEqual(components.sort(), ["evidenceDbHealthy", "skillAvailable"]);
+  // The README section alone (review of #238): the word "degraded" is also
+  // in the requirements, so the whole file could not fail the last assertion.
+  const section = /#### What the `\.mcpb` carries\n([\s\S]*?)\n#{2,4} /.exec(text("README.md"));
+  assert.ok(section, "README: missing the section on what the .mcpb carries");
   for (const [name, description] of [
     ["manifest.json long_description", json("manifest.json").long_description],
-    ["README.md", text("README.md")],
+    ["README.md, What the .mcpb carries", section[1]],
   ]) {
     for (const component of components) {
       assert.ok(description.includes(component), `${name} does not name ${component}`);
