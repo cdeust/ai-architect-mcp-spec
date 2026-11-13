@@ -123,6 +123,37 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(messages(content)).toEqual([]);
   });
 
+  it("a total line without an amount closes nothing (review 2 of #228)", () => {
+    // `Subtotal: 1 story` emptied the list, so STORY-1 was dropped and a right
+    // total of 3 read as wrong against a sum of 1.
+    const content = ["- STORY-1 — 2 SP", "Subtotal: 1 story", "- STORY-2 — 1 SP", "Total: 3 SP"].join("\n");
+    expect(messages(content)).toEqual([]);
+    expect(messages(content.replace("Total: 3 SP", "Total: 4 SP"))).toEqual([
+      "SP total line shows 4 but the stories sum to 3",
+    ]);
+  });
+
+  it("a total line states its own amount first (review 2 of #228)", () => {
+    // The last amount read `Total: 3 SP of 5 SP capacity` as 5.
+    expect(messages([...STORIES, "Total: 3 SP of 5 SP capacity"].join("\n"))).toEqual([]);
+    expect(messages([...STORIES, "Total: 4 SP of 5 SP capacity"].join("\n"))).toEqual([
+      "SP total line shows 4 but the stories sum to 3",
+    ]);
+  });
+
+  it("a story still states its estimate last", () => {
+    const content = ["- STORY-1: copy (8 SP if offline) — 2 SP", STORIES[1]!, "Total: 3 SP"].join("\n");
+    expect(messages(content)).toEqual([]);
+  });
+
+  it("a fence line ending in a lone carriage return still closes its block", () => {
+    // `.` does not match a lone `\r` (one not followed by `\n`, so not a CRLF
+    // ending), and the old pattern did not read "```\r " as a fence. Left open,
+    // the block would hide the total and the check would abstain.
+    const content = [...STORIES, "```", "- STORY-9 — 40 SP", "```\r ", "Total: 4 SP"].join("\n");
+    expect(messages(content)).toEqual(["SP total line shows 4 but the stories sum to 3"]);
+  });
+
   it("reads a list of more items than a spread argument list holds", () => {
     // Math.min(...array) throws a RangeError beyond about 120k arguments.
     const n = 200_000;
