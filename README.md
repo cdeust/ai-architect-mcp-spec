@@ -185,6 +185,17 @@ on Windows, so there the health check removes every directory that holds a
 bash from `PATH` before it starts the server (the Windows directory stays: its
 `bash.exe` is the WSL launcher, not a shell for a native program).
 
+#### What the `.mcpb` carries
+
+<!-- This paragraph is checked against scripts/release/smoke-mcpb.sh by scripts/portable-distribution.test.mjs. -->
+The `.mcpb` ships the MCP server and its configuration. It does not ship
+`SKILL.md` and the commands, which the plugin provides and a `.mcpb` host does
+not load, nor `better-sqlite3`, a native addon that a release runner cannot
+build for every platform: the evidence store is off there and consensus uses
+its prior. On the `.mcpb`, `check_health` therefore answers `degraded`, with
+`skillAvailable` and `evidenceDbHealthy` false and `configAvailable` true, and
+`scripts/release/smoke-mcpb.sh` fails on any other state of the built archive.
+
 #### Migrating from `prd-spec-generator`
 
 The old plugin and marketplace are deprecated publications, not aliases. Remove

@@ -227,3 +227,25 @@ test("README claims about the environment command match ci.json", () => {
     assert.match(section, new RegExp(`\\| ${row} \\|[^\\n]*environment \\(plugin launch[^)]*the test suite[^)]*\\.mcpb\` smoke\\), install \\|`));
   }
 });
+
+// Issue #124: the .mcpb lacks components by design, and the audit found that
+// neither its description nor its health check said so. The smoke test holds
+// the state of the built archive; this ties the two descriptions to the smoke
+// test, so that a component added to or removed from its expected set must
+// be named in what users read.
+test("the .mcpb descriptions name every component its smoke test expects to be missing", () => {
+  const smoke = text("scripts/release/smoke-mcpb.sh");
+  const declared = /^EXPECTED_DEGRADED="\$\{EXPECTED_DEGRADED:-([^}]*)\}"$/m.exec(smoke);
+  assert.ok(declared, "smoke-mcpb.sh declares no default EXPECTED_DEGRADED");
+  const components = declared[1].split(" ").filter(Boolean);
+  assert.deepEqual(components.sort(), ["evidenceDbHealthy", "skillAvailable"]);
+  for (const [name, description] of [
+    ["manifest.json long_description", json("manifest.json").long_description],
+    ["README.md", text("README.md")],
+  ]) {
+    for (const component of components) {
+      assert.ok(description.includes(component), `${name} does not name ${component}`);
+    }
+    assert.match(description, /degraded/, `${name} does not say the health status is degraded`);
+  }
+});
