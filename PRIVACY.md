@@ -28,8 +28,10 @@ anywhere.
   per type of claim, counts of how often the judge's verdict agreed with the
   outcome retained for the claim. It is created when the server starts, and
   written when a verification concludes with the types of its claims: at the
-  self-check of each pipeline run, and when `conclude_verification` is called
-  with `claim_types`.
+  self-check of a pipeline run that concludes on judge verdicts, for the
+  claims at least two judges ruled on, and when `conclude_verification` is
+  called with `claim_types`. With the default settings a pipeline run sends
+  two judges to its architecture claims and one to the others.
 - `~/.prd-gen/judge-observation-log.jsonl`, a **text log**, one line per
   judge verdict, created and written at the moment `reliability.db` is
   written. A line holds the judge's name, the claim's identifier and type,
@@ -37,8 +39,21 @@ anywhere.
   timestamp; for a claim that carries an external check, also that check's
   result and the evidence string it returned, which can quote what the claim
   was checked on: a mathematical expression, or the first characters of a
-  code snippet and of the compiler's message about it. Apart from that
-  string it holds no text of your PRD.
+  code snippet and of the compiler's message about it.
+
+  The claim's identifier is built from your PRD. In a pipeline run it is the
+  number of a requirement or of an acceptance criterion as the PRD writes it
+  (`FR-001`, `AC-002`), a counter (`NFR-LATENCY-01`, `RISK-01`), or a word
+  from a fixed list, chosen by what the PRD mentions (`ARCH-HEXAGONAL`,
+  `SEC-02-OAUTH`). For two kinds of claim it holds a name taken from the
+  PRD: the name of the table, type, enum, index or view of a schema
+  definition (`DDL-01-USERS`), and up to 32 characters of the name of a test
+  function (`TEST-001-test_login_rejects_expired`). With
+  `conclude_verification` it is the identifier the host sends. Apart from
+  the identifier and the evidence string, a line holds no text of your PRD.
+
+`reliability.db` and the log are not written when the optional
+`better-sqlite3` addon cannot be loaded.
 
 In versions up to 0.9.0 the log was written at a path relative to the
 directory the server was started in,

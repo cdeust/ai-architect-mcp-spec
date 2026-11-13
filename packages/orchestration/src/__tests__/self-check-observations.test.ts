@@ -1,6 +1,7 @@
 /**
  * #121 — a self-check that concludes on judge verdicts queues one
- * reliability observation per judge verdict.
+ * reliability observation per judge verdict, for the claims at least two
+ * judges ruled on.
  *
  * The verification orchestrator flushes an observation only when it is given
  * the types of the claims and a hook; the pipeline gave it neither, so a run
@@ -35,38 +36,61 @@ const MATH: Claim = {
   external_grounding: { type: "math", payload: { expression: "2+2", expected_value: 4 } },
 };
 
-// Two judges pass FR-001 and one fails it; one judge passes NFR-001; a rule
-// verdict stands for a claim no judge saw.
+const ALONE: Claim = { claim_id: "FR-002", claim_type: "fr_traceability", text: "FR-002 traces to its source", evidence: "" };
+
+// Two judges pass FR-001 and one fails it; two judges pass NFR-001; one
+// judge alone passes FR-002; a rule verdict stands for a claim no judge saw.
 const VERDICTS: JudgeVerdict[] = [
   verdict(genius("feynman"), "FR-001", "PASS"),
   verdict(genius("curie"), "FR-001", "PASS"),
   verdict(genius("popper"), "FR-001", "FAIL"),
   verdict(genius("feynman"), "NFR-001", "PASS"),
+  verdict(genius("curie"), "NFR-001", "PASS"),
+  verdict(genius("popper"), "FR-002", "PASS"),
   verdict({ kind: "rule", name: "hard_output_rules" } as JudgeVerdict["judge"], "AC-001", "PASS"),
 ];
+const JUDGED: Claim[] = [FR, MATH, ALONE];
 
 describe("concludeWithObservations (#121)", () => {
   it("gives the report concludeDocument gives: the types change no consensus", () => {
-    const concluded = concludeWithObservations(VERDICTS, [FR, MATH]);
+    const concluded = concludeWithObservations(VERDICTS, JUDGED);
     expect(concluded.report).toEqual(concludeDocument(VERDICTS));
     expect(concluded.report.results.find((r) => r.claim_id === "FR-001")!.verdict).toBe("PASS");
   });
 
-  it("queues one observation per judge verdict on a judged claim, against the outcome retained", () => {
-    const { observations } = concludeWithObservations(VERDICTS, [FR, MATH]);
+  it("queues one observation per judge verdict on a claim several judges ruled on, against the outcome retained", () => {
+    const { observations } = concludeWithObservations(VERDICTS, JUDGED);
+    const grounded = {
+      claim_id: "NFR-001",
+      claim_type: "correctness",
+      ground_truth_is_fail: false,
+      judge_was_correct: true,
+      external_grounding: { type: "math", payload: { expression: "2+2", expected_value: 4 } },
+    };
     expect(observations).toEqual([
       { claim_id: "FR-001", judge: genius("feynman"), claim_type: "fr_traceability", ground_truth_is_fail: false, judge_was_correct: true },
       { claim_id: "FR-001", judge: genius("curie"), claim_type: "fr_traceability", ground_truth_is_fail: false, judge_was_correct: true },
       { claim_id: "FR-001", judge: genius("popper"), claim_type: "fr_traceability", ground_truth_is_fail: false, judge_was_correct: false },
-      {
-        claim_id: "NFR-001",
-        judge: genius("feynman"),
-        claim_type: "correctness",
-        ground_truth_is_fail: false,
-        judge_was_correct: true,
-        external_grounding: { type: "math", payload: { expression: "2+2", expected_value: 4 } },
-      },
+      { ...grounded, judge: genius("feynman") },
+      { ...grounded, judge: genius("curie") },
     ]);
+  });
+
+  it("queues nothing for a judge alone on a claim: it would be compared with its own verdict", () => {
+    // The outcome retained for FR-002 is popper's verdict, so popper is
+    // "correct" whatever it says.
+    for (const value of ["PASS", "FAIL"] as const) {
+      const verdicts = [...VERDICTS.filter((v) => v.claim_id !== "FR-002"), verdict(genius("popper"), "FR-002", value)];
+      const { observations } = concludeWithObservations(verdicts, JUDGED);
+      expect(observations.filter((o) => o.claim_id === "FR-002"), value).toEqual([]);
+      expect(observations, value).toHaveLength(5);
+    }
+  });
+
+  it("queues nothing for a judge left alone by a colleague whose answer could not be parsed", () => {
+    const unparsed: JudgeVerdict = { ...verdict(genius("curie"), "FR-002", "INCONCLUSIVE"), caveats: ["parse_error"], confidence: 0 };
+    const { observations } = concludeWithObservations([...VERDICTS, unparsed], JUDGED);
+    expect(observations.filter((o) => o.claim_id === "FR-002")).toEqual([]);
   });
 
   it("queues nothing for a judge whose answer could not be parsed", () => {
@@ -84,7 +108,7 @@ describe("concludeWithObservations (#121)", () => {
   });
 
   it("queues nothing for a verdict on a claim that was not sent to judges", () => {
-    const { observations } = concludeWithObservations(VERDICTS, [FR]);
+    const { observations } = concludeWithObservations(VERDICTS, [FR, ALONE]);
     expect(observations.map((o) => o.claim_id)).toEqual(["FR-001", "FR-001", "FR-001"]);
   });
 
@@ -101,7 +125,7 @@ describe("the queue of a pipeline run (#121)", () => {
     expect(fresh.reliability_observations).toEqual([]);
   });
 
-  it("holds, after a whole run, one observation per judge the self-check sent a claim to", () => {
+  it("holds, after a whole run, one observation per judge of each claim the self-check sent to several", () => {
     const dispatch = makeCannedDispatcher({ freeform_answer: "answer", graph_path: "/tmp/observations/graph" });
     let state: PipelineState = newPipelineState({
       run_id: "observations-whole-run",
@@ -123,15 +147,16 @@ describe("the queue of a pipeline run (#121)", () => {
     expect(judged).toBeDefined();
     expect(judged!.invocations.length).toBeGreaterThan(1);
 
-    expect(state.reliability_observations).toHaveLength(judged!.invocations.length);
+    // The claim of each invocation, read in its prompt; the claims that went
+    // to at least two judges are the ones whose judges are observed.
+    const sent = judged!.invocations.map((invocation) => /<claim>\s*id: (\S+)/.exec(invocation.prompt)![1]!);
+    const compared = sent.filter((claim) => sent.filter((other) => other === claim).length >= 2);
+    expect(compared.length).toBeGreaterThan(0);
+    expect(compared.length).toBeLessThan(sent.length);
+
+    expect(state.reliability_observations.map((o) => o.claim_id).sort()).toEqual([...compared].sort());
     // Judges only: a rule-tier verdict is not an observation of a judge.
     expect(state.reliability_observations.filter((o) => o.judge.kind === "rule")).toEqual([]);
-    // Every judged claim has its observations, and no other claim has any.
-    const observed = new Set(state.reliability_observations.map((o) => o.claim_id));
-    const sent = new Set(
-      judged!.invocations.map((invocation) => /<claim>\s*id: (\S+)/.exec(invocation.prompt)![1]!),
-    );
-    expect([...observed].sort()).toEqual([...sent].sort());
   });
 
   it("holds nothing after a self-check that had no claim to judge", () => {

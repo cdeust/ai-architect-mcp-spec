@@ -5,7 +5,10 @@
  * observation hook, so a run flushed nothing: 0 rows after 7 runs (audit of
  * 2026-10-10). This plays a whole run through the built server, started
  * with a home of its own, and reads what the run left in
- * `~/.prd-gen/reliability.db` and in the observation log.
+ * `~/.prd-gen/reliability.db` and in the observation log: one observation
+ * per judge of each claim the self-check sent to at least two judges. A
+ * judge alone on a claim is compared with its own verdict and is not
+ * observed (self-check-observations.ts).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -20,7 +23,11 @@ const TEST_TIMEOUT_MS = 120_000;
 interface Envelope {
   readonly run_id: string;
   readonly current_step: string;
-  readonly action: { readonly kind: string; readonly batch_id?: string; readonly invocations?: readonly unknown[] };
+  readonly action: {
+    readonly kind: string;
+    readonly batch_id?: string;
+    readonly invocations?: readonly { readonly prompt: string }[];
+  };
   readonly __bounded: { readonly applied: readonly unknown[] };
 }
 
@@ -65,24 +72,27 @@ async function okEnvelope(tool: string, args: Record<string, unknown>): Promise<
 
 describe.skipIf(!sqliteAvailable)("the reliability observations of a pipeline run (#121)", () => {
   it(
-    "writes one observation per judge of its self-check, to the database and to the log",
+    "writes one observation per judge of a claim several judges ruled on, to the database and to the log",
     async () => {
       const dispatch = makeCannedDispatcher({});
       let envelope = await okEnvelope("start_pipeline", {
         feature_description: "build a feature for OAuth login",
         codebase_path: "/tmp/smoke",
       });
-      let judges = 0;
+      // The claim of each judge invocation of the self-check, read in its prompt.
+      let sent: string[] = [];
       for (let steps = 0; steps < 2_000; steps++) {
         if (envelope.action.kind === "spawn_subagents" && envelope.action.batch_id === "self_check_verify") {
-          judges = envelope.action.invocations!.length;
+          sent = envelope.action.invocations!.map((invocation) => /<claim>\s*id: (\S+)/.exec(invocation.prompt)![1]!);
         }
         const result = dispatch(envelope.action as unknown as NextAction);
         if (result === undefined) break;
         envelope = await okEnvelope("submit_action_result", { run_id: envelope.run_id, result });
       }
       expect(envelope.action.kind).toBe("done");
-      expect(judges).toBeGreaterThan(1);
+      const compared = sent.filter((claim) => sent.filter((other) => other === claim).length >= 2);
+      expect(compared.length).toBeGreaterThan(0);
+      expect(compared.length).toBeLessThan(sent.length);
 
       // The server is stopped first: its database is then whole on disk.
       await server!.close();
@@ -92,14 +102,17 @@ describe.skipIf(!sqliteAvailable)("the reliability observations of a pipeline ru
       const repository = tryCreateReliabilityRepository(join(stored, "reliability.db"))!;
       const records = repository.getAllRecords();
       repository.close();
-      expect(records.reduce((sum, record) => sum + record.nObservations, 0)).toBe(judges);
+      expect(records.reduce((sum, record) => sum + record.nObservations, 0)).toBe(compared.length);
       // Judges only: the rule tier is not a judge whose reliability is estimated.
       expect(records.filter((record) => record.agentKind === "rule")).toEqual([]);
 
       const logPath = join(stored, "judge-observation-log.jsonl");
       expect(existsSync(logPath)).toBe(true);
-      const lines = readFileSync(logPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { run_id: string });
-      expect(lines).toHaveLength(judges);
+      const lines = readFileSync(logPath, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { run_id: string; claim_id: string });
+      expect(lines.map((line) => line.claim_id).sort()).toEqual([...compared].sort());
       expect(new Set(lines.map((line) => line.run_id))).toEqual(new Set([envelope.run_id]));
 
       // Nothing is written where the host started the server (#243).

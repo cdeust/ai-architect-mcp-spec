@@ -280,11 +280,12 @@ export const PipelineStateSchema = z.object({
    */
   quality_scores: z.array(QualityScoreRecordSchema).default([]),
   /**
-   * Reliability observations awaiting persistence: one per judge verdict of
-   * a self-check that concluded on judge verdicts, queued by
-   * `handlers/self-check-observations.ts` and drained by the composition
-   * root, as the two queues above are. Until #121 a pipeline run flushed
-   * none: only `conclude_verification` called with `claim_types` did.
+   * Reliability observations awaiting persistence: one per judge verdict on
+   * each claim at least two judges ruled on, of a self-check that concluded
+   * on judge verdicts, queued by `handlers/self-check-observations.ts` and
+   * drained by the composition root, as the two queues above are. Until
+   * #121 a pipeline run flushed none: only `conclude_verification` called
+   * with `claim_types` did.
    */
   reliability_observations: z.array(ReliabilityObservationRecordSchema).default([]),
   /**

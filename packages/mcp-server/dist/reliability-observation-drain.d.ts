@@ -2,8 +2,9 @@
  * Drains the reliability observations a run has queued (#121).
  *
  * The reducer (orchestration, handlers/self-check-observations.ts) queues
- * one observation per judge verdict of a self-check that concludes on judge
- * verdicts; this is the I/O side, called by the composition root
+ * the observations of a self-check that concludes on judge verdicts, one per
+ * judge of each claim at least two judges ruled on; this is the I/O side,
+ * called by the composition root
  * (pipeline-tools.ts) before a state is stored. The writer is the one
  * `conclude_verification` uses (observation-writer.ts).
  */
