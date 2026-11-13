@@ -34,7 +34,10 @@ anywhere.
   written. A line holds the judge's name, the claim's identifier and type,
   the verdict and the outcome as booleans, the run identifier and a
   timestamp; for a claim that carries an external check, also that check's
-  result and the evidence string it returned. It holds no section text.
+  result and the evidence string it returned, which can quote what the claim
+  was checked on: a mathematical expression, or the first characters of a
+  code snippet and of the compiler's message about it. Apart from that
+  string it holds no text of your PRD.
 
 In versions up to 0.9.0 the log was written at a path relative to the
 directory the server was started in,
@@ -61,8 +64,9 @@ optional `better-sqlite3` native addon, which executes locally).
 The three files persist until you delete them. They contain only data your own
 runs produced. You can delete any of them at any time: without `evidence.db`
 you lose the quality history and the strategy records, without
-`reliability.db` the consensus goes back to its default weights, and the log
-is only read by calibration tooling.
+`reliability.db` the consensus goes back to its default weights, and nothing
+in the server reads the log: it is a record you can hand to calibration
+tooling.
 
 ## Contact
 
