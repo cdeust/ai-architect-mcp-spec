@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PRDContextSchema } from "@prd-gen/core";
+import { AgentIdentitySchema, ClaimSchema, PRDContextSchema } from "@prd-gen/core";
 import { ExecutionResultSchema } from "@prd-gen/strategy";
 import { DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
@@ -24,6 +24,23 @@ export const QualityScoreRecordSchema = z.object({
   total_score: z.number().min(0).max(1),
 });
 export type QualityScoreRecord = z.infer<typeof QualityScoreRecordSchema>;
+
+/**
+ * One judge verdict set against the outcome retained for its claim, as the
+ * verification orchestrator hands it to an observation hook
+ * (`ClaimObservationFlushed`). Queued by the self-check that concludes on
+ * judge verdicts and written by the composition root to the reliability
+ * store: the reducer does no I/O (#121).
+ */
+export const ReliabilityObservationRecordSchema = z.object({
+  claim_id: z.string(),
+  judge: AgentIdentitySchema,
+  claim_type: ClaimSchema.shape.claim_type,
+  ground_truth_is_fail: z.boolean(),
+  judge_was_correct: z.boolean(),
+  external_grounding: ClaimSchema.shape.external_grounding,
+});
+export type ReliabilityObservationRecord = z.infer<typeof ReliabilityObservationRecordSchema>;
 
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
@@ -262,6 +279,15 @@ export const PipelineStateSchema = z.object({
    * `recordQualityScore`, so `get_quality_history` could never return data.
    */
   quality_scores: z.array(QualityScoreRecordSchema).default([]),
+  /**
+   * Reliability observations awaiting persistence: one per judge verdict on
+   * each claim at least two judges ruled on, of a self-check that concluded
+   * on judge verdicts, queued by `handlers/self-check-observations.ts` and
+   * drained by the composition root, as the two queues above are. Until
+   * #121 a pipeline run flushed none: only `conclude_verification` called
+   * with `claim_types` did.
+   */
+  reliability_observations: z.array(ReliabilityObservationRecordSchema).default([]),
   /**
    * Global Cortex memory-recall summary for the whole run, fetched ONCE
    * (query = feature_description) at the start of input_analysis — before

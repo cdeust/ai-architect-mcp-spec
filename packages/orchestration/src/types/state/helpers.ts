@@ -38,6 +38,7 @@ export function newPipelineState(input: {
     verification_plan: null,
     strategy_executions: [],
     quality_scores: [],
+    reliability_observations: [],
   });
 }
 
