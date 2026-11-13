@@ -43,8 +43,11 @@ function auditFlagsAreRequired(db: QualityScoreDatabase): boolean {
  * (better-sqlite3's busy timeout), then finds the column rebuilt and leaves.
  * Deferred, it read the schema first, and the write that followed failed
  * with "database is locked" while the first server was rebuilding: the
- * evidence store of the second was off until it restarted (review of #239;
- * measured by the two-process test of evidence-quality-score-nullable).
+ * evidence store of the second was off until it restarted. Measured
+ * 2026-11-13 by running the two-process test of
+ * evidence-quality-score-nullable.test.ts with `rebuild()` in place of
+ * `rebuild.immediate()`: `SqliteError: database is locked`, and no second
+ * rebuild (review of #239).
  */
 export function makeAuditFlagsNullable(db: QualityScoreDatabase): void {
   if (!auditFlagsAreRequired(db)) return;

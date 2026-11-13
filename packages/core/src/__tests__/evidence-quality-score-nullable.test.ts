@@ -11,16 +11,23 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { tryCreateEvidenceRepository, type PRDQualityScore } from "../index.js";
+import { makeAuditFlagsNullable } from "../persistence/quality-score-migration.js";
+
+// The other server waits up to 10 s for this one, and this one up to 10 s for
+// it; better-sqlite3's busy timeout is 5 s. The default of vitest, 5 s, would
+// end the test before either gave its own reason.
+const TWO_PROCESS_TIMEOUT_MS = 30_000;
 
 interface RawDatabase {
   exec(sql: string): void;
   pragma(source: string): unknown;
   prepare(sql: string): { all(): unknown[] };
+  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T & { immediate: T };
   close(): void;
 }
 type RawConstructor = new (path: string) => RawDatabase;
@@ -78,18 +85,22 @@ function notNullOf(db: RawDatabase, column: string): number {
 
 /**
  * Another server opening the same database: it takes the write lock, says
- * so by creating argv[3], keeps the lock 300 ms, rebuilds the table as
+ * so by creating argv[3], waits until argv[5] exists, rebuilds the table as
  * makeAuditFlagsNullable does, commits, and writes the schema version it
  * leaves to argv[4]. argv[1] is the better-sqlite3 module, argv[2] the
- * database.
+ * database. It gives up after 10 s without argv[5].
  */
 const OTHER_SERVER = `
   const fs = require("node:fs");
-  const [modulePath, dbPath, holding, versionFile] = process.argv.slice(1);
+  const [modulePath, dbPath, holding, versionFile, go] = process.argv.slice(1);
   const db = new (require(modulePath))(dbPath);
   db.exec("BEGIN IMMEDIATE");
   fs.writeFileSync(holding, "");
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; !fs.existsSync(go); waited += 10) {
+    if (waited >= 10000) process.exit(3);
+    Atomics.wait(pause, 0, 0, 10);
+  }
   db.exec(\`
     CREATE TABLE prd_quality_scores_nullable (
       id INTEGER PRIMARY KEY AUTOINCREMENT, prd_id TEXT NOT NULL, prd_context TEXT NOT NULL,
@@ -214,49 +225,71 @@ describe.skipIf(Raw === null)("quality scores without audit flags (#121)", () =>
     expect(ids).toEqual([{ prd_id: "run_old" }, { prd_id: "run_after" }]);
   });
 
-  it("waits for another server that is rebuilding the table, and does not rebuild it again", async () => {
-    const path = tempDb();
-    // The database of an earlier server: every table of the schema, in WAL
-    // mode, with the scores table as it was. Opening it then changes the
-    // schema only if the table is rebuilt.
-    tryCreateEvidenceRepository(path)!.close();
-    const before = new Raw!(path);
-    before.exec(`DROP TABLE prd_quality_scores; ${OLD_SCHEMA}`);
-    before.exec(`
-      INSERT INTO prd_quality_scores
-        (prd_id, prd_context, rules_checked, rules_passed, critical_violations, total_score, audit_flags_raised)
-      VALUES ('run_old', 'bug', 7, 5, 0, 0.5, 2);
-    `);
-    expect(notNullOf(before, "audit_flags_raised")).toBe(1);
-    before.close();
+  it(
+    "waits for another server that is rebuilding the table, and does not rebuild it again",
+    async () => {
+      const path = tempDb();
+      // The database of an earlier server: every table of the schema, in WAL
+      // mode, with the scores table as it was. Opening it then changes the
+      // schema only if the table is rebuilt.
+      tryCreateEvidenceRepository(path)!.close();
+      const before = new Raw!(path);
+      before.exec(`DROP TABLE prd_quality_scores; ${OLD_SCHEMA}`);
+      before.exec(`
+        INSERT INTO prd_quality_scores
+          (prd_id, prd_context, rules_checked, rules_passed, critical_violations, total_score, audit_flags_raised)
+        VALUES ('run_old', 'bug', 7, 5, 0, 0.5, 2);
+      `);
+      before.close();
 
-    const holding = join(dirname(path), "holding");
-    const versionFile = join(dirname(path), "schema-version");
-    const sqlite = createRequire(import.meta.url).resolve("better-sqlite3");
-    const other = spawn(process.execPath, ["-e", OTHER_SERVER, sqlite, path, holding, versionFile], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let otherStderr = "";
-    other.stderr!.on("data", (chunk: Buffer) => (otherStderr += chunk.toString()));
-    const exited = new Promise<number | null>((resolve) => other.once("exit", (code) => resolve(code)));
-    for (let waited = 0; !existsSync(holding) && waited < 5_000; waited += 20) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(existsSync(holding), `the other server did not take the lock: ${otherStderr}`).toBe(true);
+      const files = dirname(path);
+      const [holding, versionFile, go] = ["holding", "schema-version", "go"].map((name) => join(files, name));
+      const sqlite = createRequire(import.meta.url).resolve("better-sqlite3");
+      const other = spawn(process.execPath, ["-e", OTHER_SERVER, sqlite, path, holding, versionFile, go], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let otherStderr = "";
+      other.stderr!.on("data", (chunk: Buffer) => (otherStderr += chunk.toString()));
+      const exited = new Promise<number | null>((resolve) => other.once("exit", (code) => resolve(code)));
+      const mine = new Raw!(path);
+      try {
+        for (let waited = 0; !existsSync(holding) && waited < 10_000; waited += 20) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(existsSync(holding), `the other server did not take the lock: ${otherStderr}`).toBe(true);
 
-    // The schema this open reads still has the NOT NULL column: the other
-    // server has not committed. The rebuild waits for its lock.
-    const repo = tryCreateEvidenceRepository(path);
-    expect(await exited, otherStderr).toBe(0);
-    expect(repo).not.toBeNull();
-    repo!.recordQualityScore(score());
-    const history = repo!.getQualityHistory(10);
-    repo!.close();
+        // The other server rebuilds only once this one has made its first
+        // check: the race is the one of the review of #239, on every run,
+        // not on the runs where the timing happens to produce it.
+        const firstCheck: Array<{ name: string; notnull: number }> = [];
+        const racing = {
+          exec: (sql: string) => mine.exec(sql),
+          transaction: mine.transaction.bind(mine),
+          pragma: (statement: string) => {
+            const rows = mine.pragma(statement);
+            if (firstCheck.length === 0) {
+              firstCheck.push(...(rows as Array<{ name: string; notnull: number }>));
+              writeFileSync(go, "");
+            }
+            return rows;
+          },
+        };
+        makeAuditFlagsNullable(racing);
 
-    expect(history.map((h) => h.prdId)).toEqual(["run_a", "run_old"]);
-    // The table is the one the other server left: this one did not rebuild it.
-    expect(schemaVersionOf(path)).toBe(Number(readFileSync(versionFile, "utf-8")));
-  });
+        expect(firstCheck.find((c) => c.name === "audit_flags_raised")!.notnull).toBe(1);
+        expect(await exited, otherStderr).toBe(0);
+        expect(notNullOf(mine, "audit_flags_raised")).toBe(0);
+        const rows = mine.prepare("SELECT prd_id FROM prd_quality_scores").all();
+        expect(rows).toEqual([{ prd_id: "run_old" }]);
+      } finally {
+        mine.close();
+        other.kill();
+      }
+      // The table is the one the other server left: this one did not rebuild it.
+      expect(schemaVersionOf(path)).toBe(Number(readFileSync(versionFile, "utf-8")));
+    },
+    TWO_PROCESS_TIMEOUT_MS,
+  );
 
   it("opens a database that needs no rebuild while another connection is writing", () => {
     const path = tempDb();
