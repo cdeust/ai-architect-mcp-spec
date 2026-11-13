@@ -63,8 +63,11 @@ while IFS= read -r arg; do
   ARGS+=("${arg//\$\{__dirname\}/${STAGE_DIR}}")
 done < <(node -e 'for (const a of require("./manifest.json").server.mcp_config.args) console.log(a)')
 # The environment is read from manifest.json too (review of #238): a host
-# sets what `server.mcp_config.env` declares, so a manifest that loses a
-# variable must fail here as it would there. ENV_VARS holds NAME=value pairs.
+# sets what `server.mcp_config.env` declares, and nothing else. ENV_VARS
+# holds NAME=value pairs. With a bundle built before #240, a manifest that
+# loses PRD_GEN_SKILL_CONFIG fails here (configAvailable false); since #240
+# the server finds the configuration from its own root, and such a manifest
+# passes: the variable is an override, no longer the only way.
 ENV_VARS=()
 while IFS= read -r pair; do
   ENV_VARS+=("${pair//\$\{__dirname\}/${STAGE_DIR}}")

@@ -50,7 +50,8 @@ cp mcp-server/index.js "${STAGE_DIR}/mcp-server/"
 cp mcp-server/package.json "${STAGE_DIR}/mcp-server/"
 cp mcp-server/package-lock.json "${STAGE_DIR}/mcp-server/"
 
-# Skill config (required at runtime — PRD_GEN_SKILL_CONFIG)
+# Skill config, read at runtime: from the archive's root since #240, and
+# from PRD_GEN_SKILL_CONFIG when the manifest or the user sets it.
 cp packages/skill/skill-config.json "${STAGE_DIR}/packages/skill/"
 
 # Runtime deps, resolved from the committed lockfile with integrity verified.

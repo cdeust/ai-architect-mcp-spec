@@ -29,15 +29,12 @@ interface Health {
   readonly skillAvailable: boolean;
 }
 
-let archive: string;
+let scratch: string;
+let bundle: string;
 
 beforeAll(async () => {
-  archive = mkdtempSync(join(tmpdir(), "prd-gen-bundle-"));
-  mkdirSync(join(archive, "packages", "skill"), { recursive: true });
-  copyFileSync(
-    join(REPO, "packages", "skill", "skill-config.json"),
-    join(archive, "packages", "skill", "skill-config.json"),
-  );
+  scratch = mkdtempSync(join(tmpdir(), "prd-gen-bundle-"));
+  bundle = join(scratch, "index.js");
   // The options of the `bundle` script of package.json.
   await build({
     entryPoints: [DIST_ENTRY],
@@ -46,16 +43,32 @@ beforeAll(async () => {
     target: "node20",
     format: "esm",
     external: ["better-sqlite3"],
-    outfile: join(archive, "mcp-server", "index.js"),
+    outfile: bundle,
     logLevel: "silent",
   });
 }, TEST_TIMEOUT_MS);
 
 afterAll(() => {
-  rmSync(archive, { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true });
 });
 
-async function health(): Promise<Health> {
+/**
+ * An archive of its own for each test, so that neither depends on the other
+ * having run (review of #241): the bundle in `mcp-server/`, and in
+ * `packages/skill/` the files named, copied from the repository.
+ */
+function archiveWith(name: string, skillFiles: readonly string[]): string {
+  const archive = join(scratch, name);
+  mkdirSync(join(archive, "mcp-server"), { recursive: true });
+  mkdirSync(join(archive, "packages", "skill"), { recursive: true });
+  copyFileSync(bundle, join(archive, "mcp-server", "index.js"));
+  for (const file of skillFiles) {
+    copyFileSync(join(REPO, "packages", "skill", file), join(archive, "packages", "skill", file));
+  }
+  return archive;
+}
+
+async function health(archive: string): Promise<Health> {
   const server = await startStdioServer(undefined, {
     entry: join(archive, "mcp-server", "index.js"),
     unset: ["CLAUDE_PLUGIN_ROOT", "PRD_GEN_SKILL_CONFIG"],
@@ -73,7 +86,7 @@ describe("the bundle in the layout of the .mcpb, no variable set (#240)", () => 
   it(
     "finds the configuration the archive carries, and no SKILL.md, which it does not carry",
     async () => {
-      const report = await health();
+      const report = await health(archiveWith("as-staged", ["skill-config.json"]));
       expect(report.configAvailable).toBe(true);
       expect(report.skillAvailable).toBe(false);
     },
@@ -83,8 +96,7 @@ describe("the bundle in the layout of the .mcpb, no variable set (#240)", () => 
   it(
     "finds SKILL.md once the archive carries it",
     async () => {
-      copyFileSync(join(REPO, "packages", "skill", "SKILL.md"), join(archive, "packages", "skill", "SKILL.md"));
-      const report = await health();
+      const report = await health(archiveWith("with-skill", ["skill-config.json", "SKILL.md"]));
       expect(report.configAvailable).toBe(true);
       expect(report.skillAvailable).toBe(true);
     },

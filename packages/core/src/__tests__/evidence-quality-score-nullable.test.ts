@@ -283,7 +283,14 @@ describe.skipIf(Raw === null)("quality scores without audit flags (#121)", () =>
         expect(rows).toEqual([{ prd_id: "run_old" }]);
       } finally {
         mine.close();
-        other.kill();
+        // Wait for the other process: killed and not waited for, it still
+        // holds the database open on Windows when afterEach deletes it, and
+        // that EBUSY would hide the failure that brought us here (review of
+        // #241).
+        if (other.exitCode === null && other.signalCode === null) {
+          other.kill();
+          await exited;
+        }
       }
       // The table is the one the other server left: this one did not rebuild it.
       expect(schemaVersionOf(path)).toBe(Number(readFileSync(versionFile, "utf-8")));
