@@ -6,6 +6,15 @@ import type {
 import { makeViolation } from "./helpers.js";
 import { listedIds, missingNumbers } from "./listed-ids.js";
 
+/**
+ * The number of an identifier: at most nine digits, not followed by another.
+ * A longer run of digits is not read as an identifier at all. Past 2^53 a
+ * number cannot be told from its neighbour, so two such identifiers named the
+ * same one as missing twenty times, and 309 digits read as Infinity (review
+ * of #236). Nine digits is the bound `dependency_targets_defined` uses.
+ */
+const ID_NUMBER = String.raw`(\d{1,9})(?!\d)`;
+
 /** `PREFIX-n` for each number, the form the findings name identifiers in. */
 function idsOf(prefix: string, numbers: readonly number[]): string[] {
   return numbers.map((n) => `${prefix}-${n}`);
@@ -16,7 +25,7 @@ export function checkACNumbering(
   content: string,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
-  const acPattern = /AC-(\d+)/g;
+  const acPattern = new RegExp(`AC-${ID_NUMBER}`, "g");
   const acNumbers: number[] = [];
 
   let match: RegExpExecArray | null;
@@ -126,7 +135,7 @@ function checkIdNumberingGaps(
   rule: HardOutputRule,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
-  const pattern = new RegExp(`${prefix}-(\\d+)`, "g");
+  const pattern = new RegExp(`${prefix}-${ID_NUMBER}`, "g");
   const numbers: number[] = [];
 
   let match: RegExpExecArray | null;
@@ -157,7 +166,7 @@ function checkIdNumberingGaps(
 export function checkDocumentACConsistency(
   content: string,
 ): HardOutputRuleViolation[] {
-  const acPattern = /AC-(\d+)/g;
+  const acPattern = new RegExp(`AC-${ID_NUMBER}`, "g");
   const acNumbers: number[] = [];
 
   let match: RegExpExecArray | null;

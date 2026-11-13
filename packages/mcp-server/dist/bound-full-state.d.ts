@@ -115,7 +115,11 @@ export interface BoundedFullState {
     readonly __bounded: {
         /** Measured serialized size of the state BEFORE degradation, without `__bounded`. */
         readonly original_chars: number;
-        /** Serialized size of this response, `__bounded` included (≤ MAX_RESPONSE_CHARS). */
+        /**
+         * Serialized size of this response, `__bounded` included. It is within
+         * MAX_RESPONSE_CHARS unless the state, shed to its floor, is still over
+         * it (postcondition of boundFullStateResponse).
+         */
         readonly final_chars: number;
         /** The budget the payload was fitted to. */
         readonly budget_chars: number;
