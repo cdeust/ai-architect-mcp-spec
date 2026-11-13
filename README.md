@@ -92,10 +92,13 @@ submit_action_result(run_id, result)
 validate_prd_section(content, section_type)
   → deterministic Hard Output Rules — zero LLM calls, pure regex/parsing.
   → returns: violations[], hasCriticalViolations, totalScore.
+  → paged under the 100,000-char budget by whole violations:
+    __page.next_offset is the next item_offset, null on the last page.
 
 validate_prd_document(sections[])
   → cross-section checks: SP arithmetic, AC numbering, FR-AC coverage,
     test traceability. Catches what per-section validation misses.
+  → paged like validate_prd_section.
 
 coordinate_context_budget(prd_context, completed_sections[])
   → per-section retrieval/generation token budgets so Cortex recall and
@@ -476,6 +479,8 @@ conclude_verification(verdicts[])
 ```
 
 `plan_section_verification` and `plan_document_verification` hold no state: a host reads the next page by calling the tool again with the same arguments and `request_offset` set to `__page.next_offset`. Every judge request carries the whole document as `context.prd_excerpt`, unchanged, so a page holds few requests when the document is long (one per page once the sections pass about half the budget), and a page goes over the budget only when a single request does not fit on its own (sections near the budget itself); the overshoot is then visible as `__page.final_chars` above `__page.budget_chars`.
+
+`validate_prd_section` and `validate_prd_document` are paged the same way, with `item_offset`: a page holds whole items, the violations first and then the unresolved symbols of `symbolExistence`, and the other fields of the report (`rulesChecked`, `rulesPassed`, `hasCriticalViolations`, `totalScore`) are on every page. A report that fits is one page.
 
 The verdict taxonomy is deliberately five-level — not binary. NFR claims (latency, fps, throughput, storage) **MUST NOT receive PASS**: they are SPEC-COMPLETE if a measurement method is specified, NEEDS-RUNTIME otherwise. Judges that default to PASS for everything are caught by the `distribution_suspicious` detector and flagged in the typed `done.verification` field.
 
