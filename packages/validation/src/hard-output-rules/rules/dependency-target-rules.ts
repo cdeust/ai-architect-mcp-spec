@@ -3,6 +3,7 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { listedIds } from "./listed-ids.js";
 import { LINE_BREAK, linesOutsideFences } from "./fenced-blocks.js";
 
 // Document-Level Rule: Dependency Targets Defined
@@ -41,12 +42,6 @@ const ID_HEADER = /\bID\b/i;
 
 /** A table cell that holds one identifier and nothing else. */
 const ID_ONLY_CELL = new RegExp(String.raw`^(?:\*\*|\x60)?(${DEP_ID_SOURCE})(?:\*\*|\x60)?$`);
-
-/**
- * Undefined targets named in the finding; the rest are counted. Bounds the
- * message on a document with many dangling references.
- */
-const MAX_LISTED_TARGETS = 20;
 
 /**
  * The comparison key of an identifier: its family and its number, so that
@@ -174,9 +169,8 @@ export function checkDocumentDependencyTargetsDefined(
     .sort();
 
   if (undefinedTargets.length === 0) return [];
-  const listed = undefinedTargets.slice(0, MAX_LISTED_TARGETS).join(", ");
-  const more = undefinedTargets.length - MAX_LISTED_TARGETS;
-  const names = more > 0 ? `${listed} and ${more} more` : listed;
+  // The first targets are named, the rest counted (listed-ids.ts).
+  const names = listedIds(undefinedTargets);
   return [
     makeViolation(
       "dependency_targets_defined",

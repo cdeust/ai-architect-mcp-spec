@@ -3,6 +3,7 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { listedIds } from "./listed-ids.js";
 
 // Document-Level Rule 19: FR-to-AC Coverage
 export function checkDocumentFRToACCoverage(
@@ -41,8 +42,8 @@ export function checkDocumentFRToACCoverage(
       makeViolation(
         "fr_to_ac_coverage",
         null,
-        `${uncoveredFRs.length} FR(s) have no acceptance criteria: ${uncoveredFRs.join(", ")}`,
-        `Uncovered: ${uncoveredFRs.join(", ")}`,
+        `${uncoveredFRs.length} FR(s) have no acceptance criteria: ${listedIds(uncoveredFRs)}`,
+        `Uncovered: ${listedIds(uncoveredFRs)}`,
       ),
     ];
   }
@@ -87,8 +88,8 @@ export function checkDocumentACToTestCoverage(
       makeViolation(
         "ac_to_test_coverage",
         null,
-        `${uncoveredACs.length} AC(s) have no test coverage: ${uncoveredACs.join(", ")}`,
-        `Uncovered: ${uncoveredACs.join(", ")}`,
+        `${uncoveredACs.length} AC(s) have no test coverage: ${listedIds(uncoveredACs)}`,
+        `Uncovered: ${listedIds(uncoveredACs)}`,
       ),
     ];
   }

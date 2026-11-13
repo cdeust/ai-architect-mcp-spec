@@ -38,12 +38,18 @@ interface RpcMessage {
 }
 
 /**
+ * precondition:  `prepare`, when given, writes what the server must find at
+ *                start in the evidence database whose path it receives.
  * postcondition: a started and initialized server whose evidence database
  *                lives in a scratch directory of its own.
  */
-export async function startStdioServer(): Promise<StdioServer> {
+export async function startStdioServer(
+  prepare?: (evidenceDbPath: string) => void,
+): Promise<StdioServer> {
   const scratch = mkdtempSync(join(tmpdir(), "prd-gen-stdio-"));
-  const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: join(scratch, "evidence.db") };
+  const evidenceDbPath = join(scratch, "evidence.db");
+  prepare?.(evidenceDbPath);
+  const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: evidenceDbPath };
   const child = spawn(process.execPath, [ENTRY], { env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map<number, { resolve: (m: RpcMessage) => void; reject: (e: Error) => void }>();
   let stderr = "";
@@ -56,11 +62,16 @@ export async function startStdioServer(): Promise<StdioServer> {
   };
   child.on("error", failAll);
   child.on("exit", (code) => failAll(new Error(`server exited (code ${code}): ${stderr}`)));
-  child.stderr!.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf-8");
+  // setEncoding decodes across chunk boundaries: a multi-byte character cut
+  // by a pipe read (the em dash of a story line, say) would otherwise come
+  // out as two U+FFFD (review of #235).
+  child.stderr!.setEncoding("utf8");
+  child.stdout!.setEncoding("utf8");
+  child.stderr!.on("data", (chunk: string) => {
+    stderr += chunk;
   });
-  child.stdout!.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString("utf-8");
+  child.stdout!.on("data", (chunk: string) => {
+    buffer += chunk;
     let newline: number;
     while ((newline = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, newline);

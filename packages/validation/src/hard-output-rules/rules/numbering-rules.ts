@@ -4,6 +4,12 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { listedIds, missingNumbers } from "./listed-ids.js";
+
+/** `PREFIX-n` for each number, the form the findings name identifiers in. */
+function idsOf(prefix: string, numbers: readonly number[]): string[] {
+  return numbers.map((n) => `${prefix}-${n}`);
+}
 
 // Rule 3: AC Numbering
 export function checkACNumbering(
@@ -21,21 +27,15 @@ export function checkACNumbering(
   if (acNumbers.length === 0) return [];
 
   const sorted = [...new Set(acNumbers)].sort((a, b) => a - b);
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const gaps = missingNumbers(sorted);
 
-  const gaps: number[] = [];
-  for (let n = first; n <= last; n++) {
-    if (!sorted.includes(n)) gaps.push(n);
-  }
-
-  if (gaps.length > 0) {
+  if (gaps.count > 0) {
     return [
       makeViolation(
         "ac_numbering",
         sectionType,
-        `AC numbering has gaps: missing AC-${gaps.join(", AC-")}`,
-        `Found: AC-${sorted.join(", AC-")}`,
+        `AC numbering has gaps: missing ${listedIds(idsOf("AC", gaps.first), gaps.count)}`,
+        `Found: ${listedIds(idsOf("AC", sorted))}`,
       ),
     ];
   }
@@ -137,21 +137,15 @@ function checkIdNumberingGaps(
   if (numbers.length === 0) return [];
 
   const sorted = [...new Set(numbers)].sort((a, b) => a - b);
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const gaps = missingNumbers(sorted);
 
-  const gaps: number[] = [];
-  for (let n = first; n <= last; n++) {
-    if (!sorted.includes(n)) gaps.push(n);
-  }
-
-  if (gaps.length > 0) {
+  if (gaps.count > 0) {
     return [
       makeViolation(
         rule,
         sectionType,
-        `${prefix} numbering has gaps: missing ${prefix}-${gaps.join(`, ${prefix}-`)}`,
-        `Found: ${prefix}-${sorted.join(`, ${prefix}-`)}`,
+        `${prefix} numbering has gaps: missing ${listedIds(idsOf(prefix, gaps.first), gaps.count)}`,
+        `Found: ${listedIds(idsOf(prefix, sorted))}`,
       ),
     ];
   }
@@ -174,21 +168,15 @@ export function checkDocumentACConsistency(
   if (acNumbers.length <= 1) return [];
 
   const sorted = [...new Set(acNumbers)].sort((a, b) => a - b);
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const gaps = missingNumbers(sorted);
 
-  const gaps: number[] = [];
-  for (let n = first; n <= last; n++) {
-    if (!sorted.includes(n)) gaps.push(n);
-  }
-
-  if (gaps.length > 0) {
+  if (gaps.count > 0) {
     return [
       makeViolation(
         "ac_numbering",
         null,
-        `Document-level AC numbering has gaps: missing AC-${gaps.join(", AC-")}`,
-        `Found across document: AC-${sorted.join(", AC-")}`,
+        `Document-level AC numbering has gaps: missing ${listedIds(idsOf("AC", gaps.first), gaps.count)}`,
+        `Found across document: ${listedIds(idsOf("AC", sorted))}`,
       ),
     ];
   }

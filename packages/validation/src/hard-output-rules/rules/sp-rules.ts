@@ -3,6 +3,7 @@ import type {
   SectionType,
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
+import { listedIds } from "./listed-ids.js";
 import { linesOutsideFences } from "./fenced-blocks.js";
 
 /** A line is a table row when its first non-indent character is `|`. */
@@ -89,7 +90,7 @@ export function checkUnevenSPDistribution(
         "uneven_sp_distribution",
         sectionType,
         `All ${spValues.length} sprints have identical SP (${spValues[0]}) — real projects have uneven complexity`,
-        `Sprint SP values: ${spValues.join(", ")}`,
+        `Sprint SP values: ${listedIds(spValues.map(String))}`,
       ),
     ];
   }
