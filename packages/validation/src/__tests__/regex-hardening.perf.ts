@@ -210,33 +210,35 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // pattern is anchored with `^`, so the branch is tried once, after the
   // space that follows the label; what can grow is the work inside that one
   // try. A run of `*` or of `_` is what a marker loop that overlaps the rest
-  // of the cell would split in O(n²) ways, and each run guards its own
-  // marker: with the run unbounded (`[*_]+`) and `*` allowed to start the
-  // rest, the `*` run failed at a ratio of 4.25 per doubling (review of #257;
-  // 4.04 and 4.10 when measured again for the reviews of #258 and #259, 3.97
-  // to 4.24 for the review of #260) while the other inputs stayed under 2;
-  // with `_` allowed to start the rest instead, the `_` run failed at 4.06
-  // (3.95 to 4.02 for the review of #260) while the other inputs stayed under
-  // 2. With one guard kept, every input stayed under 2: the run unbounded
-  // alone, `*` allowed alone, or `_` allowed alone (review of #260), and the
-  // run bounded with both `*` and `_` allowed (four trials, review of #261),
-  // while the run unbounded with both allowed failed at 4.00. `***(`
-  // repeated passes the branch and makes the rest read to the line end: it
-  // measures the path that matches, and no mutation above moves it. Spaced
-  // markers (` *`, ` __`) reach the branch, but the run there ends at the next
-  // space after one or two markers, so the work in the branch does not grow
-  // with the input: they stayed under 2 against both failing mutations and
-  // are not kept (review of #258).
+  // of the cell would split in O(n²) ways; `***(` repeated passes the branch
+  // and makes the rest read to the line end, so it measures the path that
+  // matches. Every input is measured before the assertion, so a failure
+  // reports the ratio of each (review of #262).
+  // Measured for the review of #262, four trials per mutation of
+  // `sp-rules.ts`, every input each time: with the marker loop unbounded
+  // (`[*_]+`), the `*` run fails when `*` may start the rest (3.80 to 4.59
+  // per doubling), the `_` run fails when `_` may (4.17 to 4.74), and both
+  // fail when both may (3.42 to 4.77 and 4.20 to 4.58). Every other input of
+  // those mutations, and every input with the loop bounded to three (whatever
+  // may start the rest) or with the loop unbounded and neither allowed,
+  // stayed under 2 (1.45 at most). `***(` stayed under 2 in every mutation.
+  // Spaced markers (` *`, ` __`) reach the branch, but the run there ends at
+  // the next space after one or two markers, so the work in the branch does
+  // not grow with the input: they stayed under 2 against both failing
+  // mutations and are not kept (review of #258).
   it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    const ratios: Record<string, number> = {};
     for (const unit of ["*", "_", "***("]) {
       const build = (n: number): string => "| **Total** " + unit.repeat(n);
       const small = build(Math.floor(16000 / unit.length));
       const large = build(Math.floor(32000 / unit.length));
       run(small);
       run(large);
-      expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+      ratios[unit] = growthRatio(run, small, large);
     }
+    const over = Object.entries(ratios).filter(([, ratio]) => !(ratio < QUADRATIC_GROWTH_CEILING));
+    expect(over, JSON.stringify(ratios)).toEqual([]);
   });
 
   // Review 2 of #228: FENCE_LINE read the rest of the line with `.*`, which

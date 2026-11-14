@@ -197,14 +197,14 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * Either of two guards keeps the scan linear: the rest cannot start with `*`
  * or `_` (`CELL_REST_START`), so the marker loop and the rest of the cell do
  * not overlap; and the loop takes at most three markers, so a run is split in
- * a bounded number of ways. Measured on the emphasis case of
- * `regex-hardening.perf.ts`, it stays under its ceiling when one guard is
- * dropped: the loop unbounded (`[*_]+`), `*` allowed to start the rest, `_`
- * allowed to start it, or both `*` and `_` allowed with the loop bounded (every
- * input under 2 in four trials, review of #261). It fails when both are
- * dropped, on the `*` run with `*` allowed and on the `_` run with `_` allowed,
- * at a growth ratio of about 4 per doubling (3.97 to 4.25 for the `*` run and
- * 3.95 to 4.06 for the `_` run over the reviews of #257 to #260).
+ * a bounded number of ways. The start guard has one part per marker, and each
+ * part guards the run of its own marker. Measured on the emphasis case of
+ * `regex-hardening.perf.ts` (four trials per mutation, every input measured,
+ * review of #262): with the loop bounded, every input stays under 2 whatever
+ * may start the rest; with the loop unbounded (`[*_]+`), every input stays
+ * under 2 while neither marker may start the rest, the `*` run fails when `*`
+ * may (3.80 to 4.59 per doubling), the `_` run fails when `_` may (4.17 to
+ * 4.74), and both runs fail when both may (3.42 to 4.77 and 4.20 to 4.58).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
