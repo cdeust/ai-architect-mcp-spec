@@ -304,6 +304,28 @@ describe("sp_arithmetic: prose total of a story list", () => {
     }
   });
 
+  it("table sp_arithmetic reads the closing bold of a label apart from the rest of the cell", () => {
+    // Codex review of #254: the closing `**` of a bold label was read as the
+    // punctuation that starts the rest of the cell, so `**Totals** carried`
+    // and `**Sum**-up task` were read as totals while their plain forms are
+    // data. A bold label or unit followed by nothing, a unit or punctuation
+    // is still a total.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| **Totals** carried | 7 |", "| **Sum**-up task | 2 |", "| **Grand Total** | 12 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    const wrong = table.replace("| **Grand Total** | 12 |", "| **Grand Total** | 3 |");
+    expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 3 but individual rows sum to 12",
+    ]);
+    for (const cell of ["**Totals**", "Total **SP**", "**Total** SP", "**Total**:", "**Total:**"]) {
+      const total = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(total, "timeline")).toEqual([]);
+      const off = total.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(off, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+  });
+
   it("table sp_arithmetic reads a first cell of spaces after a label linearly", () => {
     // The space loop after the label is the only one before the rest of the
     // cell: a label then a long run of spaces and no closing pipe fails fast.
