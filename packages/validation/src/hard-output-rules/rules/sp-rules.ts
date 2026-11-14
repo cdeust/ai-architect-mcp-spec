@@ -134,22 +134,52 @@ function trailingNumberIn(cellsText: string): number | null {
 const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 
 /**
- * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
- * Grand Total or Grand Totals, in optional bold, and nothing else.
- *
- * The total row and the lookahead of the data row share this one definition,
- * so every row is either a total or a data row. With a label prefix in the
- * lookahead (`Total|Sum` then `\b`) and the whole cell in the total row, the
- * two disagreed: `| Totals | 10 |` was counted as data and never read as a
- * total, so beside `| **Grand Total** | 10 |` a right total was reported as
- * `sum to 20`, and `| Total SP |`, `| Sum-up task |` or `| Totalité |` was
- * skipped from the sum without being read as a total (`\b` is ASCII only and
- * stops at any non-word character; review of #246). A first cell that only
- * starts with a label (`| Summary task |`, `| Totals carried |`) is data
- * (review of #242).
+ * The end of a total label: no letter, mark, digit or underscore after it, in
+ * any script, and no hyphen or apostrophe that joins it to a letter. `\b` is
+ * ASCII only and stops at any non-word character: it ended `Sum` inside
+ * `Sum-up` and `Total` before an accented letter (`Totalé`), but not inside
+ * `Totalité`, since it does not cut between `l` and `i` (review of #250).
  */
-const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)`;
-const TOTAL_CELL = `${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|`;
+const LABEL_END = "(?![\\p{L}\\p{M}\\p{N}_]|['\u2019-]\\p{L})";
+
+/**
+ * A story-point unit after a total label (`Total SP`, `Total story points`).
+ */
+const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
+
+/**
+ * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
+ * Grand Total or Grand Totals, in optional bold, at the end of a word, then
+ * optionally a story-point unit, then either the closing pipe or text that
+ * starts with a character that is neither a letter nor a space (`Total:`,
+ * `**Total SP**`, `Total (committed)`). A first cell where a word follows the
+ * label (`| Totals carried |`, review of #242) or where the label is part of
+ * a longer word (`| Summary task |`, `| Sum-up task |`, `| Totalité |`) is a
+ * data row.
+ *
+ * The total row and the lookahead of the data row share this one definition.
+ * In #250 the cell was the label alone, so a cell that starts with a label
+ * then goes on (`**Total SP**`, `Total:`, `Total (committed)`) was summed as
+ * a story: beside `| **Grand Total** | 22 |` a right total was reported as
+ * `sum to 44` (review of #250). Before #250 the lookahead skipped such a row
+ * and the total row did not read it.
+ *
+ * The space loop after the label is the only one before the rest of the cell,
+ * which starts with a character that is not a space: a run of spaces is split
+ * one way only. The rest (`[^|…]*`) cannot hold a pipe or a line terminator.
+ */
+const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)${LABEL_END}`;
+const CELL_REST = "[^|\\s\\p{L}][^|\\n\\r\\u2028\\u2029]*";
+const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:${SP_UNIT}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
+
+/**
+ * The first cell of a separator row (`|---|`, `| :---: |`): only hyphens, with
+ * an optional colon at each end. A first cell that only starts with a hyphen
+ * (`| -STORY-3 | 4 |`) is a data row (review of #250: a lookahead on `-`
+ * alone skipped it from the sum). So a row is a total, a separator or a data
+ * row.
+ */
+const SEPARATOR_CELL = `:?-+:?${INLINE_SPACE}*\\|`;
 
 /**
  * The table rows of `checkSPArithmetic`, as sources: each call builds its own
@@ -181,7 +211,7 @@ const TOTAL_CELL = `${TOTAL_LABEL}(?:\\*{0,2})${INLINE_SPACE}*\\|`;
  * spans two lines (review of #242).
  */
 const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_CELL}(.+)\\|`;
-const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:-|${TOTAL_CELL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:${SEPARATOR_CELL}|${TOTAL_CELL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
 
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(
@@ -189,8 +219,8 @@ export function checkSPArithmetic(
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
   // Fresh objects per call: `.exec` in a loop advances `lastIndex`.
-  const totalRowPattern = new RegExp(TOTAL_ROW_SOURCE, "gim");
-  const dataRowPattern = new RegExp(DATA_ROW_SOURCE, "gim");
+  const totalRowPattern = new RegExp(TOTAL_ROW_SOURCE, "gimu");
+  const dataRowPattern = new RegExp(DATA_ROW_SOURCE, "gimu");
 
   // Collect individual SP values from data rows
   const individualSPs: number[] = [];
