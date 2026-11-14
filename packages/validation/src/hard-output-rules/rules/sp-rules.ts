@@ -194,12 +194,15 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * of four (`Total ____(all)____`) and markers right after the closing bold
  * (`**Total**_(all)_`) start no rest: those cells are data rows, `_` as `*`
  * (reviews of #257 and #258).
- * The scan stays linear because the marker loop and the rest of the cell do
- * not overlap: the rest cannot start with `*` or `_` (`CELL_REST_START`), and
- * the loop takes at most three markers. Each guard holds on its own: the
- * emphasis case of `regex-hardening.perf.ts` stays under its ceiling with the
- * loop unbounded (`[*_]+`), or with `*` allowed to start the rest, and fails
- * (growth ratio 4.10 per doubling) only with both (review of #259).
+ * Either of two guards keeps the scan linear: the rest cannot start with `*`
+ * or `_` (`CELL_REST_START`), so the marker loop and the rest of the cell do
+ * not overlap; and the loop takes at most three markers, so a run is split in
+ * a bounded number of ways. Measured on the emphasis case of
+ * `regex-hardening.perf.ts`, it stays under its ceiling when one guard is
+ * dropped: the loop unbounded (`[*_]+`), `*` allowed to start the rest, or `_`
+ * allowed to start it. It fails when both are dropped, on the `*` run with `*`
+ * allowed (growth ratio 4.0 to 4.2 per doubling) and on the `_` run with `_`
+ * allowed (4.0) (reviews of #259 and #260).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
