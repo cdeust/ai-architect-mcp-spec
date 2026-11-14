@@ -214,16 +214,11 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // and makes the rest read to the line end, so it measures the path that
   // matches. Every input is measured before the assertion, so a failure
   // reports the ratio of each (review of #262).
-  // Measured four trials per mutation of `sp-rules.ts` for #263, and four
-  // more of each but the unbounded loop with neither marker allowed (last
-  // measured for #263 and #264) for the follow-up of #264 notes, every input
-  // each time. #264 itself re-measured the unbounded loop and the bounded
-  // loop with both allowed; the bounded loop with only `*` or only `_`
-  // allowed was measured, without series of four trials, for the follow-ups
-  // of #259 and #260 notes, then four trials each for #263. With the marker
-  // loop unbounded (`[*_]+`): when only `*` may start the rest, the `*` run
-  // fails (3.80 to 4.59 per doubling); when only `_` may, the `_` run fails
-  // (3.94 to 4.74); when both may, both runs fail (3.42 to 4.77 and 3.87 to
+  // Measured on mutations of `sp-rules.ts`, every input each time (the #118
+  // follow-up entries of CHANGELOG.md say which trials measured which
+  // mutation). With the marker loop unbounded (`[*_]+`): when only `*` may
+  // start the rest, the `*` run fails (3.80 to 4.59 per doubling); when only
+  // `_` may, the `_` run fails (3.94 to 4.74); when both may, both runs fail (3.42 to 4.77 and 3.87 to
   // 4.58). Every other input of those mutations, and every input with the
   // loop bounded to three (whatever may start the rest) or with the loop
   // unbounded and neither allowed, stayed under the ceiling of 3 (2.47 at
