@@ -218,18 +218,18 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // follow-up entries of CHANGELOG.md say which trials measured which
   // mutation). With the marker loop unbounded (`[*_]+`): when only `*` may
   // start the rest, the `*` run fails (3.80 to 4.59 per doubling); when only
-  // `_` may, the `_` run fails (3.94 to 4.74); when both may, both runs fail (3.42 to 4.77 and 3.87 to
-  // 4.58). Every other input of those mutations, and every input with the
-  // loop bounded to three (whatever may start the rest) or with the loop
-  // unbounded and neither allowed, stayed under the ceiling of 3 (2.47 at
-  // most, the `_` run with the loop bounded and both allowed). The ratios of
-  // a trial vary with the machine, so the ceiling, not a single trial, is
-  // what an input is compared with. Spaced markers (` *`, ` __`) reach the
-  // branch, but the run there ends at the next space after one or two
-  // markers, so the work in the branch does not grow with the input: against
-  // each of the three failing mutations they stayed under the ceiling (2.08
-  // at most, ` __` with both allowed) and are not kept (reviews of #258 and
-  // #263).
+  // `_` may, the `_` run fails (3.94 to 4.74); when both may, both runs
+  // fail (3.42 to 4.77 and 3.87 to 4.58). Every other input of those
+  // mutations, and every input with the loop bounded to three (whatever may
+  // start the rest) or with the loop unbounded and neither allowed, stayed
+  // under the ceiling of 3 (2.47 at most, the `_` run with the loop bounded
+  // and both allowed). The ratios of a trial vary with the machine, so the
+  // ceiling, not a single trial, is what an input is compared with. Spaced
+  // markers (` *`, ` __`) reach the branch, but the run there ends at the
+  // next space after one or two markers, so the work in the branch does not
+  // grow with the input: against each of the three failing mutations they
+  // stayed under the ceiling (2.08 at most, ` __` with both allowed) and are
+  // not kept (reviews of #258 and #263).
   it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
     const ratios: Record<string, number> = {};
