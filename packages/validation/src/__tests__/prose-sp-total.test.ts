@@ -251,9 +251,10 @@ describe("sp_arithmetic: prose total of a story list", () => {
   });
 
   it("table sp_arithmetic counts a row whose first cell only starts with a total label", () => {
-    // Review of #242: without a word boundary after the label, the data row's
-    // lookahead skipped `Summary task` and `Totals carried` as total rows, so
-    // the sum missed them and a right total of 10 was reported as wrong.
+    // Review of #242: the data row's lookahead skipped any first cell that
+    // starts with a label, so `Summary task` and `Totals carried` were left out
+    // of the sum and a right total of 10 was reported as wrong. A label inside
+    // a longer word, or followed by a word, is data.
     const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Summary task | 5 |", "| Totals carried | 2 |", "| **Total** | 10 |"].join("\n");
     expect(checkSPArithmetic(table, "timeline")).toEqual([]);
     // A real total row is still skipped from the sum, bold or not.
@@ -273,16 +274,43 @@ describe("sp_arithmetic: prose total of a story list", () => {
   });
 
   it("table sp_arithmetic counts every row that is not a total row", () => {
-    // Review of #246: the data row skipped any first cell that starts with a
-    // label then a non-word character (`\b` is ASCII only), while the total
-    // row reads only a cell that is a label, so `Total SP`, `Sum-up task` and
-    // `Totalité` were neither counted nor read as a total.
-    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 1 |", "| Total SP | 2 |", "| Sum-up task | 3 |", "| Totalité | 4 |", "| **Total** | 10 |"].join("\n");
+    // Review of #246: the data row skipped `Sum-up task` as a total row (`\b`
+    // stops at the hyphen), while the total row did not read it. A label
+    // joined to a letter by a hyphen, or inside a longer word in any script,
+    // is data. Review of #250: a first cell that starts with a hyphen and is
+    // not a separator (`-STORY-3`) is data too.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 1 |", "| -STORY-3 | 2 |", "| Sum-up task | 3 |", "| Totalité | 4 |", "| **Total** | 10 |"].join("\n");
     expect(checkSPArithmetic(table, "timeline")).toEqual([]);
     const wrong = table.replace("| **Total** | 10 |", "| **Total** | 1 |");
     expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
       "SP total row shows 1 but individual rows sum to 10",
     ]);
+    // An aligned separator row is still skipped.
+    const aligned = ["| Item | SP |", "| :--- | ---: |", "| STORY-1 | 3 |", "| **Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(aligned, "timeline")).toEqual([]);
+  });
+
+  it("table sp_arithmetic reads a label followed by a unit or punctuation as a total", () => {
+    // Review of #250: with the label alone as the total cell, `**Total SP**`,
+    // `Total:` and `Total (committed)` were summed as stories, so beside a
+    // grand total of 22 a right total was reported as `sum to 44`.
+    for (const cell of ["**Total SP**", "Total:", "Total (committed)", "Total story points", "Sum — all"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+      const wrong = table.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+  });
+
+  it("table sp_arithmetic reads a first cell of spaces after a label linearly", () => {
+    // The space loop after the label is the only one before the rest of the
+    // cell: a label then a long run of spaces and no closing pipe fails fast.
+    const row = `| Total${" ".repeat(20_000)}`;
+    const started = performance.now();
+    expect(checkSPArithmetic(["| Item | SP |", "|---|---|", row].join("\n"), "timeline")).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("the document check reads user_stories once and no other prose section", () => {
