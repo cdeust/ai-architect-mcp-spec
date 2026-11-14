@@ -210,12 +210,17 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // pattern is anchored with `^`, so the branch is tried once, after the
   // space that follows the label; what can grow is the work inside that one
   // try. A run of `*` or of `_` is what a marker loop that overlaps the rest
-  // of the cell would split in O(n²) ways: with the run unbounded (`[*_]+`)
-  // and `*` allowed to start the rest, this case failed on the `*` run at a
-  // ratio of 4.25 per doubling (review of #257). `***(` repeated
-  // passes the branch and makes the rest read to the line end. Spaced markers
-  // (` *`, ` __`) failed two characters after the label and measured nothing;
-  // they are gone.
+  // of the cell would split in O(n²) ways, and each run guards its own
+  // marker: with the run unbounded (`[*_]+`) and `*` allowed to start the
+  // rest, the `*` run failed at a ratio of 4.25 per doubling (review of #257;
+  // 4.04 when measured again for the review of #258) while the other inputs
+  // stayed under 2; with `_` allowed to start the rest instead, the `_` run
+  // failed at 4.06 while the other inputs stayed under 2. `***(` repeated passes the branch and makes the rest read to the
+  // line end: it measures the path that matches, and neither mutation moves
+  // it. Spaced markers (` *`, ` __`) reach the branch, but the run there ends
+  // at the next space after one or two markers, so the work in the branch
+  // does not grow with the input: they stayed under 2 against both mutations
+  // and are not kept (review of #258).
   it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
     for (const unit of ["*", "_", "***("]) {
