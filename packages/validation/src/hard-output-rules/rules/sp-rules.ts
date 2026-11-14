@@ -202,10 +202,11 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * `regex-hardening.perf.ts`, every input (the #118 follow-up entries of
  * CHANGELOG.md say which trials measured which mutation): with the loop
  * bounded, every input stays under the ceiling of 3 whatever may start the
- * rest (2.47 at most); with the loop unbounded (`[*_]+`), every input stays under it while
- * neither marker may start the rest; the `*` run fails when only `*` may
- * (3.80 to 4.59 per doubling), the `_` run when only `_` may (3.94 to 4.74),
- * and both runs when both may (3.42 to 4.77 and 3.87 to 4.58).
+ * rest (2.47 at most); with the loop unbounded (`[*_]+`), every input stays
+ * under it while neither marker may start the rest; the `*` run fails when
+ * only `*` may (3.80 to 4.59 per doubling), the `_` run when only `_` may
+ * (3.94 to 4.74), and both runs when both may (3.42 to 4.77 and 3.87 to
+ * 4.58).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
