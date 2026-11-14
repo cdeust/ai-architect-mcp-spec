@@ -215,12 +215,13 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // rest, the `*` run failed at a ratio of 4.25 per doubling (review of #257;
   // 4.04 when measured again for the review of #258) while the other inputs
   // stayed under 2; with `_` allowed to start the rest instead, the `_` run
-  // failed at 4.06 while the other inputs stayed under 2. `***(` repeated passes the branch and makes the rest read to the
-  // line end: it measures the path that matches, and neither mutation moves
-  // it. Spaced markers (` *`, ` __`) reach the branch, but the run there ends
-  // at the next space after one or two markers, so the work in the branch
-  // does not grow with the input: they stayed under 2 against both mutations
-  // and are not kept (review of #258).
+  // failed at 4.06 while the other inputs stayed under 2. `***(` repeated
+  // passes the branch and makes the rest read to the line end: it measures
+  // the path that matches, and neither mutation moves it. Spaced markers
+  // (` *`, ` __`) reach the branch, but the run there ends at the next space
+  // after one or two markers, so the work in the branch does not grow with
+  // the input: they stayed under 2 against both mutations and are not kept
+  // (review of #258).
   it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
     for (const unit of ["*", "_", "***("]) {

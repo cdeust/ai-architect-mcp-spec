@@ -190,12 +190,16 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * story and a right total of 22 was reported as `sum to 44` again; and `_`
  * could start the rest, so `| Total _carried_ | 4 |` was read as a total and
  * left out of the sum, while `Total *carried*` is data (review of #256).
- * So a marker followed by a space or a pipe (`Total _`), a run of four
- * (`Total ____`) and markers right after the closing bold
+ * So a marker followed by a space or a pipe (`Total _`, `Total ____`), a run
+ * of four (`Total ____(all)____`) and markers right after the closing bold
  * (`**Total**_(all)_`) start no rest: those cells are data rows, `_` as `*`
- * (review of #257).
- * The lookbehind reads one character and the marker loop at most three, so
- * the scan stays linear (`regex-hardening.perf.ts`).
+ * (reviews of #257 and #258).
+ * The scan stays linear because the marker loop and the rest of the cell do
+ * not overlap: the rest cannot start with `*` or `_` (`CELL_REST_START`), and
+ * the loop takes at most three markers. Each guard holds on its own: the
+ * emphasis case of `regex-hardening.perf.ts` stays under its ceiling with the
+ * loop unbounded (`[*_]+`), or with `*` allowed to start the rest, and fails
+ * (growth ratio 4.10 per doubling) only with both (review of #259).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
