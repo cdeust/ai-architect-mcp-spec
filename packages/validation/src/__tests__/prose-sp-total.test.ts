@@ -370,6 +370,24 @@ describe("sp_arithmetic: prose total of a story list", () => {
     ]);
   });
 
+  it("table sp_arithmetic reads a lone or long marker run, or an emphasis glued to a closing bold, as data", () => {
+    // Review of #257: `Total _` and `Total ____` were totals with #256 and
+    // became data with #257, and `**Total**_(all)_` is data while
+    // `**Total**(x)` is a total, with no test on either. They are data, as
+    // their `*` forms already were: emphasis starts the rest of a total cell
+    // only after a space, and only as one to three markers followed by
+    // punctuation, so a marker followed by a space or a pipe, a run of four,
+    // or markers right after the closing bold do not.
+    for (const cell of ["Total _", "Total *", "Total ____", "Total ****", "**Total**_(all)_", "**Total***(all)*"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 22 but individual rows sum to 44",
+      ]);
+    }
+    const total = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", "| **Total**(x) | 22 |", "| **Grand Total** | 22 |"].join("\n");
+    expect(checkSPArithmetic(total, "timeline")).toEqual([]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },

@@ -193,7 +193,7 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // Review of #254: the space loop after a total label must be the only one
   // before the rest of the cell, so a label then a run of spaces and no
   // closing pipe fails in linear time. It was pinned by a wall-clock budget
-  // (< 500 ms) in prose-sp-total.test.ts, the only one in a `*.test.ts` file.
+  // (< 500 ms) in prose-sp-total.test.ts.
   it("a total label then a run of spaces and no closing pipe (table sp_arithmetic)", () => {
     const build = (n: number): string => "| Total" + " ".repeat(n);
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
@@ -206,12 +206,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
 
   // Review of #256: no case passed the total label, so nothing measured the
   // emphasis branch of the rest of a total cell (a lookbehind on one space,
-  // then one to three `*` or `_`). Runs of markers, of spaced markers and of
-  // marker-punctuation pairs after a label, with no closing pipe, each try
-  // the branch at every position.
+  // then one to three `*` or `_`). Each input is one line, and the row
+  // pattern is anchored with `^`, so the branch is tried once, after the
+  // space that follows the label; what can grow is the work inside that one
+  // try. A run of `*` or of `_` is what a marker loop that overlaps the rest
+  // of the cell would split in O(n²) ways: with the run unbounded (`[*_]+`)
+  // and `*` allowed to start the rest, this case failed on the `*` run at a
+  // ratio of 4.25 per doubling (review of #257). `***(` repeated
+  // passes the branch and makes the rest read to the line end. Spaced markers
+  // (` *`, ` __`) failed two characters after the label and measured nothing;
+  // they are gone.
   it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
-    for (const unit of ["*", " *", " ***(", "_", " __"]) {
+    for (const unit of ["*", "_", "***("]) {
       const build = (n: number): string => "| **Total** " + unit.repeat(n);
       const small = build(Math.floor(16000 / unit.length));
       const large = build(Math.floor(32000 / unit.length));
