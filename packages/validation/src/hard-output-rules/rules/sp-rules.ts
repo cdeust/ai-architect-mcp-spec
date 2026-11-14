@@ -151,8 +151,10 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
  * Grand Total or Grand Totals, in optional bold, at the end of a word, then
  * optionally a story-point unit, then either the closing pipe or text that
- * starts with a character that is neither a letter nor a space (`Total:`,
- * `**Total SP**`, `Total (committed)`). A first cell where a word follows the
+ * starts with a character that is neither a letter, a space nor `*`
+ * (`Total:`, `**Total SP**`, `Total (committed)`), or, after a space, with
+ * one or two `*` then such a character (`Total *(committed)*`,
+ * `**Total** *(all)*`). A first cell where a word follows the
  * label (`| Totals carried |`, review of #242) or where the label is part of
  * a longer word (`| Summary task |`, `| Sum-up task |`, `| Totalité |`) is a
  * data row.
@@ -166,11 +168,22 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  *
  * The bold that closes the label (`**Totals**`) or the unit (`Total **SP**`)
  * is read on its own, then the label end applies again, and the rest of the
- * cell cannot start with `*`. In #254 the closing `**` was the punctuation
+ * cell cannot start with `*` right after it. In #254 the closing `**` was the punctuation
  * that starts the rest, so `| **Totals** carried | 7 |` and
- * `| **Sum**-up task | 3 |` were read as totals while `Totals carried` and
+ * `| **Sum**-up task | 2 |` were read as totals while `Totals carried` and
  * `Sum-up task` are data (Codex review of #254). Each bold loop takes at
  * most two stars, so backtracking over them is bounded by a constant.
+ *
+ * An italic rest (`*(committed)*`) starts the rest only after a space, and
+ * only when its stars are followed by neither a letter, a space nor a pipe.
+ * In #255 the rest refused `*` everywhere, so `| Total *(committed)* | 22 |`
+ * and `| **Total** *(all)* | 22 |` were summed as stories and a right total
+ * of 22 was reported as `sum to 44` again (review of #255). The space before
+ * the stars keeps `| **Sum**-up task |` a data row: with no space there, the
+ * stars are the closing bold, and `-up` then joins the label to a word. An
+ * italic word (`| Total *carried* |`) is a data row, as `Totals carried` is.
+ * The lookbehind reads one character and the star loop at most two, so the
+ * scan stays linear.
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
@@ -178,7 +191,8 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  */
 const BOLD_CLOSE = `\\*{0,2}${LABEL_END}`;
 const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)${LABEL_END}${BOLD_CLOSE}`;
-const CELL_REST = "[^|*\\s\\p{L}][^|\\n\\r\\u2028\\u2029]*";
+const CELL_REST_START = "[^|*\\s\\p{L}]";
+const CELL_REST = `(?:${CELL_REST_START}|(?<=${INLINE_SPACE})\\*{1,2}${CELL_REST_START})[^|\\n\\r\\u2028\\u2029]*`;
 const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
 
 /**

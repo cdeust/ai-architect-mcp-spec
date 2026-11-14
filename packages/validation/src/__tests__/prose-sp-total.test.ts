@@ -326,6 +326,28 @@ describe("sp_arithmetic: prose total of a story list", () => {
     }
   });
 
+  it("table sp_arithmetic reads an italic rest after a space as part of a total cell", () => {
+    // Review of #255: the rest of a total cell refused `*` even after a space,
+    // so `Total *(committed)*` and `**Total** *(all)*` were summed as stories
+    // and a right total of 22 was reported as `sum to 44`.
+    for (const cell of ["Total *(committed)*", "**Total** *(all)*", "Total **(all)**", "Total SP *(sprint 1)*"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+      const wrong = table.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+    // An italic word after the label is data, as a plain word is; stars with
+    // no space before them are still the closing bold.
+    const data = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Total *carried* | 4 |", "| **Totals** *carried* | 5 |", "| **Sum**-up task | 2 |", "| **Grand Total** | 14 |"].join("\n");
+    expect(checkSPArithmetic(data, "timeline")).toEqual([]);
+    const off = data.replace("| **Grand Total** | 14 |", "| **Grand Total** | 3 |");
+    expect(checkSPArithmetic(off, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 3 but individual rows sum to 14",
+    ]);
+  });
+
   it("table sp_arithmetic reads a first cell of spaces after a label linearly", () => {
     // The space loop after the label is the only one before the rest of the
     // cell: a label then a long run of spaces and no closing pipe fails fast.
