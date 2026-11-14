@@ -199,10 +199,12 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * not overlap; and the loop takes at most three markers, so a run is split in
  * a bounded number of ways. Measured on the emphasis case of
  * `regex-hardening.perf.ts`, it stays under its ceiling when one guard is
- * dropped: the loop unbounded (`[*_]+`), `*` allowed to start the rest, or `_`
- * allowed to start it. It fails when both are dropped, on the `*` run with `*`
- * allowed (growth ratio 4.0 to 4.2 per doubling) and on the `_` run with `_`
- * allowed (4.0) (reviews of #259 and #260).
+ * dropped: the loop unbounded (`[*_]+`), `*` allowed to start the rest, `_`
+ * allowed to start it, or both `*` and `_` allowed with the loop bounded (every
+ * input under 2 in four trials, review of #261). It fails when both are
+ * dropped, on the `*` run with `*` allowed and on the `_` run with `_` allowed,
+ * at a growth ratio of about 4 per doubling (3.97 to 4.25 for the `*` run and
+ * 3.95 to 4.06 for the `_` run over the reviews of #257 to #260).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split

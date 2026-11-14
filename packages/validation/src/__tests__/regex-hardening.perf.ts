@@ -218,7 +218,9 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // with `_` allowed to start the rest instead, the `_` run failed at 4.06
   // (3.95 to 4.02 for the review of #260) while the other inputs stayed under
   // 2. With one guard kept, every input stayed under 2: the run unbounded
-  // alone, `*` allowed alone, or `_` allowed alone (review of #260). `***(`
+  // alone, `*` allowed alone, or `_` allowed alone (review of #260), and the
+  // run bounded with both `*` and `_` allowed (four trials, review of #261),
+  // while the run unbounded with both allowed failed at 4.00. `***(`
   // repeated passes the branch and makes the rest read to the line end: it
   // measures the path that matches, and no mutation above moves it. Spaced
   // markers (` *`, ` __`) reach the branch, but the run there ends at the next
