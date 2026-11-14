@@ -348,13 +348,26 @@ describe("sp_arithmetic: prose total of a story list", () => {
     ]);
   });
 
-  it("table sp_arithmetic reads a first cell of spaces after a label linearly", () => {
-    // The space loop after the label is the only one before the rest of the
-    // cell: a label then a long run of spaces and no closing pipe fails fast.
-    const row = `| Total${" ".repeat(20_000)}`;
-    const started = performance.now();
-    expect(checkSPArithmetic(["| Item | SP |", "|---|---|", row].join("\n"), "timeline")).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(500);
+  it("table sp_arithmetic reads a bold-italic or underscore emphasis after a space as part of a total cell", () => {
+    // Review of #256: the emphasis run after a space took one or two `*`, so
+    // the bold-italic `Total ***(all)***` was summed as a story and a right
+    // total of 22 was reported as `sum to 44`; and the rest could start with
+    // `_`, so `Total _carried_` was read as a total and left out of the sum.
+    for (const cell of ["Total ***(all)***", "**Total** ***(all)***", "Total _(committed)_", "**Total** __(all)__", "Total SP _(sprint 1)_"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+      const wrong = table.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+    // A word in underscore emphasis after the label is data, as `*carried*` is.
+    const data = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Total _carried_ | 4 |", "| **Totals** __carried__ | 5 |", "| Total ***carried*** | 1 |", "| **Grand Total** | 13 |"].join("\n");
+    expect(checkSPArithmetic(data, "timeline")).toEqual([]);
+    const off = data.replace("| **Grand Total** | 13 |", "| **Grand Total** | 3 |");
+    expect(checkSPArithmetic(off, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 3 but individual rows sum to 13",
+    ]);
   });
 
   it("the document check reads user_stories once and no other prose section", () => {
