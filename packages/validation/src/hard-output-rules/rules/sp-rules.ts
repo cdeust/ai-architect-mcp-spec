@@ -199,15 +199,10 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * not overlap; and the loop takes at most three markers, so a run is split in
  * a bounded number of ways. The start guard has one part per marker, and each
  * part guards the run of its own marker. Measured on the emphasis case of
- * `regex-hardening.perf.ts` (every input measured; four trials of each
- * mutation for #263, and four more of each but the unbounded loop with
- * neither marker allowed, last measured for #263 and #264, for the follow-up
- * of #264 notes; #264 re-measured the unbounded loop and the bounded loop
- * with both allowed; the bounded loop with only `*` or only `_` allowed was
- * measured, without series of four trials, for the follow-ups of #259 and
- * #260 notes, then four trials each for #263): with the loop bounded, every
- * input stays under the ceiling of 3 whatever may start the rest (2.47 at
- * most); with the loop unbounded (`[*_]+`), every input stays under it while
+ * `regex-hardening.perf.ts`, every input (the #118 follow-up entries of
+ * CHANGELOG.md say which trials measured which mutation): with the loop
+ * bounded, every input stays under the ceiling of 3 whatever may start the
+ * rest (2.47 at most); with the loop unbounded (`[*_]+`), every input stays under it while
  * neither marker may start the rest; the `*` run fails when only `*` may
  * (3.80 to 4.59 per doubling), the `_` run when only `_` may (3.94 to 4.74),
  * and both runs when both may (3.42 to 4.77 and 3.87 to 4.58).
