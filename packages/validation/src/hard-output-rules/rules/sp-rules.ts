@@ -200,15 +200,17 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * a bounded number of ways. The start guard has one part per marker, and each
  * part guards the run of its own marker. Measured on the emphasis case of
  * `regex-hardening.perf.ts` (every input measured; four trials of each
- * mutation for #263 and four more for the follow-up of #264 notes, which also
- * re-measured the bounded loop with only `*` or only `_` allowed, measured
- * for #263 alone before; #264 re-measured the unbounded loop and the bounded
- * loop with both allowed): with the loop bounded, every input stays under
- * the ceiling of 3 whatever may start the rest (2.47 at most); with the loop
- * unbounded (`[*_]+`), every input stays under it while neither marker may
- * start the rest; the `*` run fails when only `*` may (3.80 to 4.59 per
- * doubling), the `_` run when only `_` may (3.94 to 4.74), and both runs when
- * both may (3.42 to 4.77 and 3.87 to 4.58).
+ * mutation for #263, and four more of each but the unbounded loop with
+ * neither marker allowed, last measured for #263 and #264, for the follow-up
+ * of #264 notes; #264 re-measured the unbounded loop and the bounded loop
+ * with both allowed; the bounded loop with only `*` or only `_` allowed was
+ * measured, without series of four trials, for the follow-ups of #259 and
+ * #260 notes, then four trials each for #263): with the loop bounded, every
+ * input stays under the ceiling of 3 whatever may start the rest (2.47 at
+ * most); with the loop unbounded (`[*_]+`), every input stays under it while
+ * neither marker may start the rest; the `*` run fails when only `*` may
+ * (3.80 to 4.59 per doubling), the `_` run when only `_` may (3.94 to 4.74),
+ * and both runs when both may (3.42 to 4.77 and 3.87 to 4.58).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
