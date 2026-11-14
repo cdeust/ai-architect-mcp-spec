@@ -164,13 +164,22 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * `sum to 44` (review of #250). Before #250 the lookahead skipped such a row
  * and the total row did not read it.
  *
+ * The bold that closes the label (`**Totals**`) or the unit (`Total **SP**`)
+ * is read on its own, then the label end applies again, and the rest of the
+ * cell cannot start with `*`. In #254 the closing `**` was the punctuation
+ * that starts the rest, so `| **Totals** carried | 7 |` and
+ * `| **Sum**-up task | 3 |` were read as totals while `Totals carried` and
+ * `Sum-up task` are data (Codex review of #254). Each bold loop takes at
+ * most two stars, so backtracking over them is bounded by a constant.
+ *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
  * one way only. The rest (`[^|…]*`) cannot hold a pipe or a line terminator.
  */
-const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)${LABEL_END}`;
-const CELL_REST = "[^|\\s\\p{L}][^|\\n\\r\\u2028\\u2029]*";
-const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:${SP_UNIT}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
+const BOLD_CLOSE = `\\*{0,2}${LABEL_END}`;
+const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)${LABEL_END}${BOLD_CLOSE}`;
+const CELL_REST = "[^|*\\s\\p{L}][^|\\n\\r\\u2028\\u2029]*";
+const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
 
 /**
  * The first cell of a separator row (`|---|`, `| :---: |`): only hyphens, with
