@@ -190,6 +190,37 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 
+  // Review of #254: the space loop after a total label must be the only one
+  // before the rest of the cell, so a label then a run of spaces and no
+  // closing pipe fails in linear time. It was pinned by a wall-clock budget
+  // (< 500 ms) in prose-sp-total.test.ts, the only one in a `*.test.ts` file.
+  it("a total label then a run of spaces and no closing pipe (table sp_arithmetic)", () => {
+    const build = (n: number): string => "| Total" + " ".repeat(n);
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    const small = build(16000);
+    const large = build(32000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
+  // Review of #256: no case passed the total label, so nothing measured the
+  // emphasis branch of the rest of a total cell (a lookbehind on one space,
+  // then one to three `*` or `_`). Runs of markers, of spaced markers and of
+  // marker-punctuation pairs after a label, with no closing pipe, each try
+  // the branch at every position.
+  it("emphasis runs after a total label and no closing pipe (table sp_arithmetic)", () => {
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    for (const unit of ["*", " *", " ***(", "_", " __"]) {
+      const build = (n: number): string => "| **Total** " + unit.repeat(n);
+      const small = build(Math.floor(16000 / unit.length));
+      const large = build(Math.floor(32000 / unit.length));
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   // Review 2 of #228: FENCE_LINE read the rest of the line with `.*`, which
   // stops at a lone `\r`, so a run of backticks followed by one failed after
   // O(n²) backtracking (10, 41 and 170 ms at 5k, 10k and 20k backticks). Both
