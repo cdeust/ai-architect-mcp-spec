@@ -16,7 +16,7 @@ mcp_tools_legacy:
   - check_health, get_prd_context_info, list_available_strategies
   - validate_prd_section, validate_prd_document
   - get_quality_history, get_strategy_effectiveness
-  - coordinate_context_budget, map_failure_to_retrieval
+  - map_failure_to_retrieval
 ecosystem:
   - ai-architect-mcp-codebase (Rust MCP) — codebase indexing, graph queries, impact, semantic-diff
   - cortex (Python MCP) — persistent memory, recall, methodology, narrative
@@ -264,7 +264,7 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 
 In these cases, display the `error` field from the response to the user and stop.
 
-A restart of the server while a run is in progress is not one of them: the run is still there. Call `get_pipeline_state({ run_id, format: "action" })`, execute the action it returns, and submit its result. Do not resubmit the result you were sending when the connection dropped without that check.
+A restart of the server while a run is in progress is not one of them: the run is still there. Call `get_pipeline_state({ run_id, format: "action" })`, execute the action it returns, and submit its result. Do not resubmit the result you were sending when the connection dropped without that check. If that call answers "unknown run_id", the server is one that keeps runs in memory only (the packaged server up to 0.9.0): the run is lost, and the first row of the table applies.
 
 ---
 

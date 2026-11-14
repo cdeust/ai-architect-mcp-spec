@@ -54,13 +54,18 @@ export declare class RunFiles {
      */
     remove(runId: string): void;
     /**
-     * Applies to the files the bounds the run store applies to memory.
+     * Applies to the files the two bounds of the run store, with one
+     * difference. The store never drops a run in progress: its memory ends
+     * with the process. The directory does not, and a run nobody comes back to
+     * would stay in it for ever, so beyond the cap a run in progress goes too,
+     * after every finished one (review of #249).
      *
      * postcondition: no file of a finished run, and no partial file, is older
-     *                than `ttlMs`; at most `maxRuns` run files are left, the
-     *                most recently written. Returns the number of files
-     *                removed. A file that cannot be read as JSON is not a
-     *                finished run: it is kept until the cap removes it. A
+     *                than `ttlMs`; at most `maxRuns` run files are left: the
+     *                runs in progress before the finished ones, and among
+     *                each the most recently written. Returns the number of
+     *                files removed. A file that cannot be read as JSON is not
+     *                a finished run: it is kept until the cap removes it. A
      *                file the file system refuses to remove is left, and the
      *                sweep goes on: this never throws, so that the first tool
      *                call of a server does not fail on a leftover.

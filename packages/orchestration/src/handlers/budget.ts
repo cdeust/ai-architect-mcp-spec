@@ -1,14 +1,14 @@
 import type { StepHandler } from "../runner.js";
 
 /**
- * Budget step is in-process. Validates the proceed-signal invariant set by
- * clarification (a clean exit) before transitioning to section generation.
+ * The step between clarification and section generation. It is in-process:
+ * it checks the proceed-signal invariant set by clarification (a clean exit)
+ * and moves on.
  *
- * The actual token budget calculation lives in mcp-server/context-budget.ts
- * and is exposed to the host via the standalone `coordinate_context_budget`
- * MCP tool. The host should call it BEFORE submitting the result that
- * advances out of the clarification step if it wants the numbers in its own
- * context window.
+ * It allocates nothing. It was named after a token budget that a separate
+ * tool, `coordinate_context_budget`, computed and that no step of the
+ * pipeline ever read; the tool is gone (#120). The step keeps its name, which
+ * hosts and the run files of a server know (`current_step: "budget"`).
  */
 export const handleBudget: StepHandler = ({ state }) => {
   if (!state.proceed_signal) {
@@ -27,7 +27,7 @@ export const handleBudget: StepHandler = ({ state }) => {
     state: { ...state, current_step: "section_generation" },
     action: {
       kind: "emit_message",
-      message: "Budget allocated. Starting section generation.",
+      message: "Starting section generation.",
     },
   };
 };

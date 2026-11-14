@@ -21,7 +21,6 @@ const ALL_TOOL_NAMES = [
   "validate_prd_document",
   "get_quality_history",
   "get_strategy_effectiveness",
-  "coordinate_context_budget",
   "map_failure_to_retrieval",
   "start_pipeline",
   "submit_action_result",
@@ -78,7 +77,7 @@ describe("isAllowed", () => {
       "start_pipeline",
       "submit_action_result",
       "get_pipeline_state",
-      "coordinate_context_budget",
+      "map_failure_to_retrieval",
       "validate_prd_document",
       "conclude_verification",
     ]) {
@@ -91,7 +90,7 @@ describe("isAllowed", () => {
       "validate_prd_section",
       "validate_prd_document",
     ]);
-    expect(ALL_TOOL_NAMES).toHaveLength(17);
+    expect(ALL_TOOL_NAMES).toHaveLength(16);
 
     for (const name of ALL_TOOL_NAMES) {
       expect(isAllowed("verifier", name)).toBe(

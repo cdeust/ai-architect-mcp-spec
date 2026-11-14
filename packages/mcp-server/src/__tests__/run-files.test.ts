@@ -141,6 +141,19 @@ describe("the sweep of the run files (#121)", () => {
     expect(readdirSync(dir).sort()).toEqual(names.slice(2).sort());
   });
 
+  it("beyond the cap, removes the finished runs before the runs in progress", () => {
+    // Both finished runs are younger than the delay, and younger than the
+    // runs in progress: only the cap removes them.
+    const inProgress = [20, 10].map((minutes) => aged(`run_${minutes}_inflight`, minutes));
+    const finishedYoung = aged("run_2_finished", 2, LAST);
+    aged("run_3_finished", 3, LAST);
+    expect(files.sweep({ ...BOUNDS, maxRuns: 3 })).toBe(1);
+    expect(readdirSync(dir).sort()).toEqual([...inProgress, finishedYoung].sort());
+    // With a cap below the number of runs in progress, the oldest of them goes.
+    expect(files.sweep({ ...BOUNDS, maxRuns: 1 })).toBe(2);
+    expect(readdirSync(dir)).toEqual([inProgress[1]]);
+  });
+
   it("does not take an old file it cannot read for a finished run", () => {
     mkdirSync(dir);
     const path = join(dir, "run_a_broken.json");

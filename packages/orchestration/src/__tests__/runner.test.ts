@@ -297,6 +297,10 @@ describe("pipeline runner — emit_message coalescing", () => {
     // Coalesces budget message → section_generation needs codebase recall
     expect(out.state.current_step).toBe("section_generation");
     expect(out.action.kind).toBe("call_cortex_tool");
+    // The step allocates nothing and does not say it does (#120); the recall
+    // that follows asks what the pipeline asks for every section.
+    expect(out.messages.map((m) => m.text)).toEqual(["Starting section generation."]);
+    expect(out.action.kind === "call_cortex_tool" ? out.action.arguments : null).toMatchObject({ max_results: 8 });
   });
 
   it("failed action surfaces in messages even when emit_message coalesces", () => {

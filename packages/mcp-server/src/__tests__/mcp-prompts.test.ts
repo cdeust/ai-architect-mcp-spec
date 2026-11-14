@@ -25,7 +25,6 @@ const TOOLS: Record<string, string> = {
   validate_prd_document: "Run full document validation including cross-section checks.",
   get_quality_history: "Read historical quality scores.",
   get_strategy_effectiveness: "Read strategy effectiveness.",
-  coordinate_context_budget: "Calculate token budget allocation for PRD generation. Call before generating.",
   map_failure_to_retrieval: "Map validation failures to retrieval queries.",
   start_pipeline: "Initialize a pipeline run. Returns the first NextAction to execute.",
   get_pipeline_state: "Read the current pipeline state by run_id.",

@@ -109,11 +109,13 @@ function recallAction(
     kind: "call_cortex_tool",
     tool_name: "recall",
     /**
-     * source: provisional heuristic. 8 results × ~500 tokens/memory ≈ 4K
-     * tokens of retrieval context per section, which fits comfortably
-     * inside the per-section retrieval budget computed by
-     * mcp-server/context-budget.ts (~2-5K depending on section weight).
-     * Cross-audit code-reviewer H6 (Phase 3+4, 2026-04).
+     * source: provisional heuristic, not measured. It is also the number
+     * of results a prompt keeps (cortex-recall-summary.ts,
+     * RECALL_MAX_RESULTS_INCLUDED), so asking for more would add nothing
+     * to a prompt. The module this comment cited for a per-section
+     * retrieval budget, mcp-server/context-budget.ts, was never read by the
+     * pipeline and is gone (#120). Cross-audit code-reviewer H6 (Phase 3+4,
+     * 2026-04).
      */
     arguments: { query, max_results: 8 },
     correlation_id: correlationFor(RETRIEVE_PREFIX, sectionType),
