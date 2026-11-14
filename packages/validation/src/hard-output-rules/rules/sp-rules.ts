@@ -200,11 +200,12 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * a bounded number of ways. The start guard has one part per marker, and each
  * part guards the run of its own marker. Measured on the emphasis case of
  * `regex-hardening.perf.ts` (four trials per mutation, every input measured,
- * review of #262): with the loop bounded, every input stays under 2 whatever
- * may start the rest; with the loop unbounded (`[*_]+`), every input stays
- * under 2 while neither marker may start the rest, the `*` run fails when `*`
- * may (3.80 to 4.59 per doubling), the `_` run fails when `_` may (4.17 to
- * 4.74), and both runs fail when both may (3.42 to 4.77 and 4.20 to 4.58).
+ * reviews of #262 and #263): with the loop bounded, every input stays under
+ * the ceiling of 3 whatever may start the rest (2.47 at most); with the loop
+ * unbounded (`[*_]+`), every input stays under it while neither marker may
+ * start the rest; the `*` run fails when only `*` may (3.80 to 4.59 per
+ * doubling), the `_` run when only `_` may (3.99 to 4.74), and both runs when
+ * both may (3.42 to 4.77 and 3.87 to 4.58).
  *
  * The space loop after the label is the only one before the rest of the cell,
  * which starts with a character that is not a space: a run of spaces is split
