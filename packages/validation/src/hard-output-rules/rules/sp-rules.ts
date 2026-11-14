@@ -190,6 +190,10 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * story and a right total of 22 was reported as `sum to 44` again; and `_`
  * could start the rest, so `| Total _carried_ | 4 |` was read as a total and
  * left out of the sum, while `Total *carried*` is data (review of #256).
+ * So a marker followed by a space or a pipe (`Total _`), a run of four
+ * (`Total ____`) and markers right after the closing bold
+ * (`**Total**_(all)_`) start no rest: those cells are data rows, `_` as `*`
+ * (review of #257).
  * The lookbehind reads one character and the marker loop at most three, so
  * the scan stays linear (`regex-hardening.perf.ts`).
  *
