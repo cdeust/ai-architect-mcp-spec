@@ -27,7 +27,7 @@
 // source: issue #118.
 
 import MarkdownIt from "markdown-it";
-import { htmlParts, isHtmlComment } from "./requirement-html.js";
+import { isHtmlComment, opaqueHtmlBlock } from "./requirement-html.js";
 
 /** An ordered list marker that opens a statement right after its identifier. */
 const NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -64,8 +64,14 @@ export interface RequirementDefinition {
  */
 const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 
-/** The same, with HTML lines read as text: it parses an HTML block's source, so it never meets an HTML block again. */
-const htmlAsText = new MarkdownIt("commonmark").enable("table").disable(["inline", "html_block"]);
+/**
+ * The same, for an HTML block's source: HTML lines are read as text, save a
+ * comment or a raw-text block, which `opaqueHtmlBlock` opens in place of the
+ * `html_block` rule. So the parser orders them against fences and code
+ * blocks, and keeps them in their containers (PR #305 review).
+ */
+const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
+htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
 const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
@@ -90,9 +96,9 @@ interface Leaf {
 /**
  * The leaf blocks of a section in document order, read in one pass over
  * markdown-it's token stream. Code, HTML comments and thematic breaks hold
- * none; another HTML block holds the leaves of the text parts of its source
- * read with `htmlAsText` (`addHtmlBlock`), each line mapped back to the section by `lineAt`
- * and its blocks inside the container that ends at `rootEnd`. No tree is
+ * none; another HTML block holds the leaves of its source read with
+ * `htmlAsText` (`addHtmlBlock`), each line mapped back to the section by
+ * `lineAt` and its blocks inside the container that ends at `rootEnd`. No tree is
  * built, and the open containers are kept as parallel arrays of
  * primitives: on a long section of nested lists, an object per token made
  * the growth allocation-bound, near the perf ceiling.
@@ -125,7 +131,7 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -163,35 +169,18 @@ function extendOverComment(leaves: Leaf[], lines: [number, number], containerEnd
   }
 }
 
-/** The lines of the code blocks (fenced or indented) of a source read with `htmlAsText`. */
-function codeLinesOf(content: string): Set<number> {
-  const lines = new Set<number>();
-  for (const token of htmlAsText.parse(content, {})) {
-    if ((token.type === "fence" || token.type === "code_block") && token.map !== null) {
-      for (let line = token.map[0]; line < token.map[1]; line++) lines.add(line);
-    }
-  }
-  return lines;
-}
-
 /**
  * Adds what an HTML block at `lines` of the section holds to `leaves`. A
- * comment block extends the paragraph above it (`extendOverComment`).
- * Another block holds the leaves of the text parts of its source
- * (`htmlParts`), each parsed on its own inside the container that ends at
- * `containerEnd`, and its comment lines extend a paragraph as a comment
- * block does.
+ * comment extends the paragraph above it (`extendOverComment`). Another
+ * block of the section is parsed again with `htmlAsText`, inside the
+ * container that ends at `containerEnd`, unless it is a raw-text block,
+ * which defines nothing: `htmlAsText` opens one where the section's parser
+ * does. An HTML block met by `htmlAsText` is a comment or a raw-text block
+ * (`opaqueHtmlBlock`), so it is never parsed again.
  */
-function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number): void {
-  if (isHtmlComment(content)) {
-    extendOverComment(leaves, lines, containerEnd);
-    return;
-  }
-  for (const part of htmlParts(content, codeLinesOf(content))) {
-    const offset = lines[0] + part.first;
-    if (part.kind === "comment") extendOverComment(leaves, [offset, lines[0] + part.end], containerEnd);
-    else leaves.push(...leavesOf(part.source, htmlAsText, (line) => offset + line, containerEnd));
-  }
+function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number, reparse: boolean): void {
+  if (isHtmlComment(content)) extendOverComment(leaves, lines, containerEnd);
+  else if (reparse) leaves.push(...leavesOf(content, htmlAsText, (line) => lines[0] + line, containerEnd));
 }
 
 /** The leaf of a paragraph or heading, from its opening token's type, its lines and its inline source. */
