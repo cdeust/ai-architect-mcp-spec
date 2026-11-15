@@ -18,8 +18,14 @@ import { phrases } from "./lexicon.js";
 //
 // The rule reads each requirement definition (FR-n, NFR-n) and reports the
 // ones whose text holds such a term and no number. A number, in digits or in
-// words, is read as the bound the term needs; the rule does not check that
-// the number belongs to the term. It fires on the presence of a defect, so
+// words, is read as the bound the term needs, except where it cannot be a
+// quantity: a code span, an identifier (`FR-2`), a priority code (`P1`), the
+// marker of a numbered list item, and a metadata column of a table
+// (`Priority`, `Story Points`). The rule does not check that the number
+// belongs to the term, and quoted text is read for the number (a quote may
+// state the bound), so a quoted label that carries a number silences it
+// (`The "Top 10" page must load fast.`): a missed finding, chosen over a
+// blocking one on a quoted bound. It fires on the presence of a defect, so
 // it is blocking, but not critical: the term list is a heuristic, and a
 // finding costs the non-critical penalty and triggers no critical retry.
 //
@@ -103,13 +109,17 @@ const CODE_SPAN = /`[^`\n]*`/g;
 /**
  * Tokens that carry a digit but are not a quantity, so they cannot bound a
  * term: an identifier (`FR-001`, `STORY-2`, `UTF-8`), a priority code (`P1`),
- * and the number of a list item at a line start (`1.`, `2)`). Each pattern
- * is bounded, so the scan stays linear. source: PR #275 review, notes 1 and 4.
+ * and the marker of a list item at a line start (`1.`, `2)`), which is
+ * followed by the item's text. A number alone on a line (`  1000.`, the end
+ * of a sentence wrapped onto the next line) is not a marker and still counts
+ * (PR #276 review, note 1). Each pattern is bounded, and the lookahead runs
+ * from a line start only, so the scan stays linear. source: PR #275 review,
+ * notes 1 and 4.
  */
 const NOT_A_QUANTITY = [
   /\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g,
   /\bP\d\b/g,
-  /^[ \t]*\d{1,9}[.)](?=[ \t]|$)/gm,
+  /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/gm,
 ] as const;
 
 /**
@@ -164,6 +174,33 @@ const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
 /** A table row. */
 const TABLE_ROW = /^[ \t]*\|/;
 
+/**
+ * The lines of a heading's body with each table read as a requirement row
+ * is: the separator row is dropped, and the metadata columns named by the
+ * table's header are removed from every row, the header included. A header
+ * is a table row right above a separator that opens its table. Without this,
+ * a `| Priority | Story Points |` table under `### FR-001` was read as plain
+ * text and its `3` bounded the statement (PR #276 review, note 2).
+ */
+function withoutMetadataCells(lines: readonly string[]): string[] {
+  const out: string[] = [];
+  let metadata: ReadonlySet<number> = new Set();
+  lines.forEach((line, i) => {
+    if (!TABLE_ROW.test(line)) {
+      metadata = new Set();
+      out.push(line);
+      return;
+    }
+    if (isSeparatorRow(line)) return;
+    const next = lines[i + 1];
+    const opensTable = i === 0 || !TABLE_ROW.test(lines[i - 1]!);
+    const cells = cellsOf(line);
+    if (opensTable && next !== undefined && isSeparatorRow(next)) metadata = metadataColumns(cells);
+    out.push(cells.filter((_, c) => !metadata.has(c)).join(" | "));
+  });
+  return out;
+}
+
 /** The width of a run of leading spaces and tabs, a tab counting as four. */
 function indentWidth(indent: string): number {
   let width = 0;
@@ -204,7 +241,10 @@ function definitionsIn(content: string): RequirementDefinition[] {
   const out: RequirementDefinition[] = [];
   let open: OpenDefinition | null = null;
   const close = (): void => {
-    if (open !== null) out.push({ id: open.id, text: open.lines.join("\n") });
+    if (open !== null) {
+      const lines = open.kind === "heading" ? withoutMetadataCells(open.lines) : open.lines;
+      out.push({ id: open.id, text: lines.join("\n") });
+    }
     open = null;
   };
   let metadata: ReadonlySet<number> = new Set();
