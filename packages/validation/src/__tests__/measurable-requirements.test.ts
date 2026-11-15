@@ -393,10 +393,14 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
-  it("reads no lazy line after a fenced block or a table, and no fence 4 columns right of its container (PR #289 review, notes 1 to 3)", () => {
-    // In each case the `2. Group` is paragraph text, so NFR-00n is not nested
-    // in it, the `2` of `    2.` is a lazy continuation that bounds it, and
-    // nothing is reported; read as an item, `2. Group` made it a marker.
+  it("reads no lazy line after a fenced block, and no fence 4 columns right of its container (PR #289 review, notes 1 to 3)", () => {
+    // NFR-001 and NFR-004: `2. Group` goes on with the paragraph above it, so
+    // NFR-00n is not nested in it and the `2` of `    2.` is a lazy
+    // continuation that bounds it. NFR-002 and NFR-003: `2. Group` opens a
+    // list after a list item or a block quote, and `    2.` is a marker under
+    // it, so both are reported; the line scanner read `2. Group` as lazy text
+    // there, which the CommonMark reference implementation (commonmark.js
+    // 0.31) does not, and a pipe line with no delimiter row is no table.
     const content = [
       "## Requirements",
       "",
@@ -443,7 +447,7 @@ describe("measurable_requirements (#118)", () => {
     // NFR-005: a fence at its item's content (column 2) ends the paragraph,
     // so `  2. Group` opens an item and the rule reports it.
     expect(findings(content).map((v) => v.message)).toEqual([
-      '1 requirement(s) state an unbounded quality with no number: NFR-005 ("fast")',
+      '3 requirement(s) state an unbounded quality with no number: NFR-002 ("fast"), NFR-003 ("fast"), NFR-005 ("fast")',
     ]);
   });
 
@@ -467,9 +471,11 @@ describe("measurable_requirements (#118)", () => {
       ...["| a | b |", "|---|---|", "| X | y |", "> ---", ...tail(4)],
       ...["| a | b |", "|---|---|", "| X | y |", "> quote", ...tail(5)],
     ].join("\n");
-    // NFR-005: `> quote` holds paragraph text, so `2. Group` goes on with it.
+    // NFR-005: `2. Group` is no lazy line of `> quote` either: a list item
+    // cannot be one (CommonMark 0.31.2 §5.1; commonmark.js 0.31 agrees), so
+    // it opens a list and the requirement is reported too.
     expect(findings(content).map((v) => v.message)).toEqual([
-      '4 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast"), NFR-004 ("fast")',
+      '5 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast"), NFR-004 ("fast"), NFR-005 ("fast")',
     ]);
   });
 
@@ -545,15 +551,14 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
-  it("ends the text of a `### NFR` line after a tab at the first blank line, as a bold line's (PR #295 review, note 3)", () => {
-    // `\t### NFR-001` is no heading at top level: its text stops at the blank
-    // line, so the bound below it does not reach NFR-001, which is reported.
-    // As a heading (NFR-002), the body runs to the next heading and holds it.
+  it("reads a `### NFR` line after a tab at top level as code, not a definition (PR #295 review, note 3)", () => {
+    // `\t### NFR-001` is 4 columns in at top level: an indented code block
+    // (CommonMark 0.31.2 §4.4), which defines nothing, as a fenced block does
+    // not. As a heading (NFR-002), the body runs to the next heading and
+    // holds the bound.
     const def = (head: string) => [head, "Search must be fast.", "", "At most 2 seconds.", ""];
     const content = ["## Requirements", "", ...def("\t### NFR-001"), ...def("### NFR-002")].join("\n");
-    expect(findings(content).map((v) => v.message)).toEqual([
-      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
-    ]);
+    expect(findings(content)).toEqual([]);
   });
 
   it("reads a block quote indented past column 3 inside a list item, after a table (PR #296 review, Codex P2)", () => {
@@ -605,10 +610,13 @@ describe("measurable_requirements (#118)", () => {
   });
 
   it("closes a nested definition's item at a column-0 line, and measures a heading two items deep from its own item (PR #297 review, notes 1 and 3)", () => {
-    // NFR-001 and NFR-002: the column-0 line closes the item, so `1000.` goes
-    // on with that paragraph and bounds the requirement (`main` reported
-    // neither). NFR-003: the heading is in `   1. Sub`, nested in `1. Group`,
-    // so `    2.` is a sibling marker of `Sub` and the requirement is reported.
+    // NFR-001: the column-0 line closes the item, so `1000.` goes on with
+    // that paragraph and bounds the requirement. NFR-002: ` 1000.` is left of
+    // the item's content and opens a list (commonmark.js 0.31 renders
+    // `<ol start="1000">`), so it bounds nothing and the requirement is
+    // reported; the line scanner read it as a lazy line. NFR-003: the heading
+    // is in `   1. Sub`, nested in `1. Group`, so `    2.` is a sibling marker
+    // of `Sub` and the requirement is reported.
     const content = [
       "## Requirements",
       "",
@@ -617,7 +625,28 @@ describe("measurable_requirements (#118)", () => {
       ...["1. Group", "   1. Sub", "      ### NFR-003: Search must be fast.", "", "    2. Results are listed."],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
-      '1 requirement(s) state an unbounded quality with no number: NFR-003 ("fast")',
+      '2 requirement(s) state an unbounded quality with no number: NFR-002 ("fast"), NFR-003 ("fast")',
+    ]);
+  });
+
+  it("reads the block tree of CommonMark/GFM, not a line scanner (PR #298 review, Codex P2)", () => {
+    // NFR-001: `    1.` under a bold line in `- Intro` is a nested list
+    // (1 may interrupt a paragraph), so `1` is a marker and the requirement
+    // is reported. NFR-002: the list item after a table in the heading's item
+    // ends the table and stays in the item, so `1` is a marker again. FR-003:
+    // a pipe line with no delimiter row is paragraph text (GFM 0.29 §4.10), so
+    // its `2` bounds the item. NFR-004: a fence at column 0 closes `- Setup`,
+    // and the heading after it opens the body that holds its bound.
+    const content = [
+      "## Requirements",
+      "",
+      ...["- Intro", "  **NFR-001** Search must be fast.", "    1. Results are listed.", "", "## Next", ""],
+      ...["- Intro", "  ### NFR-002: Search must be fast.", "  | Feature | Status |", "  | --- | --- |", "    1. Results are listed.", "", "## Next", ""],
+      ...["- FR-003: Export must be fast, at most", "| 2 seconds per file |", ""],
+      ...["- Setup", "```", "x", "```", "  ### NFR-004: Import must be fast.", "", "Within 3 seconds."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast")',
     ]);
   });
 
