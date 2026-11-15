@@ -354,6 +354,10 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // table made of key-value rows of a metadata field.
       wrappedMarkers: (n) => "- FR-1: fast\n" + "  1000. x\n".repeat(n / 10),
       keyValueTable: (n) => "### FR-1 fast\n| Field | Value |\n|---|---|\n" + "| Points | 3 |\n".repeat(n / 16),
+      // PR #278 review, note 1: open list items wrapped over several lines,
+      // each closed by a paragraph after a blank line, so the stack of open
+      // items is pushed and popped on every few lines.
+      openListStack: (n) => "### FR-1 fast\n" + "1. a\n   b\n\nc\n".repeat(n / 16),
     };
     for (const [name, build] of Object.entries(builds)) {
       const small = build(32000);
