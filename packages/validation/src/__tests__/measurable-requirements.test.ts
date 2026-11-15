@@ -393,6 +393,60 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads no lazy line after a fenced block or a table, and no fence 4 columns right of its container (PR #289 review, notes 1 to 3)", () => {
+    // In each case the `2. Group` is paragraph text, so NFR-00n is not nested
+    // in it, the `2` of `    2.` is a lazy continuation that bounds it, and
+    // nothing is reported; read as an item, `2. Group` made it a marker.
+    const content = [
+      "## Requirements",
+      "",
+      "- Setup",
+      "  ```",
+      "  code",
+      "  ```",
+      "Notes follow",
+      "2. Group",
+      "   - NFR-001: Export must be fast, at most",
+      "    2. seconds per file.",
+      "",
+      "| X | y |",
+      "- Item",
+      "  | a |",
+      "Left",
+      "2. Group",
+      "   - NFR-002: Export must be fast, at most",
+      "    2. seconds per file.",
+      "",
+      "| X | y |",
+      "> quote",
+      "2. Group",
+      "   - NFR-003: Export must be fast, at most",
+      "    2. seconds per file.",
+      "",
+      "Text line",
+      "    ```",
+      "    code",
+      "    ```",
+      "2. Group",
+      "   - NFR-004: Search must be fast and",
+      "    2. Results are listed.",
+      "",
+      "- Item",
+      "  Text line",
+      "  ```",
+      "  code",
+      "  ```",
+      "  2. Group",
+      "     - NFR-005: Search must be fast and",
+      "      2. Results are listed.",
+    ].join("\n");
+    // NFR-005: a fence at its item's content (column 2) ends the paragraph,
+    // so `  2. Group` opens an item and the rule reports it.
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-005 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

@@ -12,6 +12,7 @@ import {
   TABLE_ROW,
   indentWidth,
   blockAfter,
+  containerOf,
   type BlockState,
   trackItems,
   withoutListMarkers,
@@ -284,9 +285,15 @@ function definitionsIn({ lines, afterBlock }: LinesOutsideFences): RequirementDe
   /** The block open before the line: a paragraph, a table, or none. */
   let block: BlockState = "none";
   for (const [i, line] of lines.entries()) {
-    if (afterBlock.has(i)) block = "none";
-    const container = trackItems(items, line, previous, block === "paragraph");
-    block = blockAfter(line, block, items);
+    // A fenced block ends the paragraph or table above it, unless its fence is
+    // 4 or more columns right of its container: that is paragraph text, or an
+    // indented code block after a blank line (§4.4-4.5; PR #289 review, note 3).
+    const fence = afterBlock.get(i);
+    if (fence !== undefined && fence - containerOf(items, fence) < 4) block = "none";
+    const depth = items.length;
+    const container = trackItems(items, line, block === "paragraph");
+    const left = !LIST_ITEM.test(line) && items.length < depth;
+    block = blockAfter(line, block, items, left);
     if (!TABLE_ROW.test(line)) {
       metadata = new Set();
     } else if (isSeparatorRow(line) && previous !== null && TABLE_ROW.test(previous)) {
