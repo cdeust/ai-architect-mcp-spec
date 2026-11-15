@@ -148,6 +148,17 @@ function containerOf(open: readonly number[], marker: number): number {
 }
 
 /**
+ * Opens the list item of `line`, whose marker is at column `marker`. An
+ * item's content is right of its marker, so this one pass closes the items
+ * it is not nested in, its previous sibling included.
+ */
+function openItem(open: number[], line: string, marker: number, markerText: string): void {
+  while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
+  const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? markerText;
+  open.push(indentWidth(contentStart.replace(/\S/g, " ")));
+}
+
+/**
  * The lines of a text with the marker of each ordered list item removed. A
  * line that starts with a number and a period is a list item only where
  * CommonMark 0.31.2 §5.2 lets one start: an ordered list may interrupt a
@@ -226,18 +237,11 @@ function withoutListMarkers(text: string, afterHeading: boolean, base: number): 
         (i === 1 && afterHeading) ||
         continuesList;
       if (!isItem) return line;
-      const strip = (): string =>
-        ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
       // The first line of a list-item definition is the rest of the defining
       // line, whose columns are not the document's: its number is removed,
       // and the defining item stays the open item.
-      if (i === 0 && base > 0) return strip();
-      // An item's content is right of its marker, so this one pass closes the
-      // items it is not nested in, its previous sibling included.
-      while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
-      const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? item[0];
-      open.push(indentWidth(contentStart.replace(/\S/g, " ")));
-      return strip();
+      if (i > 0 || base === 0) openItem(open, line, marker, item[0]);
+      return ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
     })
     .join("\n");
 }
