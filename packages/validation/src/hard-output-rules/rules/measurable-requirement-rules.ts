@@ -97,6 +97,61 @@ const NUMBER = new RegExp(
  */
 const NAMED_TEXT = /"[^"\n]*"|“[^“”\n]*”|«[^«»\n]*»|`[^`\n]*`/g;
 
+/** A code span: a symbol, never a bound. Bounded to one line like NAMED_TEXT. */
+const CODE_SPAN = /`[^`\n]*`/g;
+
+/**
+ * Tokens that carry a digit but are not a quantity, so they cannot bound a
+ * term: an identifier (`FR-001`, `STORY-2`, `UTF-8`), a priority code (`P1`),
+ * and the number of a list item at a line start (`1.`, `2)`). Each pattern
+ * is bounded, so the scan stays linear. source: PR #275 review, notes 1 and 4.
+ */
+const NOT_A_QUANTITY = [
+  /\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g,
+  /\bP\d\b/g,
+  /^[ \t]*\d{1,9}[.)](?=[ \t]|$)/gm,
+] as const;
+
+/**
+ * A table column whose cells are metadata of the requirement, never its
+ * statement: identifier, dependency, priority, status, estimate and owner
+ * columns (EN + FR). A number in one of them (`P1`, `3` story points) does
+ * not bound the statement. source: PR #275 review, note 1.
+ */
+const METADATA_HEADER =
+  /^(?:(?:[\p{L}]+[ \t]+)?ids?|depends[ \t]+on|dependenc(?:y|ies)|blocked[ \t]+by|dépend[ \t]+de|dépendances?|priority|priorité|prio|moscow|status|statut|state|état|story[ \t]+points?|points?|sps?|estimate|estimation|effort|owner|responsable)$/iu;
+
+/** The cells of a table row, split on unescaped pipes only (`\|` is a literal pipe). */
+function cellsOf(row: string): string[] {
+  const trimmed = row.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  return trimmed.split(/(?<!\\)\|/).map((c) => c.replace(/\*\*/g, "").trim());
+}
+
+function isSeparatorRow(row: string): boolean {
+  return /^[ \t]*\|[ \t:|-]*$/.test(row) && row.includes("-");
+}
+
+/** The indexes of the metadata columns of a table, read from its header row. */
+function metadataColumns(header: readonly string[]): ReadonlySet<number> {
+  const out = new Set<number>();
+  header.forEach((cell, i) => {
+    if (METADATA_HEADER.test(cell)) out.add(i);
+  });
+  return out;
+}
+
+/**
+ * The statement of a requirement row: its cells after the identifier, less
+ * the metadata columns of the table's header. With no header, every cell
+ * after the identifier is read.
+ */
+function statementOf(cells: readonly string[], metadata: ReadonlySet<number>): string {
+  return cells
+    .slice(1)
+    .filter((_, i) => !metadata.has(i + 1))
+    .join(" | ");
+}
+
 interface RequirementDefinition {
   readonly id: string;
   readonly text: string;
@@ -152,12 +207,21 @@ function definitionsIn(content: string): RequirementDefinition[] {
     if (open !== null) out.push({ id: open.id, text: open.lines.join("\n") });
     open = null;
   };
+  let metadata: ReadonlySet<number> = new Set();
+  let previous: string | null = null;
   for (const line of content.split(LINE_BREAK)) {
+    if (!TABLE_ROW.test(line)) {
+      metadata = new Set();
+    } else if (isSeparatorRow(line) && previous !== null && TABLE_ROW.test(previous)) {
+      // The row above a separator is the header of a new table.
+      metadata = metadataColumns(cellsOf(previous));
+    }
+    previous = line;
     const row = TABLE_DEFINITION.exec(line);
     const listed = row === null ? LIST_DEFINITION.exec(line) : null;
     if (row !== null) {
       close();
-      out.push({ id: row[1]!, text: row[2] ?? "" });
+      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata) });
     } else if (listed !== null) {
       close();
       const item = LIST_ITEM.exec(line);
@@ -178,13 +242,25 @@ function definitionsIn(content: string): RequirementDefinition[] {
 }
 
 /**
+ * The text in which a bound is looked for: code spans and the tokens that
+ * are not a quantity are removed, but quoted text is kept, since a quote may
+ * state the bound (`"p95 under 2 s"`; PR #275 review, note 2).
+ */
+function quantitiesOf(text: string): string {
+  let out = text.replace(CODE_SPAN, " ");
+  for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, " ");
+  return out;
+}
+
+/**
  * The first unbounded term of a requirement text when the text holds no
- * number, else null.
+ * number, else null. The term is looked for outside quoted text and code
+ * spans; the number anywhere but in a code span, an identifier, a priority
+ * code or a list number.
  */
 export function unboundedTermIn(text: string): string | null {
-  const stated = text.replace(NAMED_TEXT, " ");
-  if (NUMBER.test(stated)) return null;
-  return UNBOUNDED_TERM.exec(stated)?.[0] ?? null;
+  if (NUMBER.test(quantitiesOf(text))) return null;
+  return UNBOUNDED_TERM.exec(text.replace(NAMED_TEXT, " "))?.[0] ?? null;
 }
 
 export function checkDocumentMeasurableRequirements(
