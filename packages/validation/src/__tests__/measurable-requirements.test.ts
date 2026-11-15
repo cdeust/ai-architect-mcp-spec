@@ -588,6 +588,39 @@ describe("measurable_requirements (#118)", () => {
     expect(findings(content)).toEqual([]);
   });
 
+  it("keeps a numbered bold-line definition in a list item opening its list, and closes a nested heading's item at a dedented body line (PR #297 review, Codex P2)", () => {
+    // NFR-001: the bold line keeps column 0, so `1.` opens a list and `  2.`
+    // is its sibling marker, not the bound. NFR-002: `The maximum …` right
+    // under the heading is left of `- Intro`'s content and closes it, so the
+    // `2.` after it goes on with that paragraph and is the bound.
+    const content = [
+      "## Requirements",
+      "",
+      ...["- Intro", "  **NFR-001** 1. Search must be fast.", "  2. Results are listed.", ""],
+      ...["- Intro", "    ### NFR-002: Search must be fast.", "The maximum duration in seconds is", "2. Beyond that it times out."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("closes a nested definition's item at a column-0 line, and measures a heading two items deep from its own item (PR #297 review, notes 1 and 3)", () => {
+    // NFR-001 and NFR-002: the column-0 line closes the item, so `1000.` goes
+    // on with that paragraph and bounds the requirement (`main` reported
+    // neither). NFR-003: the heading is in `   1. Sub`, nested in `1. Group`,
+    // so `    2.` is a sibling marker of `Sub` and the requirement is reported.
+    const content = [
+      "## Requirements",
+      "",
+      ...["- Overview", "  ### NFR-001: Search must be fast.", "The maximum result count is", "1000. Beyond that it pages.", ""],
+      ...["- Intro", "  **NFR-002**: Search must be fast, at most", " 1000. results.", ""],
+      ...["1. Group", "   1. Sub", "      ### NFR-003: Search must be fast.", "", "    2. Results are listed."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-003 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

@@ -45,7 +45,8 @@ const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
  * innermost open item the marker is inside, else 0. A marker 4 or more
  * columns right of it opens no item (CommonMark 0.31.2 §5.2; PR #281 review,
  * note 1; PR #282 review, note 1). In `withoutListMarkers`, when the
- * requirement is defined by a list item (`base` > 0), that item is the
+ * requirement is defined by a list item or by a heading in one (`base` > 0),
+ * that item is the
  * innermost open item when the text starts, and when it is nested in another
  * item (`container` > 0) that parent is the one below it on the stack, so a
  * marker under it is measured from its content and a sibling of it from its
@@ -110,7 +111,8 @@ function openItem(open: number[], line: string, marker: number, markerText: stri
  * (`| FR-001 | 2. Search must be fast. |`), it bounds nothing, so its marker
  * is removed (PR #278 review, note 3). `afterHeading` says the first line is
  * the rest of a heading, so the second line may open a list. `base` is the
- * content indentation of the list item that defines the requirement, whose
+ * content indentation of the list item that defines the requirement (or that
+ * a heading definition is in; PR #297 review, note 2), whose
  * continuation lines keep their indentation: that item is open when the text
  * starts, so a sibling left of its content continues its list (`1. NFR-001:
  * Search must be fast.` / ` 2. Results are listed.`) and a marker right of
@@ -141,7 +143,9 @@ export function withoutListMarkers(text: string, afterHeading: boolean, base: nu
         (item[2] !== undefined && ordered === null) ||
         (i > 0 && marker - containerOf(open, marker) >= 4)
       ) {
-        if (i > 0 && line.trim() !== "" && previous.trim() === "") {
+        // Right after a heading no paragraph is open either, so its body's
+        // first line closes the items it is left of (PR #297 review, Codex P2).
+        if (i > 0 && line.trim() !== "" && (previous.trim() === "" || (i === 1 && afterHeading))) {
           const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
           while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
         }
