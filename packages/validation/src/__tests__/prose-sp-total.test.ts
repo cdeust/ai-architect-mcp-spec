@@ -112,6 +112,40 @@ describe("sp_arithmetic: prose total of a story list", () => {
     ]);
   });
 
+  it("reads a spaced subtotal and the plural or joined units the table rule reads (review of #271)", () => {
+    // `- Sub total: 3 SP` was summed as a story, so a right total of 3 read
+    // as wrong against 6; as a subtotal it makes two total lines, and nothing
+    // is reported.
+    expect(messages([...STORIES, "- Sub total: 3 SP", "Total: 3 SP"].join("\n"))).toEqual([]);
+    expect(messages([...STORIES, "-  Sub \t total: 3 SP", "Total: 3 SP"].join("\n"))).toEqual([]);
+    // `Sub task` and `Sub totality` are not totals: the item is a story, and
+    // its amount is summed.
+    expect(messages(["- STORY-1 — 2 SP", "- Sub task — 1 SP", "Total: 4 SP"].join("\n"))).toEqual([
+      "SP total line shows 4 but the stories sum to 3",
+    ]);
+    expect(messages(["- STORY-1 — 2 SP", "- Sub totality — 1 SP", "Total: 4 SP"].join("\n"))).toEqual([
+      "SP total line shows 4 but the stories sum to 3",
+    ]);
+    // A total in SPs, story-points or storypoints had no readable amount, so
+    // the check abstained; a story in those units was unreadable too.
+    for (const unit of ["SPs", "sps", "story-points", "storypoints", "Story-Point", "storypoint"]) {
+      expect(messages([...STORIES, `Total: 5 ${unit}`].join("\n")), unit).toEqual([
+        "SP total line shows 5 but the stories sum to 3",
+      ]);
+      const stories = [`- STORY-1 — 2 ${unit}`, `- STORY-2 — 1 ${unit}`];
+      expect(messages([...stories, "Total: 3 SP"].join("\n")), unit).toEqual([]);
+      expect(messages([...stories, "Total: 4 SP"].join("\n")), unit).toEqual([
+        "SP total line shows 4 but the stories sum to 3",
+      ]);
+    }
+    // A unit glued to more letters is not a unit, and a bare `points` is not
+    // read: a story that counts other points stays unreadable.
+    for (const total of ["Total: 5 SPsx", "Total: 5 storypointsx", "Total: 5 points"]) {
+      expect(messages([...STORIES, total].join("\n")), total).toEqual([]);
+    }
+    expect(messages(["- STORY-1 — 2 SP", "- STORY-2: 3 edge points", "Total: 9 SP"].join("\n"))).toEqual([]);
+  });
+
   it("reads an emphasized amount (review of #228)", () => {
     // Unread, the amount would make the story unreadable and the check abstain.
     const content = ["- STORY-1 — 2 SP", "- STORY-2 — **1** SP", "Total: 4 SP"].join("\n");
