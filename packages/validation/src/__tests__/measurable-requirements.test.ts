@@ -285,11 +285,29 @@ describe("measurable_requirements (#118)", () => {
       "    1. stay reliable.",
       "    2. Retry on failure.",
       "- NFR-002: Import must be fast and the steps are",
-      "      1. read the file, whose maximum size is",
+      "      - read the file, whose maximum size is",
       "    2000. Larger ones are split.",
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("continues the list of an ordered list-item definition from a sibling left of its content (PR #283 review, note 3)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "1. NFR-001: Search must be fast.",
+      " 2. Results are listed.",
+      "",
+      "100. NFR-002: Import must be fast.",
+      " 101. Files are listed.",
+      "",
+      "   1. NFR-003: Export must be fast.",
+      "  2. Files are written.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast")',
     ]);
   });
 
