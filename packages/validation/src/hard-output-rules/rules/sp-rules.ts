@@ -341,7 +341,10 @@ export function checkSPArithmetic(
 const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 /**
  * A total line: an optional bullet or ordinal, optional emphasis, then Total,
- * Sum, Subtotal or Grand Total as the first word.
+ * Sum, Subtotal or Grand Total as the first word, singular or plural
+ * (`Totals`, `Sub totals`, `Subtotals`), as `TOTAL_CELL` and `SUBTOTAL_CELL`
+ * read a table label (review of #273: `- Subtotals: 3 SP` was summed as a
+ * story, so a right total read as wrong).
  *
  * Linear: each run of spaces can be matched by one loop only. The bullet
  * group ends with its own `[ \t]+` and the emphasis group with its own
@@ -354,7 +357,7 @@ const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
  * (measured 13 ms, 55 ms, 269 ms at 5k, 10k, 20k spaces; review of #228).
  */
 const PROSE_TOTAL_START =
-  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:[*_]{1,2}[ \t]*)?(?:grand[ \t]+|sub(?:-|[ \t]+)?)?(?:total|sum)\b/i;
+  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:[*_]{1,2}[ \t]*)?(?:grand[ \t]+|sub(?:-|[ \t]+)?)?(?:totals?|sum)\b/i;
 /**
  * A story-point amount with its unit. The number is at most nine digits and
  * one decimal part, so `Number()` is exact; the unit is required, so a total
@@ -363,7 +366,8 @@ const PROSE_TOTAL_START =
  * `story-points` or `storypoints`, singular or plural (review of #271: a
  * `Total: 5 SPs` line had no amount the prose rule could read). A bare
  * `points` or `pts` is left out here: a table label names its column, but a
- * story line can count other points (`3 edge points`), which would be summed.
+ * story line can count other points (`3 points of failure`), which would be
+ * summed.
  */
 const SP_AMOUNT = /(?<![\d.])(\d{1,9}(?:\.\d{1,3})?)[ \t]*(?:SPs?|story(?:[ \t]+|-)?points?)\b/gi;
 /** Emphasis markers, removed before an amount is read (`**1** SP`). */
