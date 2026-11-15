@@ -29,20 +29,38 @@ function opensBlock(fence: RegExpExecArray): boolean {
   return fence[1]![0] !== "`" || !fence[2]!.includes("`");
 }
 
+/** The lines of a section outside its fenced blocks, and where each block was. */
+export interface LinesOutsideFences {
+  readonly lines: string[];
+  /** The index in `lines` of each line that follows a removed block. */
+  readonly afterBlock: ReadonlySet<number>;
+}
+
 /**
  * The lines of a section outside its fenced blocks, which show proposed code.
  * As in CommonMark, a block closes only on a fence of the same character, at
  * least as long as the opening one and with nothing after it, so a shorter or
  * other fence inside the block (a nested example) stays inside it.
+ * `afterBlock` names the kept lines a removed block came right before, so a
+ * reader that follows paragraphs can end one there (CommonMark 0.31.2 §4.5: a
+ * fenced block interrupts a paragraph; PR #288 review, note 1).
  */
-export function linesOutsideFences(content: string): string[] {
-  const kept: string[] = [];
+export function splitOutsideFences(content: string): LinesOutsideFences {
+  const lines: string[] = [];
+  const afterBlock = new Set<number>();
   let open: string | null = null;
+  let removed = false;
   for (const line of content.split(LINE_BREAK)) {
     const fence = FENCE_LINE.exec(line);
     if (open === null) {
-      if (fence && opensBlock(fence)) open = fence[1]!;
-      else kept.push(line);
+      if (fence && opensBlock(fence)) {
+        open = fence[1]!;
+        removed = true;
+      } else {
+        if (removed) afterBlock.add(lines.length);
+        removed = false;
+        lines.push(line);
+      }
     } else if (
       fence &&
       fence[1]![0] === open[0] &&
@@ -52,5 +70,10 @@ export function linesOutsideFences(content: string): string[] {
       open = null;
     }
   }
-  return kept;
+  return { lines, afterBlock };
+}
+
+/** The lines of a section outside its fenced blocks (`splitOutsideFences`). */
+export function linesOutsideFences(content: string): string[] {
+  return splitOutsideFences(content).lines;
 }

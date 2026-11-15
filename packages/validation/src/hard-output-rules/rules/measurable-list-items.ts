@@ -162,47 +162,82 @@ export function withoutListMarkers(text: string, afterHeading: boolean, base: nu
 /** The number of an ordered list marker at a line start, in group 1. */
 const ORDERED_NUMBER = /^[ \t]*(\d{1,9})[.)]/;
 
-/** A thematic break (`---`, `***`, `___`; CommonMark 0.31.2 §4.1), also a setext underline after text. */
-const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+/** The body of a thematic break (`---`, `***`, `___`; CommonMark 0.31.2 §4.1), also a setext underline after text. */
+const THEMATIC_BREAK_BODY = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 /** A line of `=` signs: a setext underline after paragraph text, paragraph text otherwise (§4.3). */
-const EQUALS_LINE = /^ {0,3}=+[ \t]*$/;
+const EQUALS_LINE = /^[ \t]*=+[ \t]*$/;
 
 /**
- * Whether a paragraph is open after `line`, given whether one was open
- * before it. A blank line, a heading, a table row and a thematic break end
- * it; a line of `=` ends it when it underlines it (a setext heading) and
- * else starts one; any other line is paragraph text, a list item's first
- * line included. After a paragraph an ordered list may start only at 1
- * (PR #286 review, Codex P2; PR #287 review, Codex P2).
+ * Whether `line` is a thematic break: its body is one, and it sits less than
+ * 4 columns right of its container (the content of the innermost open item
+ * it is inside, or the line start), as a list marker must (§4.1, §5.2). A
+ * thematic break takes precedence over a list item, so `* * *` and `- - -`
+ * open no item (§5.2; PR #288 review, note 3).
  */
-export function paragraphAfter(line: string, inParagraph: boolean): boolean {
-  if (line.trim() === "" || HEADING.test(line) || TABLE_ROW.test(line) || THEMATIC_BREAK.test(line)) return false;
-  if (EQUALS_LINE.test(line)) return !inParagraph;
-  return true;
+function isThematicBreak(open: readonly number[], line: string): boolean {
+  const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
+  return indent - containerOf(open, indent) < 4 && THEMATIC_BREAK_BODY.test(line.trim());
+}
+
+/**
+ * The block a line of a section leaves open for the next one: a paragraph, a
+ * table, or none. Only a paragraph matters to `trackItems`: after one, an
+ * ordered list may start only at 1 (CommonMark 0.31.2 §5.2).
+ */
+export type BlockState = "none" | "paragraph" | "table";
+
+/**
+ * The block open after `line`, given the one open before it and `open`, the
+ * content indentations of the list items open at the line (`trackItems`, run
+ * on the line first). A blank line, a heading and a thematic break end any
+ * block; a table row opens a table, and any other line right under a table
+ * that opens no list item is a row of it (GFM 0.29 §4.10), so a `===` there
+ * is no setext underline (PR #288 review, note 1). Under paragraph text, a
+ * line of `=` is a setext underline, which ends the paragraph, except when it
+ * is left of the content of the innermost open item, or 4 or more columns
+ * right of its container: a setext underline cannot be a lazy continuation
+ * line nor indented 4 columns (§4.3), so `- Intro` / `===` goes on with the
+ * item's paragraph (PR #288 review, note 2). Any other line is
+ * paragraph text, a list item's first line and a `===` with no paragraph
+ * above included (PR #286 review, Codex P2; PR #287 review, Codex P2). The
+ * caller ends any block at the place of a fenced block, whose lines it does
+ * not pass (PR #288 review, note 1).
+ */
+export function blockAfter(line: string, before: BlockState, open: readonly number[]): BlockState {
+  if (line.trim() === "" || HEADING.test(line) || isThematicBreak(open, line)) return "none";
+  if (TABLE_ROW.test(line) || (before === "table" && !LIST_ITEM.test(line))) return "table";
+  if (EQUALS_LINE.test(line) && before === "paragraph") {
+    const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
+    const lazy = open.length > 0 && indent < open[open.length - 1]!;
+    return lazy || indent - containerOf(open, indent) >= 4 ? "paragraph" : "none";
+  }
+  return "paragraph";
 }
 
 /**
  * Follows the list items open at each line of a section, as a stack of their
- * content indentations (the rules of `withoutListMarkers`, except that it also
- * reads table rows, thematic breaks and setext underlines): a list item
- * closes the items it is not inside and opens its own, unless its marker is
- * 4 or more columns right of its container; a heading, a table row, or a
- * line of text after a blank line closes the items whose content it is left
- * of. A line of text right after another goes on with its paragraph (a lazy
- * continuation) and closes nothing. An ordered list may interrupt a
- * paragraph only when it starts at 1 (CommonMark 0.31.2 §5.2), so right
- * after a line of text an ordered marker of another number opens an item
- * only as a sibling left of the content of the innermost open item; else it
- * goes on with the paragraph (`Text line` / `2. note`; PR #285 review,
- * note 1). `inParagraph` says a paragraph is open before the line
- * (`paragraphAfter`): not after a blank line, a heading, a table row, a
- * thematic break or a setext underline (PR #286 and #287 reviews). Returns
- * the content indentation of the item the line's own list item is nested
- * in, or 0 (PR #284 review, note 2).
+ * content indentations (the rules of `withoutListMarkers`, except that it
+ * also tells a thematic break from a list item, and takes the paragraph state
+ * of `blockAfter`, which reads table rows, thematic breaks and setext
+ * underlines): a list item closes the items it is not inside and opens its
+ * own, unless its marker is 4 or more columns right of its container; a
+ * heading, a table row, a thematic break (`---`, `* * *`, `- - -`, never read
+ * as a list item; PR #288 review, note 3), or a line of text after a blank
+ * line closes the items whose content it is left of. A line of text right
+ * after another goes on with its paragraph (a lazy continuation) and closes
+ * nothing. An ordered list may interrupt a paragraph only when it starts at 1
+ * (CommonMark 0.31.2 §5.2), so right after a line of text an ordered marker of
+ * another number opens an item only as a sibling left of the content of the
+ * innermost open item; else it goes on with the paragraph (`Text line` /
+ * `2. note`; PR #285 review, note 1). `inParagraph` says a paragraph is open
+ * before the line (`blockAfter` gave `"paragraph"`; PR #286 to #288 reviews).
+ * Returns the content indentation of the item the line's own list item is
+ * nested in, or 0 (PR #284 review, note 2).
  */
 export function trackItems(open: number[], line: string, previous: string | null, inParagraph: boolean): number {
-  const item = LIST_ITEM.exec(line);
   const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
+  const thematicBreak = isThematicBreak(open, line);
+  const item = thematicBreak ? null : LIST_ITEM.exec(line);
   const afterBlank = previous === null || previous.trim() === "";
   if (item !== null && indent - containerOf(open, indent) < 4) {
     const number = ORDERED_NUMBER.exec(line)?.[1];
@@ -213,7 +248,7 @@ export function trackItems(open: number[], line: string, previous: string | null
     }
     return 0;
   }
-  if (line.trim() !== "" && (afterBlank || HEADING.test(line) || TABLE_ROW.test(line))) {
+  if (line.trim() !== "" && (afterBlank || thematicBreak || HEADING.test(line) || TABLE_ROW.test(line))) {
     while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
   }
   return 0;
