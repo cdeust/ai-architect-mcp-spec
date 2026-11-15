@@ -54,16 +54,25 @@ export interface RequirementDefinition {
 
 /**
  * CommonMark blocks with GFM tables; inline content is left as source text.
- * An HTML block other than a comment is read as a paragraph of its source
- * (`leavesOf`): as an opaque block, `<div>` / `**FR-001** …` with no blank
- * line between them hid the definition, which the line scanner read (PR
- * #299 review, note 2). An HTML comment is not document text, so a
- * definition inside one is not read (PR #300 review, note 1).
+ * An HTML block other than a comment is parsed again as markdown with
+ * `htmlAsText` (`leavesOf`): as an opaque block, `<div>` / `- FR-001: …` or
+ * `**FR-001** …` with no blank line between them hid the definition, which
+ * the line scanner read (PR #299 review, note 2; PR #301 review, Codex P2).
+ * An HTML comment is not document text, so a definition inside one is not
+ * read (PR #300 review, note 1).
  */
 const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 
-/** An HTML block that is a comment (CommonMark 0.31.2 §4.6, start condition 2). */
-const HTML_COMMENT = /^[ \t]*<!--/;
+/** The same, with HTML lines read as text: it parses an HTML block's source, so it never meets an HTML block again. */
+const htmlAsText = new MarkdownIt("commonmark").enable("table").disable(["inline", "html_block"]);
+
+/**
+ * Whether an HTML block is a comment (CommonMark 0.31.2 §4.6, start
+ * condition 2: the block opens with `<!--`). markdown-it has already found
+ * where the block ends; this only classifies it, so a prefix test is enough,
+ * and no pattern is used to parse HTML (CodeQL js/bad-tag-filter, PR #301).
+ */
+const isHtmlComment = (content: string): boolean => content.trimStart().startsWith("<!--");
 
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
 const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
@@ -88,17 +97,20 @@ interface Leaf {
 /**
  * The leaf blocks of a section in document order, read in one pass over
  * markdown-it's token stream. Code, HTML comments and thematic breaks hold
- * none; another HTML block is a paragraph of its source. No
+ * none; another HTML block holds the leaves of its source read with
+ * `htmlAsText`, its lines counted from `offset` and its blocks inside the
+ * container that ends at `rootEnd`. No
  * tree is built, and the open containers are kept as parallel arrays of
  * primitives: on a long section of nested lists, an object per token made
  * the growth allocation-bound, near the perf ceiling.
  */
-function leavesOf(content: string): Leaf[] {
-  const tokens = parser.parse(content, {});
+function leavesOf(content: string, md = parser, offset = 0, rootEnd = Infinity): Leaf[] {
+  const tokens = md.parse(content, {});
   const leaves: Leaf[] = [];
+  const at = (map: [number, number] | null): [number, number] => [(map?.[0] ?? 0) + offset, (map?.[1] ?? 0) + offset];
   /** The type, last line (exclusive) and filled state of each open container, the section itself first. */
   const openType: string[] = ["root"];
-  const openEnd: number[] = [Infinity];
+  const openEnd: number[] = [rootEnd];
   const openFilled: boolean[] = [false];
   let table: { map: [number, number]; rows: string[][]; containerEnd: number } | null = null;
   for (let i = 0; i < tokens.length; i++) {
@@ -114,18 +126,17 @@ function leavesOf(content: string): Leaf[] {
       continue;
     }
     if (token.type === "table_open") {
-      table = { map: token.map as [number, number], rows: [], containerEnd: openEnd[top]! };
+      table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      const leaf = htmlLeaf(token.content, token.map as [number, number], openEnd[top]!);
-      if (leaf !== null) leaves.push(leaf);
+      if (!isHtmlComment(token.content)) leaves.push(...leavesOf(token.content, htmlAsText, at(token.map)[0], openEnd[top]!));
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
-      leaves.push(textLeaf(token, tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
+      leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
       i += 2;
     } else if (token.nesting === 1) {
       openFilled[top] = true;
       openType.push(token.type);
-      openEnd.push(token.map?.[1] ?? Infinity);
+      openEnd.push(token.map === null ? Infinity : at(token.map)[1]);
       openFilled.push(false);
       continue;
     } else if (token.nesting === -1) {
@@ -141,16 +152,10 @@ function leavesOf(content: string): Leaf[] {
   return leaves;
 }
 
-/** The leaf of a paragraph or heading, from its opening token and its inline source. */
-function textLeaf(open: { type: string; map: [number, number] | null }, inline: string, containerEnd: number, opensItem: boolean): Leaf {
-  const type = open.type === "paragraph_open" ? "paragraph" : "heading";
-  return { type, map: open.map ?? [0, 0], inline, rows: NO_ROWS, containerEnd, opensItem };
-}
-
-/** An HTML block read as a paragraph of its source, or null for an HTML comment. */
-function htmlLeaf(content: string, map: [number, number], containerEnd: number): Leaf | null {
-  if (HTML_COMMENT.test(content)) return null;
-  return { type: "paragraph", map, inline: content.replace(/\n$/, ""), rows: NO_ROWS, containerEnd, opensItem: false };
+/** The leaf of a paragraph or heading, from its opening token's type, its lines and its inline source. */
+function textLeaf(openType: string, map: [number, number], inline: string, containerEnd: number, opensItem: boolean): Leaf {
+  const type = openType === "paragraph_open" ? "paragraph" : "heading";
+  return { type, map, inline, rows: NO_ROWS, containerEnd, opensItem };
 }
 
 /** The rows of a leaf that is no table. */
