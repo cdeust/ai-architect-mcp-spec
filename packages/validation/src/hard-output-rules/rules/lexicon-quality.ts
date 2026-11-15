@@ -1,7 +1,76 @@
 import type { LexiconConcept } from "./lexicon-types.js";
 
-/** Bilingual concept groups consumed by senior-quality-rules.ts. */
+/**
+ * Bilingual concept groups consumed by senior-quality-rules.ts, and
+ * `unboundedQualityTerms` by measurable-requirement-rules.ts.
+ */
 export const QUALITY_LEXICON = {
+  /**
+   * Terms that state a quality without a bound. Matched as whole words
+   * (a hyphen counts as part of a word, so "fast-track" is not "fast").
+   * source: ISO/IEC/IEEE 29148:2018 §5.2.7, unbounded or ambiguous terms
+   * (subjective language, ambiguous adjectives and adverbs, loopholes).
+   * Terms of art that name a bounded property ("responsive layout",
+   * "best-effort", "reliable delivery") are left out.
+   */
+  unboundedQualityTerms: {
+    en: [
+      "fast",
+      "quick",
+      "quickly",
+      "rapid",
+      "rapidly",
+      "user-friendly",
+      "user friendly",
+      "easy",
+      "easily",
+      "intuitive",
+      "intuitively",
+      "seamless",
+      "seamlessly",
+      "efficient",
+      "efficiently",
+      "robust",
+      "adequate",
+      "adequately",
+      "as appropriate",
+      "if possible",
+      "as needed",
+      "minimal",
+      "significant",
+      "significantly",
+      "optimal",
+      "optimally",
+      "performant",
+      "smooth",
+      "smoothly",
+    ],
+    fr: [
+      "rapide",
+      "rapidement",
+      "convivial",
+      "conviviale",
+      "facile",
+      "facilement",
+      "intuitif",
+      "intuitive",
+      "intuitivement",
+      "fluide",
+      "efficace",
+      "efficacement",
+      "robuste",
+      "adéquat",
+      "adéquate",
+      "si possible",
+      "au besoin",
+      "optimal",
+      "optimale",
+      "performant",
+      "performante",
+      "significatif",
+      "significative",
+    ],
+  },
   namedConstantSignals: {
     en: [
       "named constant",

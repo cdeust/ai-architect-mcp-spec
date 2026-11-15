@@ -31,6 +31,7 @@ import { describe, expect, it } from "vitest";
 import { validateSection } from "../index.js";
 import { checkProseSPTotal, checkSPArithmetic } from "../hard-output-rules/rules/sp-rules.js";
 import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
+import { checkDocumentMeasurableRequirements } from "../hard-output-rules/rules/measurable-requirement-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -309,6 +310,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // stops at a lone `\r`, so a run of backticks followed by one failed after
   // O(n²) backtracking (10, 41 and 170 ms at 5k, 10k and 20k backticks). Both
   // document rules that skip fenced blocks share the pattern.
+  it("space runs inside a two-word unbounded term and an unclosed quote (measurable_requirements)", () => {
+    const run = (input: string): void =>
+      void checkDocumentMeasurableRequirements([{ type: "requirements", content: input }]);
+    for (const head of ["| FR-1 | as", '| FR-1 | "if', "- FR-1: `as"]) {
+      const build = (n: number): string => head + " ".repeat(n) + "x";
+      const small = build(64000);
+      const large = build(128000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), head).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   it("backtick runs before a lone carriage return (fenced blocks, both rules)", () => {
     const build = (n: number): string => "`".repeat(n) + "\r";
     const prose = (input: string): void => void checkProseSPTotal(input, "user_stories");
