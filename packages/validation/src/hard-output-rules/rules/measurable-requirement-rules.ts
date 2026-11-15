@@ -99,7 +99,7 @@ const CODE_SPAN = /`[^`\n]*`/g;
  * Both patterns are bounded. source: PR #275 review, notes 1 and 4. The
  * marker of a list item is not text in the block tree (requirement-definitions.ts).
  */
-const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g, /\bP\d\b/g] as const;
+const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}(?:-[A-Z0-9]{1,10}){0,5}\b/g, /\bP\d\b/g] as const;
 
 /**
  * An ordered list marker that numbers a statement right after its

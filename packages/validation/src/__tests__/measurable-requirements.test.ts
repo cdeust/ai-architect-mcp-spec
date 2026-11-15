@@ -673,10 +673,15 @@ describe("measurable_requirements (#118)", () => {
       // review, note 1). FR-011: `FR-011-AC1` is no identifier of its own, so
       // its 200 ms goes on with FR-011 and bounds it (PR #300 review, note 2).
       ...["<!--", "- FR-010: Offline mode should be seamless.", "-->", ""],
-      ...["- FR-011: Search must be fast.", "  - FR-011-AC1: p95 under 200 ms."],
+      ...["- FR-011: Search must be fast.", "  - FR-011-AC1: p95 under 200 ms.", "", "## Next", ""],
+      // FR-012: the digit of `FR-012-AC1` is part of an identifier, not a
+      // bound. FR-013 and FR-014: a list item or a heading right under an
+      // HTML line is read as one (PR #301 review, Codex P2).
+      ...["- FR-012: Search must be fast.", "  - FR-012-AC1: Results are listed.", ""],
+      ...["<div>", "- FR-013: Search must be fast.", "", "<div>", "### FR-014: Import must be fast."],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
-      '5 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast"), FR-009 ("easy")',
+      '8 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast"), FR-009 ("easy"), FR-012 ("fast"), FR-013 ("fast"), FR-014 ("fast")',
     ]);
   });
 
