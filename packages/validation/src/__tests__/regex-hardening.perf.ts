@@ -336,6 +336,25 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     }
   });
 
+  // PR #275 review, notes 1 and 4: the header of a table is matched against
+  // METADATA_HEADER and the statement is cleared of identifiers before the
+  // number search; neither may grow faster than linearly on a long cell.
+  it("a long table header cell and a run of identifier-like tokens (measurable_requirements)", () => {
+    const run = (input: string): void =>
+      void checkDocumentMeasurableRequirements([{ type: "requirements", content: input }]);
+    const builds: Record<string, (n: number) => string> = {
+      header: (n) => "| " + "a".repeat(n) + " ".repeat(n) + "x |\n|---|\n| FR-1 | fast |",
+      identifiers: (n) => "| FR-1 | fast " + "AB-".repeat(n) + " |",
+    };
+    for (const [name, build] of Object.entries(builds)) {
+      const small = build(32000);
+      const large = build(64000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), name).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   it("backtick runs before a lone carriage return (fenced blocks, both rules)", () => {
     const build = (n: number): string => "`".repeat(n) + "\r";
     const prose = (input: string): void => void checkProseSPTotal(input, "user_stories");

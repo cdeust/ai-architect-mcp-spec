@@ -90,6 +90,52 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("does not read a metadata column, an identifier or a priority code as the bound (PR #275 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "| ID | Requirement | Priority | Depends On | Story Points |",
+      "|----|-------------|----------|------------|--------------|",
+      "| FR-001 | Search must be fast. | P1 | FR-002 | 3 |",
+      "| FR-002 | Export is seamless. | Must | — | — |",
+      "",
+      "- FR-003 (P2): Import is easy, after FR-001.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-002 ("seamless"), FR-003 ("easy")',
+    ]);
+  });
+
+  it("still reads a number in a statement column other than the first (PR #275 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "| ID | Title | Acceptance | Priority |",
+      "|----|-------|------------|----------|",
+      "| NFR-001 | Fast search | p95 under 200 ms | P1 |",
+    ].join("\n");
+    expect(findings(content)).toEqual([]);
+  });
+
+  it("reads a bound stated inside quotes, but not inside a code span (PR #275 review, note 2)", () => {
+    expect(unboundedTermIn('Search must be fast: "p95 under 2 s".')).toBeNull();
+    expect(unboundedTermIn("Search must be fast, see `retry3`.")).toBe("fast");
+  });
+
+  it("does not read a list number or an identifier on a following line as the bound (PR #275 review, note 4)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Search",
+      "",
+      "1. Search must be fast.",
+      "2. Results follow FR-2 and P1.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
   it("does not read a term inside a quoted label or a code span, or a hyphenated word", () => {
     expect(
       findings(
