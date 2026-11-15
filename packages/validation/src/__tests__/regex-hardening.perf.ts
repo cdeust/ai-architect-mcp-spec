@@ -363,7 +363,7 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // every sibling, and the push puts it back to one item (PR #281 review,
       // note 2).
       nestedListStack: (n) => "### FR-1 fast\n" + "- a\n  - b\n    - c\n- d\n".repeat(n / 24),
-      // PR #282 review, note 2: a deep stack of open items, then lines whose
+      // PR #282 review, note 3: a deep stack of open items, then lines whose
       // marker is 4 columns past a container far down the stack, so each
       // opens no item and leaves the stack as it is. A linear rescan of the
       // stack would cost its depth on each such line; since indentation grows

@@ -126,16 +126,17 @@ const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
 
 /**
  * The column a list marker is measured from: the content indentation of the
- * innermost open item the marker is inside, else `base`, the content
- * indentation of the list item that defines the requirement (0 for a heading,
- * a bold line or a table row), else 0. A marker 4 or more columns right of it
- * opens no item (CommonMark 0.31.2 §5.2; PR #281 review, note 1; PR #282
- * review, note 1). `open` holds the content indentations of the open items,
- * strictly increasing, so a binary search finds the container: a line that
- * opens no item leaves the stack as it is, and a rescan of the stack on
- * every such line would cost its depth each time (PR #282 review, note 2).
+ * innermost open item the marker is inside, else 0. A marker 4 or more
+ * columns right of it opens no item (CommonMark 0.31.2 §5.2; PR #281 review,
+ * note 1; PR #282 review, note 1). The list item that defines the
+ * requirement is the first open item (`withoutListMarkers`), so a marker
+ * under it is measured from its content (PR #283 review, note 3). `open`
+ * holds the content indentations of the open items, strictly increasing, so
+ * a binary search finds the container: a line that opens no item never
+ * pushes on the stack, and a rescan of the stack on every such line would
+ * cost its depth each time (PR #282 review, note 3).
  */
-function containerOf(open: readonly number[], marker: number, base: number): number {
+function containerOf(open: readonly number[], marker: number): number {
   let lo = 0;
   let hi = open.length;
   while (lo < hi) {
@@ -143,8 +144,18 @@ function containerOf(open: readonly number[], marker: number, base: number): num
     if (open[mid]! <= marker) lo = mid + 1;
     else hi = mid;
   }
-  if (lo > 0) return open[lo - 1]!;
-  return marker >= base ? base : 0;
+  return lo > 0 ? open[lo - 1]! : 0;
+}
+
+/**
+ * Opens the list item of `line`, whose marker is at column `marker`. An
+ * item's content is right of its marker, so this one pass closes the items
+ * it is not nested in, its previous sibling included.
+ */
+function openItem(open: number[], line: string, marker: number, markerText: string): void {
+  while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
+  const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? markerText;
+  open.push(indentWidth(contentStart.replace(/\S/g, " ")));
 }
 
 /**
@@ -180,12 +191,15 @@ function containerOf(open: readonly number[], marker: number, base: number): num
  * is removed (PR #278 review, note 3). `afterHeading` says the first line is
  * the rest of a heading, so the second line may open a list. `base` is the
  * content indentation of the list item that defines the requirement, whose
- * continuation lines keep their indentation (see `containerOf`).
+ * continuation lines keep their indentation: that item is open when the text
+ * starts, so a sibling left of its content continues its list (`1. NFR-001:
+ * Search must be fast.` / ` 2. Results are listed.`) and a marker right of
+ * it is measured from it (PR #283 review, note 3).
  */
 function withoutListMarkers(text: string, afterHeading: boolean, base: number): string {
   const lines = text.split("\n");
-  /** Content indentation of each open item, innermost last. */
-  const open: number[] = [];
+  /** Content indentation of each open item, innermost last; the defining item first. */
+  const open: number[] = base > 0 ? [base] : [];
   return lines
     .map((line, i) => {
       const previous = i === 0 ? "" : lines[i - 1]!;
@@ -196,13 +210,14 @@ function withoutListMarkers(text: string, afterHeading: boolean, base: number): 
       // past its container, which after text is a lazy continuation of the
       // paragraph and after a blank line an indented code block. None opens
       // an item, and each closes after a blank line the items it is left
-      // of, as any text does (PR #282 review, note 2).
+      // of, as any text does (PR #282 review, note 2). The first line follows
+      // the defining line, not a blank line, so it closes nothing.
       if (
         item === null ||
         (item[2] !== undefined && ordered === null) ||
-        (i > 0 && marker - containerOf(open, marker, base) >= 4)
+        (i > 0 && marker - containerOf(open, marker) >= 4)
       ) {
-        if (line.trim() !== "" && previous.trim() === "") {
+        if (i > 0 && line.trim() !== "" && previous.trim() === "") {
           const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
           while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
         }
@@ -222,11 +237,10 @@ function withoutListMarkers(text: string, afterHeading: boolean, base: number): 
         (i === 1 && afterHeading) ||
         continuesList;
       if (!isItem) return line;
-      // An item's content is right of its marker, so this one pass closes the
-      // items it is not nested in, its previous sibling included.
-      while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
-      const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? item[0];
-      open.push(indentWidth(contentStart.replace(/\S/g, " ")));
+      // The first line of a list-item definition is the rest of the defining
+      // line, whose columns are not the document's: its number is removed,
+      // and the defining item stays the open item.
+      if (i > 0 || base === 0) openItem(open, line, marker, item[0]);
       return ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
     })
     .join("\n");
