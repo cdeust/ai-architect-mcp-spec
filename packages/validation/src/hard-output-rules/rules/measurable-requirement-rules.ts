@@ -265,6 +265,27 @@ function definitionOf(open: OpenDefinition): RequirementDefinition {
 }
 
 /**
+ * The open definition of a heading or a bold line, which is no list item. In
+ * an open list item, its text is that item's content: a list nested there is
+ * measured from it, so `- Intro` / `    ### NFR-001: …` / `` / `    2. …`
+ * reads `2.` as a marker, not a bound (PR #296 review, Codex P2). `items`
+ * holds the content indentation of the open items, innermost last.
+ */
+function nonItemDefinition(listed: RegExpExecArray, line: string, items: readonly number[]): OpenDefinition {
+  const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
+  const content = containerOf(items, indent);
+  const at = items.lastIndexOf(content);
+  return {
+    id: listed[1]!,
+    kind: isHeading(items, line) ? "heading" : "item",
+    indent: 0,
+    content,
+    container: at > 0 ? items[at - 1]! : 0,
+    lines: [listed[2] ?? ""],
+  };
+}
+
+/**
  * The requirement definitions of a section with their text: the rest of a
  * table row; or the rest of the opening line of a list item, heading or bold
  * line, plus the lines that go on with it (`continues`). A nested definition
@@ -309,14 +330,18 @@ function definitionsIn({ lines, afterBlock }: LinesOutsideFences): RequirementDe
     } else if (listed !== null) {
       close();
       const item = LIST_ITEM.exec(line);
-      open = {
-        id: listed[1]!,
-        kind: isHeading(items, line) ? "heading" : "item",
-        indent: item === null ? 0 : indentWidth(item[1]!),
-        content: item === null ? 0 : indentWidth(/^[ \t]*\S+[ \t]+/.exec(line)![0].replace(/\S/g, " ")),
-        container: item === null ? 0 : container,
-        lines: [listed[2] ?? ""],
-      };
+      if (item === null) {
+        open = nonItemDefinition(listed, line, items);
+      } else {
+        open = {
+          id: listed[1]!,
+          kind: "item",
+          indent: indentWidth(item[1]!),
+          content: indentWidth(/^[ \t]*\S+[ \t]+/.exec(line)![0].replace(/\S/g, " ")),
+          container,
+          lines: [listed[2] ?? ""],
+        };
+      }
     } else if (open !== null && continues(open, line, items)) {
       (open as OpenDefinition).lines.push(line);
     } else {

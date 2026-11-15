@@ -184,7 +184,7 @@ const EQUALS_LINE = /^[ \t]*=+[ \t]*$/;
  * line is inside, else column 0 (CommonMark 0.31.2 §4.2, §5.1). A tab moves
  * to the next tab stop, so after `- Intro` the line `\t# Note` is two columns
  * past the item's content, a heading in it, while at top level it is text
- * (PR #294 review, note 2 and Codex P2).
+ * (PR #294 review, note 2; PR #295 review, Codex P2).
  */
 function opensBlock(open: readonly number[], line: string, body: RegExp): boolean {
   const lead = /^[ \t]*/.exec(line)![0];
@@ -244,7 +244,10 @@ export function blockAfter(line: string, before: BlockState, open: readonly numb
     // A block quote leaves a paragraph open only when its content is
     // paragraph text: an empty quote, a heading or a thematic break in it
     // leaves none (§5.1; PR #292 review, Codex P2).
-    const inner = line.replace(QUOTE_MARKERS, "");
+    // `opensBlock` measured the first marker from its container, so the
+    // indentation before it is dropped whatever its width, then the markers
+    // (PR #296 review, Codex P2: `    > # Note` under `- Intro`).
+    const inner = line.trimStart().replace(QUOTE_MARKERS, "");
     return inner.trim() === "" || QUOTED_HEADING.test(inner) || isThematicBreak([], inner) ? "none" : "paragraph";
   }
   const endsTable = left || LIST_ITEM.test(line);
@@ -265,7 +268,8 @@ export function blockAfter(line: string, before: BlockState, open: readonly numb
  * underlines): a list item closes the items it is not inside and opens its
  * own, unless its marker is 4 or more columns right of its container; a
  * heading, a table row, a thematic break (`---`, `* * *`, `- - -`, never read
- * as a list item; PR #288 review, note 3), or a line of text where no
+ * as a list item; PR #288 review, note 3), a block quote (PR #296 review,
+ * note 1), or a line of text where no
  * paragraph is open (after a blank line, a table, a fenced block, a heading or
  * a thematic break) closes the items whose content it is left of. A line of
  * text right after paragraph text goes on with its paragraph (a lazy
@@ -292,7 +296,7 @@ export function trackItems(open: number[], line: string, inParagraph: boolean): 
     }
     return 0;
   }
-  if (line.trim() !== "" && (!inParagraph || thematicBreak || isHeading(open, line) || TABLE_ROW.test(line))) {
+  if (line.trim() !== "" && (!inParagraph || thematicBreak || isHeading(open, line) || opensBlock(open, line, QUOTE_BODY) || TABLE_ROW.test(line))) {
     while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
   }
   return 0;
