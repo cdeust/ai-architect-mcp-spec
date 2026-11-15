@@ -650,6 +650,28 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("ends a definition at the next one, reads an indented bold line, keeps a wrapped quantity of a numbered statement, and reads a bold line under an HTML tag (PR #299 review, Codex P2 and note 2)", () => {
+    // FR-001: the nested FR-002 is a definition of its own, so its `2` does
+    // not bound FR-001. FR-003: the heading body ends at the bold line below
+    // it, so NFR-004's `3` does not bound it. NFR-005: an indented
+    // continuation line is still a bold line. NFR-006: `2000.` is not the
+    // next marker of the statement's list (`1.`), so it is the bound.
+    const content = [
+      "## Requirements",
+      "",
+      ...["- FR-001: Search must be fast.", "  - FR-002: Export finishes within 2 seconds.", ""],
+      ...["### FR-003: Import must be fast.", "", "**NFR-004** Login within 3 seconds.", "", "## Next", ""],
+      ...["Intro", "  **NFR-005** Search must be fast.", ""],
+      ...["**NFR-006** 1. Search must be fast; the maximum count is", "    2000. Larger collections page.", "", "## Next", ""],
+      // NFR-007: with no blank line, `<div>` and the bold line are one
+      // paragraph of text, not an HTML block, so the bold line defines it.
+      ...["<div>", "**NFR-007** Search must be fast."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '4 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",
