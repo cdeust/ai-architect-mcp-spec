@@ -53,6 +53,43 @@ describe("measurable_requirements (#118)", () => {
     ).toEqual([]);
   });
 
+  it("reads every spelled-out number, EN and FR, as a bound (PR #275 review)", () => {
+    for (const bound of ["thirteen", "seventeen", "ninety", "twenty-five", "zero", "treize", "seize", "dix-sept", "quatre-vingts"]) {
+      expect(unboundedTermIn(`Search must be fast: under ${bound} seconds.`), bound).toBeNull();
+    }
+  });
+
+  it("reads the lines that go on with a heading or list definition (PR #275 review)", () => {
+    const bounded = [
+      "## Requirements",
+      "",
+      "### NFR-001: Fast search",
+      "",
+      "Search completes in under 200 ms.",
+      "",
+      "- FR-002: Export is quick",
+      "  and finishes within 5 s.",
+    ].join("\n");
+    expect(findings(bounded)).toEqual([]);
+    const unbounded = [
+      "## Requirements",
+      "",
+      "### NFR-001: Search",
+      "",
+      "Search must be fast.",
+      "### Notes",
+      "Fast is fine here.",
+      "- FR-002: Export",
+      "  - The export is seamless.",
+      "- FR-003: Import",
+      "",
+      "The import is easy.",
+    ].join("\n");
+    expect(findings(unbounded).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), FR-002 ("seamless")',
+    ]);
+  });
+
   it("does not read a term inside a quoted label or a code span, or a hyphenated word", () => {
     expect(
       findings(
