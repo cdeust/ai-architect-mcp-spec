@@ -556,6 +556,38 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads a block quote indented past column 3 inside a list item, after a table (PR #296 review, Codex P2)", () => {
+    // `    > # Note` is two columns past `- Intro`'s content: a quote holding a
+    // heading, which ends the table and leaves no paragraph, so `  2. Group`
+    // opens an item and the `2.` under NFR-001 is a sibling marker.
+    const content = [
+      "## Requirements",
+      "",
+      ...["- Intro", "", "  | a |", "  | --- |", "    > # Note", "  2. Group"],
+      ...["     - NFR-001: Search must be fast and", "      2. Results are listed."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("measures the body of a heading definition nested in a list item from that item's content (PR #296 review, Codex P2)", () => {
+    // `    ### NFR-001` is a heading in `- Intro`; its body is that item's
+    // content, so `    2.` is a list marker there, not the bound.
+    const content = ["## Requirements", "", "- Intro", "    ### NFR-001: Search must be fast.", "", "    2. Results are listed."].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("closes a list item at a block quote left of its content, so a later line is not measured from it (PR #296 review, note 1)", () => {
+    // `> Note` at column 0 closes `- Intro`; `    # At most 2 seconds.` then
+    // goes on with the quote's paragraph, text of NFR-001's heading body,
+    // whose `2` bounds the requirement.
+    const content = ["## Requirements", "", "### NFR-001: Search must be fast.", "- Intro", "> Note", "    # At most 2 seconds."].join("\n");
+    expect(findings(content)).toEqual([]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

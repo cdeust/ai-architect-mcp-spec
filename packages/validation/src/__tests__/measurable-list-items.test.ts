@@ -146,8 +146,8 @@ describe("blockAfter (#118)", () => {
     expect(blockOf(["Intro", "    ==="]).block).toBe("paragraph");
   });
 
-  it("reads a heading or a block quote after a tab as paragraph text, as after four spaces (PR #294 review, note 2)", () => {
-    // A tab at the line start reaches column 4 (CommonMark 0.31.2 §2.2), so
+  it("measures a heading or a block quote from its container, a tab moving to the next tab stop (PR #294 review, note 2; PR #296 review, note 3)", () => {
+    // At top level a tab reaches column 4 (CommonMark 0.31.2 §2.2), so
     // neither opens: the line goes on with the paragraph above it.
     for (const indent of ["\t", "  \t", "    "]) {
       expect(blockOf(["Intro", `${indent}# Note`]).block).toBe("paragraph");
@@ -162,6 +162,8 @@ describe("blockAfter (#118)", () => {
     expect(blockOf(["- Intro", "\t# Note"]).block).toBe("none");
     expect(blockOf(["- Intro", "\t> # Note"]).block).toBe("none");
     expect(blockOf(["- Intro", "      # Note"]).block).toBe("paragraph");
+    // The content of a quote is read after all of its accepted indentation (PR #296 review, Codex P2).
+    expect(blockOf(["- Intro", "    > # Note"]).block).toBe("none");
   });
 });
 
