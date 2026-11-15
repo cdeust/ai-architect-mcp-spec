@@ -124,31 +124,27 @@ const ORDERED_MARKER = /^[ \t]*(\d{1,9})[.)](?=[ \t]+\S)/;
 /** A line that opens a list item, ordered or not: indentation in group 1, the number of an ordered marker in group 2. */
 const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
 
-/** An open list item: the indentation of its marker and of its content. */
-interface OpenItem {
-  readonly marker: number;
-  readonly content: number;
-}
-
 /**
  * The lines of a text with the marker of each ordered list item removed. A
  * line that starts with a number and a period is a list item only where
  * CommonMark 0.31.2 §5.2 lets one start: an ordered list may interrupt a
  * paragraph only when it starts at 1, so after a line of text a marker is
- * read only for `1.`, while after a blank line, a heading, or inside a list
- * that is still open, any number is. Otherwise the line goes on with the
+ * read only for `1.`, while after a blank line, a heading, or left of the
+ * content of a list item that is still open, any number is. Otherwise the line goes on with the
  * paragraph above, and its number is the end of a wrapped sentence (`… is`
  * then `  1000. Beyond that it pages.`), which counts as the bound (PR #277
  * review, note 1; PR #276 review, note 1).
  *
- * The open lists are a stack of item indentations (CommonMark §5.2-5.3): an
- * item stays open across the lines of its text, wrapped ones included, so
- * the `2.` of `1. Search must be fast and` / `   reliable.` / `2. …` is a
- * marker (PR #278 review, note 1). Only a sibling of an open item continues
- * its list: a number at or past the item's content indentation would open a
- * nested list, so `   2000.` wrapped under `1. … the maximum entry count is`
- * is the bound (PR #279 review). A non-blank line after a blank line that is
- * indented less than an item's content closes that item.
+ * The open items are a stack of their content indentations, increasing from
+ * the outermost (CommonMark §5.2-5.3). An item stays open across the lines of
+ * its text, wrapped ones included, so the `2.` of `1. Search must be fast
+ * and` / `   reliable.` / `2. …` is a marker (PR #278 review, note 1), and so
+ * is a sibling left of the item before it (`  1.` then `2.`, PR #280 review,
+ * note 1). A number at or past the innermost item's content indentation
+ * would open a nested list, so `   2000.` wrapped under `1. … the maximum
+ * entry count is` is the bound (PR #279 review). A new item closes every
+ * open item whose content it is not inside, siblings included; a non-blank
+ * line after a blank line closes every item whose content it is left of.
  *
  * The first line is the rest of the definition's opening line, right after
  * its identifier: a number there opens the statement and numbers it
@@ -158,7 +154,8 @@ interface OpenItem {
  */
 function withoutListMarkers(text: string, afterHeading: boolean): string {
   const lines = text.split("\n");
-  const open: OpenItem[] = [];
+  /** Content indentation of each open item, innermost last. */
+  const open: number[] = [];
   return lines
     .map((line, i) => {
       const previous = i === 0 ? "" : lines[i - 1]!;
@@ -168,15 +165,17 @@ function withoutListMarkers(text: string, afterHeading: boolean): string {
         // Text, or a number with no item text after it: not a list item.
         if (line.trim() !== "" && previous.trim() === "") {
           const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
-          while (open.length > 0 && indent < open[open.length - 1]!.content) open.pop();
+          while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
         }
         return line;
       }
       const marker = indentWidth(item[1]!);
-      // A sibling of an open item continues its list; a marker at or past an
-      // item's content would open a nested list, which must start at 1 to
-      // interrupt the item's paragraph (PR #279 review).
-      const continuesList = open.some((o) => o.marker <= marker && marker < o.content);
+      // A marker left of the innermost item's content continues an open list
+      // (a sibling may sit left of the item before it, CommonMark 0.31.2
+      // §5.3; PR #280 review, note 1); one at or past that content would open
+      // a nested list, which must start at 1 to interrupt the item's
+      // paragraph (PR #279 review).
+      const continuesList = open.length > 0 && marker < open[open.length - 1]!;
       const isItem =
         i === 0 ||
         item[2] === undefined ||
@@ -185,10 +184,11 @@ function withoutListMarkers(text: string, afterHeading: boolean): string {
         (i === 1 && afterHeading) ||
         continuesList;
       if (!isItem) return line;
-      while (open.length > 0 && open[open.length - 1]!.content > marker) open.pop();
-      while (open.length > 0 && open[open.length - 1]!.marker >= marker) open.pop();
+      // An item's content is right of its marker, so this one pass closes the
+      // items it is not nested in, its previous sibling included.
+      while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
       const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? item[0];
-      open.push({ marker, content: indentWidth(contentStart.replace(/\S/g, " ")) });
+      open.push(indentWidth(contentStart.replace(/\S/g, " ")));
       return ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
     })
     .join("\n");

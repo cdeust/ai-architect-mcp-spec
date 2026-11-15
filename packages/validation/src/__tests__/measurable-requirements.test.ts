@@ -237,9 +237,15 @@ describe("measurable_requirements (#118)", () => {
       "1. Import must be fast and",
       "   the maximum entry count is",
       "   2000. Larger ones are split.",
+      "",
+      "### NFR-004: Sync",
+      "",
+      "  1. Sync must be fast and",
+      "     reliable.",
+      "2. Results are listed.",
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
-      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-004 ("fast")',
     ]);
   });
 
