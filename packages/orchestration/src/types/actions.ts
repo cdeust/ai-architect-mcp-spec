@@ -115,9 +115,12 @@ export const SpawnSubagentsActionSchema = z.object({
    * (unused until PR 4b's `review` step wires it) so no addition was needed
    * there. "pr" added additively (design-phases-3-5.md §3, PR 5) for the
    * `pr_creation` step's engineer spawn (branch push + `gh pr create`) — no
-   * existing purpose value was removed or repurposed.
+   * existing purpose value was removed or repurposed. "probe" added
+   * additively (#123) for the `preflight` step's one-invocation check that
+   * the host can start a zetetic-team-subagents subagent — no existing
+   * purpose value was removed or repurposed.
    */
-  purpose: z.enum(["judge", "draft", "review", "implement", "test", "pr"]),
+  purpose: z.enum(["judge", "draft", "review", "implement", "test", "pr", "probe"]),
 });
 export type SpawnSubagentsAction = z.infer<typeof SpawnSubagentsActionSchema>;
 

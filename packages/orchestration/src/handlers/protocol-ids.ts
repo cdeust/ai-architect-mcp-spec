@@ -159,3 +159,10 @@ export const PR_CREATION_INV_ID = "pr_creation_engineer";
  * judge invocations in one batch; see types/state/verify-budget.ts.
  */
 export const VERIFY_BUDGET_QUESTION_ID = "self_check_verify_budget";
+
+/**
+ * preflight.ts — single invocation_id AND batch_id of the
+ * zetetic-team-subagents probe (one `zetetic-team-subagents:engineer`
+ * invocation, the first subagent type a run needs). source: #123.
+ */
+export const PREFLIGHT_SUBAGENT_PROBE_ID = "preflight_subagent_probe";

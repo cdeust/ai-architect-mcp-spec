@@ -119,17 +119,17 @@ map_failure_to_retrieval(violations[])
 
 ### Requirements
 
-The rule-based checking tools (`validate_prd_section`, `validate_prd_document`, `map_failure_to_retrieval`) run on their own. The verification tools (`plan_section_verification`, `plan_document_verification`, `conclude_verification`) need zetetic-team-subagents, because the host spawns the judges they select. The full `/generate-prd` pipeline needs the companions below, and its preflight checks only some of them.
+The rule-based checking tools (`validate_prd_section`, `validate_prd_document`, `map_failure_to_retrieval`) run on their own. The verification tools (`plan_section_verification`, `plan_document_verification`, `conclude_verification`) need zetetic-team-subagents, because the host spawns the judges they select. The full `/generate-prd` pipeline needs the companions below; its preflight checks each one it needs before the run depends on it.
 
 | Companion (for `/generate-prd`) | Required? | Checked by preflight? |
 |---|---|---|
 | [Cortex](https://github.com/cdeust/Cortex) (`hypermnesia-mcp`) | Yes, unless `skip_preflight: true` | Yes |
-| [zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents) | Yes, no degraded mode | No |
+| [zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents) | Yes, no degraded mode | Yes, by starting one subagent |
 | [ai-architect-mcp-codebase](https://github.com/cdeust/ai-architect-mcp-codebase) | Only with `codebase_path` | Yes, when `codebase_path` is set |
 
 - **Cortex** provides the run-level recall in input analysis, the per-section recall during section generation, and the `remember` of the run summary at the end. Without it the run stops at `preflight` with "Cortex MCP not reachable". `skip_preflight: true` lets the run continue without that context.
-- **zetetic-team-subagents** provides the subagent types of the PRD-generation and verification steps: `zetetic-team-subagents:engineer` for clarification, section drafts and JIRA tickets, the `zetetic-team-subagents:genius:*` and team judges (for example `zetetic-team-subagents:code-reviewer`) for verification, and `zetetic-team-subagents:git-historian` when a codebase is given. No probe checks for it, and a missing plugin does not stop the run cleanly: the git-history step fails and the run continues without it, clarification shows the host's spawn error as the question, and each section draft is marked failed without a retry and left out of the exported files, so no JIRA ticket is generated either.
-- **`skip_preflight: true`** skips both probes, including the ai-architect-mcp-codebase one. It does not make ai-architect-mcp-codebase optional when `codebase_path` is set: if it is missing, the run stops at `input_analysis` when `analyze_codebase` fails.
+- **zetetic-team-subagents** provides the subagent types of the PRD-generation and verification steps: `zetetic-team-subagents:engineer` for clarification, section drafts and JIRA tickets, the `zetetic-team-subagents:genius:*` and team judges (for example `zetetic-team-subagents:code-reviewer`) for verification, and `zetetic-team-subagents:git-historian` when a codebase is given. The preflight starts one `zetetic-team-subagents:engineer` subagent (a one-line prompt, model `haiku`, effort `low`: one small model call per run); if the host answers with an error or no text, the run stops at `preflight` with the host's answer and the install commands. That message does not tell a missing plugin from another failure to start a subagent. With `skip_preflight: true` the probe is skipped, and a missing plugin does not stop the run cleanly: the git-history step fails and the run continues without it, clarification shows the host's spawn error as the question, and each section draft is marked failed without a retry and left out of the exported files, so no JIRA ticket is generated either.
+- **`skip_preflight: true`** skips every probe, including the ai-architect-mcp-codebase and zetetic-team-subagents ones. It does not make ai-architect-mcp-codebase optional when `codebase_path` is set: if it is missing, the run stops at `input_analysis` when `analyze_codebase` fails.
 
 Install commands for all three are in [Companion ecosystem](#companion-ecosystem).
 
@@ -383,7 +383,7 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 | # | Step | What it produces |
 |---|------|------------------|
 | **1** | `banner` | Welcome banner with run ID + feature description + capability summary |
-| **2** | `preflight` | Probes Cortex, and ai-architect-mcp-codebase when `codebase_path` is set, before the pipeline depends on them; skippable via `skip_preflight`. zetetic-team-subagents is not probed (see [Requirements](#requirements)) |
+| **2** | `preflight` | Probes Cortex, ai-architect-mcp-codebase when `codebase_path` is set, then zetetic-team-subagents by starting one subagent, before the pipeline depends on them; skippable via `skip_preflight` (see [Requirements](#requirements)) |
 | **3** | `context_detection` | Detects PRD type from trigger words; asks user when ambiguous |
 | **4** | `input_analysis` | Calls `index_codebase` (ai-architect-mcp-codebase) when a path is provided; sets `codebase_graph_path` |
 | **5** | `feasibility_gate` | Detects epic-scope inputs (≥2 EPIC_SIGNALS); asks user to focus |
