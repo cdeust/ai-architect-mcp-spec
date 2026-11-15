@@ -74,6 +74,35 @@ const htmlAsText = new MarkdownIt("commonmark").enable("table").disable(["inline
  */
 const isHtmlComment = (content: string): boolean => content.trimStart().startsWith("<!--");
 
+/**
+ * Whether an HTML block holds raw text (CommonMark 0.31.2 §4.6, start
+ * condition 1: `<pre`, `<script`, `<style` or `<textarea`). Its content is
+ * not markdown, so, like a code block, it defines nothing (PR #302 review,
+ * note 1).
+ */
+function isRawTextBlock(content: string): boolean {
+  const head = content.trimStart().slice(0, 10).toLowerCase();
+  return ["<pre", "<script", "<style", "<textarea"].some((tag) => head.startsWith(tag) && /^[\s>]|^$/.test(head.slice(tag.length)));
+}
+
+/**
+ * The source of an HTML block with each comment in it (`<!--` to the next
+ * `-->`, or to the end) replaced by its line breaks, so the lines keep their
+ * numbers and nothing inside a comment is read when the block is parsed again
+ * (PR #302 review, Codex P2). A plain search, linear, with no pattern.
+ */
+function withoutHtmlComments(source: string): string {
+  let out = "";
+  let from = 0;
+  for (let start = source.indexOf("<!--"); start >= 0; start = source.indexOf("<!--", from)) {
+    const close = source.indexOf("-->", start + 4);
+    const end = close < 0 ? source.length : close + 3;
+    out += source.slice(from, start) + source.slice(start, end).replace(/[^\n]/g, "");
+    from = end;
+  }
+  return out + source.slice(from);
+}
+
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
 const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
 /** A bold line: one that opens with a bold requirement identifier. */
@@ -128,7 +157,7 @@ function leavesOf(content: string, md = parser, offset = 0, rootEnd = Infinity):
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      if (!isHtmlComment(token.content)) leaves.push(...leavesOf(token.content, htmlAsText, at(token.map)[0], openEnd[top]!));
+      if (!isHtmlComment(token.content) && !isRawTextBlock(token.content)) leaves.push(...leavesOf(withoutHtmlComments(token.content), htmlAsText, at(token.map)[0], openEnd[top]!));
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -255,9 +284,10 @@ function definingId(source: string, boldOnly: boolean): { id: string; rest: stri
 }
 
 /**
- * The index of the first line of a leaf that opens a definition, else -1:
- * the first line of a paragraph that opens a list item, a bold line, a
- * heading, or, for a table, its first line when a row defines one. Another
+ * Where a leaf opens a definition, else -1: for a paragraph, the index of
+ * its first line that does (a list item's first line or a bold line); for a
+ * heading, 0 when it defines one; for a table, the index of its first row
+ * that defines one, the header row being 0 (PR #301 review, note 3). Another
  * definition ends the text of the one before it, as the line scanner closed
  * it (PR #299 review, Codex P2).
  */

@@ -663,8 +663,9 @@ describe("measurable_requirements (#118)", () => {
       ...["### FR-003: Import must be fast.", "", "**NFR-004** Login within 3 seconds.", "", "## Next", ""],
       ...["Intro", "  **NFR-005** Search must be fast.", ""],
       ...["**NFR-006** 1. Search must be fast; the maximum count is", "    2000. Larger collections page.", "", "## Next", ""],
-      // NFR-007: with no blank line, `<div>` and the bold line are one
-      // paragraph of text, not an HTML block, so the bold line defines it.
+      // NFR-007: with no blank line, `<div>` and the bold line are one HTML
+      // block, whose source is read again as markdown, so the bold line
+      // defines it.
       ...["<div>", "**NFR-007** Search must be fast.", "", "## Next", ""],
       // FR-008: the table's rows above FR-009's row are its body and hold its
       // bound; FR-009 is a definition of its own (PR #300 review, Codex P2).
@@ -678,7 +679,15 @@ describe("measurable_requirements (#118)", () => {
       // bound. FR-013 and FR-014: a list item or a heading right under an
       // HTML line is read as one (PR #301 review, Codex P2).
       ...["- FR-012: Search must be fast.", "  - FR-012-AC1: Results are listed.", ""],
-      ...["<div>", "- FR-013: Search must be fast.", "", "<div>", "### FR-014: Import must be fast."],
+      ...["<div>", "- FR-013: Search must be fast.", "", "<div>", "### FR-014: Import must be fast.", "", "## Next", ""],
+      // FR-015: a comment inside an HTML block stays unread when the block
+      // is parsed again (PR #302 review, Codex P2).
+      ...["<div>", "<!--", "- FR-015: Search must be fast.", "-->", "</div>", ""],
+      // FR-016: a raw-text block (`<pre>`) defines nothing. NFR-017: the
+      // `500` of `NFR-017-500` is a number, so it bounds the requirement
+      // (PR #302 review, notes 1 and 2).
+      ...["<pre>", "- FR-016: Search must be fast.", "</pre>", ""],
+      ...["- NFR-017: Search must be fast for NFR-017-500 rows."],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '8 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast"), FR-009 ("easy"), FR-012 ("fast"), FR-013 ("fast"), FR-014 ("fast")',
