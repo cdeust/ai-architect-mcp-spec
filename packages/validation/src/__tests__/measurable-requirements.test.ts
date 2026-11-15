@@ -171,6 +171,50 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads a wrapped number followed by more text as the bound, not as a list marker (PR #277 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "- NFR-001: The list is fast; the maximum entry count is",
+      "  1000. Beyond that it pages.",
+      "- NFR-002: The list is fast; see the steps",
+      "  1. open it.",
+      "  2. close it.",
+      "### NFR-003: Search",
+      "2. Search must be fast.",
+      "",
+      "### NFR-004: Export",
+      "",
+      "3. Export must be fast.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: NFR-002 ("fast"), NFR-003 ("fast"), NFR-004 ("fast")',
+    ]);
+  });
+
+  it("does not read a key-value row of a metadata field under a heading definition (PR #277 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### FR-001: Search must be fast.",
+      "",
+      "| Field | Value |",
+      "|-------|-------|",
+      "| Priority | P1 |",
+      "| Story Points | 3 |",
+      "",
+      "### FR-002: Export must be fast.",
+      "",
+      "| Field | Value |",
+      "|-------|-------|",
+      "| Story Points | 3 |",
+      "| Acceptance | p95 under 200 ms |",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: FR-001 ("fast")',
+    ]);
+  });
+
   it("reads a number in a quoted label as the bound, a known miss (PR #276 review, note 3)", () => {
     expect(unboundedTermIn('The "Top 10" page must load fast.')).toBeNull();
   });
