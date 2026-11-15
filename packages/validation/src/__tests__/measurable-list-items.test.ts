@@ -4,11 +4,24 @@
  * removed (PR #285 review, note 3).
  */
 import { describe, it, expect } from "vitest";
-import { paragraphAfter, trackItems } from "../hard-output-rules/rules/measurable-list-items.js";
+import { blockAfter, trackItems, type BlockState } from "../hard-output-rules/rules/measurable-list-items.js";
 
-/** `trackItems` on `line` after `before`, with the paragraph state `paragraphAfter` gives. */
+/** The block `blockAfter` leaves open after `lines`, following their list items with `trackItems`. */
+const blockOf = (lines: readonly string[]): { block: BlockState; open: number[] } => {
+  const open: number[] = [];
+  let block: BlockState = "none";
+  let previous: string | null = null;
+  for (const line of lines) {
+    trackItems(open, line, previous, block === "paragraph");
+    block = blockAfter(line, block, open);
+    previous = line;
+  }
+  return { block, open };
+};
+
+/** `trackItems` on `line` after `before`, with the paragraph state `blockAfter` gives. */
 const track = (open: number[], line: string, ...before: string[]): number =>
-  trackItems(open, line, before.at(-1) ?? null, before.reduce((inParagraph, l) => paragraphAfter(l, inParagraph), false));
+  trackItems(open, line, before.at(-1) ?? null, blockOf(before).block === "paragraph");
 
 describe("trackItems (#118)", () => {
   it("closes the items a heading is left of, even right after a line of text", () => {
@@ -79,4 +92,32 @@ describe("trackItems (#118)", () => {
       expect(equalsText).toEqual([]);
     }
   });
+
+  it("closes the items a thematic break is left of, and reads `* * *` and `- - -` as breaks, not items (PR #288 review, note 3)", () => {
+    for (const rule of ["---", "***", "* * *", "- - -"]) {
+      const open = [2];
+      expect(track(open, rule, "- Intro")).toBe(0);
+      expect(open).toEqual([]);
+    }
+    const inside = [2];
+    track(inside, "  ---", "- Intro");
+    expect(inside).toEqual([2]);
+  });
 });
+
+describe("blockAfter (#118)", () => {
+  it("reads a line under a table row as a row of the table, `===` included (PR #288 review, note 1)", () => {
+    expect(blockOf(["| ID | Note |", "|----|------|", "| X | y |", "==="]).block).toBe("table");
+    expect(blockOf(["| X | y |", "text"]).block).toBe("table");
+    expect(blockOf(["| X | y |", "2. Group"]).block).toBe("paragraph");
+    expect(blockOf(["| X | y |", ""]).block).toBe("none");
+  });
+
+  it("reads a lazy `===` under a list item as paragraph text, and one at the item's content as an underline (PR #288 review, note 2)", () => {
+    expect(blockOf(["- Intro", "==="]).block).toBe("paragraph");
+    expect(blockOf(["- Intro", "  ==="]).block).toBe("none");
+    expect(blockOf(["Intro", "==="]).block).toBe("none");
+    expect(blockOf(["Intro", "    ==="]).block).toBe("paragraph");
+  });
+});
+

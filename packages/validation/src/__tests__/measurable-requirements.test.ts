@@ -362,6 +362,37 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("ends no paragraph at a `===` under a table row, a lazy one under a list item, and ends one at a fenced block (PR #288 review, notes 1 and 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "| ID | Note |",
+      "|----|------|",
+      "| X | y |",
+      "===",
+      "2. Group",
+      "   - NFR-001: Export must be fast, at most",
+      "    2. seconds per file.",
+      "",
+      "- Intro",
+      "===",
+      "  2. Group",
+      "     - NFR-002: Export must be fast, at most",
+      "      2. seconds per file.",
+      "",
+      "Text line",
+      "```",
+      "code",
+      "```",
+      "2. Group",
+      "   - NFR-003: Search must be fast and",
+      "    2. Results are listed.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-003 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

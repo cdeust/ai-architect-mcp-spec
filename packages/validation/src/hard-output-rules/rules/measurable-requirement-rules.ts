@@ -4,14 +4,15 @@ import type {
 } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
-import { LINE_BREAK, linesOutsideFences } from "./fenced-blocks.js";
+import { splitOutsideFences, type LinesOutsideFences } from "./fenced-blocks.js";
 import { phrases } from "./lexicon.js";
 import {
   HEADING,
   LIST_ITEM,
   TABLE_ROW,
   indentWidth,
-  paragraphAfter,
+  blockAfter,
+  type BlockState,
   trackItems,
   withoutListMarkers,
 } from "./measurable-list-items.js";
@@ -266,9 +267,10 @@ function definitionOf(open: OpenDefinition): RequirementDefinition {
  * The requirement definitions of a section with their text: the rest of a
  * table row; or the rest of the opening line of a list item, heading or bold
  * line, plus the lines that go on with it (`continues`). A nested definition
- * closes the one above it. One pass over the lines.
+ * closes the one above it. One pass over the lines outside fenced blocks; a
+ * removed block ends the paragraph or table above it (PR #288 review, note 1).
  */
-function definitionsIn(content: string): RequirementDefinition[] {
+function definitionsIn({ lines, afterBlock }: LinesOutsideFences): RequirementDefinition[] {
   const out: RequirementDefinition[] = [];
   let open: OpenDefinition | null = null;
   const close = (): void => {
@@ -279,11 +281,12 @@ function definitionsIn(content: string): RequirementDefinition[] {
   let previous: string | null = null;
   /** Content indentation of each list item open in the section, innermost last. */
   const items: number[] = [];
-  /** Whether a paragraph is open before the line. */
-  let inParagraph = false;
-  for (const line of content.split(LINE_BREAK)) {
-    const container = trackItems(items, line, previous, inParagraph);
-    inParagraph = paragraphAfter(line, inParagraph);
+  /** The block open before the line: a paragraph, a table, or none. */
+  let block: BlockState = "none";
+  for (const [i, line] of lines.entries()) {
+    if (afterBlock.has(i)) block = "none";
+    const container = trackItems(items, line, previous, block === "paragraph");
+    block = blockAfter(line, block, items);
     if (!TABLE_ROW.test(line)) {
       metadata = new Set();
     } else if (isSeparatorRow(line) && previous !== null && TABLE_ROW.test(previous)) {
@@ -347,8 +350,7 @@ export function checkDocumentMeasurableRequirements(
   const quoted: string[] = [];
   for (const section of sections) {
     // Fences are removed per section, as in dependency-target-rules.ts.
-    const content = linesOutsideFences(section.content).join("\n");
-    for (const { id, text, afterHeading, base, container } of definitionsIn(content)) {
+    for (const { id, text, afterHeading, base, container } of definitionsIn(splitOutsideFences(section.content))) {
       const term = unboundedTermIn(text, afterHeading, base, container);
       if (term === null || flagged.has(id)) continue;
       flagged.add(id);
