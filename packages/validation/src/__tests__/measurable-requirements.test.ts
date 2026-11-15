@@ -694,6 +694,29 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads across a comment line, takes `<!-->` as a comment and an unclosed `<!--` as text, skips a nested raw-text block and reads a line-leading sub-identifier as one (PR #303 review, notes 1 to 3)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      // FR-001 and FR-002: a comment between two lines of the paragraph, at
+      // the top level or inside an HTML block, does not cut it, so the bound
+      // below it counts.
+      ...["**FR-001** Search must be fast", "<!-- x -->", "within 2 seconds.", ""],
+      ...["<div>", "**FR-002** Search must be fast", "<!-- x -->", "within 2 seconds.", "", "## Next", ""],
+      // FR-003: `<!-->` is a whole comment, so the item under it is read.
+      // FR-004: an unclosed `<!--` is text and hides nothing.
+      ...["<div>", "<!-->", "- FR-003: Search must be fast.", ""],
+      ...["<div>", "- FR-004: Export must be easy.", "<!-- open", "", "## Next", ""],
+      // FR-005: a `<pre>` nested in a `<div>` defines nothing.
+      ...["<div>", "<pre>", "- FR-005: Search must be fast.", "</pre>", "</div>", ""],
+      // FR-006: `FR-006-1:` names its line, so its `1` does not bound FR-006.
+      ...["- FR-006: Search must be fast.", "  - FR-006-1: Results are listed."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: FR-003 ("fast"), FR-004 ("easy"), FR-006 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

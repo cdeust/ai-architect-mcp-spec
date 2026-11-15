@@ -98,10 +98,18 @@ const CODE_SPAN = /`[^`\n]*`/g;
  * term: an identifier (`FR-001`, `STORY-2`, `UTF-8`) with its sub-identifier
  * suffixes that start with a letter (`FR-001-AC1`, not the `-500` of
  * `NFR-002-500`; PR #302 review, note 2), a priority code (`P1`).
- * Both patterns are bounded. source: PR #275 review, notes 1 and 4. The
+ * An identifier that opens a line and is followed by a colon names that line
+ * (`FR-001-1: Results are listed.`), so its digit-only suffixes are part of
+ * it there: in running text they stay a number, the choice of PR #302
+ * (PR #303 review, note 2).
+ * The patterns are bounded. source: PR #275 review, notes 1 and 4. The
  * marker of a list item is not text in the block tree (requirement-definitions.ts).
  */
-const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}(?:-[A-Z][A-Z0-9]{0,9}){0,5}\b/g, /\bP\d\b/g] as const;
+const NOT_A_QUANTITY = [
+  /^([ \t]*)(?:\*\*|\x60)?[A-Z][A-Z0-9]{0,9}-\d{1,9}(?:-[A-Z0-9]{1,10}){0,5}(?:\*\*|\x60)?(?=[ \t]*:)/gm,
+  /\b[A-Z][A-Z0-9]{0,9}-\d{1,9}(?:-[A-Z][A-Z0-9]{0,9}){0,5}\b/g,
+  /\bP\d\b/g,
+] as const;
 
 /**
  * An ordered list marker that numbers a statement right after its
@@ -118,7 +126,7 @@ const LEADING_MARKER = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
  */
 function quantitiesOf(text: string): string {
   let out = text.replace(LEADING_MARKER, " ").replace(CODE_SPAN, " ");
-  for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, " ");
+  for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, (_, indent: unknown) => `${typeof indent === "string" ? indent : ""} `);
   return out;
 }
 
