@@ -231,6 +231,12 @@ describe("measurable_requirements (#118)", () => {
       "",
       "The archive size is at most",
       "2000. Larger ones are split.",
+      "",
+      "### NFR-003: Import",
+      "",
+      "1. Import must be fast and",
+      "   the maximum entry count is",
+      "   2000. Larger ones are split.",
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
@@ -256,6 +262,25 @@ describe("measurable_requirements (#118)", () => {
     expect(findings(content).map((v) => v.message)).toEqual([
       '1 requirement(s) state an unbounded quality with no number: NFR-002 ("fast")',
     ]);
+  });
+
+  it("reads a metadata row under a header that is not key-value as the bound, a known miss (PR #279 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### FR-001: Search must be fast.",
+      "",
+      "| Attribute | Detail |",
+      "|-----------|--------|",
+      "| Story Points | 3 |",
+      "",
+      "### FR-002: Export must be fast.",
+      "",
+      "| Field | Value | Notes |",
+      "|-------|-------|-------|",
+      "| Story Points | 3 | estimate |",
+    ].join("\n");
+    expect(findings(content)).toEqual([]);
   });
 
   it("removes the marker that numbers a one-line statement right after its identifier (PR #278 review, note 3)", () => {
