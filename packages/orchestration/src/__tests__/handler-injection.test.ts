@@ -1016,7 +1016,7 @@ describe("preflight", () => {
     }
   });
 
-  it("when codebase_path is NOT set, advances to context_detection right after Cortex passes (no ai-architect probe)", () => {
+  it("when codebase_path is NOT set, probes zetetic-team-subagents right after Cortex passes (no ai-architect probe)", () => {
     const seed = newPipelineState({
       run_id: "preflight_no_codebase",
       feature_description: "x",
@@ -1032,8 +1032,10 @@ describe("preflight", () => {
       success: true,
       data: {},
     });
-    expect(afterCortex.state.current_step).not.toBe("preflight");
-    expect(afterCortex.state.preflight_status).toBe("ok");
+    // source: #123 — the subagent plugin is probed before preflight passes.
+    expect(afterCortex.action.kind).toBe("spawn_subagents");
+    expect(afterCortex.state.current_step).toBe("preflight");
+    expect(afterCortex.state.preflight_status).not.toBe("ok");
   });
 
   it("skip_preflight=true short-circuits the preflight step (no probes) and marks status=skipped", () => {
