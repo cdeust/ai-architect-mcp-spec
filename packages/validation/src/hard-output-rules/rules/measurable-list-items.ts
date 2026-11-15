@@ -162,24 +162,29 @@ export function withoutListMarkers(text: string, afterHeading: boolean, base: nu
 /** The number of an ordered list marker at a line start, in group 1. */
 const ORDERED_NUMBER = /^[ \t]*(\d{1,9})[.)]/;
 
-/**
- * A line that ends a block without being paragraph text: a thematic break
- * (`---`, `***`, `___`, CommonMark 0.31.2 §4.1) or a setext underline (`===`,
- * §4.3; `---` under text is one too). After it an ordered list of any number
- * may start (PR #286 review, Codex P2).
- */
-const BLOCK_END = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
+/** A thematic break (`---`, `***`, `___`; CommonMark 0.31.2 §4.1), also a setext underline after text. */
+const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+/** A line of `=` signs: a setext underline after paragraph text, paragraph text otherwise (§4.3). */
+const EQUALS_LINE = /^ {0,3}=+[ \t]*$/;
 
-/** Whether a line is paragraph text, which an ordered list interrupts only from 1. */
-function isParagraphText(line: string | null): boolean {
-  return (
-    line !== null && line.trim() !== "" && !HEADING.test(line) && !TABLE_ROW.test(line) && !BLOCK_END.test(line)
-  );
+/**
+ * Whether a paragraph is open after `line`, given whether one was open
+ * before it. A blank line, a heading, a table row and a thematic break end
+ * it; a line of `=` ends it when it underlines it (a setext heading) and
+ * else starts one; any other line is paragraph text, a list item's first
+ * line included. After a paragraph an ordered list may start only at 1
+ * (PR #286 review, Codex P2; PR #287 review, Codex P2).
+ */
+export function paragraphAfter(line: string, inParagraph: boolean): boolean {
+  if (line.trim() === "" || HEADING.test(line) || TABLE_ROW.test(line) || THEMATIC_BREAK.test(line)) return false;
+  if (EQUALS_LINE.test(line)) return !inParagraph;
+  return true;
 }
 
 /**
  * Follows the list items open at each line of a section, as a stack of their
- * content indentations (the same rules as `withoutListMarkers`): a list item
+ * content indentations (the rules of `withoutListMarkers`, except that it also
+ * reads table rows, thematic breaks and setext underlines): a list item
  * closes the items it is not inside and opens its own, unless its marker is
  * 4 or more columns right of its container; a heading, a table row, or a
  * line of text after a blank line closes the items whose content it is left
@@ -189,18 +194,20 @@ function isParagraphText(line: string | null): boolean {
  * after a line of text an ordered marker of another number opens an item
  * only as a sibling left of the content of the innermost open item; else it
  * goes on with the paragraph (`Text line` / `2. note`; PR #285 review,
- * note 1). A blank line, a heading, a table row, a thematic break or a
- * setext underline is not paragraph text (PR #286 review). Returns the content indentation of the item the line's own list
- * item is nested in, or 0 (PR #284 review, note 2).
+ * note 1). `inParagraph` says a paragraph is open before the line
+ * (`paragraphAfter`): not after a blank line, a heading, a table row, a
+ * thematic break or a setext underline (PR #286 and #287 reviews). Returns
+ * the content indentation of the item the line's own list item is nested
+ * in, or 0 (PR #284 review, note 2).
  */
-export function trackItems(open: number[], line: string, previous: string | null): number {
+export function trackItems(open: number[], line: string, previous: string | null, inParagraph: boolean): number {
   const item = LIST_ITEM.exec(line);
   const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
   const afterBlank = previous === null || previous.trim() === "";
   if (item !== null && indent - containerOf(open, indent) < 4) {
     const number = ORDERED_NUMBER.exec(line)?.[1];
     const continuesList = open.length > 0 && indent < open[open.length - 1]!;
-    if (number === undefined || Number(number) === 1 || !isParagraphText(previous) || continuesList) {
+    if (number === undefined || Number(number) === 1 || !inParagraph || continuesList) {
       openItem(open, line, indent, item[0]);
       return open.length > 1 ? open[open.length - 2]! : 0;
     }
