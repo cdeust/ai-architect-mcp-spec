@@ -665,10 +665,18 @@ describe("measurable_requirements (#118)", () => {
       ...["**NFR-006** 1. Search must be fast; the maximum count is", "    2000. Larger collections page.", "", "## Next", ""],
       // NFR-007: with no blank line, `<div>` and the bold line are one
       // paragraph of text, not an HTML block, so the bold line defines it.
-      ...["<div>", "**NFR-007** Search must be fast."],
+      ...["<div>", "**NFR-007** Search must be fast.", "", "## Next", ""],
+      // FR-008: the table's rows above FR-009's row are its body and hold its
+      // bound; FR-009 is a definition of its own (PR #300 review, Codex P2).
+      ...["### FR-008: Search must be fast.", "", "| Metric | Target |", "|---|---|", "| Search latency | 200 ms |", "| FR-009 | Export must be easy. |", "", "## Next", ""],
+      // FR-010: a definition inside an HTML comment is not read (PR #300
+      // review, note 1). FR-011: `FR-011-AC1` is no identifier of its own, so
+      // its 200 ms goes on with FR-011 and bounds it (PR #300 review, note 2).
+      ...["<!--", "- FR-010: Offline mode should be seamless.", "-->", ""],
+      ...["- FR-011: Search must be fast.", "  - FR-011-AC1: p95 under 200 ms."],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
-      '4 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast")',
+      '5 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast"), FR-009 ("easy")',
     ]);
   });
 
