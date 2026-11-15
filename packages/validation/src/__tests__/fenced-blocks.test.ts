@@ -12,8 +12,8 @@ describe("splitOutsideFences (#118)", () => {
     expect([...afterBlock]).toEqual([[1, 4]]);
   });
 
-  it("keeps the first fence of a run of blocks, and counts a tab as four columns", () => {
-    const { afterBlock } = splitOutsideFences(["a", "\t~~~", "~~~", "```", "```", "b"].join("\n"));
-    expect([...afterBlock]).toEqual([[1, 4]]);
+  it("keeps the least indentation of the fences of a run of blocks, and counts a tab as four columns (PR #292 review, Codex P2)", () => {
+    expect([...splitOutsideFences(["a", "\t~~~", "~~~", "```", "```", "b"].join("\n")).afterBlock]).toEqual([[1, 0]]);
+    expect([...splitOutsideFences(["a", "\t~~~", "~~~", "      ```", "```", "b"].join("\n")).afterBlock]).toEqual([[1, 4]]);
   });
 });
