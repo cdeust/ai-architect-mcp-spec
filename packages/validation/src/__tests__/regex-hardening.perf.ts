@@ -349,6 +349,11 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // number alone on a line, and a heading body made of a long table.
       listMarker: (n) => "### FR-1 fast\n1." + " ".repeat(n) + "\n",
       headingTable: (n) => "### FR-1 fast\n| Priority |\n|---|\n" + "| a |\n".repeat(n / 8),
+      // PR #277 review, notes 1 and 2: every line of a list item opens with a
+      // number, so each is checked against the line above; and a heading
+      // table made of key-value rows of a metadata field.
+      wrappedMarkers: (n) => "- FR-1: fast\n" + "  1000. x\n".repeat(n / 10),
+      keyValueTable: (n) => "### FR-1 fast\n| Field | Value |\n|---|---|\n" + "| Points | 3 |\n".repeat(n / 16),
     };
     for (const [name, build] of Object.entries(builds)) {
       const small = build(32000);

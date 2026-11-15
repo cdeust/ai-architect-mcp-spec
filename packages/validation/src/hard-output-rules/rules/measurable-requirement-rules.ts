@@ -20,8 +20,8 @@ import { phrases } from "./lexicon.js";
 // ones whose text holds such a term and no number. A number, in digits or in
 // words, is read as the bound the term needs, except where it cannot be a
 // quantity: a code span, an identifier (`FR-2`), a priority code (`P1`), the
-// marker of a numbered list item, and a metadata column of a table
-// (`Priority`, `Story Points`). The rule does not check that the number
+// marker of a numbered list item, and a metadata column or key-value row of
+// a table (`Priority`, `Story Points`). The rule does not check that the number
 // belongs to the term, and quoted text is read for the number (a quote may
 // state the bound), so a quoted label that carries a number silences it
 // (`The "Top 10" page must load fast.`): a missed finding, chosen over a
@@ -108,19 +108,50 @@ const CODE_SPAN = /`[^`\n]*`/g;
 
 /**
  * Tokens that carry a digit but are not a quantity, so they cannot bound a
- * term: an identifier (`FR-001`, `STORY-2`, `UTF-8`), a priority code (`P1`),
- * and the marker of a list item at a line start (`1.`, `2)`), which is
- * followed by the item's text. A number alone on a line (`  1000.`, the end
- * of a sentence wrapped onto the next line) is not a marker and still counts
- * (PR #276 review, note 1). Each pattern is bounded, and the lookahead runs
- * from a line start only, so the scan stays linear. source: PR #275 review,
- * notes 1 and 4.
+ * term: an identifier (`FR-001`, `STORY-2`, `UTF-8`), a priority code (`P1`).
+ * Both patterns are bounded. source: PR #275 review, notes 1 and 4. The
+ * marker of a list item is removed by `withoutListMarkers`.
  */
-const NOT_A_QUANTITY = [
-  /\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g,
-  /\bP\d\b/g,
-  /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/gm,
-] as const;
+const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g, /\bP\d\b/g] as const;
+
+/**
+ * An ordered list marker at a line start followed by the item's text, with
+ * the number in group 1. Anchored at the start of one line, so the scan of a
+ * line is linear (the lookahead is tried once).
+ */
+const ORDERED_MARKER = /^[ \t]*(\d{1,9})[.)](?=[ \t]+\S)/;
+
+/** A line that opens a list item, ordered or not. */
+const ANY_LIST_MARKER = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+
+/**
+ * The lines of a text with the marker of each ordered list item removed. A
+ * line that starts with a number and a period is a list item only where
+ * CommonMark 0.31.2 §5.2 lets one start: an ordered list may interrupt a
+ * paragraph only when it starts at 1, so after a line of text a marker is
+ * read only for `1.`, while after a blank line, a heading or another list
+ * item any number is. Otherwise the line goes on with the paragraph above,
+ * and its number is the end of a wrapped sentence (`… is` then
+ * `  1000. Beyond that it pages.`), which counts as the bound (PR #277
+ * review, note 1; PR #276 review, note 1). `afterHeading` says the first
+ * line is the rest of a heading, not text.
+ */
+function withoutListMarkers(text: string, afterHeading: boolean): string {
+  const lines = text.split("\n");
+  return lines
+    .map((line, i) => {
+      const marker = ORDERED_MARKER.exec(line);
+      if (marker === null || i === 0) return line;
+      const previous = lines[i - 1]!;
+      const listMayStart =
+        Number(marker[1]) === 1 ||
+        previous.trim() === "" ||
+        (i === 1 && afterHeading) ||
+        ANY_LIST_MARKER.test(previous);
+      return listMayStart ? " ".repeat(marker[0].length) + line.slice(marker[0].length) : line;
+    })
+    .join("\n");
+}
 
 /**
  * A table column whose cells are metadata of the requirement, never its
@@ -165,6 +196,8 @@ function statementOf(cells: readonly string[], metadata: ReadonlySet<number>): s
 interface RequirementDefinition {
   readonly id: string;
   readonly text: string;
+  /** The first line of `text` is the rest of a heading. */
+  readonly afterHeading: boolean;
 }
 
 /** A heading line (any level). */
@@ -180,7 +213,10 @@ const TABLE_ROW = /^[ \t]*\|/;
  * table's header are removed from every row, the header included. A header
  * is a table row right above a separator that opens its table. Without this,
  * a `| Priority | Story Points |` table under `### FR-001` was read as plain
- * text and its `3` bounded the statement (PR #276 review, note 2).
+ * text and its `3` bounded the statement (PR #276 review, note 2). A row
+ * below the header whose first cell names a metadata field is a key-value
+ * row (`| Story Points | 3 |` under `| Field | Value |`) and is dropped
+ * whole (PR #277 review, note 2).
  */
 function withoutMetadataCells(lines: readonly string[]): string[] {
   const out: string[] = [];
@@ -195,7 +231,12 @@ function withoutMetadataCells(lines: readonly string[]): string[] {
     const next = lines[i + 1];
     const opensTable = i === 0 || !TABLE_ROW.test(lines[i - 1]!);
     const cells = cellsOf(line);
-    if (opensTable && next !== undefined && isSeparatorRow(next)) metadata = metadataColumns(cells);
+    const isHeader = opensTable && next !== undefined && isSeparatorRow(next);
+    if (isHeader) metadata = metadataColumns(cells);
+    else if (METADATA_HEADER.test(cells[0] ?? "")) {
+      out.push("");
+      return;
+    }
     out.push(cells.filter((_, c) => !metadata.has(c)).join(" | "));
   });
   return out;
@@ -243,7 +284,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
   const close = (): void => {
     if (open !== null) {
       const lines = open.kind === "heading" ? withoutMetadataCells(open.lines) : open.lines;
-      out.push({ id: open.id, text: lines.join("\n") });
+      out.push({ id: open.id, text: lines.join("\n"), afterHeading: open.kind === "heading" });
     }
     open = null;
   };
@@ -261,7 +302,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
     const listed = row === null ? LIST_DEFINITION.exec(line) : null;
     if (row !== null) {
       close();
-      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata) });
+      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata), afterHeading: false });
     } else if (listed !== null) {
       close();
       const item = LIST_ITEM.exec(line);
@@ -282,12 +323,12 @@ function definitionsIn(content: string): RequirementDefinition[] {
 }
 
 /**
- * The text in which a bound is looked for: code spans and the tokens that
- * are not a quantity are removed, but quoted text is kept, since a quote may
- * state the bound (`"p95 under 2 s"`; PR #275 review, note 2).
+ * The text in which a bound is looked for: code spans, list markers and the
+ * tokens that are not a quantity are removed, but quoted text is kept, since
+ * a quote may state the bound (`"p95 under 2 s"`; PR #275 review, note 2).
  */
-function quantitiesOf(text: string): string {
-  let out = text.replace(CODE_SPAN, " ");
+function quantitiesOf(text: string, afterHeading: boolean): string {
+  let out = withoutListMarkers(text, afterHeading).replace(CODE_SPAN, " ");
   for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, " ");
   return out;
 }
@@ -298,8 +339,8 @@ function quantitiesOf(text: string): string {
  * spans; the number anywhere but in a code span, an identifier, a priority
  * code or a list number.
  */
-export function unboundedTermIn(text: string): string | null {
-  if (NUMBER.test(quantitiesOf(text))) return null;
+export function unboundedTermIn(text: string, afterHeading = false): string | null {
+  if (NUMBER.test(quantitiesOf(text, afterHeading))) return null;
   return UNBOUNDED_TERM.exec(text.replace(NAMED_TEXT, " "))?.[0] ?? null;
 }
 
@@ -311,8 +352,8 @@ export function checkDocumentMeasurableRequirements(
   for (const section of sections) {
     // Fences are removed per section, as in dependency-target-rules.ts.
     const content = linesOutsideFences(section.content).join("\n");
-    for (const { id, text } of definitionsIn(content)) {
-      const term = unboundedTermIn(text);
+    for (const { id, text, afterHeading } of definitionsIn(content)) {
+      const term = unboundedTermIn(text, afterHeading);
       if (term === null || flagged.has(id)) continue;
       flagged.add(id);
       quoted.push(`${id} ("${term.toLowerCase()}")`);
