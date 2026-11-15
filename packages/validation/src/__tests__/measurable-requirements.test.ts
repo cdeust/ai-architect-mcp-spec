@@ -256,13 +256,13 @@ describe("measurable_requirements (#118)", () => {
       "### NFR-001: Import",
       "",
       "Import must be fast and the steps are",
-      "    1. read the file, whose maximum size is",
+      "    - read the file, whose maximum size is",
       "  2000. Larger ones are split.",
       "",
       "### NFR-002: Export",
       "",
       "1. Export must be fast and the steps are",
-      "       1. write the file, whose maximum size is",
+      "       - write the file, whose maximum size is",
       "   2000. Larger ones are split.",
       "",
       "### NFR-003: Sync",
@@ -275,6 +275,37 @@ describe("measurable_requirements (#118)", () => {
     expect(findings(content).map((v) => v.message)).toEqual([
       '1 requirement(s) state an unbounded quality with no number: NFR-003 ("fast")',
     ]);
+  });
+
+  it("measures a marker under a list-item definition from that item's content (PR #282 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "- NFR-001: Search must be fast and",
+      "    1. stay reliable.",
+      "    2. Retry on failure.",
+      "- NFR-002: Import must be fast and the steps are",
+      "      1. read the file, whose maximum size is",
+      "    2000. Larger ones are split.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("closes the items left of a rejected marker after a blank line (PR #282 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Import",
+      "",
+      "   - Import must be fast",
+      "",
+      "    - code",
+      "The maximum is",
+      "  2000. Larger ones are split.",
+    ].join("\n");
+    expect(findings(content)).toEqual([]);
   });
 
   it("closes both open items at an outdented sibling, and keeps a bound at a nested item's content (PR #281 review, note 3)", () => {
