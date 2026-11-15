@@ -20,8 +20,8 @@ import { phrases } from "./lexicon.js";
 // ones whose text holds such a term and no number. A number, in digits or in
 // words, is read as the bound the term needs, except where it cannot be a
 // quantity: a code span, an identifier (`FR-2`), a priority code (`P1`), the
-// marker of a numbered list item, and a metadata column or key-value row of
-// a table (`Priority`, `Story Points`). The rule does not check that the number
+// marker of a numbered list item, and a metadata column of a table or a
+// metadata row of a key-value table (`Priority`, `Story Points`). The rule does not check that the number
 // belongs to the term, and quoted text is read for the number (a quote may
 // state the bound), so a quoted label that carries a number silences it
 // (`The "Top 10" page must load fast.`): a missed finding, chosen over a
@@ -121,34 +121,68 @@ const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g, /\bP\d\b/g] as const;
  */
 const ORDERED_MARKER = /^[ \t]*(\d{1,9})[.)](?=[ \t]+\S)/;
 
-/** A line that opens a list item, ordered or not. */
-const ANY_LIST_MARKER = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+/** A line that opens a list item, ordered or not: indentation in group 1, the number of an ordered marker in group 2. */
+const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
+
+/** An open list item: the indentation of its marker and of its content. */
+interface OpenItem {
+  readonly marker: number;
+  readonly content: number;
+}
 
 /**
  * The lines of a text with the marker of each ordered list item removed. A
  * line that starts with a number and a period is a list item only where
  * CommonMark 0.31.2 §5.2 lets one start: an ordered list may interrupt a
  * paragraph only when it starts at 1, so after a line of text a marker is
- * read only for `1.`, while after a blank line, a heading or another list
- * item any number is. Otherwise the line goes on with the paragraph above,
- * and its number is the end of a wrapped sentence (`… is` then
- * `  1000. Beyond that it pages.`), which counts as the bound (PR #277
- * review, note 1; PR #276 review, note 1). `afterHeading` says the first
- * line is the rest of a heading, not text.
+ * read only for `1.`, while after a blank line, a heading, or inside a list
+ * that is still open, any number is. Otherwise the line goes on with the
+ * paragraph above, and its number is the end of a wrapped sentence (`… is`
+ * then `  1000. Beyond that it pages.`), which counts as the bound (PR #277
+ * review, note 1; PR #276 review, note 1).
+ *
+ * The open lists are a stack of item indentations (CommonMark §5.2-5.3): an
+ * item stays open across the lines of its text, wrapped ones included, so
+ * the `2.` of `1. Search must be fast and` / `   reliable.` / `2. …` is a
+ * marker (PR #278 review, note 1); a non-blank line after a blank line that
+ * is indented less than an item's content closes that item.
+ *
+ * The first line is the rest of the definition's opening line, right after
+ * its identifier: a number there opens the statement and numbers it
+ * (`| FR-001 | 2. Search must be fast. |`), it bounds nothing, so its marker
+ * is removed (PR #278 review, note 3). `afterHeading` says the first line is
+ * the rest of a heading, so the second line may open a list.
  */
 function withoutListMarkers(text: string, afterHeading: boolean): string {
   const lines = text.split("\n");
+  const open: OpenItem[] = [];
   return lines
     .map((line, i) => {
-      const marker = ORDERED_MARKER.exec(line);
-      if (marker === null || i === 0) return line;
-      const previous = lines[i - 1]!;
-      const listMayStart =
-        Number(marker[1]) === 1 ||
+      const previous = i === 0 ? "" : lines[i - 1]!;
+      const item = ANY_LIST_MARKER.exec(line);
+      const ordered = ORDERED_MARKER.exec(line);
+      if (item === null || (item[2] !== undefined && ordered === null)) {
+        // Text, or a number with no item text after it: not a list item.
+        if (line.trim() !== "" && previous.trim() === "") {
+          const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
+          while (open.length > 0 && indent < open[open.length - 1]!.content) open.pop();
+        }
+        return line;
+      }
+      const isItem =
+        i === 0 ||
+        item[2] === undefined ||
+        Number(item[2]) === 1 ||
         previous.trim() === "" ||
         (i === 1 && afterHeading) ||
-        ANY_LIST_MARKER.test(previous);
-      return listMayStart ? " ".repeat(marker[0].length) + line.slice(marker[0].length) : line;
+        open.length > 0;
+      if (!isItem) return line;
+      const marker = indentWidth(item[1]!);
+      while (open.length > 0 && open[open.length - 1]!.content > marker) open.pop();
+      while (open.length > 0 && open[open.length - 1]!.marker >= marker) open.pop();
+      const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? item[0];
+      open.push({ marker, content: indentWidth(contentStart.replace(/\S/g, " ")) });
+      return ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
     })
     .join("\n");
 }
@@ -208,22 +242,36 @@ const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
 const TABLE_ROW = /^[ \t]*\|/;
 
 /**
+ * The header of a key-value table: two columns, the second naming the value
+ * (`| Field | Value |`, `| Champ | Valeur |`). Its rows are one field each,
+ * named by their first cell.
+ */
+function isKeyValueHeader(header: readonly string[]): boolean {
+  return header.length === 2 && /^(?:values?|valeurs?)$/iu.test(header[1]!);
+}
+
+/**
  * The lines of a heading's body with each table read as a requirement row
  * is: the separator row is dropped, and the metadata columns named by the
  * table's header are removed from every row, the header included. A header
  * is a table row right above a separator that opens its table. Without this,
  * a `| Priority | Story Points |` table under `### FR-001` was read as plain
- * text and its `3` bounded the statement (PR #276 review, note 2). A row
- * below the header whose first cell names a metadata field is a key-value
- * row (`| Story Points | 3 |` under `| Field | Value |`) and is dropped
- * whole (PR #277 review, note 2).
+ * text and its `3` bounded the statement (PR #276 review, note 2). In a
+ * key-value table (`isKeyValueHeader`), a row whose first cell names a
+ * metadata field (`| Story Points | 3 |` under `| Field | Value |`) is
+ * dropped whole (PR #277 review, note 2). In any other table the first cell
+ * is a value of its column, not a field name: under `| Metric | Target |`,
+ * `| State | restored within 2 s |` states a bound and is kept (PR #278
+ * review, note 2).
  */
 function withoutMetadataCells(lines: readonly string[]): string[] {
   const out: string[] = [];
   let metadata: ReadonlySet<number> = new Set();
+  let keyValue = false;
   lines.forEach((line, i) => {
     if (!TABLE_ROW.test(line)) {
       metadata = new Set();
+      keyValue = false;
       out.push(line);
       return;
     }
@@ -232,8 +280,10 @@ function withoutMetadataCells(lines: readonly string[]): string[] {
     const opensTable = i === 0 || !TABLE_ROW.test(lines[i - 1]!);
     const cells = cellsOf(line);
     const isHeader = opensTable && next !== undefined && isSeparatorRow(next);
-    if (isHeader) metadata = metadataColumns(cells);
-    else if (METADATA_HEADER.test(cells[0] ?? "")) {
+    if (isHeader) {
+      metadata = metadataColumns(cells);
+      keyValue = isKeyValueHeader(cells);
+    } else if (keyValue && METADATA_HEADER.test(cells[0] ?? "")) {
       out.push("");
       return;
     }

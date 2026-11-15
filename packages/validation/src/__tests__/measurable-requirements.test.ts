@@ -215,6 +215,64 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads the next marker of a numbered list after a wrapped item (PR #278 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Search",
+      "",
+      "1. Search must be fast and",
+      "   reliable.",
+      "2. Results are listed.",
+      "",
+      "### NFR-002: Export",
+      "",
+      "1. Export must be fast.",
+      "",
+      "The archive size is at most",
+      "2000. Larger ones are split.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("keeps a row of a non key-value table whose first cell names a metadata field (PR #278 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Recovery must be fast.",
+      "",
+      "| Metric | Target |",
+      "|--------|--------|",
+      "| State | restored within 2 s |",
+      "",
+      "### NFR-002: Search must be fast.",
+      "",
+      "| Champ | Valeur |",
+      "|-------|--------|",
+      "| Statut | 2 |",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-002 ("fast")',
+    ]);
+  });
+
+  it("removes the marker that numbers a one-line statement right after its identifier (PR #278 review, note 3)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "| ID | Requirement | Priority |",
+      "|----|-------------|----------|",
+      "| FR-001 | 2. Search must be fast. | Must |",
+      "| FR-002 | 3. Export must be fast; p95 under 2 s. | Must |",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: FR-001 ("fast")',
+    ]);
+    expect(unboundedTermIn("2. Search must be fast.")).toBe("fast");
+  });
+
   it("reads a number in a quoted label as the bound, a known miss (PR #276 review, note 3)", () => {
     expect(unboundedTermIn('The "Top 10" page must load fast.')).toBeNull();
   });
