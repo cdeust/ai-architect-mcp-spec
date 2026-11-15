@@ -340,9 +340,14 @@ describe("measurable_requirements (#118)", () => {
       "1. note",
       "   - NFR-002: Import must be fast, at most",
       "    2. Files are read.",
+      "",
+      "---",
+      "2. Group",
+      "   - NFR-003: Search must be fast and",
+      "    2. Results are listed.",
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
-      '1 requirement(s) state an unbounded quality with no number: NFR-002 ("fast")',
+      '2 requirement(s) state an unbounded quality with no number: NFR-002 ("fast"), NFR-003 ("fast")',
     ]);
   });
 
