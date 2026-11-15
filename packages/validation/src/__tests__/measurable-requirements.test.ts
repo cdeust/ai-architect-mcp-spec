@@ -136,6 +136,45 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads a number alone on a following line as the bound, not as a list marker (PR #276 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "- NFR-001: The list is fast; the maximum entry count is",
+      "  1000.",
+      "- NFR-002: The list is fast; see the steps",
+      "  1. open it.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-002 ("fast")',
+    ]);
+  });
+
+  it("does not read the metadata columns of a table under a heading definition (PR #276 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### FR-001: Search must be fast.",
+      "",
+      "| Priority | Story Points |",
+      "|----------|--------------|",
+      "| P1 | 3 |",
+      "",
+      "### FR-002: Export must be fast.",
+      "",
+      "| Acceptance | Priority |",
+      "|------------|----------|",
+      "| p95 under 200 ms | Must |",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: FR-001 ("fast")',
+    ]);
+  });
+
+  it("reads a number in a quoted label as the bound, a known miss (PR #276 review, note 3)", () => {
+    expect(unboundedTermIn('The "Top 10" page must load fast.')).toBeNull();
+  });
+
   it("does not read a term inside a quoted label or a code span, or a hyphenated word", () => {
     expect(
       findings(

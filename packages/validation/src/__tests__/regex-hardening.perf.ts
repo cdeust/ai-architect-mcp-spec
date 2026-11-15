@@ -345,6 +345,10 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     const builds: Record<string, (n: number) => string> = {
       header: (n) => "| " + "a".repeat(n) + " ".repeat(n) + "x |\n|---|\n| FR-1 | fast |",
       identifiers: (n) => "| FR-1 | fast " + "AB-".repeat(n) + " |",
+      // PR #276 review, notes 1 and 2: the list-marker lookahead after a
+      // number alone on a line, and a heading body made of a long table.
+      listMarker: (n) => "### FR-1 fast\n1." + " ".repeat(n) + "\n",
+      headingTable: (n) => "### FR-1 fast\n| Priority |\n|---|\n" + "| a |\n".repeat(n / 8),
     };
     for (const [name, build] of Object.entries(builds)) {
       const small = build(32000);
