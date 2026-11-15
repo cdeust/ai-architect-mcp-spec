@@ -126,15 +126,25 @@ const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
 
 /**
  * The column a list marker is measured from: the content indentation of the
- * innermost open item the marker is inside, or 0. A marker 4 or more columns
- * right of it opens no item (CommonMark 0.31.2 §5.2; PR #281 review, note 1).
- * `open` holds the content indentations of the open items, innermost last.
+ * innermost open item the marker is inside, else `base`, the content
+ * indentation of the list item that defines the requirement (0 for a heading,
+ * a bold line or a table row), else 0. A marker 4 or more columns right of it
+ * opens no item (CommonMark 0.31.2 §5.2; PR #281 review, note 1; PR #282
+ * review, note 1). `open` holds the content indentations of the open items,
+ * strictly increasing, so a binary search finds the container: a line that
+ * opens no item leaves the stack as it is, and a rescan of the stack on
+ * every such line would cost its depth each time (PR #282 review, note 2).
  */
-function containerOf(open: readonly number[], marker: number): number {
-  for (let k = open.length - 1; k >= 0; k--) {
-    if (open[k]! <= marker) return open[k]!;
+function containerOf(open: readonly number[], marker: number, base: number): number {
+  let lo = 0;
+  let hi = open.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (open[mid]! <= marker) lo = mid + 1;
+    else hi = mid;
   }
-  return 0;
+  if (lo > 0) return open[lo - 1]!;
+  return marker >= base ? base : 0;
 }
 
 /**
@@ -168,9 +178,11 @@ function containerOf(open: readonly number[], marker: number): number {
  * its identifier: a number there opens the statement and numbers it
  * (`| FR-001 | 2. Search must be fast. |`), it bounds nothing, so its marker
  * is removed (PR #278 review, note 3). `afterHeading` says the first line is
- * the rest of a heading, so the second line may open a list.
+ * the rest of a heading, so the second line may open a list. `base` is the
+ * content indentation of the list item that defines the requirement, whose
+ * continuation lines keep their indentation (see `containerOf`).
  */
-function withoutListMarkers(text: string, afterHeading: boolean): string {
+function withoutListMarkers(text: string, afterHeading: boolean, base: number): string {
   const lines = text.split("\n");
   /** Content indentation of each open item, innermost last. */
   const open: number[] = [];
@@ -179,18 +191,23 @@ function withoutListMarkers(text: string, afterHeading: boolean): string {
       const previous = i === 0 ? "" : lines[i - 1]!;
       const item = ANY_LIST_MARKER.exec(line);
       const ordered = ORDERED_MARKER.exec(line);
-      if (item === null || (item[2] !== undefined && ordered === null)) {
-        // Text, or a number with no item text after it: not a list item.
+      const marker = item === null ? 0 : indentWidth(item[1]!);
+      // Text; a number with no item text after it; or a marker 4 columns
+      // past its container, which after text is a lazy continuation of the
+      // paragraph and after a blank line an indented code block. None opens
+      // an item, and each closes after a blank line the items it is left
+      // of, as any text does (PR #282 review, note 2).
+      if (
+        item === null ||
+        (item[2] !== undefined && ordered === null) ||
+        (i > 0 && marker - containerOf(open, marker, base) >= 4)
+      ) {
         if (line.trim() !== "" && previous.trim() === "") {
           const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
           while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
         }
         return line;
       }
-      const marker = indentWidth(item[1]!);
-      // After text such a line is a lazy continuation of the paragraph,
-      // after a blank line an indented code block: its number is text.
-      if (i > 0 && marker - containerOf(open, marker) >= 4) return line;
       // A marker left of the innermost item's content continues an open list
       // (a sibling may sit left of the item before it, CommonMark 0.31.2
       // §5.3; PR #280 review, note 1); one at or past that content would open
@@ -260,6 +277,8 @@ interface RequirementDefinition {
   readonly text: string;
   /** The first line of `text` is the rest of a heading. */
   readonly afterHeading: boolean;
+  /** Content indentation of the defining list item; 0 for any other definition. */
+  readonly base: number;
 }
 
 /** A heading line (any level). */
@@ -336,6 +355,8 @@ interface OpenDefinition {
   readonly kind: "heading" | "item";
   /** Indentation of the list item; 0 for a heading or a bold line. */
   readonly indent: number;
+  /** Content indentation of the list item; 0 for a heading or a bold line. */
+  readonly content: number;
   readonly lines: string[];
 }
 
@@ -365,7 +386,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
   const close = (): void => {
     if (open !== null) {
       const lines = open.kind === "heading" ? withoutMetadataCells(open.lines) : open.lines;
-      out.push({ id: open.id, text: lines.join("\n"), afterHeading: open.kind === "heading" });
+      out.push({ id: open.id, text: lines.join("\n"), afterHeading: open.kind === "heading", base: open.content });
     }
     open = null;
   };
@@ -383,7 +404,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
     const listed = row === null ? LIST_DEFINITION.exec(line) : null;
     if (row !== null) {
       close();
-      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata), afterHeading: false });
+      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata), afterHeading: false, base: 0 });
     } else if (listed !== null) {
       close();
       const item = LIST_ITEM.exec(line);
@@ -391,6 +412,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
         id: listed[1]!,
         kind: HEADING.test(line) ? "heading" : "item",
         indent: item === null ? 0 : indentWidth(item[1]!),
+        content: item === null ? 0 : indentWidth(/^[ \t]*\S+[ \t]+/.exec(line)![0].replace(/\S/g, " ")),
         lines: [listed[2] ?? ""],
       };
     } else if (open !== null && continues(open, line)) {
@@ -408,8 +430,8 @@ function definitionsIn(content: string): RequirementDefinition[] {
  * tokens that are not a quantity are removed, but quoted text is kept, since
  * a quote may state the bound (`"p95 under 2 s"`; PR #275 review, note 2).
  */
-function quantitiesOf(text: string, afterHeading: boolean): string {
-  let out = withoutListMarkers(text, afterHeading).replace(CODE_SPAN, " ");
+function quantitiesOf(text: string, afterHeading: boolean, base: number): string {
+  let out = withoutListMarkers(text, afterHeading, base).replace(CODE_SPAN, " ");
   for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, " ");
   return out;
 }
@@ -418,10 +440,11 @@ function quantitiesOf(text: string, afterHeading: boolean): string {
  * The first unbounded term of a requirement text when the text holds no
  * number, else null. The term is looked for outside quoted text and code
  * spans; the number anywhere but in a code span, an identifier, a priority
- * code or a list number.
+ * code or a list number. `base` is the content indentation of the defining
+ * list item (see `containerOf`).
  */
-export function unboundedTermIn(text: string, afterHeading = false): string | null {
-  if (NUMBER.test(quantitiesOf(text, afterHeading))) return null;
+export function unboundedTermIn(text: string, afterHeading = false, base = 0): string | null {
+  if (NUMBER.test(quantitiesOf(text, afterHeading, base))) return null;
   return UNBOUNDED_TERM.exec(text.replace(NAMED_TEXT, " "))?.[0] ?? null;
 }
 
@@ -433,8 +456,8 @@ export function checkDocumentMeasurableRequirements(
   for (const section of sections) {
     // Fences are removed per section, as in dependency-target-rules.ts.
     const content = linesOutsideFences(section.content).join("\n");
-    for (const { id, text, afterHeading } of definitionsIn(content)) {
-      const term = unboundedTermIn(text, afterHeading);
+    for (const { id, text, afterHeading, base } of definitionsIn(content)) {
+      const term = unboundedTermIn(text, afterHeading, base);
       if (term === null || flagged.has(id)) continue;
       flagged.add(id);
       quoted.push(`${id} ("${term.toLowerCase()}")`);
