@@ -7,14 +7,26 @@
 
 import { indentWidth } from "./fenced-blocks.js";
 
-/** A heading line (any level). */
-export const HEADING = /^[ \t]{0,3}#{1,6}[ \t]/;
+/**
+ * A heading line (any level), less than 4 columns from the line start. A tab
+ * there always reaches column 4 (CommonMark 0.31.2 §2.2), so only spaces may
+ * come before the `#`: `\t# Note` is text, as `    # Note` is (PR #294
+ * review, note 2).
+ */
+export const HEADING = /^ {0,3}#{1,6}[ \t]/;
+/**
+ * A heading in the content of a block quote. That content starts right of
+ * column 0, after the markers and their optional space, so a tab there may
+ * stop short of 4 columns (`> \t# Note` is a heading in the quote); it is
+ * still read as at most three columns, as before #294 (note 1 of its review).
+ */
+const QUOTED_HEADING = /^[ \t]{0,3}#{1,6}[ \t]/;
 /** A list item, with its indentation in group 1. */
 export const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
 /** A table row. */
 export const TABLE_ROW = /^[ \t]*\|/;
-/** The start of a block quote (CommonMark 0.31.2 §5.1). */
-const BLOCK_QUOTE = /^[ \t]{0,3}>/;
+/** The start of a block quote, less than 4 columns from the line start, so after spaces only (CommonMark 0.31.2 §5.1). */
+const BLOCK_QUOTE = /^ {0,3}>/;
 /** The block quote markers at a line start, nested ones included, each with its optional space. */
 const QUOTE_MARKERS = /^(?:[ \t]{0,3}>[ \t]?)+/;
 
@@ -217,7 +229,7 @@ export function blockAfter(line: string, before: BlockState, open: readonly numb
     // paragraph text: an empty quote, a heading or a thematic break in it
     // leaves none (§5.1; PR #292 review, Codex P2).
     const inner = line.replace(QUOTE_MARKERS, "");
-    return inner.trim() === "" || HEADING.test(inner) || isThematicBreak([], inner) ? "none" : "paragraph";
+    return inner.trim() === "" || QUOTED_HEADING.test(inner) || isThematicBreak([], inner) ? "none" : "paragraph";
   }
   const endsTable = left || LIST_ITEM.test(line);
   if (TABLE_ROW.test(line) || (before === "table" && !endsTable)) return "table";

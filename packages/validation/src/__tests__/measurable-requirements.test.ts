@@ -494,6 +494,32 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("measures the content of an item from a tab after its marker to the next tab stop (PR #294 review, note 2)", () => {
+    // `1.\t` puts NFR-001's content at column 4: `   2.` is left of it, a
+    // sibling marker, so the requirement is reported; `    2.` is at that
+    // content, a nested list that cannot start at 2 after text, so its `2`
+    // bounds NFR-002 (CommonMark 0.31.2 §2.2, §5.2).
+    const content = [
+      "## Requirements",
+      "",
+      ...["1.\tNFR-001: Search must be fast and", "   2. Results are listed.", ""],
+      ...["1.\tNFR-002: Search must be fast, at most", "    2. seconds per query.", ""],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
+  it("goes on with a heading definition's body at a `#` line after a tab, as after four spaces (PR #294 review, note 2)", () => {
+    // `\t# …` is column 4, not a heading (CommonMark 0.31.2 §4.2): the line
+    // is body text and its `2` bounds the requirement.
+    const body = (n: number, indent: string) => [`### NFR-00${n}`, "Search must be fast.", `${indent}# At most 2 seconds.`, ""];
+    const content = ["## Requirements", "", ...body(1, "\t"), ...body(2, "    "), ...body(3, "   ")].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-003 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

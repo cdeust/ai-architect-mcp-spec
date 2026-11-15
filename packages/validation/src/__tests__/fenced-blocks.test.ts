@@ -12,7 +12,7 @@ describe("splitOutsideFences (#118)", () => {
     expect([...afterBlock]).toEqual([[1, 4]]);
   });
 
-  it("keeps the least indentation of the fences of a run of blocks, and counts a tab as four columns (PR #292 review, Codex P2)", () => {
+  it("keeps the least indentation of the fences of a run of blocks, a tab at the line start reaching column 4 (PR #292 review, Codex P2; PR #294 review, note 3)", () => {
     expect([...splitOutsideFences(["a", "\t~~~", "~~~", "```", "```", "b"].join("\n")).afterBlock]).toEqual([[1, 0]]);
     expect([...splitOutsideFences(["a", "\t~~~", "~~~", "      ```", "```", "b"].join("\n")).afterBlock]).toEqual([[1, 4]]);
   });
