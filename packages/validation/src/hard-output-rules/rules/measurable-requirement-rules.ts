@@ -73,9 +73,12 @@ const NUMBER = new RegExp(
 /**
  * Quoted text and code spans name things (a "Fast mode" label, a `quickSort`
  * symbol) rather than state a quality, so they are removed before the term
- * search. Each pattern is bounded to one line and has no nested quantifier.
+ * search. Each pattern is bounded to one line, and the body of a quote
+ * excludes its opening mark as well as its closing one: otherwise a line of
+ * `“` (or `«`) with no closing mark is rescanned to its end from every
+ * opening mark, which is quadratic (CodeQL js/polynomial-redos, PR #275).
  */
-const NAMED_TEXT = /"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|`[^`\n]*`/g;
+const NAMED_TEXT = /"[^"\n]*"|“[^“”\n]*”|«[^«»\n]*»|`[^`\n]*`/g;
 
 interface RequirementDefinition {
   readonly id: string;

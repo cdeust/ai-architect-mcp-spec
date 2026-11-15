@@ -323,6 +323,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     }
   });
 
+  it("runs of opening curly or guillemet quotes with no closing mark (measurable_requirements)", () => {
+    const run = (input: string): void =>
+      void checkDocumentMeasurableRequirements([{ type: "requirements", content: input }]);
+    for (const mark of ["\u201c", "\u00ab"]) {
+      const build = (n: number): string => "| FR-1 | " + mark.repeat(n);
+      const small = build(16000);
+      const large = build(32000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), mark).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   it("backtick runs before a lone carriage return (fenced blocks, both rules)", () => {
     const build = (n: number): string => "`".repeat(n) + "\r";
     const prose = (input: string): void => void checkProseSPTotal(input, "user_stories");
