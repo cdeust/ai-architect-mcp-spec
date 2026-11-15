@@ -27,6 +27,7 @@
 // source: issue #118.
 
 import MarkdownIt from "markdown-it";
+import { htmlParts, isHtmlComment } from "./requirement-html.js";
 
 /** An ordered list marker that opens a statement right after its identifier. */
 const NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -66,75 +67,6 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 /** The same, with HTML lines read as text: it parses an HTML block's source, so it never meets an HTML block again. */
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable(["inline", "html_block"]);
 
-/**
- * Whether an HTML block is a comment (CommonMark 0.31.2 §4.6, start
- * condition 2: the block opens with `<!--`). markdown-it has already found
- * where the block ends; this only classifies it, so a prefix test is enough,
- * and no pattern is used to parse HTML (CodeQL js/bad-tag-filter, PR #301).
- */
-const isHtmlComment = (content: string): boolean => content.trimStart().startsWith("<!--");
-
-/**
- * The tag that ends a raw-text block opened by a line (CommonMark 0.31.2
- * §4.6, start condition 1: `<pre`, `<script`, `<style` or `<textarea`,
- * then a space, `>` or the line's end), or null. Its content is not markdown,
- * so, like a code block, it defines nothing (PR #302 review, note 1).
- */
-function rawTextEnd(line: string): string | null {
-  const head = line.trimStart().slice(0, 10).toLowerCase();
-  const tag = ["pre", "script", "style", "textarea"].find((name) => head.startsWith(`<${name}`) && /^[\s>]|^$/.test(head.slice(name.length + 1)));
-  return tag === undefined ? null : `</${tag}>`;
-}
-
-/**
- * The end (exclusive) of the HTML comment that opens at `start` (CommonMark
- * 0.31.2 §6.6: `<!-->`, `<!--->`, or `<!--` to the next `-->`), or -1 when it
- * is not closed: an unclosed `<!--` is text, not a comment (PR #303 review,
- * note 1). A plain search, with no pattern.
- */
-function commentEnd(source: string, start: number): number {
-  if (source.startsWith(">", start + 4)) return start + 5;
-  if (source.startsWith("->", start + 4)) return start + 6;
-  const close = source.indexOf("-->", start + 4);
-  return close < 0 ? -1 : close + 3;
-}
-
-/**
- * The source of an HTML block as it is read again as markdown, and the line
- * of the block each of its lines comes from. Each comment is removed (PR
- * #302 review, Codex P2), and a line it leaves blank is dropped, so a comment
- * between two lines of a paragraph does not cut it (PR #303 review, note 1);
- * the lines of a raw-text block, at the block's top or nested in it, are
- * blanked, so they define nothing (PR #303 review, note 3). Linear, with no
- * pattern that parses HTML (CodeQL js/bad-tag-filter, PR #301).
- */
-function readableHtml(source: string): { source: string; lines: number[] } {
-  let stripped = "";
-  let from = 0;
-  for (let start = source.indexOf("<!--"); start >= 0; start = source.indexOf("<!--", from)) {
-    const end = commentEnd(source, start);
-    if (end < 0) break;
-    stripped += source.slice(from, start) + source.slice(start, end).replace(/[^\n]/g, "");
-    from = end;
-  }
-  stripped += source.slice(from);
-  const before = source.split("\n");
-  const out: string[] = [];
-  const lines: number[] = [];
-  let rawEnd: string | null = null;
-  stripped.split("\n").forEach((line, i) => {
-    if (line.trim() === "" && before[i]!.trim() !== "") return;
-    if (rawEnd === null) rawEnd = rawTextEnd(line);
-    if (rawEnd !== null) {
-      if (line.toLowerCase().includes(rawEnd)) rawEnd = null;
-      line = "";
-    }
-    out.push(line);
-    lines.push(i);
-  });
-  return { source: out.join("\n"), lines };
-}
-
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
 const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
 /** A bold line: one that opens with a bold requirement identifier. */
@@ -158,8 +90,8 @@ interface Leaf {
 /**
  * The leaf blocks of a section in document order, read in one pass over
  * markdown-it's token stream. Code, HTML comments and thematic breaks hold
- * none; another HTML block holds the leaves of its `readableHtml` source
- * read with `htmlAsText`, each line mapped back to the section by `lineAt`
+ * none; another HTML block holds the leaves of the text parts of its source
+ * read with `htmlAsText` (`addHtmlBlock`), each line mapped back to the section by `lineAt`
  * and its blocks inside the container that ends at `rootEnd`. No tree is
  * built, and the open containers are kept as parallel arrays of
  * primitives: on a long section of nested lists, an object per token made
@@ -218,24 +150,48 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
 }
 
 /**
- * Adds what an HTML block at `lines` of the section holds to `leaves`. A
+ * Extends the paragraph that ends where the comment lines `lines` start to
+ * their end, when it sits in the container that ends at `containerEnd`. A
  * comment is not document text: a paragraph it interrupts, CommonMark having
  * ended it there (§4.6, start condition 2), goes on with the paragraph right
- * under it (PR #303 review, note 1), so the paragraph's lines are extended
- * over the comment. Another block holds the leaves of its `readableHtml`
- * source, inside the container that ends at `containerEnd`.
+ * under it (PR #303 review, note 1).
+ */
+function extendOverComment(leaves: Leaf[], lines: [number, number], containerEnd: number): void {
+  const last = leaves[leaves.length - 1];
+  if (last?.type === "paragraph" && last.map[1] === lines[0] && last.containerEnd === containerEnd) {
+    leaves[leaves.length - 1] = { ...last, map: [last.map[0], lines[1]] };
+  }
+}
+
+/** The lines of the code blocks (fenced or indented) of a source read with `htmlAsText`. */
+function codeLinesOf(content: string): Set<number> {
+  const lines = new Set<number>();
+  for (const token of htmlAsText.parse(content, {})) {
+    if ((token.type === "fence" || token.type === "code_block") && token.map !== null) {
+      for (let line = token.map[0]; line < token.map[1]; line++) lines.add(line);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Adds what an HTML block at `lines` of the section holds to `leaves`. A
+ * comment block extends the paragraph above it (`extendOverComment`).
+ * Another block holds the leaves of the text parts of its source
+ * (`htmlParts`), each parsed on its own inside the container that ends at
+ * `containerEnd`, and its comment lines extend a paragraph as a comment
+ * block does.
  */
 function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number): void {
   if (isHtmlComment(content)) {
-    const last = leaves[leaves.length - 1];
-    if (last?.type === "paragraph" && last.map[1] === lines[0] && last.containerEnd === containerEnd) {
-      leaves[leaves.length - 1] = { ...last, map: [last.map[0], lines[1]] };
-    }
+    extendOverComment(leaves, lines, containerEnd);
     return;
   }
-  const readable = readableHtml(content);
-  const lineAt = (line: number): number => lines[0] + readable.lines[Math.min(line, readable.lines.length - 1)]!;
-  leaves.push(...leavesOf(readable.source, htmlAsText, lineAt, containerEnd));
+  for (const part of htmlParts(content, codeLinesOf(content))) {
+    const offset = lines[0] + part.first;
+    if (part.kind === "comment") extendOverComment(leaves, [offset, lines[0] + part.end], containerEnd);
+    else leaves.push(...leavesOf(part.source, htmlAsText, (line) => offset + line, containerEnd));
+  }
 }
 
 /** The leaf of a paragraph or heading, from its opening token's type, its lines and its inline source. */
