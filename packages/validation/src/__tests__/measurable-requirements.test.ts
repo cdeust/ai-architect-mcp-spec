@@ -520,6 +520,42 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads a heading or a block quote after a tab inside a list item, measured from the item's content (PR #295 review, Codex P2)", () => {
+    // Under `- Intro` (content at column 2), `\t# Note` and `    # Note` are
+    // two columns past it: a heading in the item, which leaves no paragraph
+    // open, so `  2. Group` opens an item, the `2.` under NFR-00n is a sibling
+    // marker and each requirement is reported. `\t> # Note` is a quote there.
+    const group = (n: number, line: string) => [
+      "- Intro",
+      line,
+      "  2. Group",
+      `     - NFR-00${n}: Search must be fast and`,
+      "      2. Results are listed.",
+      "",
+    ];
+    const content = [
+      "## Requirements",
+      "",
+      ...group(1, "\t# Note"),
+      ...group(2, "\t> # Note"),
+      ...group(3, "    # Note"),
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast")',
+    ]);
+  });
+
+  it("ends the text of a `### NFR` line after a tab at the first blank line, as a bold line's (PR #295 review, note 3)", () => {
+    // `\t### NFR-001` is no heading at top level: its text stops at the blank
+    // line, so the bound below it does not reach NFR-001, which is reported.
+    // As a heading (NFR-002), the body runs to the next heading and holds it.
+    const def = (head: string) => [head, "Search must be fast.", "", "At most 2 seconds.", ""];
+    const content = ["## Requirements", "", ...def("\t### NFR-001"), ...def("### NFR-002")].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

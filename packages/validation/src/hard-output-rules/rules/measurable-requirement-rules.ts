@@ -7,7 +7,7 @@ import { listedIds } from "./listed-ids.js";
 import { splitOutsideFences, type LinesOutsideFences } from "./fenced-blocks.js";
 import { phrases } from "./lexicon.js";
 import {
-  HEADING,
+  isHeading,
   LIST_ITEM,
   TABLE_ROW,
   indentWidth,
@@ -249,8 +249,8 @@ interface OpenDefinition {
  * runs to the next blank line, heading, table row, or list item that is not
  * nested under it.
  */
-function continues(open: OpenDefinition, line: string): boolean {
-  if (HEADING.test(line)) return false;
+function continues(open: OpenDefinition, line: string, items: readonly number[]): boolean {
+  if (isHeading(items, line)) return false;
   if (open.kind === "heading") return true;
   if (line.trim() === "" || TABLE_ROW.test(line)) return false;
   const item = LIST_ITEM.exec(line);
@@ -311,13 +311,13 @@ function definitionsIn({ lines, afterBlock }: LinesOutsideFences): RequirementDe
       const item = LIST_ITEM.exec(line);
       open = {
         id: listed[1]!,
-        kind: HEADING.test(line) ? "heading" : "item",
+        kind: isHeading(items, line) ? "heading" : "item",
         indent: item === null ? 0 : indentWidth(item[1]!),
         content: item === null ? 0 : indentWidth(/^[ \t]*\S+[ \t]+/.exec(line)![0].replace(/\S/g, " ")),
         container: item === null ? 0 : container,
         lines: [listed[2] ?? ""],
       };
-    } else if (open !== null && continues(open, line)) {
+    } else if (open !== null && continues(open, line, items)) {
       (open as OpenDefinition).lines.push(line);
     } else {
       close();
