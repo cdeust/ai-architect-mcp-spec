@@ -143,7 +143,30 @@ describe("sp_arithmetic: prose total of a story list", () => {
     for (const total of ["Total: 5 SPsx", "Total: 5 storypointsx", "Total: 5 points"]) {
       expect(messages([...STORIES, total].join("\n")), total).toEqual([]);
     }
-    expect(messages(["- STORY-1 — 2 SP", "- STORY-2: 3 edge points", "Total: 9 SP"].join("\n"))).toEqual([]);
+    // Read as an amount, `3 points` would make the sum 5 against 9 and be
+    // reported; unread, the story has no amount and the check abstains
+    // (review of #273: in `3 edge points` no unit follows the number, so the
+    // case passed whether or not a bare `points` was read).
+    expect(messages(["- STORY-1 — 2 SP", "- STORY-2: 3 points of failure", "Total: 9 SP"].join("\n"))).toEqual([]);
+    expect(messages(["- STORY-1 — 2 SP", "- STORY-2: 3 pts of failure", "Total: 9 SP"].join("\n"))).toEqual([]);
+  });
+
+  it("reads a plural subtotal or total, and a spaced subtotal alone as the total (review of #273)", () => {
+    // `- Sub totals: 3 SP` and `- Subtotals: 3 SP` were summed as stories,
+    // so a right total of 3 read as wrong against 6; as subtotals they make
+    // two total lines, and nothing is reported.
+    for (const subtotal of ["- Sub totals: 3 SP", "- Subtotals: 3 SP", "- Sub-totals: 3 SP"]) {
+      expect(messages([...STORIES, subtotal, "Total: 3 SP"].join("\n")), subtotal).toEqual([]);
+    }
+    for (const total of ["Totals: 4 SP", "Grand Totals: 4 SP", "- Sub total: 4 SP", "- Sub totals: 4 SP"]) {
+      expect(messages([...STORIES, total].join("\n")), total).toEqual([
+        "SP total line shows 4 but the stories sum to 3",
+      ]);
+    }
+    // `Totality` is still a story: its amount is summed.
+    expect(messages(["- STORY-1 — 2 SP", "- Totality check — 1 SP", "Total: 4 SP"].join("\n"))).toEqual([
+      "SP total line shows 4 but the stories sum to 3",
+    ]);
   });
 
   it("reads an emphasized amount (review of #228)", () => {
