@@ -473,6 +473,27 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("measures a tab to the next tab stop, not as four columns (PR #292 review, note 3)", () => {
+    // NFR-001: `  \t` is column 4, two columns right of `- Text line`'s
+    // content, so the fence ends that paragraph, `  2. Group` opens an item,
+    // and the `2.` of `      2.` is a marker. Six spaces (NFR-003) are 4
+    // columns past that content: the fence interrupts nothing, as before.
+    // NFR-002: `  \t2.` is column 4, left of the content of NFR-002's item
+    // (column 5), so it is a marker, not the bound. Counted as six columns,
+    // both tabs hid the finding.
+    const group = (n: number) => ["  2. Group", `     - NFR-00${n}: Search must be fast and`, "      2. Results are listed.", ""];
+    const content = [
+      "## Requirements",
+      "",
+      ...["- Text line", "  \t```", "  x", "  ```", ...group(1)],
+      ...["1. Group", "   - NFR-002: Search must be fast and", "  \t2. Results are listed.", ""],
+      ...["- Text line", "      ```", "  x", "  ```", ...group(3)],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

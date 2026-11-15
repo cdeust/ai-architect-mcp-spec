@@ -5,6 +5,8 @@
 //
 // source: issue #118.
 
+import { indentWidth } from "./fenced-blocks.js";
+
 /** A heading line (any level). */
 export const HEADING = /^[ \t]{0,3}#{1,6}[ \t]/;
 /** A list item, with its indentation in group 1. */
@@ -16,12 +18,8 @@ const BLOCK_QUOTE = /^[ \t]{0,3}>/;
 /** The block quote markers at a line start, nested ones included, each with its optional space. */
 const QUOTE_MARKERS = /^(?:[ \t]{0,3}>[ \t]?)+/;
 
-/** The width of a run of leading spaces and tabs, a tab counting as four. */
-export function indentWidth(indent: string): number {
-  let width = 0;
-  for (const ch of indent) width += ch === "\t" ? 4 : 1;
-  return width;
-}
+/** The width of a run of leading spaces and tabs, a tab moving to the next tab stop. */
+export { indentWidth };
 
 /**
  * An ordered list marker at a line start followed by the item's text, with

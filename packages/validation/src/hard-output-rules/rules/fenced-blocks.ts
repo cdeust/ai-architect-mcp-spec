@@ -29,11 +29,20 @@ function opensBlock(fence: RegExpExecArray): boolean {
   return fence[1]![0] !== "`" || !fence[2]!.includes("`");
 }
 
-/** The indentation width of a line, a tab counting as four columns. */
-function fenceIndent(line: string): number {
+/**
+ * The width of a run of spaces and tabs that starts at column 0. A tab moves
+ * to the next tab stop, a multiple of four columns (CommonMark 0.31.2 §2.2),
+ * so two spaces and a tab are four columns, not six (PR #292 review, note 3).
+ */
+export function indentWidth(indent: string): number {
   let width = 0;
-  for (const ch of /^[ \t]*/.exec(line)![0]) width += ch === "\t" ? 4 : 1;
+  for (const ch of indent) width = ch === "\t" ? width + 4 - (width % 4) : width + 1;
   return width;
+}
+
+/** The indentation width of a line (`indentWidth`). */
+function fenceIndent(line: string): number {
+  return indentWidth(/^[ \t]*/.exec(line)![0]);
 }
 
 /** The lines of a section outside its fenced blocks, and where each block was. */
@@ -58,7 +67,7 @@ export interface LinesOutsideFences {
  * or more columns right of its container interrupts nothing, which only that
  * reader can tell (§4.5; PR #289 review, note 3), and one fence of the run
  * that does interrupt ends the paragraph, wherever it is in the run (PR #292
- * review, Codex P2). A tab counts as four columns.
+ * review, Codex P2). A tab moves to the next tab stop (`indentWidth`).
  */
 export function splitOutsideFences(content: string): LinesOutsideFences {
   const lines: string[] = [];
