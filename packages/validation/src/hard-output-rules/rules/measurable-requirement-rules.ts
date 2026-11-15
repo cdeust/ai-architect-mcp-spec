@@ -170,7 +170,7 @@ interface RequirementDefinition {
   readonly text: string;
   /** The first line of `text` is the rest of a heading. */
   readonly afterHeading: boolean;
-  /** Content indentation of the defining list item; 0 for any other definition. */
+  /** Content indentation of the defining list item, or of the list item a heading definition is in; 0 for any other definition. */
   readonly base: number;
   /** Content indentation of the open list item the defining item is nested in; 0 at top level. */
   readonly container: number;
@@ -236,7 +236,7 @@ interface OpenDefinition {
   readonly kind: "heading" | "item";
   /** Indentation of the list item; 0 for a heading or a bold line. */
   readonly indent: number;
-  /** Content indentation of the list item; 0 for a heading or a bold line. */
+  /** Content indentation of the list item; for a heading, that of the list item it is in (`nonItemDefinition`); 0 for a bold line or a top-level heading. */
   readonly content: number;
   /** Content indentation of the open list item this one is nested in; 0 at top level. */
   readonly container: number;
@@ -265,22 +265,25 @@ function definitionOf(open: OpenDefinition): RequirementDefinition {
 }
 
 /**
- * The open definition of a heading or a bold line, which is no list item. In
- * an open list item, its text is that item's content: a list nested there is
- * measured from it, so `- Intro` / `    ### NFR-001: …` / `` / `    2. …`
- * reads `2.` as a marker, not a bound (PR #296 review, Codex P2). `items`
- * holds the content indentation of the open items, innermost last.
+ * The open definition of a heading or a bold line, which is no list item. A
+ * heading in an open list item takes that item's content for its body: a
+ * list nested there is measured from it, so `- Intro` / `    ### NFR-001: …`
+ * / `` / `    2. …` reads `2.` as a marker, not a bound (PR #296 review, Codex
+ * P2). A bold line keeps column 0, so `withoutListMarkers` still opens the
+ * list its first line numbers (`  **NFR-001** 1. …` / `  2. …`; PR #297
+ * review, Codex P2). `items` holds the content indentation of the open items,
+ * innermost last.
  */
 function nonItemDefinition(listed: RegExpExecArray, line: string, items: readonly number[]): OpenDefinition {
-  const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
-  const content = containerOf(items, indent);
+  const heading = isHeading(items, line);
+  const content = heading ? containerOf(items, indentWidth(/^[ \t]*/.exec(line)![0])) : 0;
   const at = items.lastIndexOf(content);
   return {
     id: listed[1]!,
-    kind: isHeading(items, line) ? "heading" : "item",
+    kind: heading ? "heading" : "item",
     indent: 0,
     content,
-    container: at > 0 ? items[at - 1]! : 0,
+    container: content > 0 && at > 0 ? items[at - 1]! : 0,
     lines: [listed[2] ?? ""],
   };
 }
