@@ -29,11 +29,21 @@ function opensBlock(fence: RegExpExecArray): boolean {
   return fence[1]![0] !== "`" || !fence[2]!.includes("`");
 }
 
+/** The indentation width of a line, a tab counting as four columns. */
+function fenceIndent(line: string): number {
+  let width = 0;
+  for (const ch of /^[ \t]*/.exec(line)![0]) width += ch === "\t" ? 4 : 1;
+  return width;
+}
+
 /** The lines of a section outside its fenced blocks, and where each block was. */
 export interface LinesOutsideFences {
   readonly lines: string[];
-  /** The index in `lines` of each line that follows a removed block. */
-  readonly afterBlock: ReadonlySet<number>;
+  /**
+   * The index in `lines` of each line that follows a removed block (or a run
+   * of blocks), with the indentation width of the block's opening fence.
+   */
+  readonly afterBlock: ReadonlyMap<number, number>;
 }
 
 /**
@@ -43,22 +53,26 @@ export interface LinesOutsideFences {
  * other fence inside the block (a nested example) stays inside it.
  * `afterBlock` names the kept lines a removed block came right before, so a
  * reader that follows paragraphs can end one there (CommonMark 0.31.2 §4.5: a
- * fenced block interrupts a paragraph; PR #288 review, note 1).
+ * fenced block interrupts a paragraph; PR #288 review, note 1). The
+ * indentation of the opening fence comes with it: a fence 4 or more columns
+ * right of its container interrupts nothing, which only that reader can tell
+ * (§4.5; PR #289 review, note 3). A tab counts as four columns.
  */
 export function splitOutsideFences(content: string): LinesOutsideFences {
   const lines: string[] = [];
-  const afterBlock = new Set<number>();
+  const afterBlock = new Map<number, number>();
   let open: string | null = null;
-  let removed = false;
+  /** The indentation of the first fence of the run of blocks just removed, or null. */
+  let removed: number | null = null;
   for (const line of content.split(LINE_BREAK)) {
     const fence = FENCE_LINE.exec(line);
     if (open === null) {
       if (fence && opensBlock(fence)) {
         open = fence[1]!;
-        removed = true;
+        removed ??= fenceIndent(line);
       } else {
-        if (removed) afterBlock.add(lines.length);
-        removed = false;
+        if (removed !== null) afterBlock.set(lines.length, removed);
+        removed = null;
         lines.push(line);
       }
     } else if (

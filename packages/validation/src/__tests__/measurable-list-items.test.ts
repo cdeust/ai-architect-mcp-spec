@@ -4,24 +4,23 @@
  * removed (PR #285 review, note 3).
  */
 import { describe, it, expect } from "vitest";
-import { blockAfter, trackItems, type BlockState } from "../hard-output-rules/rules/measurable-list-items.js";
+import { LIST_ITEM, blockAfter, trackItems, type BlockState } from "../hard-output-rules/rules/measurable-list-items.js";
 
 /** The block `blockAfter` leaves open after `lines`, following their list items with `trackItems`. */
 const blockOf = (lines: readonly string[]): { block: BlockState; open: number[] } => {
   const open: number[] = [];
   let block: BlockState = "none";
-  let previous: string | null = null;
   for (const line of lines) {
-    trackItems(open, line, previous, block === "paragraph");
-    block = blockAfter(line, block, open);
-    previous = line;
+    const depth = open.length;
+    trackItems(open, line, block === "paragraph");
+    block = blockAfter(line, block, open, !LIST_ITEM.test(line) && open.length < depth);
   }
   return { block, open };
 };
 
 /** `trackItems` on `line` after `before`, with the paragraph state `blockAfter` gives. */
 const track = (open: number[], line: string, ...before: string[]): number =>
-  trackItems(open, line, before.at(-1) ?? null, blockOf(before).block === "paragraph");
+  trackItems(open, line, blockOf(before).block === "paragraph");
 
 describe("trackItems (#118)", () => {
   it("closes the items a heading is left of, even right after a line of text", () => {
@@ -105,12 +104,32 @@ describe("trackItems (#118)", () => {
   });
 });
 
+describe("trackItems where no paragraph is open (#118)", () => {
+  it("closes the items a line is left of right after a table row (PR #289 review, note 2)", () => {
+    const open = [2];
+    expect(track(open, "Left", "- Item", "  | a |")).toBe(0);
+    expect(open).toEqual([]);
+  });
+
+  it("keeps the items open at a lazy line right after paragraph text", () => {
+    const open = [2];
+    expect(track(open, "Left", "- Item", "  text")).toBe(0);
+    expect(open).toEqual([2]);
+  });
+});
+
 describe("blockAfter (#118)", () => {
   it("reads a line under a table row as a row of the table, `===` included (PR #288 review, note 1)", () => {
     expect(blockOf(["| ID | Note |", "|----|------|", "| X | y |", "==="]).block).toBe("table");
     expect(blockOf(["| X | y |", "text"]).block).toBe("table");
     expect(blockOf(["| X | y |", "2. Group"]).block).toBe("paragraph");
     expect(blockOf(["| X | y |", ""]).block).toBe("none");
+  });
+
+  it("ends a table at a block quote and at a line left of the item the table is in (PR #289 review, note 2)", () => {
+    expect(blockOf(["| X | y |", "> quote"]).block).toBe("paragraph");
+    expect(blockOf(["- Item", "  | a |", "Left"]).block).toBe("paragraph");
+    expect(blockOf(["- Item", "  | a |", "  text"]).block).toBe("table");
   });
 
   it("reads a lazy `===` under a list item as paragraph text, and one at the item's content as an underline (PR #288 review, note 2)", () => {
