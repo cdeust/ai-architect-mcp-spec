@@ -249,6 +249,55 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("opens no item from a marker 4 columns right of its container (PR #281 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Import",
+      "",
+      "Import must be fast and the steps are",
+      "    1. read the file, whose maximum size is",
+      "  2000. Larger ones are split.",
+      "",
+      "### NFR-002: Export",
+      "",
+      "1. Export must be fast and the steps are",
+      "       1. write the file, whose maximum size is",
+      "   2000. Larger ones are split.",
+      "",
+      "### NFR-003: Sync",
+      "",
+      "1. Sync must be fast and",
+      "   reliable.",
+      "   1. Retry it.",
+      "2. Results are listed.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-003 ("fast")',
+    ]);
+  });
+
+  it("closes both open items at an outdented sibling, and keeps a bound at a nested item's content (PR #281 review, note 3)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "### NFR-001: Sync",
+      "",
+      "  1. Sync must be fast and",
+      "     1. reliable, then",
+      "2. Results are listed.",
+      "",
+      "### NFR-002: Import",
+      "",
+      "1. Import must be fast and",
+      "   1. the maximum entry count is",
+      "      2000. Larger ones are split.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
+    ]);
+  });
+
   it("keeps a row of a non key-value table whose first cell names a metadata field (PR #278 review, note 2)", () => {
     const content = [
       "## Requirements",

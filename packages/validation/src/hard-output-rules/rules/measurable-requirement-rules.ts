@@ -144,7 +144,12 @@ const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
  * would open a nested list, so `   2000.` wrapped under `1. … the maximum
  * entry count is` is the bound (PR #279 review). A new item closes every
  * open item whose content it is not inside, siblings included; a non-blank
- * line after a blank line closes every item whose content it is left of.
+ * line after a blank line closes every item whose content it is left of. A
+ * marker 4 or more columns right of its container (the content of the
+ * innermost open item it is inside, or the line start) opens no item, so
+ * `    1. read the file, whose maximum size is` under a line of text goes on
+ * with that text and the `  2000.` below it is the bound (PR #281 review,
+ * note 1).
  *
  * The first line is the rest of the definition's opening line, right after
  * its identifier: a number there opens the statement and numbers it
@@ -170,6 +175,19 @@ function withoutListMarkers(text: string, afterHeading: boolean): string {
         return line;
       }
       const marker = indentWidth(item[1]!);
+      // A marker 4 or more columns right of its container (the content of
+      // the innermost open item it is inside, or the line start) does not
+      // open an item (CommonMark 0.31.2 §5.2): after text the line is a lazy
+      // continuation of the paragraph, after a blank line an indented code
+      // block, so its number is text (PR #281 review, note 1).
+      let container = 0;
+      for (let k = open.length - 1; k >= 0; k--) {
+        if (open[k]! <= marker) {
+          container = open[k]!;
+          break;
+        }
+      }
+      if (i > 0 && marker - container >= 4) return line;
       // A marker left of the innermost item's content continues an open list
       // (a sibling may sit left of the item before it, CommonMark 0.31.2
       // §5.3; PR #280 review, note 1); one at or past that content would open

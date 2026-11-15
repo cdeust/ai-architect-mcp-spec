@@ -359,8 +359,9 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // items is pushed and popped on every few lines.
       openListStack: (n) => "### FR-1 fast\n" + "1. a\n   b\n\nc\n".repeat(n / 16),
       // PR #279 review, note 3: items nested three deep then a sibling of the
-      // outermost one, so the stack grows to three and the pop loop empties it
-      // down to one on every sibling.
+      // outermost one, so the stack grows to three, the pop loop empties it on
+      // every sibling, and the push puts it back to one item (PR #281 review,
+      // note 2).
       nestedListStack: (n) => "### FR-1 fast\n" + "- a\n  - b\n    - c\n- d\n".repeat(n / 24),
     };
     for (const [name, build] of Object.entries(builds)) {
