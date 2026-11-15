@@ -30,9 +30,15 @@ function opensBlock(fence: RegExpExecArray): boolean {
 }
 
 /**
- * The width of a run of spaces and tabs that starts at column 0. A tab moves
- * to the next tab stop, a multiple of four columns (CommonMark 0.31.2 §2.2),
- * so two spaces and a tab are four columns, not six (PR #292 review, note 3).
+ * The width of a run of spaces and tabs, measured as if it started at column
+ * 0. A tab moves to the next tab stop, a multiple of four columns (CommonMark
+ * 0.31.2 §2.2), so two spaces and a tab are four columns, not six (PR #292
+ * review, note 3). Two callers pass a run that starts right of column 0: the
+ * content of a block quote after its markers (`isThematicBreak` in
+ * `blockAfter`) and the first line of a list-item definition, which is the
+ * rest of its defining line (`withoutListMarkers`). For them a tab may count
+ * more columns than it spans; the width was the same or larger before #294
+ * (PR #294 review, note 1).
  */
 export function indentWidth(indent: string): number {
   let width = 0;

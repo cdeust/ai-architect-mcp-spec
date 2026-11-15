@@ -145,5 +145,19 @@ describe("blockAfter (#118)", () => {
     expect(blockOf(["Intro", "==="]).block).toBe("none");
     expect(blockOf(["Intro", "    ==="]).block).toBe("paragraph");
   });
+
+  it("reads a heading or a block quote after a tab as paragraph text, as after four spaces (PR #294 review, note 2)", () => {
+    // A tab at the line start reaches column 4 (CommonMark 0.31.2 §2.2), so
+    // neither opens: the line goes on with the paragraph above it.
+    for (const indent of ["\t", "  \t", "    "]) {
+      expect(blockOf(["Intro", `${indent}# Note`]).block).toBe("paragraph");
+      expect(blockOf(["Intro", `${indent}> # Note`]).block).toBe("paragraph");
+    }
+    expect(blockOf(["Intro", "   # Note"]).block).toBe("none");
+    expect(blockOf(["Intro", "   > # Note"]).block).toBe("none");
+    // In a quote, the content starts right of column 0, so a tab after the
+    // marker's space is still read as at most three columns (note 1 of the review).
+    expect(blockOf(["Intro", "> \t# Note"]).block).toBe("none");
+  });
 });
 
