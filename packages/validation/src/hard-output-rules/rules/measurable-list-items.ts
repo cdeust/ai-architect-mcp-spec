@@ -33,12 +33,13 @@ const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
  * The column a list marker is measured from: the content indentation of the
  * innermost open item the marker is inside, else 0. A marker 4 or more
  * columns right of it opens no item (CommonMark 0.31.2 §5.2; PR #281 review,
- * note 1; PR #282 review, note 1). In `withoutListMarkers` the list item
- * that defines the requirement is the innermost open item when the text
- * starts, and the item it is nested in is its parent, the one below it on
- * the stack, so a marker under it is measured from its content and a sibling
- * of it from its parent's content (PR #283 review, note 3; PR #284 review,
- * note 2; PR #285 review, note 2). `open`
+ * note 1; PR #282 review, note 1). In `withoutListMarkers`, when the
+ * requirement is defined by a list item (`base` > 0), that item is the
+ * innermost open item when the text starts, and when it is nested in another
+ * item (`container` > 0) that parent is the one below it on the stack, so a
+ * marker under it is measured from its content and a sibling of it from its
+ * parent's content (PR #283 review, note 3; PR #284 review, note 2; PR #285
+ * review, note 2; PR #286 review, note 2). `open`
  * holds the content indentations of the open items, strictly increasing, so
  * a binary search finds the container: a line that opens no item never
  * pushes on the stack, and a rescan of the stack on every such line would
@@ -162,6 +163,21 @@ export function withoutListMarkers(text: string, afterHeading: boolean, base: nu
 const ORDERED_NUMBER = /^[ \t]*(\d{1,9})[.)]/;
 
 /**
+ * A line that ends a block without being paragraph text: a thematic break
+ * (`---`, `***`, `___`, CommonMark 0.31.2 §4.1) or a setext underline (`===`,
+ * §4.3; `---` under text is one too). After it an ordered list of any number
+ * may start (PR #286 review, Codex P2).
+ */
+const BLOCK_END = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)$/;
+
+/** Whether a line is paragraph text, which an ordered list interrupts only from 1. */
+function isParagraphText(line: string | null): boolean {
+  return (
+    line !== null && line.trim() !== "" && !HEADING.test(line) && !TABLE_ROW.test(line) && !BLOCK_END.test(line)
+  );
+}
+
+/**
  * Follows the list items open at each line of a section, as a stack of their
  * content indentations (the same rules as `withoutListMarkers`): a list item
  * closes the items it is not inside and opens its own, unless its marker is
@@ -173,7 +189,8 @@ const ORDERED_NUMBER = /^[ \t]*(\d{1,9})[.)]/;
  * after a line of text an ordered marker of another number opens an item
  * only as a sibling left of the content of the innermost open item; else it
  * goes on with the paragraph (`Text line` / `2. note`; PR #285 review,
- * note 1). Returns the content indentation of the item the line's own list
+ * note 1). A blank line, a heading, a table row, a thematic break or a
+ * setext underline is not paragraph text (PR #286 review). Returns the content indentation of the item the line's own list
  * item is nested in, or 0 (PR #284 review, note 2).
  */
 export function trackItems(open: number[], line: string, previous: string | null): number {
@@ -182,9 +199,8 @@ export function trackItems(open: number[], line: string, previous: string | null
   const afterBlank = previous === null || previous.trim() === "";
   if (item !== null && indent - containerOf(open, indent) < 4) {
     const number = ORDERED_NUMBER.exec(line)?.[1];
-    const afterText = !afterBlank && !HEADING.test(previous!) && !TABLE_ROW.test(previous!);
     const continuesList = open.length > 0 && indent < open[open.length - 1]!;
-    if (number === undefined || Number(number) === 1 || !afterText || continuesList) {
+    if (number === undefined || Number(number) === 1 || !isParagraphText(previous) || continuesList) {
       openItem(open, line, indent, item[0]);
       return open.length > 1 ? open[open.length - 2]! : 0;
     }

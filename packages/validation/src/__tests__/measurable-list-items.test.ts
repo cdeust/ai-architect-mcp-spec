@@ -56,5 +56,13 @@ describe("trackItems (#118)", () => {
     const afterHeading: number[] = [];
     trackItems(afterHeading, "2. note", "## Heading");
     expect(afterHeading).toEqual([3]);
+    const afterRow: number[] = [];
+    trackItems(afterRow, "2. note", "| a | b |");
+    expect(afterRow).toEqual([3]);
+    for (const end of ["---", "***", "_ _ _", "==="]) {
+      const afterBreak: number[] = [];
+      trackItems(afterBreak, "2. note", end);
+      expect(afterBreak).toEqual([3]);
+    }
   });
 });
