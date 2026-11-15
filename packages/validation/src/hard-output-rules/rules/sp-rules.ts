@@ -143,9 +143,11 @@ const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 const LABEL_END = "(?![\\p{L}\\p{M}\\p{N}_]|['\u2019-]\\p{L})";
 
 /**
- * A story-point unit after a total label (`Total SP`, `Total story points`).
+ * A story-point unit after a total label (`Total SP`, `Total story points`,
+ * `Total story-points`). Issue #118: the unit took a space between `story`
+ * and `points` only, so `| Total story-points | 5 |` was summed as a story.
  */
-const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
+const SP_UNIT = `(?:SP|pts|story(?:${INLINE_SPACE}+|-)points?|points?)${LABEL_END}`;
 
 /**
  * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
@@ -155,10 +157,11 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * (`Total:`, `**Total SP**`, `Total (committed)`), or, after a space, with
  * one to three emphasis markers (`*` or `_`) then such a character
  * (`Total *(committed)*`, `**Total** *(all)*`, `Total ***(all)***`,
- * `Total _(all)_`). A first cell where a word follows the
- * label (`| Totals carried |`, review of #242) or where the label is part of
- * a longer word (`| Summary task |`, `| Sum-up task |`, `| Totalité |`) is a
- * data row.
+ * `Total _(all)_`). After a unit, the text may also start with a letter
+ * (`Total SP delivered`). A first cell where a word follows the label with
+ * no unit between (`| Totals carried |`, review of #242) or where the label
+ * is part of a longer word (`| Summary task |`, `| Sum-up task |`,
+ * `| Totalité |`) is a data row.
  *
  * The total row and the lookahead of the data row share this one definition.
  * In #250 the cell was the label alone, so a cell that starts with a label
@@ -212,11 +215,29 @@ const SP_UNIT = `(?:SP|pts|story${INLINE_SPACE}+points?|points?)${LABEL_END}`;
  * which starts with a character that is not a space: a run of spaces is split
  * one way only. The rest (`[^|…]*`) cannot hold a pipe or a line terminator.
  */
+/*
+ * Issue #118: a unit names the cell a story-point total, so after a unit the
+ * rest may also start with a letter (`| Total SP delivered | 5 |`); with the
+ * rest of a bare label, such a cell was summed as a story. Without a unit, a
+ * word after the label is still data (`Totals carried`). The two rests after
+ * a unit start with a letter and with a character that is not one, so one of
+ * them at most is tried at a position, and the rest without a unit is the
+ * other branch of the same group: the scan stays linear.
+ *
+ * A subtotal row (`| Subtotal | 3 |`, `| **Sub-total SP** | 3 |`) has the
+ * same cell with `Subtotal` or `Sub-total` as its label. It is neither a
+ * story nor a total: summed as a story, it doubled its stories; compared
+ * with the whole table, a right subtotal of one epic would read as wrong.
+ */
 const BOLD_CLOSE = `\\*{0,2}${LABEL_END}`;
-const TOTAL_LABEL = `(?:\\*{0,2})(?:Totals?|Sum|Grand${INLINE_SPACE}+Totals?)${LABEL_END}${BOLD_CLOSE}`;
 const CELL_REST_START = "[^|*_\\s\\p{L}]";
 const CELL_REST = `(?:${CELL_REST_START}|(?<=${INLINE_SPACE})[*_]{1,3}${CELL_REST_START})[^|\\n\\r\\u2028\\u2029]*`;
-const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
+const UNIT_REST = `\\p{L}[^|\\n\\r\\u2028\\u2029]*`;
+const totalCell = (label: string): string =>
+  `(?:\\*{0,2})(?:${label})${LABEL_END}${BOLD_CLOSE}${INLINE_SPACE}*` +
+  `(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*(?:${UNIT_REST}|${CELL_REST})?|${CELL_REST})?\\|`;
+const TOTAL_CELL = totalCell(`Totals?|Sum|Grand${INLINE_SPACE}+Totals?`);
+const SUBTOTAL_CELL = totalCell("Sub-?totals?");
 
 /**
  * A separator row (`|---|---|`, `| :--- | ---: |`): every cell holds only
@@ -265,7 +286,7 @@ const SEPARATOR_ROW = `(?:${SEPARATOR_CELL}\\|)+(?:${SEPARATOR_CELL}|${INLINE_SP
  * spans two lines (review of #242).
  */
 const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_CELL}(.+)\\|`;
-const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${SEPARATOR_ROW}|${INLINE_SPACE}*${TOTAL_CELL})([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${SEPARATOR_ROW}|${INLINE_SPACE}*${TOTAL_CELL}|${INLINE_SPACE}*${SUBTOTAL_CELL})([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
 
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(

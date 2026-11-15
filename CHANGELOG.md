@@ -75,6 +75,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Table `sp_arithmetic` reads `| Total SP delivered |` and `| Total story-points |` as totals, and a subtotal row as neither a story nor a total (#118). After a story-point unit, the rest of a total cell may now start with a letter, and the unit accepts a hyphen between `story` and `points`; both cells were summed as stories, so beside a grand total of 22 a right total was reported as `sum to 44`. A row whose first cell is `Subtotal` or `Sub-total`, in the same forms as a total cell, is left out of the sum and is not compared with it: summed, it doubled its stories, and compared with the whole table a right subtotal of one epic would read as wrong. Without a unit, a word after the label is still data (`Totals carried`). A new growth case of `regex-hardening.perf.ts` measures a unit followed by a long run of words and no closing pipe.
 - Table `sp_arithmetic` counts a row whose first cell is a placeholder hyphen (#118). The data row skipped any row whose first cell held only hyphens, so `| - | 3 |` (a story without an id) was read as a separator and left out of the sum, and a right total of 5 was reported as `sum to 2`. A row is now a separator only when every cell holds hyphens and colons alone; a new growth case of `regex-hardening.perf.ts` measures a long run of hyphen cells that is not a separator.
 
 ## [0.9.0] — 2026-11-11 — honest run outcome and health status, paged verification plans, node launcher, Windows and macOS validated

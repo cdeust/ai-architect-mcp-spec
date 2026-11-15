@@ -259,6 +259,26 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     expect(over, JSON.stringify(ratios)).toEqual([]);
   });
 
+  // Issue #118: after a story-point unit, the rest of a total cell may start
+  // with a letter (`Total SP delivered`). That rest and the punctuation rest
+  // start with disjoint characters, so a unit then a long run of words and
+  // no closing pipe is read once; the subtotal cell of the data-row
+  // lookahead has the same shape.
+  it("a unit then words and no closing pipe (table sp_arithmetic)", () => {
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    const ratios: Record<string, number> = {};
+    for (const head of ["| Total SP ", "| **Subtotal SP** ", "| Total story-points "]) {
+      const build = (n: number): string => head + "word ".repeat(n);
+      const small = build(3200);
+      const large = build(6400);
+      run(small);
+      run(large);
+      ratios[head] = growthRatio(run, small, large);
+    }
+    const over = Object.entries(ratios).filter(([, ratio]) => !(ratio < QUADRATIC_GROWTH_CEILING));
+    expect(over, JSON.stringify(ratios)).toEqual([]);
+  });
+
   // Review 2 of #228: FENCE_LINE read the rest of the line with `.*`, which
   // stops at a lone `\r`, so a run of backticks followed by one failed after
   // O(n²) backtracking (10, 41 and 170 ms at 5k, 10k and 20k backticks). Both
