@@ -6,6 +6,7 @@ import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
 import { LINE_BREAK, linesOutsideFences } from "./fenced-blocks.js";
 import { phrases } from "./lexicon.js";
+import { HEADING, LIST_ITEM, TABLE_ROW, indentWidth, trackItems, withoutListMarkers } from "./measurable-list-items.js";
 
 // Document-Level Rule: Measurable Requirements
 //
@@ -115,138 +116,6 @@ const CODE_SPAN = /`[^`\n]*`/g;
 const NOT_A_QUANTITY = [/\b[A-Z][A-Z0-9]{0,9}-\d{1,9}\b/g, /\bP\d\b/g] as const;
 
 /**
- * An ordered list marker at a line start followed by the item's text, with
- * the number in group 1. Anchored at the start of one line, so the scan of a
- * line is linear (the lookahead is tried once).
- */
-const ORDERED_MARKER = /^[ \t]*(\d{1,9})[.)](?=[ \t]+\S)/;
-
-/** A line that opens a list item, ordered or not: indentation in group 1, the number of an ordered marker in group 2. */
-const ANY_LIST_MARKER = /^([ \t]*)(?:[-*+]|(\d{1,9})[.)])(?:[ \t]|$)/;
-
-/**
- * The column a list marker is measured from: the content indentation of the
- * innermost open item the marker is inside, else 0. A marker 4 or more
- * columns right of it opens no item (CommonMark 0.31.2 §5.2; PR #281 review,
- * note 1; PR #282 review, note 1). The list item that defines the
- * requirement is the first open item (`withoutListMarkers`), so a marker
- * under it is measured from its content (PR #283 review, note 3). `open`
- * holds the content indentations of the open items, strictly increasing, so
- * a binary search finds the container: a line that opens no item never
- * pushes on the stack, and a rescan of the stack on every such line would
- * cost its depth each time (PR #282 review, note 3).
- */
-function containerOf(open: readonly number[], marker: number): number {
-  let lo = 0;
-  let hi = open.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (open[mid]! <= marker) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo > 0 ? open[lo - 1]! : 0;
-}
-
-/**
- * Opens the list item of `line`, whose marker is at column `marker`. An
- * item's content is right of its marker, so this one pass closes the items
- * it is not nested in, its previous sibling included.
- */
-function openItem(open: number[], line: string, marker: number, markerText: string): void {
-  while (open.length > 0 && open[open.length - 1]! > marker) open.pop();
-  const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? markerText;
-  open.push(indentWidth(contentStart.replace(/\S/g, " ")));
-}
-
-/**
- * The lines of a text with the marker of each ordered list item removed. A
- * line that starts with a number and a period is a list item only where
- * CommonMark 0.31.2 §5.2 lets one start: an ordered list may interrupt a
- * paragraph only when it starts at 1, so after a line of text a marker is
- * read only for `1.`, while after a blank line, a heading, or left of the
- * content of a list item that is still open, any number is. Otherwise the line goes on with the
- * paragraph above, and its number is the end of a wrapped sentence (`… is`
- * then `  1000. Beyond that it pages.`), which counts as the bound (PR #277
- * review, note 1; PR #276 review, note 1).
- *
- * The open items are a stack of their content indentations, increasing from
- * the outermost (CommonMark §5.2-5.3). An item stays open across the lines of
- * its text, wrapped ones included, so the `2.` of `1. Search must be fast
- * and` / `   reliable.` / `2. …` is a marker (PR #278 review, note 1), and so
- * is a sibling left of the item before it (`  1.` then `2.`, PR #280 review,
- * note 1). A number at or past the innermost item's content indentation
- * would open a nested list, so `   2000.` wrapped under `1. … the maximum
- * entry count is` is the bound (PR #279 review). A new item closes every
- * open item whose content it is not inside, siblings included; a non-blank
- * line after a blank line closes every item whose content it is left of. A
- * marker 4 or more columns right of its container (the content of the
- * innermost open item it is inside, or the line start) opens no item, so
- * `    1. read the file, whose maximum size is` under a line of text goes on
- * with that text and the `  2000.` below it is the bound (PR #281 review,
- * note 1).
- *
- * The first line is the rest of the definition's opening line, right after
- * its identifier: a number there opens the statement and numbers it
- * (`| FR-001 | 2. Search must be fast. |`), it bounds nothing, so its marker
- * is removed (PR #278 review, note 3). `afterHeading` says the first line is
- * the rest of a heading, so the second line may open a list. `base` is the
- * content indentation of the list item that defines the requirement, whose
- * continuation lines keep their indentation: that item is open when the text
- * starts, so a sibling left of its content continues its list (`1. NFR-001:
- * Search must be fast.` / ` 2. Results are listed.`) and a marker right of
- * it is measured from it (PR #283 review, note 3).
- */
-function withoutListMarkers(text: string, afterHeading: boolean, base: number): string {
-  const lines = text.split("\n");
-  /** Content indentation of each open item, innermost last; the defining item first. */
-  const open: number[] = base > 0 ? [base] : [];
-  return lines
-    .map((line, i) => {
-      const previous = i === 0 ? "" : lines[i - 1]!;
-      const item = ANY_LIST_MARKER.exec(line);
-      const ordered = ORDERED_MARKER.exec(line);
-      const marker = item === null ? 0 : indentWidth(item[1]!);
-      // Text; a number with no item text after it; or a marker 4 columns
-      // past its container, which after text is a lazy continuation of the
-      // paragraph and after a blank line an indented code block. None opens
-      // an item, and each closes after a blank line the items it is left
-      // of, as any text does (PR #282 review, note 2). The first line follows
-      // the defining line, not a blank line, so it closes nothing.
-      if (
-        item === null ||
-        (item[2] !== undefined && ordered === null) ||
-        (i > 0 && marker - containerOf(open, marker) >= 4)
-      ) {
-        if (i > 0 && line.trim() !== "" && previous.trim() === "") {
-          const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
-          while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
-        }
-        return line;
-      }
-      // A marker left of the innermost item's content continues an open list
-      // (a sibling may sit left of the item before it, CommonMark 0.31.2
-      // §5.3; PR #280 review, note 1); one at or past that content would open
-      // a nested list, which must start at 1 to interrupt the item's
-      // paragraph (PR #279 review).
-      const continuesList = open.length > 0 && marker < open[open.length - 1]!;
-      const isItem =
-        i === 0 ||
-        item[2] === undefined ||
-        Number(item[2]) === 1 ||
-        previous.trim() === "" ||
-        (i === 1 && afterHeading) ||
-        continuesList;
-      if (!isItem) return line;
-      // The first line of a list-item definition is the rest of the defining
-      // line, whose columns are not the document's: its number is removed,
-      // and the defining item stays the open item.
-      if (i > 0 || base === 0) openItem(open, line, marker, item[0]);
-      return ordered === null ? line : " ".repeat(ordered[0].length) + line.slice(ordered[0].length);
-    })
-    .join("\n");
-}
-
-/**
  * A table column whose cells are metadata of the requirement, never its
  * statement: identifier, dependency, priority, status, estimate and owner
  * columns (EN + FR). A number in one of them (`P1`, `3` story points) does
@@ -293,14 +162,9 @@ interface RequirementDefinition {
   readonly afterHeading: boolean;
   /** Content indentation of the defining list item; 0 for any other definition. */
   readonly base: number;
+  /** Content indentation of the open list item the defining item is nested in; 0 at top level. */
+  readonly container: number;
 }
-
-/** A heading line (any level). */
-const HEADING = /^[ \t]{0,3}#{1,6}[ \t]/;
-/** A list item, with its indentation in group 1. */
-const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
-/** A table row. */
-const TABLE_ROW = /^[ \t]*\|/;
 
 /**
  * The header of a key-value table: two columns, the second naming the value
@@ -356,13 +220,6 @@ function withoutMetadataCells(lines: readonly string[]): string[] {
   return out;
 }
 
-/** The width of a run of leading spaces and tabs, a tab counting as four. */
-function indentWidth(indent: string): number {
-  let width = 0;
-  for (const ch of indent) width += ch === "\t" ? 4 : 1;
-  return width;
-}
-
 /** How the text of an open list or heading definition goes on. */
 interface OpenDefinition {
   readonly id: string;
@@ -371,6 +228,8 @@ interface OpenDefinition {
   readonly indent: number;
   /** Content indentation of the list item; 0 for a heading or a bold line. */
   readonly content: number;
+  /** Content indentation of the open list item this one is nested in; 0 at top level. */
+  readonly container: number;
   readonly lines: string[];
 }
 
@@ -388,6 +247,13 @@ function continues(open: OpenDefinition, line: string): boolean {
   return item === null || indentWidth(item[1]!) > open.indent;
 }
 
+/** The definition an open list item, heading or bold line holds once its text ends. */
+function definitionOf(open: OpenDefinition): RequirementDefinition {
+  const heading = open.kind === "heading";
+  const lines = heading ? withoutMetadataCells(open.lines) : open.lines;
+  return { id: open.id, text: lines.join("\n"), afterHeading: heading, base: open.content, container: open.container };
+}
+
 /**
  * The requirement definitions of a section with their text: the rest of a
  * table row; or the rest of the opening line of a list item, heading or bold
@@ -398,15 +264,15 @@ function definitionsIn(content: string): RequirementDefinition[] {
   const out: RequirementDefinition[] = [];
   let open: OpenDefinition | null = null;
   const close = (): void => {
-    if (open !== null) {
-      const lines = open.kind === "heading" ? withoutMetadataCells(open.lines) : open.lines;
-      out.push({ id: open.id, text: lines.join("\n"), afterHeading: open.kind === "heading", base: open.content });
-    }
+    if (open !== null) out.push(definitionOf(open));
     open = null;
   };
   let metadata: ReadonlySet<number> = new Set();
   let previous: string | null = null;
+  /** Content indentation of each list item open in the section, innermost last. */
+  const items: number[] = [];
   for (const line of content.split(LINE_BREAK)) {
+    const container = trackItems(items, line, previous);
     if (!TABLE_ROW.test(line)) {
       metadata = new Set();
     } else if (isSeparatorRow(line) && previous !== null && TABLE_ROW.test(previous)) {
@@ -418,7 +284,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
     const listed = row === null ? LIST_DEFINITION.exec(line) : null;
     if (row !== null) {
       close();
-      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata), afterHeading: false, base: 0 });
+      out.push({ id: row[1]!, text: statementOf(cellsOf(line), metadata), afterHeading: false, base: 0, container: 0 });
     } else if (listed !== null) {
       close();
       const item = LIST_ITEM.exec(line);
@@ -427,6 +293,7 @@ function definitionsIn(content: string): RequirementDefinition[] {
         kind: HEADING.test(line) ? "heading" : "item",
         indent: item === null ? 0 : indentWidth(item[1]!),
         content: item === null ? 0 : indentWidth(/^[ \t]*\S+[ \t]+/.exec(line)![0].replace(/\S/g, " ")),
+        container: item === null ? 0 : container,
         lines: [listed[2] ?? ""],
       };
     } else if (open !== null && continues(open, line)) {
@@ -444,8 +311,8 @@ function definitionsIn(content: string): RequirementDefinition[] {
  * tokens that are not a quantity are removed, but quoted text is kept, since
  * a quote may state the bound (`"p95 under 2 s"`; PR #275 review, note 2).
  */
-function quantitiesOf(text: string, afterHeading: boolean, base: number): string {
-  let out = withoutListMarkers(text, afterHeading, base).replace(CODE_SPAN, " ");
+function quantitiesOf(text: string, afterHeading: boolean, base: number, container: number): string {
+  let out = withoutListMarkers(text, afterHeading, base, container).replace(CODE_SPAN, " ");
   for (const pattern of NOT_A_QUANTITY) out = out.replace(pattern, " ");
   return out;
 }
@@ -455,10 +322,10 @@ function quantitiesOf(text: string, afterHeading: boolean, base: number): string
  * number, else null. The term is looked for outside quoted text and code
  * spans; the number anywhere but in a code span, an identifier, a priority
  * code or a list number. `base` is the content indentation of the defining
- * list item (see `containerOf`).
+ * list item, `container` that of the item it is nested in (see `containerOf`).
  */
-export function unboundedTermIn(text: string, afterHeading = false, base = 0): string | null {
-  if (NUMBER.test(quantitiesOf(text, afterHeading, base))) return null;
+export function unboundedTermIn(text: string, afterHeading = false, base = 0, container = 0): string | null {
+  if (NUMBER.test(quantitiesOf(text, afterHeading, base, container))) return null;
   return UNBOUNDED_TERM.exec(text.replace(NAMED_TEXT, " "))?.[0] ?? null;
 }
 
@@ -470,8 +337,8 @@ export function checkDocumentMeasurableRequirements(
   for (const section of sections) {
     // Fences are removed per section, as in dependency-target-rules.ts.
     const content = linesOutsideFences(section.content).join("\n");
-    for (const { id, text, afterHeading, base } of definitionsIn(content)) {
-      const term = unboundedTermIn(text, afterHeading, base);
+    for (const { id, text, afterHeading, base, container } of definitionsIn(content)) {
+      const term = unboundedTermIn(text, afterHeading, base, container);
       if (term === null || flagged.has(id)) continue;
       flagged.add(id);
       quoted.push(`${id} ("${term.toLowerCase()}")`);

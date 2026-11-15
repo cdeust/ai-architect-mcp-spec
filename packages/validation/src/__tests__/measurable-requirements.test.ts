@@ -303,11 +303,46 @@ describe("measurable_requirements (#118)", () => {
       "100. NFR-002: Import must be fast.",
       " 101. Files are listed.",
       "",
-      "   1. NFR-003: Export must be fast.",
-      "  2. Files are written.",
+      "  1. NFR-003: Export must be fast.",
+      "   2. Files are written.",
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '3 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast")',
+    ]);
+  });
+
+  it("measures a sibling of a nested defining item from the content of its parent item (PR #284 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "1. Group",
+      "   1. NFR-001: Search must be fast and",
+      "    2. Results are listed.",
+      "10. Other",
+      "    - NFR-002: Import must be fast.",
+      "     2. Files are read.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast")',
+    ]);
+  });
+
+  it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "   1. NFR-001: Export must be fast, at most",
+      "    2. seconds per file.",
+    ].join("\n");
+    expect(findings(content)).toEqual([]);
+  });
+
+  it("opens the numbered first line of a bold-line definition so its sibling is a marker (PR #284 review, note 3)", () => {
+    const content = ["## Requirements", "", "**NFR-001** 1. Search must be fast.", " 2. Results are listed."].join(
+      "\n",
+    );
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-001 ("fast")',
     ]);
   });
 
