@@ -219,13 +219,21 @@ const CELL_REST = `(?:${CELL_REST_START}|(?<=${INLINE_SPACE})[*_]{1,3}${CELL_RES
 const TOTAL_CELL = `${TOTAL_LABEL}${INLINE_SPACE}*(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*)?(?:${CELL_REST})?\\|`;
 
 /**
- * The first cell of a separator row (`|---|`, `| :---: |`): only hyphens, with
- * an optional colon at each end. A first cell that only starts with a hyphen
- * (`| -STORY-3 | 4 |`) is a data row (review of #250: a lookahead on `-`
- * alone skipped it from the sum). So a row is a total, a separator or a data
- * row.
+ * A separator row (`|---|---|`, `| :--- | ---: |`): every cell holds only
+ * hyphens, with an optional colon at each end; the last pipe may be left out,
+ * and spaces may follow it.
+ * A first cell that only starts with a hyphen (`| -STORY-3 | 4 |`) is a data
+ * row (review of #250: a lookahead on `-` alone skipped it from the sum).
+ *
+ * Issue #118: the lookahead read the first cell alone, so a data row whose
+ * first cell is a placeholder hyphen (`| - | 3 |`, a story without an id) was
+ * skipped as a separator and its 3 left out of the sum. The whole row is read
+ * now: a row is a separator only when no cell holds anything but hyphens and
+ * colons. Each cell ends at its pipe, so the cells of a row are split one way
+ * only. So a row is a total, a separator or a data row.
  */
-const SEPARATOR_CELL = `:?-+:?${INLINE_SPACE}*\\|`;
+const SEPARATOR_CELL = `${INLINE_SPACE}*:?-+:?${INLINE_SPACE}*`;
+const SEPARATOR_ROW = `(?:${SEPARATOR_CELL}\\|)+(?:${SEPARATOR_CELL}|${INLINE_SPACE}*)$`;
 
 /**
  * The table rows of `checkSPArithmetic`, as sources: each call builds its own
@@ -257,7 +265,7 @@ const SEPARATOR_CELL = `:?-+:?${INLINE_SPACE}*\\|`;
  * spans two lines (review of #242).
  */
 const TOTAL_ROW_SOURCE = `^${INLINE_SPACE}*\\|${INLINE_SPACE}*${TOTAL_CELL}(.+)\\|`;
-const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${INLINE_SPACE}*(?:${SEPARATOR_CELL}|${TOTAL_CELL}))([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
+const DATA_ROW_SOURCE = `^${INLINE_SPACE}*\\|(?!${SEPARATOR_ROW}|${INLINE_SPACE}*${TOTAL_CELL})([^|\\n\\r\\u2028\\u2029]+)\\|(.+)\\|`;
 
 // Rule 1: SP Arithmetic
 export function checkSPArithmetic(

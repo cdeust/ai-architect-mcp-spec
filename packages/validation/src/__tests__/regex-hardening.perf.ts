@@ -190,6 +190,20 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 
+  // Issue #118: the data row reads its whole row to tell a separator from a
+  // row whose first cell is a hyphen. Each separator cell ends at its pipe,
+  // so a long run of hyphen cells that ends with a cell of another kind
+  // fails in linear time.
+  it("a run of hyphen cells that is not a separator (table sp_arithmetic)", () => {
+    const build = (n: number): string => "|" + " - |".repeat(n) + " x";
+    const run = (input: string): void => void checkSPArithmetic(input, "timeline");
+    const small = build(16000);
+    const large = build(32000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
   // Review of #254: the space loop after a total label must be the only one
   // before the rest of the cell, so a label then a run of spaces and no
   // closing pipe fails in linear time. It was pinned by a wall-clock budget

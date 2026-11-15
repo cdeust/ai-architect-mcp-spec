@@ -290,6 +290,33 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(checkSPArithmetic(aligned, "timeline")).toEqual([]);
   });
 
+  it("table sp_arithmetic counts a row whose first cell is a placeholder hyphen", () => {
+    // Issue #118: the lookahead read the first cell alone, so `| - | 3 |` (a
+    // story without an id) was skipped as a separator and a right total of 5
+    // was reported as `sum to 2`. A row is a separator only when every cell
+    // holds hyphens and colons alone.
+    const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 2 |", "| - | 3 |", "| **Total** | 5 |"].join("\n");
+    expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+    const wrong = table.replace("| **Total** | 5 |", "| **Total** | 2 |");
+    expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+      "SP total row shows 2 but individual rows sum to 5",
+    ]);
+    // A hyphen in a later cell does not make a separator either.
+    const later = ["| Item | Sprint | SP |", "|---|---|---|", "| STORY-1 | - | 2 |", "| :- | -- | 3 |", "| **Total** | | 5 |"].join("\n");
+    expect(checkSPArithmetic(later, "timeline")).toEqual([]);
+    // Separator rows are still skipped: aligned, spaced, without the last
+    // pipe, with spaces after it, and with a digit-free hyphen run in each cell.
+    for (const separator of ["|---|---|", "| :--- | ---: |", "|:-:|-", "| - | - |  ", "|\u00a0---\t|---|"]) {
+      const rows = ["| Item | SP |", separator, "| STORY-1 | 3 |", "| **Total** | 3 |"].join("\n");
+      expect(checkSPArithmetic(rows, "timeline")).toEqual([]);
+    }
+    // A separator row followed by a lone `\r`, U+2028 or U+2029 ends there.
+    for (const eol of ["\r\n", "\r", "\u2028", "\u2029"]) {
+      const rows = ["| Item | SP |", "|---|---|", "| - | 3 |", "| **Total** | 3 |"].join(eol);
+      expect(checkSPArithmetic(rows, "timeline")).toEqual([]);
+    }
+  });
+
   it("table sp_arithmetic reads a label followed by a unit or punctuation as a total", () => {
     // Review of #250: with the label alone as the total cell, `**Total SP**`,
     // `Total:` and `Total (committed)` were summed as stories, so beside a
