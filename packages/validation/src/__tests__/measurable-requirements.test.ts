@@ -740,6 +740,34 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("opens a comment or raw-text block of an HTML block where the parser opens a block, so a fence inside it opens nothing and an item keeps it (PR #305 review, two Codex P2 findings and note 2)", () => {
+    const fence = "```";
+    const content = [
+      "## Requirements",
+      "",
+      // FR-001: the fence inside the first comment opens no code block, so
+      // the second `<!--` opens a comment and FR-001 stays hidden.
+      ...["<div>", "<!--", fence, "-->", "<!--", "- FR-001: Search is fast.", "-->", "</div>", ""],
+      // FR-002: the same with a fence inside a `<pre>` block.
+      ...["<div>", "<pre>", fence, "</pre>", "<!--", "- FR-002: Import is fast.", "-->", "</div>", ""],
+      // FR-003: a comment inside a list item stays in it, so the nested item
+      // under it is a list item, not a code block, and defines FR-003.
+      ...["<div>", "- Notes", "  <!-- reviewed -->", "    - FR-003: Export is fast.", "</div>", ""],
+      // FR-004: the item's paragraph goes on under the comment, so `2`
+      // bounds FR-004 (note 2).
+      ...["<div>", "- **FR-004** Sync is fast.", "  <!-- x -->", "  within 2 s.", "</div>", ""],
+      // FR-005: a comment in the middle of a line is text, as at the top
+      // level, so FR-005 is defined.
+      ...["<div>", "- FR-005: Login is fast. <!-- x --> More text.", "</div>", ""],
+      // FR-006: an unclosed `<!--` hides the rest of its HTML block, as it
+      // hides the rest of the section at the top level.
+      ...["<div>", "<!-- open", "- FR-006: Upload is fast.", "", "- FR-007: Backup is fast."],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: FR-003 ("fast"), FR-005 ("fast"), FR-007 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",
