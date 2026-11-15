@@ -6,7 +6,15 @@ import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
 import { LINE_BREAK, linesOutsideFences } from "./fenced-blocks.js";
 import { phrases } from "./lexicon.js";
-import { HEADING, LIST_ITEM, TABLE_ROW, indentWidth, trackItems, withoutListMarkers } from "./measurable-list-items.js";
+import {
+  HEADING,
+  LIST_ITEM,
+  TABLE_ROW,
+  indentWidth,
+  paragraphAfter,
+  trackItems,
+  withoutListMarkers,
+} from "./measurable-list-items.js";
 
 // Document-Level Rule: Measurable Requirements
 //
@@ -271,8 +279,11 @@ function definitionsIn(content: string): RequirementDefinition[] {
   let previous: string | null = null;
   /** Content indentation of each list item open in the section, innermost last. */
   const items: number[] = [];
+  /** Whether a paragraph is open before the line. */
+  let inParagraph = false;
   for (const line of content.split(LINE_BREAK)) {
-    const container = trackItems(items, line, previous);
+    const container = trackItems(items, line, previous, inParagraph);
+    inParagraph = paragraphAfter(line, inParagraph);
     if (!TABLE_ROW.test(line)) {
       metadata = new Set();
     } else if (isSeparatorRow(line) && previous !== null && TABLE_ROW.test(previous)) {
