@@ -54,16 +54,21 @@ export interface RequirementDefinition {
 
 /**
  * CommonMark blocks with GFM tables; inline content is left as source text.
- * HTML blocks are not parsed: as one, `<div>` / `**FR-001** …` with no blank
+ * An HTML block other than a comment is read as a paragraph of its source
+ * (`leavesOf`): as an opaque block, `<div>` / `**FR-001** …` with no blank
  * line between them hid the definition, which the line scanner read (PR
- * #299 review, note 2); as paragraph text it is read again.
+ * #299 review, note 2). An HTML comment is not document text, so a
+ * definition inside one is not read (PR #300 review, note 1).
  */
-const parser = new MarkdownIt("commonmark").enable("table").disable(["inline", "html_block"]);
+const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
+
+/** An HTML block that is a comment (CommonMark 0.31.2 §4.6, start condition 2). */
+const HTML_COMMENT = /^[ \t]*<!--/;
 
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
-const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9}\b)(?:\*\*|\x60)?(.*)$/;
+const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
 /** A bold line: one that opens with a bold requirement identifier. */
-const BOLD_LINE = /^\*\*(?:FR|NFR)-\d{1,9}\b/;
+const BOLD_LINE = /^\*\*(?:FR|NFR)-\d{1,9}(?![\w-])/;
 
 /** A leaf block a definition's text is read from: a paragraph, a heading or a table. */
 interface Leaf {
@@ -82,7 +87,8 @@ interface Leaf {
 
 /**
  * The leaf blocks of a section in document order, read in one pass over
- * markdown-it's token stream. Code, HTML and thematic breaks hold none. No
+ * markdown-it's token stream. Code, HTML comments and thematic breaks hold
+ * none; another HTML block is a paragraph of its source. No
  * tree is built, and the open containers are kept as parallel arrays of
  * primitives: on a long section of nested lists, an object per token made
  * the growth allocation-bound, near the perf ceiling.
@@ -109,15 +115,12 @@ function leavesOf(content: string): Leaf[] {
     }
     if (token.type === "table_open") {
       table = { map: token.map as [number, number], rows: [], containerEnd: openEnd[top]! };
+    } else if (token.type === "html_block") {
+      const leaf = htmlLeaf(token.content, token.map as [number, number], openEnd[top]!);
+      if (leaf !== null) leaves.push(leaf);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
-      leaves.push({
-        type: token.type === "paragraph_open" ? "paragraph" : "heading",
-        map: token.map as [number, number],
-        inline: tokens[i + 1]?.content ?? "",
-        rows: NO_ROWS,
-        containerEnd: openEnd[top]!,
-        opensItem: token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top],
-      });
+      const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
+      leaves.push(textLeaf(token, tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
       i += 2;
     } else if (token.nesting === 1) {
       openFilled[top] = true;
@@ -136,6 +139,18 @@ function leavesOf(content: string): Leaf[] {
     openFilled[top] = true;
   }
   return leaves;
+}
+
+/** The leaf of a paragraph or heading, from its opening token and its inline source. */
+function textLeaf(open: { type: string; map: [number, number] | null }, inline: string, containerEnd: number, opensItem: boolean): Leaf {
+  const type = open.type === "paragraph_open" ? "paragraph" : "heading";
+  return { type, map: open.map ?? [0, 0], inline, rows: NO_ROWS, containerEnd, opensItem };
+}
+
+/** An HTML block read as a paragraph of its source, or null for an HTML comment. */
+function htmlLeaf(content: string, map: [number, number], containerEnd: number): Leaf | null {
+  if (HTML_COMMENT.test(content)) return null;
+  return { type: "paragraph", map, inline: content.replace(/\n$/, ""), rows: NO_ROWS, containerEnd, opensItem: false };
 }
 
 /** The rows of a leaf that is no table. */
@@ -174,8 +189,8 @@ function isKeyValueHeader(header: readonly string[]): boolean {
  * field name: under `| Metric | Target |`, `| State | restored within 2 s |`
  * states a bound and is kept (PR #278 review, note 2).
  */
-function tableBodyText(table: Leaf): string {
-  const [header, ...rows] = table.rows;
+function tableBodyText(table: Leaf, end = table.rows.length): string {
+  const [header, ...rows] = table.rows.slice(0, end);
   if (header === undefined) return "";
   const headerCells = cellTexts(header);
   const metadata = metadataColumns(headerCells);
@@ -190,6 +205,9 @@ function tableBodyText(table: Leaf): string {
   ].join("\n");
 }
 
+/** The identifier a table row defines (its first cell, optionally code), or undefined. */
+const rowId = (cells: readonly string[]): string | undefined => /^\x60?((?:FR|NFR)-\d{1,9})\x60?$/.exec(cells[0] ?? "")?.[1];
+
 /** The requirement rows of a table: a row whose first cell is one identifier; its statement is the other cells less the metadata columns. */
 function tableDefinitions(table: Leaf): RequirementDefinition[] {
   const rows = table.rows;
@@ -199,7 +217,7 @@ function tableDefinitions(table: Leaf): RequirementDefinition[] {
   const out: RequirementDefinition[] = [];
   rows.forEach((row, r) => {
     const cells = cellTexts(row);
-    const id = /^\x60?((?:FR|NFR)-\d{1,9})\x60?$/.exec(cells[0] ?? "")?.[1];
+    const id = rowId(cells);
     if (id === undefined) return;
     // The header row is a definition only when its first cell is one; it
     // names no metadata column for itself.
@@ -239,15 +257,21 @@ function definingId(source: string, boldOnly: boolean): { id: string; rest: stri
  * it (PR #299 review, Codex P2).
  */
 function firstDefiningLine(leaf: Leaf): number {
-  if (leaf.type === "table") return tableDefinitions(leaf).length > 0 ? 0 : -1;
+  if (leaf.type === "table") return leaf.rows.findIndex((row) => rowId(cellTexts(row)) !== undefined);
   if (leaf.type === "heading") return definingId(leaf.inline, false) === null ? -1 : 0;
   return leaf.inline.split("\n").findIndex((line, i) => definingId(line, !(leaf.opensItem && i === 0)) !== null);
 }
 
-/** The text of a leaf before its first definition, and whether one starts in it. */
+/**
+ * The text of a leaf before its first definition, and whether one starts in
+ * it. For a table, the rows above its first defining row are kept, read as
+ * `tableBodyText` reads them, so a bound stated there still counts (PR #300
+ * review, Codex P2).
+ */
 function textBeforeDefinition(leaf: Leaf): { text: string; ends: boolean } {
   const at = firstDefiningLine(leaf);
   if (at < 0) return { text: leafText(leaf), ends: false };
+  if (leaf.type === "table") return { text: at === 0 ? "" : tableBodyText(leaf, at), ends: true };
   return { text: leaf.type === "paragraph" ? leaf.inline.split("\n").slice(0, at).join("\n") : "", ends: true };
 }
 
