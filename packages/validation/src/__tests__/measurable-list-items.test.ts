@@ -132,6 +132,13 @@ describe("blockAfter (#118)", () => {
     expect(blockOf(["- Item", "  | a |", "  text"]).block).toBe("table");
   });
 
+  it("leaves a paragraph open after a block quote only when it holds paragraph text (PR #292 review, Codex P2)", () => {
+    expect(blockOf(["| X | y |", ">"]).block).toBe("none");
+    expect(blockOf(["| X | y |", "> # Note"]).block).toBe("none");
+    expect(blockOf(["| X | y |", "> > ---"]).block).toBe("none");
+    expect(blockOf(["Text", "> quote"]).block).toBe("paragraph");
+  });
+
   it("reads a lazy `===` under a list item as paragraph text, and one at the item's content as an underline (PR #288 review, note 2)", () => {
     expect(blockOf(["- Intro", "==="]).block).toBe("paragraph");
     expect(blockOf(["- Intro", "  ==="]).block).toBe("none");

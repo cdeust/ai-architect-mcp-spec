@@ -447,6 +447,32 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("ends a paragraph at a later fence of a run of blocks, and at a block quote that holds no paragraph (PR #292 review, Codex P2)", () => {
+    // In each case `2. Group` opens an item, NFR-00n is nested in it, the `2.`
+    // of `    2.` is a marker, and the requirement is reported, as on `main`.
+    const tail = (n: number) => ["2. Group", `   - NFR-00${n}: Search must be fast and`, "    2. Results are listed.", ""];
+    const content = [
+      "## Requirements",
+      "",
+      "Text line",
+      "    ```",
+      "    x",
+      "    ```",
+      "```",
+      "y",
+      "```",
+      ...tail(1),
+      ...["| a | b |", "|---|---|", "| X | y |", ">", ...tail(2)],
+      ...["| a | b |", "|---|---|", "| X | y |", "> # Note", ...tail(3)],
+      ...["| a | b |", "|---|---|", "| X | y |", "> ---", ...tail(4)],
+      ...["| a | b |", "|---|---|", "| X | y |", "> quote", ...tail(5)],
+    ].join("\n");
+    // NFR-005: `> quote` holds paragraph text, so `2. Group` goes on with it.
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '4 requirement(s) state an unbounded quality with no number: NFR-001 ("fast"), NFR-002 ("fast"), NFR-003 ("fast"), NFR-004 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",

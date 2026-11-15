@@ -41,7 +41,7 @@ export interface LinesOutsideFences {
   readonly lines: string[];
   /**
    * The index in `lines` of each line that follows a removed block (or a run
-   * of blocks), with the indentation width of the block's opening fence.
+   * of blocks), with the least indentation width of the run's opening fences.
    */
   readonly afterBlock: ReadonlyMap<number, number>;
 }
@@ -54,22 +54,24 @@ export interface LinesOutsideFences {
  * `afterBlock` names the kept lines a removed block came right before, so a
  * reader that follows paragraphs can end one there (CommonMark 0.31.2 §4.5: a
  * fenced block interrupts a paragraph; PR #288 review, note 1). The
- * indentation of the opening fence comes with it: a fence 4 or more columns
- * right of its container interrupts nothing, which only that reader can tell
- * (§4.5; PR #289 review, note 3). A tab counts as four columns.
+ * least indentation of the opening fences of the run comes with it: a fence 4
+ * or more columns right of its container interrupts nothing, which only that
+ * reader can tell (§4.5; PR #289 review, note 3), and one fence of the run
+ * that does interrupt ends the paragraph, wherever it is in the run (PR #292
+ * review, Codex P2). A tab counts as four columns.
  */
 export function splitOutsideFences(content: string): LinesOutsideFences {
   const lines: string[] = [];
   const afterBlock = new Map<number, number>();
   let open: string | null = null;
-  /** The indentation of the first fence of the run of blocks just removed, or null. */
+  /** The least indentation of the opening fences of the run of blocks just removed, or null. */
   let removed: number | null = null;
   for (const line of content.split(LINE_BREAK)) {
     const fence = FENCE_LINE.exec(line);
     if (open === null) {
       if (fence && opensBlock(fence)) {
         open = fence[1]!;
-        removed ??= fenceIndent(line);
+        removed = Math.min(removed ?? Infinity, fenceIndent(line));
       } else {
         if (removed !== null) afterBlock.set(lines.length, removed);
         removed = null;

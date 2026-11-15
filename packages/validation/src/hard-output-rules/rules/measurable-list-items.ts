@@ -13,6 +13,8 @@ export const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
 export const TABLE_ROW = /^[ \t]*\|/;
 /** The start of a block quote (CommonMark 0.31.2 §5.1). */
 const BLOCK_QUOTE = /^[ \t]{0,3}>/;
+/** The block quote markers at a line start, nested ones included, each with its optional space. */
+const QUOTE_MARKERS = /^(?:[ \t]{0,3}>[ \t]?)+/;
 
 /** The width of a run of leading spaces and tabs, a tab counting as four. */
 export function indentWidth(indent: string): number {
@@ -197,8 +199,10 @@ export type BlockState = "none" | "paragraph" | "table";
  * (PR #288 review, note 1), unless it starts another block: a list item, a
  * block quote, or a line that `left` the list item the table is in (`left`:
  * `trackItems` closed an item at the line, which only a line left of the
- * content of an item containing the table does; PR #289 review, note 2). Under paragraph text, a
- * line of `=` is a setext underline, which ends the paragraph, except when it
+ * content of an item containing the table does; PR #289 review, note 2). A
+ * block quote leaves a paragraph open only when it holds paragraph text, not
+ * when it is empty or holds a heading or a thematic break (PR #292 review,
+ * Codex P2). Under paragraph text, a line of `=` is a setext underline, which ends the paragraph, except when it
  * is left of the content of the innermost open item, or 4 or more columns
  * right of its container: a setext underline cannot be a lazy continuation
  * line nor indented 4 columns (§4.3), so `- Intro` / `===` goes on with the
@@ -210,7 +214,14 @@ export type BlockState = "none" | "paragraph" | "table";
  */
 export function blockAfter(line: string, before: BlockState, open: readonly number[], left = false): BlockState {
   if (line.trim() === "" || HEADING.test(line) || isThematicBreak(open, line)) return "none";
-  const endsTable = left || LIST_ITEM.test(line) || BLOCK_QUOTE.test(line);
+  if (BLOCK_QUOTE.test(line)) {
+    // A block quote leaves a paragraph open only when its content is
+    // paragraph text: an empty quote, a heading or a thematic break in it
+    // leaves none (§5.1; PR #292 review, Codex P2).
+    const inner = line.replace(QUOTE_MARKERS, "");
+    return inner.trim() === "" || HEADING.test(inner) || isThematicBreak([], inner) ? "none" : "paragraph";
+  }
+  const endsTable = left || LIST_ITEM.test(line);
   if (TABLE_ROW.test(line) || (before === "table" && !endsTable)) return "table";
   if (EQUALS_LINE.test(line) && before === "paragraph") {
     const indent = indentWidth(/^[ \t]*/.exec(line)![0]);
