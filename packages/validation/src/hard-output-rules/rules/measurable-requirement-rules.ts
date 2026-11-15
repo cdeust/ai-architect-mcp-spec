@@ -144,8 +144,11 @@ interface OpenItem {
  * The open lists are a stack of item indentations (CommonMark §5.2-5.3): an
  * item stays open across the lines of its text, wrapped ones included, so
  * the `2.` of `1. Search must be fast and` / `   reliable.` / `2. …` is a
- * marker (PR #278 review, note 1); a non-blank line after a blank line that
- * is indented less than an item's content closes that item.
+ * marker (PR #278 review, note 1). Only a sibling of an open item continues
+ * its list: a number at or past the item's content indentation would open a
+ * nested list, so `   2000.` wrapped under `1. … the maximum entry count is`
+ * is the bound (PR #279 review). A non-blank line after a blank line that is
+ * indented less than an item's content closes that item.
  *
  * The first line is the rest of the definition's opening line, right after
  * its identifier: a number there opens the statement and numbers it
@@ -169,15 +172,19 @@ function withoutListMarkers(text: string, afterHeading: boolean): string {
         }
         return line;
       }
+      const marker = indentWidth(item[1]!);
+      // A sibling of an open item continues its list; a marker at or past an
+      // item's content would open a nested list, which must start at 1 to
+      // interrupt the item's paragraph (PR #279 review).
+      const continuesList = open.some((o) => o.marker <= marker && marker < o.content);
       const isItem =
         i === 0 ||
         item[2] === undefined ||
         Number(item[2]) === 1 ||
         previous.trim() === "" ||
         (i === 1 && afterHeading) ||
-        open.length > 0;
+        continuesList;
       if (!isItem) return line;
-      const marker = indentWidth(item[1]!);
       while (open.length > 0 && open[open.length - 1]!.content > marker) open.pop();
       while (open.length > 0 && open[open.length - 1]!.marker >= marker) open.pop();
       const contentStart = /^[ \t]*\S+[ \t]+/.exec(line)?.[0] ?? item[0];
@@ -244,7 +251,10 @@ const TABLE_ROW = /^[ \t]*\|/;
 /**
  * The header of a key-value table: two columns, the second naming the value
  * (`| Field | Value |`, `| Champ | Valeur |`). Its rows are one field each,
- * named by their first cell.
+ * named by their first cell. Another header (`| Attribute | Detail |`, or a
+ * third `Notes` column) is not read as one, so a metadata row under it still
+ * bounds the statement: a missed finding, chosen over a false positive on a
+ * table whose first column is not a field name (PR #279 review, note 2).
  */
 function isKeyValueHeader(header: readonly string[]): boolean {
   return header.length === 2 && /^(?:values?|valeurs?)$/iu.test(header[1]!);
