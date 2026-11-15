@@ -449,6 +449,34 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(checkSPArithmetic(sub, "timeline")).toEqual([]);
   });
 
+  it("table sp_arithmetic reads a spaced subtotal, a plural unit and a joined unit as the label they spell", () => {
+    // Review of #270: `| Sub total |` (with a space) did not match the
+    // subtotal label, and `Total SPs` and `Total storypoints` did not match a
+    // unit, so each was summed as a story and none of them was pinned by a
+    // test. Beside a grand total of 22, a right total was reported as
+    // `sum to 44`; a right subtotal doubled its stories.
+    for (const cell of ["Total SPs", "**Total SPs** delivered", "Total storypoints", "Total story-point", "Grand Total Story Points"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline"), cell).toEqual([]);
+      const wrong = table.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message), cell).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+    for (const cell of ["Sub total", "**Sub total**", "Sub totals", "Sub total SPs", "Sub\ttotal (epic A)"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 3 |", `| ${cell} | 5 |`, "| STORY-3 | 4 |", `| ${cell} | 4 |`, "| **Total** | 9 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline"), cell).toEqual([]);
+      const wrong = table.replace("| **Total** | 9 |", "| **Total** | 18 |");
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message), cell).toEqual([
+        "SP total row shows 18 but individual rows sum to 9",
+      ]);
+    }
+    // A word after `Sub` that is not `total`, or a plural on a word that is
+    // not a unit, stays data.
+    const data = ["| Item | SP |", "|---|---|", "| Sub task | 2 |", "| Sub totality | 1 |", "| Total SPsx | 1 |", "| **Total** | 4 |"].join("\n");
+    expect(checkSPArithmetic(data, "timeline")).toEqual([]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },

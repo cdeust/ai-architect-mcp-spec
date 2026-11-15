@@ -143,11 +143,15 @@ const INLINE_SPACE = "[^\\S\\n\\r\\u2028\\u2029]";
 const LABEL_END = "(?![\\p{L}\\p{M}\\p{N}_]|['\u2019-]\\p{L})";
 
 /**
- * A story-point unit after a total label (`Total SP`, `Total story points`,
- * `Total story-points`). Issue #118: the unit took a space between `story`
- * and `points` only, so `| Total story-points | 5 |` was summed as a story.
+ * A story-point unit after a total label (`Total SP`, `Total SPs`,
+ * `Total story points`, `Total story-points`, `Total storypoints`).
+ * Issue #118: the unit took a space between `story` and `points` only, so
+ * `| Total story-points | 5 |` was summed as a story; then it took neither a
+ * plural `SPs` nor `storypoints` written as one word (review of #270).
+ * The separator loop is followed by the literal `points`, so a run of spaces
+ * is split one way only.
  */
-const SP_UNIT = `(?:SP|pts|story(?:${INLINE_SPACE}+|-)points?|points?)${LABEL_END}`;
+const SP_UNIT = `(?:SPs?|pts|story(?:${INLINE_SPACE}+|-)?points?|points?)${LABEL_END}`;
 
 /**
  * The first cell of a total row, up to its closing pipe: Total, Totals, Sum,
@@ -224,8 +228,10 @@ const SP_UNIT = `(?:SP|pts|story(?:${INLINE_SPACE}+|-)points?|points?)${LABEL_EN
  * them at most is tried at a position, and the rest without a unit is the
  * other branch of the same group: the scan stays linear.
  *
- * A subtotal row (`| Subtotal | 3 |`, `| **Sub-total SP** | 3 |`) has the
- * same cell with `Subtotal` or `Sub-total` as its label. It is neither a
+ * A subtotal row (`| Subtotal | 3 |`, `| **Sub-total SP** | 3 |`,
+ * `| Sub total | 3 |`) has the same cell with `Subtotal`, `Sub-total` or
+ * `Sub total` as its label (the spaced form was summed as a story before the
+ * review of #270). It is neither a
  * story nor a total: summed as a story, it doubled its stories; compared
  * with the whole table, a right subtotal of one epic would read as wrong.
  */
@@ -237,7 +243,7 @@ const totalCell = (label: string): string =>
   `(?:\\*{0,2})(?:${label})${LABEL_END}${BOLD_CLOSE}${INLINE_SPACE}*` +
   `(?:\\*{0,2}${SP_UNIT}${BOLD_CLOSE}${INLINE_SPACE}*(?:${UNIT_REST}|${CELL_REST})?|${CELL_REST})?\\|`;
 const TOTAL_CELL = totalCell(`Totals?|Sum|Grand${INLINE_SPACE}+Totals?`);
-const SUBTOTAL_CELL = totalCell("Sub-?totals?");
+const SUBTOTAL_CELL = totalCell(`Sub(?:-|${INLINE_SPACE}+)?totals?`);
 
 /**
  * A separator row (`|---|---|`, `| :--- | ---: |`): every cell holds only

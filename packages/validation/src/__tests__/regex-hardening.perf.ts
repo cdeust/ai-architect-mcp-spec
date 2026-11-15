@@ -207,15 +207,23 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   // Review of #254: the space loop after a total label must be the only one
   // before the rest of the cell, so a label then a run of spaces and no
   // closing pipe fails in linear time. It was pinned by a wall-clock budget
-  // (< 500 ms) in prose-sp-total.test.ts.
+  // (< 500 ms) in prose-sp-total.test.ts. Review of #270: `Sub total` takes
+  // a space loop inside the subtotal label, followed by the literal `total`,
+  // and the unit `story points` one before the literal `points`; the heads
+  // `| Sub`, `| Sub total` and `| Total story` measure both.
   it("a total label then a run of spaces and no closing pipe (table sp_arithmetic)", () => {
-    const build = (n: number): string => "| Total" + " ".repeat(n);
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
-    const small = build(16000);
-    const large = build(32000);
-    run(small);
-    run(large);
-    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    const ratios: Record<string, number> = {};
+    for (const head of ["| Total", "| Sub", "| Sub total", "| Total story"]) {
+      const build = (n: number): string => head + " ".repeat(n);
+      const small = build(16000);
+      const large = build(32000);
+      run(small);
+      run(large);
+      ratios[head] = growthRatio(run, small, large);
+    }
+    const over = Object.entries(ratios).filter(([, ratio]) => !(ratio < QUADRATIC_GROWTH_CEILING));
+    expect(over, JSON.stringify(ratios)).toEqual([]);
   });
 
   // Review of #256: no case passed the total label, so nothing measured the
@@ -267,7 +275,7 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   it("a unit then words and no closing pipe (table sp_arithmetic)", () => {
     const run = (input: string): void => void checkSPArithmetic(input, "timeline");
     const ratios: Record<string, number> = {};
-    for (const head of ["| Total SP ", "| **Subtotal SP** ", "| Total story-points "]) {
+    for (const head of ["| Total SP ", "| **Subtotal SP** ", "| Total story-points ", "| Sub total SPs ", "| Total storypoints "]) {
       const build = (n: number): string => head + "word ".repeat(n);
       const small = build(3200);
       const large = build(6400);
