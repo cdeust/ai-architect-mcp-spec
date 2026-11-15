@@ -369,8 +369,9 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // stack would cost its depth on each such line; since indentation grows
       // with depth, the depth is at most the square root of the input, so
       // that rescan is O(n^1.5) and stays under the ceiling (measured: the
-      // linear rescan passes this case too). The case guards the binary
-      // search of `containerOf` against a quadratic regression.
+      // linear rescan passes this case too). The case was written for the
+      // line scanner #299 replaced; it now guards the block parse of a deep
+      // stack of nested lists against a quadratic regression.
       rejectedMarkers: (n) => {
         const depth = Math.floor(Math.sqrt(n) / 2);
         const nested = Array.from({ length: depth }, (_, k) => " ".repeat(5 + 2 * k) + "- b\n").join("");

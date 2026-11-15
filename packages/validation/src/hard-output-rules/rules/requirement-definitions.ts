@@ -52,8 +52,13 @@ export interface RequirementDefinition {
   readonly text: string;
 }
 
-/** CommonMark blocks with GFM tables; inline content is left as source text. */
-const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
+/**
+ * CommonMark blocks with GFM tables; inline content is left as source text.
+ * HTML blocks are not parsed: as one, `<div>` / `**FR-001** …` with no blank
+ * line between them hid the definition, which the line scanner read (PR
+ * #299 review, note 2); as paragraph text it is read again.
+ */
+const parser = new MarkdownIt("commonmark").enable("table").disable(["inline", "html_block"]);
 
 /** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
 const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9}\b)(?:\*\*|\x60)?(.*)$/;
@@ -217,10 +222,56 @@ const leafText = (leaf: Leaf): string => (leaf.type === "table" ? tableBodyText(
  * bold line only: a paragraph line that opens no list item defines a
  * requirement only as a bold line.
  */
-function definingId(line: string, boldOnly: boolean): { id: string; rest: string } | null {
+function definingId(source: string, boldOnly: boolean): { id: string; rest: string } | null {
+  // A continuation line keeps its indentation in the inline source; the
+  // parser has already decided it is paragraph text (PR #299 review, Codex P2).
+  const line = source.replace(/^[ \t]+/, "");
   if (boldOnly && !BOLD_LINE.test(line)) return null;
   const found = DEFINING_LINE.exec(line);
   return found === null ? null : { id: found[1]!, rest: found[2]! };
+}
+
+/**
+ * The index of the first line of a leaf that opens a definition, else -1:
+ * the first line of a paragraph that opens a list item, a bold line, a
+ * heading, or, for a table, its first line when a row defines one. Another
+ * definition ends the text of the one before it, as the line scanner closed
+ * it (PR #299 review, Codex P2).
+ */
+function firstDefiningLine(leaf: Leaf): number {
+  if (leaf.type === "table") return tableDefinitions(leaf).length > 0 ? 0 : -1;
+  if (leaf.type === "heading") return definingId(leaf.inline, false) === null ? -1 : 0;
+  return leaf.inline.split("\n").findIndex((line, i) => definingId(line, !(leaf.opensItem && i === 0)) !== null);
+}
+
+/** The text of a leaf before its first definition, and whether one starts in it. */
+function textBeforeDefinition(leaf: Leaf): { text: string; ends: boolean } {
+  const at = firstDefiningLine(leaf);
+  if (at < 0) return { text: leafText(leaf), ends: false };
+  return { text: leaf.type === "paragraph" ? leaf.inline.split("\n").slice(0, at).join("\n") : "", ends: true };
+}
+
+/**
+ * The markers removed from a statement numbered right after its
+ * identifier: its first marker, then each line-leading number that is the
+ * next one of that list (`1.`, ` 2.`, ` 3.`). Any other number at a line
+ * start is a quantity wrapped into the statement and kept (`1. … the
+ * maximum count is` / `    2000. Larger collections page.`; PR #299
+ * review, Codex P2).
+ */
+function withoutStatementMarkers(rest: string): string {
+  const first = NUMBERED_STATEMENT.exec(rest);
+  if (first === null) return rest;
+  let next = Number(/\d+/.exec(first[0])![0]);
+  return rest
+    .split("\n")
+    .map((line, i) => {
+      const marker = /^([ \t]*)(\d{1,9})[.)](?=[ \t]+\S)/.exec(line);
+      if (marker === null || (i > 0 && Number(marker[2]) !== next + 1)) return line;
+      if (i > 0) next += 1;
+      return marker[1]! + " ".repeat(marker[0].length - marker[1]!.length) + line.slice(marker[0].length);
+    })
+    .join("\n");
 }
 
 /**
@@ -229,20 +280,22 @@ function definingId(line: string, boldOnly: boolean): { id: string; rest: string
  * reaches the paragraph's end, the paragraphs of `following` that follow it
  * with no blank line between, nested items included, up to the first table
  * or heading (the text of an item runs to its first blank line, as before).
- * A statement numbered right after its identifier (`**NFR-001** 1. Search
- * must be fast.` / ` 2. Results are listed.`) is a numbered list its author
- * wrote in one paragraph: CommonMark reads ` 2.` as text, since an ordered
- * list may interrupt a paragraph only at 1 (§5.2), but here it is the next
- * marker of that list, not a bound, so each line of the definition that
- * opens with a marker loses it (PR #284 review, note 3; PR #297 review,
- * Codex P2).
+ * A following paragraph that opens a definition ends it. A statement
+ * numbered right after its identifier (`**NFR-001** 1. Search must be
+ * fast.` / ` 2. Results are listed.`) is a numbered list its author wrote in
+ * one paragraph: CommonMark reads ` 2.` as text, since an ordered list may
+ * interrupt a paragraph only at 1 (§5.2), but here it is the next marker of
+ * that list, not a bound (`withoutStatementMarkers`; PR #284 review, note 3;
+ * PR #297 review, Codex P2).
  */
 function paragraphDefinitionText(rest: string, paragraph: Leaf, following: Iterable<Leaf> | null): string {
-  const lines = [NUMBERED_STATEMENT.test(rest) ? rest.replace(/^([ \t]*)\d{1,9}[.)](?=[ \t]+\S)/gm, "$1") : rest];
+  const lines = [withoutStatementMarkers(rest)];
   let last = paragraph.map[1];
   for (const leaf of following ?? []) {
     if (leaf.type !== "paragraph" || leaf.map[0] !== last) break;
-    lines.push(leafText(leaf));
+    const before = textBeforeDefinition(leaf);
+    if (before.text !== "") lines.push(before.text);
+    if (before.ends) break;
     last = leaf.map[1];
   }
   return lines.join("\n");
@@ -269,10 +322,18 @@ function paragraphDefinitions(paragraph: Leaf, following: () => Iterable<Leaf>):
   });
 }
 
-/** A heading's body: the leaf blocks after it, in document order, up to the next heading at any depth or level. */
+/**
+ * A heading's body: the leaf blocks after it, in document order, up to the
+ * next heading at any depth or level, or the next definition (a list item,
+ * bold line or table row that defines a requirement; PR #299 review, Codex P2).
+ */
 function headingBody(leaves: readonly Leaf[], at: number): string {
   const lines: string[] = [];
-  for (let k = at + 1; k < leaves.length && leaves[k]!.type !== "heading"; k++) lines.push(leafText(leaves[k]!));
+  for (let k = at + 1; k < leaves.length && leaves[k]!.type !== "heading"; k++) {
+    const before = textBeforeDefinition(leaves[k]!);
+    if (before.text !== "") lines.push(before.text);
+    if (before.ends) break;
+  }
   return lines.join("\n");
 }
 
