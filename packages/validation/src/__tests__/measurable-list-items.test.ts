@@ -156,8 +156,12 @@ describe("blockAfter (#118)", () => {
     expect(blockOf(["Intro", "   # Note"]).block).toBe("none");
     expect(blockOf(["Intro", "   > # Note"]).block).toBe("none");
     // In a quote, the content starts right of column 0, so a tab after the
-    // marker's space is still read as at most three columns (note 1 of the review).
+    // marker's space is counted as one character, not as columns (note 1 of the review).
     expect(blockOf(["Intro", "> \t# Note"]).block).toBe("none");
+    // In a list item, the indentation is measured from the item's content (PR #295 review, Codex P2).
+    expect(blockOf(["- Intro", "\t# Note"]).block).toBe("none");
+    expect(blockOf(["- Intro", "\t> # Note"]).block).toBe("none");
+    expect(blockOf(["- Intro", "      # Note"]).block).toBe("paragraph");
   });
 });
 

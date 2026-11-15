@@ -7,26 +7,23 @@
 
 import { indentWidth } from "./fenced-blocks.js";
 
-/**
- * A heading line (any level), less than 4 columns from the line start. A tab
- * there always reaches column 4 (CommonMark 0.31.2 §2.2), so only spaces may
- * come before the `#`: `\t# Note` is text, as `    # Note` is (PR #294
- * review, note 2).
- */
-export const HEADING = /^ {0,3}#{1,6}[ \t]/;
+/** A heading marker at the start of a line's content. */
+const HEADING_BODY = /^#{1,6}[ \t]/;
+/** A block quote marker at the start of a line's content (CommonMark 0.31.2 §5.1). */
+const QUOTE_BODY = /^>/;
 /**
  * A heading in the content of a block quote. That content starts right of
  * column 0, after the markers and their optional space, so a tab there may
- * stop short of 4 columns (`> \t# Note` is a heading in the quote); it is
- * still read as at most three columns, as before #294 (note 1 of its review).
+ * stop short of 4 columns (`> \t# Note` is a heading in the quote). The
+ * pattern counts characters, not columns, so `> \t\t# x` matches too, as
+ * before #294 (note 1 of its review; PR #295 review, note 2).
  */
 const QUOTED_HEADING = /^[ \t]{0,3}#{1,6}[ \t]/;
 /** A list item, with its indentation in group 1. */
 export const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]/;
 /** A table row. */
 export const TABLE_ROW = /^[ \t]*\|/;
-/** The start of a block quote, less than 4 columns from the line start, so after spaces only (CommonMark 0.31.2 §5.1). */
-const BLOCK_QUOTE = /^ {0,3}>/;
+
 /** The block quote markers at a line start, nested ones included, each with its optional space. */
 const QUOTE_MARKERS = /^(?:[ \t]{0,3}>[ \t]?)+/;
 
@@ -182,6 +179,25 @@ const THEMATIC_BREAK_BODY = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,
 const EQUALS_LINE = /^[ \t]*=+[ \t]*$/;
 
 /**
+ * Whether `line` opens a block whose marker matches `body` less than 4
+ * columns right of its container: the content of the innermost open item the
+ * line is inside, else column 0 (CommonMark 0.31.2 §4.2, §5.1). A tab moves
+ * to the next tab stop, so after `- Intro` the line `\t# Note` is two columns
+ * past the item's content, a heading in it, while at top level it is text
+ * (PR #294 review, note 2 and Codex P2).
+ */
+function opensBlock(open: readonly number[], line: string, body: RegExp): boolean {
+  const lead = /^[ \t]*/.exec(line)![0];
+  const indent = indentWidth(lead);
+  return indent - containerOf(open, indent) < 4 && body.test(line.slice(lead.length));
+}
+
+/** Whether `line` is a heading, measured from its container (`opensBlock`). */
+export function isHeading(open: readonly number[], line: string): boolean {
+  return opensBlock(open, line, HEADING_BODY);
+}
+
+/**
  * Whether `line` is a thematic break: its body is one, and it sits less than
  * 4 columns right of its container (the content of the innermost open item
  * it is inside, or the line start), as a list marker must (§4.1, §5.2). A
@@ -223,8 +239,8 @@ export type BlockState = "none" | "paragraph" | "table";
  * not pass (PR #288 review, note 1).
  */
 export function blockAfter(line: string, before: BlockState, open: readonly number[], left = false): BlockState {
-  if (line.trim() === "" || HEADING.test(line) || isThematicBreak(open, line)) return "none";
-  if (BLOCK_QUOTE.test(line)) {
+  if (line.trim() === "" || isHeading(open, line) || isThematicBreak(open, line)) return "none";
+  if (opensBlock(open, line, QUOTE_BODY)) {
     // A block quote leaves a paragraph open only when its content is
     // paragraph text: an empty quote, a heading or a thematic break in it
     // leaves none (§5.1; PR #292 review, Codex P2).
@@ -276,7 +292,7 @@ export function trackItems(open: number[], line: string, inParagraph: boolean): 
     }
     return 0;
   }
-  if (line.trim() !== "" && (!inParagraph || thematicBreak || HEADING.test(line) || TABLE_ROW.test(line))) {
+  if (line.trim() !== "" && (!inParagraph || thematicBreak || isHeading(open, line) || TABLE_ROW.test(line))) {
     while (open.length > 0 && indent < open[open.length - 1]!) open.pop();
   }
   return 0;
