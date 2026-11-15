@@ -327,6 +327,25 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("reads an ordered marker other than 1 right after a line of text as that text (PR #285 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      "Text line",
+      "2. note",
+      "   - NFR-001: Export must be fast, at most",
+      "    2. seconds per file.",
+      "",
+      "Text line",
+      "1. note",
+      "   - NFR-002: Import must be fast, at most",
+      "    2. Files are read.",
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '1 requirement(s) state an unbounded quality with no number: NFR-002 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",
