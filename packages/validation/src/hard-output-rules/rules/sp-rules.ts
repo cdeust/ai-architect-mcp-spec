@@ -346,19 +346,26 @@ const LIST_ITEM = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+/;
  * Linear: each run of spaces can be matched by one loop only. The bullet
  * group ends with its own `[ \t]+` and the emphasis group with its own
  * `[ \t]*`, and both groups start with a non-space character, so no two
- * whitespace loops are ever adjacent. The first version wrote
+ * whitespace loops are ever adjacent; the run between `Sub` and `total`
+ * (`Sub total`, as the table rule reads it since #271) lies between two
+ * letters. The first version wrote
  * `[*_]{0,2}[ \t]*` after the bullet group: with both groups empty, two
  * loops split a run of n spaces in O(n²) ways when the match failed
  * (measured 13 ms, 55 ms, 269 ms at 5k, 10k, 20k spaces; review of #228).
  */
 const PROSE_TOTAL_START =
-  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:[*_]{1,2}[ \t]*)?(?:grand[ \t]+|sub-?)?(?:total|sum)\b/i;
+  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:[*_]{1,2}[ \t]*)?(?:grand[ \t]+|sub(?:-|[ \t]+)?)?(?:total|sum)\b/i;
 /**
  * A story-point amount with its unit. The number is at most nine digits and
  * one decimal part, so `Number()` is exact; the unit is required, so a total
- * of stories or of days is not read as points.
+ * of stories or of days is not read as points. The unit is spelled as the
+ * table rule spells it (`SP_UNIT`, #271): `SP`, `SPs`, `story points`,
+ * `story-points` or `storypoints`, singular or plural (review of #271: a
+ * `Total: 5 SPs` line had no amount the prose rule could read). A bare
+ * `points` or `pts` is left out here: a table label names its column, but a
+ * story line can count other points (`3 edge points`), which would be summed.
  */
-const SP_AMOUNT = /(?<![\d.])(\d{1,9}(?:\.\d{1,3})?)[ \t]*(?:SP|story[ \t]+points?)\b/gi;
+const SP_AMOUNT = /(?<![\d.])(\d{1,9}(?:\.\d{1,3})?)[ \t]*(?:SPs?|story(?:[ \t]+|-)?points?)\b/gi;
 /** Emphasis markers, removed before an amount is read (`**1** SP`). */
 const EMPHASIS = /[*_]/g;
 

@@ -164,6 +164,24 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
   });
 
+  // Review of #271: the prose total reads `Sub total` with a run of spaces
+  // between the two words, and a story-point amount as `story points` with
+  // a run between them. Each run lies between two letters, so a long run that
+  // ends without the second word fails in linear time.
+  it("space runs after Sub and after story (prose sp_arithmetic)", () => {
+    const run = (input: string): void => void checkProseSPTotal(input, "user_stories");
+    for (const build of [
+      (n: number): string => "- Sub" + " ".repeat(n) + "x",
+      (n: number): string => "- 1 story" + " ".repeat(n) + "x",
+    ]) {
+      const small = build(64000);
+      const large = build(128000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   // Review of #231: the table rows of sp_arithmetic were found with `^\s*\|`
   // under the `m` flag, so `\s` ran across a run of blank lines from each line
   // start (20, 88 and 362 ms at 5k, 10k and 20k blank lines).
