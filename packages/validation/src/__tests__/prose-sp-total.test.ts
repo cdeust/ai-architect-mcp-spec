@@ -419,6 +419,36 @@ describe("sp_arithmetic: prose total of a story list", () => {
     expect(checkSPArithmetic(total, "timeline")).toEqual([]);
   });
 
+  it("table sp_arithmetic reads a unit then words, or a hyphenated unit, as a total, and a subtotal row as neither", () => {
+    // Issue #118: `Total SP delivered` and `Total story-points` were summed as
+    // stories, so beside a grand total of 22 a right total was reported as
+    // `sum to 44`.
+    for (const cell of ["Total SP delivered", "**Total SP** delivered", "Total story-points", "Total story points delivered", "Grand Total pts (sprint 1)"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 20 |", "| STORY-2 | 2 |", `| ${cell} | 22 |`, "| **Grand Total** | 22 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+      const wrong = table.replace(`| ${cell} | 22 |`, `| ${cell} | 23 |`);
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 23 but individual rows sum to 22",
+      ]);
+    }
+    // A word after the label with no unit between is still data.
+    const data = ["| Item | SP |", "|---|---|", "| STORY-1 | 3 |", "| Total carried | 4 |", "| Total story | 1 |", "| **Grand Total** | 8 |"].join("\n");
+    expect(checkSPArithmetic(data, "timeline")).toEqual([]);
+    // A subtotal row is neither summed nor checked against the whole table:
+    // each one is right for its epic, the grand total for the table.
+    for (const cell of ["Subtotal", "**Subtotal**", "Sub-total", "Subtotals", "Subtotal SP", "Subtotal (epic A)", "**Sub-total SP** delivered"]) {
+      const table = ["| Item | SP |", "|---|---|", "| STORY-1 | 2 |", "| STORY-2 | 3 |", `| ${cell} | 5 |`, "| STORY-3 | 4 |", `| ${cell} | 4 |`, "| **Total** | 9 |"].join("\n");
+      expect(checkSPArithmetic(table, "timeline")).toEqual([]);
+      const wrong = table.replace("| **Total** | 9 |", "| **Total** | 18 |");
+      expect(checkSPArithmetic(wrong, "timeline").map((v) => v.message)).toEqual([
+        "SP total row shows 18 but individual rows sum to 9",
+      ]);
+    }
+    // A word that only starts with `Sub` stays data.
+    const sub = ["| Item | SP |", "|---|---|", "| Subtask A | 2 |", "| Subtotality | 1 |", "| **Total** | 3 |"].join("\n");
+    expect(checkSPArithmetic(sub, "timeline")).toEqual([]);
+  });
+
   it("the document check reads user_stories once and no other prose section", () => {
     const sections: { type: SectionType; content: string }[] = [
       { type: "overview", content: [...STORIES, "Total: 5 SP"].join("\n") },
