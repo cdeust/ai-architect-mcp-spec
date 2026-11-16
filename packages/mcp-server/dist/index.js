@@ -140,6 +140,7 @@ const toolGetPrdContextInfo = server.tool("get_prd_context_info", "Get configura
         "mvp",
         "release",
         "cicd",
+        "tiny",
     ])
         .describe("The PRD context type"),
 }, { readOnlyHint: true }, async ({ context }) => {

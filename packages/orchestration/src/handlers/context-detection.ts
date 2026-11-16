@@ -6,7 +6,15 @@ import {
   type PRDContext,
 } from "@prd-gen/core";
 
-const TRIGGER_WORDS: Record<PRDContext, readonly string[]> = {
+/**
+ * A request its author declares tiny takes the fast path (#119), checked
+ * before TRIGGER_WORDS so that "add a tiny ..." or "fix a one-line ..." is
+ * not read as `feature` or `bug`. Whole words only: "destiny" declares
+ * nothing.
+ */
+const TINY_DECLARATION = /\b(?:tiny|trivial|one[- ]line)\b/i;
+
+const TRIGGER_WORDS: Record<Exclude<PRDContext, "tiny">, readonly string[]> = {
   proposal: ["proposal", "pitch", "stakeholder"],
   feature: ["feature", "build", "implement", "add support"],
   bug: ["bug", "fix", "broken", "regression", "defect"],
@@ -18,9 +26,10 @@ const TRIGGER_WORDS: Record<PRDContext, readonly string[]> = {
 };
 
 function detectFromText(text: string): PRDContext | null {
+  if (TINY_DECLARATION.test(text)) return "tiny";
   const lower = text.toLowerCase();
   for (const [ctx, triggers] of Object.entries(TRIGGER_WORDS) as [
-    PRDContext,
+    Exclude<PRDContext, "tiny">,
     readonly string[],
   ][]) {
     if (triggers.some((t) => lower.includes(t))) return ctx;

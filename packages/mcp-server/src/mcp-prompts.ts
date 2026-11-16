@@ -39,6 +39,7 @@ const PRD_CONTEXTS = [
   "mvp",
   "release",
   "cicd",
+  "tiny",
 ] as const;
 
 // ─── Prompt catalog (ordering only; summaries come from the tool schemas) ───

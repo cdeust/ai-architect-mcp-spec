@@ -53,6 +53,7 @@ export const CAPABILITIES: Capabilities = {
     "mvp",
     "release",
     "cicd",
+    "tiny",
   ],
   maxSections: 11,
   verificationLevel: "full",

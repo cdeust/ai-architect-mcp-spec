@@ -32,7 +32,7 @@ describe("Capabilities", () => {
     expect(CAPABILITIES.maxClarificationRounds).toBe(Infinity);
     expect(CAPABILITIES.maxSections).toBe(11);
     expect(CAPABILITIES.verificationLevel).toBe("full");
-    expect(CAPABILITIES.allowedContextTypes.length).toBe(8);
+    expect(CAPABILITIES.allowedContextTypes.length).toBe(9);
   });
 
   it("maxStrategies equals allowedStrategies.length (Darwin difficulty-book invariant)", () => {
@@ -41,8 +41,8 @@ describe("Capabilities", () => {
     expect(CAPABILITIES.maxStrategies).toBe(CAPABILITIES.allowedStrategies.length);
   });
 
-  it("allows all 8 PRD contexts", () => {
-    const expected = ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd"];
+  it("allows all 9 PRD contexts", () => {
+    const expected = ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd", "tiny"];
     for (const ctx of expected) {
       expect(CAPABILITIES.allowedContextTypes).toContain(ctx);
     }
@@ -50,8 +50,8 @@ describe("Capabilities", () => {
 });
 
 describe("PRDContext", () => {
-  it("Schema accepts the eight canonical contexts", () => {
-    const expected = ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd"];
+  it("Schema accepts the nine canonical contexts", () => {
+    const expected = ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd", "tiny"];
     for (const ctx of expected) {
       expect(PRDContextSchema.safeParse(ctx).success).toBe(true);
     }

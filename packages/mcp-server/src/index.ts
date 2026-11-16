@@ -214,6 +214,7 @@ const toolGetPrdContextInfo = server.tool(
         "mvp",
         "release",
         "cicd",
+        "tiny",
       ])
       .describe("The PRD context type"),
   },

@@ -15,6 +15,7 @@ export const PRDContextSchema = z.enum([
   "mvp",
   "release",
   "cicd",
+  "tiny",
 ]);
 
 export type PRDContext = z.infer<typeof PRDContextSchema>;
@@ -106,5 +107,21 @@ export const PRD_CONTEXT_CONFIGS: Record<PRDContext, PRDContextConfig> = {
     ragMaxHops: 3,
     expectedSectionCount: 9,
     preferredStrategyTier: 1,
+  },
+  /**
+   * Fast path for a request its author declares tiny (#119). The four
+   * sections are the ones #119 names. No number here is new: each is the
+   * smallest value an existing context already uses (clarification [4, 5]
+   * and tier 3 from poc, 1 RAG hop from proposal). Going lower is a
+   * measurement, not a guess.
+   */
+  tiny: {
+    displayName: "Tiny change",
+    description:
+      "Fast path for a small, declared-tiny request: overview, requirements, acceptance criteria and tests only",
+    clarificationRange: [4, 5],
+    ragMaxHops: 1,
+    expectedSectionCount: 4,
+    preferredStrategyTier: 3,
   },
 } as const;
