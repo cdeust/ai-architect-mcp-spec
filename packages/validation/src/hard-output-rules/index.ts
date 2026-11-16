@@ -21,7 +21,7 @@ import { checkDocumentMeasurableRequirements } from "./rules/measurable-requirem
 import { checkDocumentTestableAcceptanceCriteria } from "./rules/testable-acceptance-criteria-rules.js";
 import { checkDocumentContradictoryRequirements } from "./rules/contradictory-requirement-rules.js";
 
-// SP Rules (1, 8, 9)
+// SP Rules
 import {
   checkSPArithmetic,
   checkSPNotInFRTable,
@@ -29,7 +29,7 @@ import {
   checkDocumentSPArithmetic,
 } from "./rules/sp-rules.js";
 
-// Quality Rules (2, 10, 15, 23, 24)
+// Quality Rules
 import {
   checkNoSelfReferencingDeps,
   checkMetricsDisclaimer,
@@ -39,7 +39,7 @@ import {
   checkDeploymentRollbackPlan,
 } from "./rules/quality-rules.js";
 
-// Numbering Rules (3, 11, 18, 22)
+// Numbering Rules
 import {
   checkACNumbering,
   checkFRTraceability,
@@ -48,7 +48,7 @@ import {
   checkDocumentACConsistency,
 } from "./rules/numbering-rules.js";
 
-// Database Rules (4, 5, 6, 21)
+// Database Rules
 import {
   checkNoAnyCodable,
   checkNoNowInPartialIndexes,
@@ -56,14 +56,14 @@ import {
   checkFKReferencesExist,
 } from "./rules/database-rules.js";
 
-// Test Rules (7, 17)
+// Test Rules
 import {
   checkNoPlaceholderTests,
   checkTestTraceabilityIntegrity,
   checkDocumentTestTraceability,
 } from "./rules/test-rules.js";
 
-// Architecture Rules (12, 16, 18)
+// Architecture Rules
 import {
   checkCleanArchitecture,
   checkCodeExamplePortCompliance,
@@ -80,7 +80,7 @@ import {
   checkCodeReusability,
 } from "./rules/code-quality-rules.js";
 
-// Coverage Rules (19, 20) — document-level
+// Coverage Rules — document-level
 import {
   checkDocumentFRToACCoverage,
   checkDocumentACToTestCoverage,

@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { isBlockingViolation } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
-import { digitsValue, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
+import { digitsValue, splitGlued, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
 
 type Sections = ReadonlyArray<{ type: "requirements" | "user_stories"; content: string }>;
 
@@ -187,5 +187,62 @@ describe("contradictory_requirements (#118)", () => {
     expect(
       messageOf(table("| FR-001 | A job runs for 1 s. | Must | Ops |", `| FR-002 | A job runs for ${long} s. | Must | Ops |`)),
     ).toBe(`1 requirement(s) state a quantity an earlier requirement states differently: FR-002 ("${"9".repeat(24)}…", against FR-001: "1")`);
+  });
+
+  // Review 1 of #319, note 2: a leading 0 read `,250` as a group of thousands.
+  it("reads a comma after a leading 0 as a decimal mark", () => {
+    expect(["0,250", "0,25", "0,001", "0.250", "00,500"].map(digitsValue)).toEqual(["0.25", "0.25", "0.001", "0.25", "0.5"]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | La réponse arrive en 0,250 seconde. | Must | SLO |",
+          "| FR-002 | La réponse arrive en 0,25 seconde. | Must | SLO |",
+          "| FR-003 | Le délai est de 0,001 seconde. | Must | SLO |",
+          "| FR-004 | Le délai est de 1 seconde. | Must | SLO |",
+        ),
+      ),
+    ).toBe('1 requirement(s) state a quantity an earlier requirement states differently: FR-004 ("1", against FR-003: "0,001")');
+  });
+
+  // Review 1 of #319, note 3: `B2B` was cut into `B`, `2`, `B`, so the `B`
+  // after a naming number read as bytes.
+  it("reads a word that holds digits as one word, and a unit glued to a number", () => {
+    expect(["10MB", "200ms", "5s", "3h", "1b", "2a", "3D", "2nd", "1,000ms", "7"].map(splitGlued)).toEqual([
+      { number: "10", unit: "mb" },
+      { number: "200", unit: "ms" },
+      { number: "5", unit: "s" },
+      { number: "3", unit: "h" },
+      null,
+      null,
+      null,
+      null,
+      { number: "1,000", unit: "ms" },
+      { number: "7", unit: null },
+    ]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Tier 1 B2B customers can export CSV. | Must | Pricing |",
+          "| FR-002 | Tier 2 B2B customers can export CSV. | Must | Pricing |",
+          "| FR-003 | Phase 1b ships the export. | Must | Plan |",
+          "| FR-004 | Phase 2b ships the export. | Must | Plan |",
+          "| FR-005 | The v2 API is kept for 2 years. | Must | Support |",
+          "| FR-006 | The v3 API is kept for 2 years. | Must | Support |",
+        ),
+      ),
+    ).toBe(undefined);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Uploads up to 10MB are accepted. | Must | Limits |",
+          "| FR-002 | Uploads up to 25 MB are accepted. | Must | Limits |",
+          "| FR-003 | A retry waits 5s. | Must | Ops |",
+          "| FR-004 | A retry waits 30 s. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "2 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("25", against FR-001: "10"), FR-004 ("30", against FR-003: "5")',
+    );
   });
 });
