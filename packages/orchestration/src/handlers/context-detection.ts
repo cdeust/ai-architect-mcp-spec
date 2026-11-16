@@ -10,9 +10,19 @@ import {
  * A request its author declares tiny takes the fast path (#119), checked
  * before TRIGGER_WORDS so that "add a tiny ..." or "fix a one-line ..." is
  * not read as `feature` or `bug`. Whole words only: "destiny" declares
- * nothing.
+ * nothing. A negated term declares the opposite, so it does not count:
+ * "non-trivial", "not tiny", "isn't a one-line change", "never trivial"
+ * (review 1 of #323, note 2).
  */
-const TINY_DECLARATION = /\b(?:tiny|trivial|one[- ]line)\b/i;
+const TINY_TERM = /\b(?:tiny|trivial|one[- ]line)\b/gi;
+const NEGATION_BEFORE = /(?:\bnon-|\b(?:not|never|no)\s+(?:an?\s+)?|n't\s+(?:an?\s+)?)$/i;
+
+function declaresTiny(text: string): boolean {
+  for (const match of text.matchAll(TINY_TERM)) {
+    if (!NEGATION_BEFORE.test(text.slice(0, match.index))) return true;
+  }
+  return false;
+}
 
 const TRIGGER_WORDS: Record<Exclude<PRDContext, "tiny">, readonly string[]> = {
   proposal: ["proposal", "pitch", "stakeholder"],
@@ -25,9 +35,16 @@ const TRIGGER_WORDS: Record<Exclude<PRDContext, "tiny">, readonly string[]> = {
   cicd: ["ci", "cd", "ci/cd", "pipeline", "deploy automation"],
 };
 
+/**
+ * An incident is never a fast path: its report needs the security,
+ * deployment and risks sections whatever the size of the change that caused
+ * it ("Outage: a one-line config change took down checkout"), so its
+ * triggers are read before the tiny declaration (review 1 of #323, note 1).
+ */
 function detectFromText(text: string): PRDContext | null {
-  if (TINY_DECLARATION.test(text)) return "tiny";
   const lower = text.toLowerCase();
+  if (TRIGGER_WORDS.incident.some((t) => lower.includes(t))) return "incident";
+  if (declaresTiny(text)) return "tiny";
   for (const [ctx, triggers] of Object.entries(TRIGGER_WORDS) as [
     Exclude<PRDContext, "tiny">,
     readonly string[],

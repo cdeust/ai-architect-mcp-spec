@@ -40,6 +40,18 @@ describe("tiny context detection (#119)", () => {
     expect(detect("build the Destiny leaderboard")).toBe("feature");
   });
 
+  it("does not read a negated term as a declaration (review 1 of #323, note 2)", () => {
+    expect(detect("Implement a non-trivial OAuth feature")).toBe("feature");
+    expect(detect("Implement a feature that is not tiny")).toBe("feature");
+    expect(detect("This isn't a one-line fix")).toBe("bug");
+    expect(detect("Build it: never trivial, but a tiny first step")).toBe("tiny");
+  });
+
+  it("reads an incident as an incident whatever the size of its cause (review 1 of #323, note 1)", () => {
+    expect(detect("Outage: a one-line config change took down checkout")).toBe("incident");
+    expect(detect("Incident: a tiny typo in the DNS record")).toBe("incident");
+  });
+
   it("leaves requests that declare no size to the other triggers", () => {
     expect(detect("build a feature for OAuth login")).toBe("feature");
     expect(detect("fix the broken login redirect")).toBe("bug");

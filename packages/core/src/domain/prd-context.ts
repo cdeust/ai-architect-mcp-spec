@@ -110,10 +110,11 @@ export const PRD_CONTEXT_CONFIGS: Record<PRDContext, PRDContextConfig> = {
   },
   /**
    * Fast path for a request its author declares tiny (#119). The four
-   * sections are the ones #119 names. No number here is new: each is the
-   * smallest value an existing context already uses (clarification [4, 5]
-   * and tier 3 from poc, 1 RAG hop from proposal). Going lower is a
-   * measurement, not a guess.
+   * sections are the ones #119 names, so 4 is the one new number. The
+   * others are taken from existing contexts: clarification [4, 5], the
+   * smallest range any context uses, and strategy tier 3, the tier of the
+   * minimal-scope context, from poc; 1 RAG hop, the fewest, from proposal.
+   * Fewer rounds than 4 needs a measurement, not a guess.
    */
   tiny: {
     displayName: "Tiny change",
