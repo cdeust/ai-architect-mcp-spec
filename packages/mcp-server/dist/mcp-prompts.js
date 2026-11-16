@@ -28,6 +28,7 @@ const PRD_CONTEXTS = [
     "mvp",
     "release",
     "cicd",
+    "tiny",
 ];
 // ─── Prompt catalog (ordering only; summaries come from the tool schemas) ───
 const RUN_PIPELINE_STEPS = [
