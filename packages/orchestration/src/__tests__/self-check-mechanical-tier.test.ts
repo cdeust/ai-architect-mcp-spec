@@ -10,6 +10,7 @@
  * verification/src/__tests__/claim-tier.test.ts for the 29-claim fixture).
  */
 
+import { claimIdsInJudgePrompt } from "@prd-gen/verification";
 import { describe, it, expect } from "vitest";
 import {
   newPipelineState,
@@ -119,9 +120,11 @@ describe("self-check mechanical-tier claims", () => {
     expect(out.action.kind).toBe("spawn_subagents");
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
 
-    // Only the 2 subjective ACs (AC-001, AC-002) get an invocation — the 4
-    // mechanical ACs (AC-010..013) never appear in the dispatched batch.
-    expect(out.action.invocations).toHaveLength(2);
+    // Only the 2 subjective ACs (AC-001, AC-002) are judged — the 4
+    // mechanical ACs (AC-010..013) never appear in the dispatched batch. Both
+    // go to the same judge, so they share one invocation (issue #119).
+    expect(out.action.invocations).toHaveLength(1);
+    expect(claimIdsInJudgePrompt(out.action.invocations[0].prompt).slice().sort()).toEqual(["AC-001", "AC-002"]);
     const snapshot = out.state.verification_plan!;
     expect(snapshot.claim_ids.sort()).toEqual(["AC-001", "AC-002"]);
 
@@ -131,12 +134,15 @@ describe("self-check mechanical-tier claims", () => {
       batch_id: out.action.batch_id,
       responses: out.action.invocations.map((inv) => ({
         invocation_id: inv.invocation_id,
-        raw_text: JSON.stringify({
-          verdict: "PASS",
-          rationale: "synthetic mixed-tier test judge response",
-          caveats: [],
-          confidence: 0.9,
-        }),
+        raw_text: JSON.stringify(
+          claimIdsInJudgePrompt(inv.prompt).map((claim_id) => ({
+            claim_id,
+            verdict: "PASS",
+            rationale: "synthetic mixed-tier test judge response",
+            caveats: [],
+            confidence: 0.9,
+          })),
+        ),
       })),
     };
     const finalOut = step({ state: out.state, result: batchResult });

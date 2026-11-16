@@ -19,6 +19,7 @@
  * judge invocations under the session model in one spawn_subagents batch.
  */
 
+import { claimIdsInJudgePrompt } from "@prd-gen/verification";
 import { describe, it, expect } from "vitest";
 import {
   newPipelineState,
@@ -115,15 +116,24 @@ function dispatchAction(state: PipelineState, result?: ActionResult) {
 
 describe("self-check judge-panel budget gate", () => {
   it("dispatches 1 judge/claim by default, 2 for an architecture claim (under cap)", () => {
-    // 2 FR claims + 1 architecture claim: 2*1 + 1*2 = 4 invocations — well
-    // under DEFAULT_VERIFY_BUDGET.invocation_cap (20), so no gate fires.
+    // 2 FR claims + 1 architecture claim: 2*1 + 1*2 = 4 verdicts requested —
+    // well under DEFAULT_VERIFY_BUDGET.invocation_cap (20), so no gate fires.
     const state = selfCheckState(2, true);
     const out = dispatchAction(state);
 
     expect(out.action.kind).toBe("spawn_subagents");
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
     expect(out.action.batch_id).toBe(VERIFY_BATCH_ID);
-    expect(out.action.invocations).toHaveLength(4);
+    // One invocation per (judge, model) batch (issue #119): the two FR claims
+    // share one judge and one model; the architecture claim's two judges run
+    // under two models. 4 (judge × claim) pairs travel in 3 prompts.
+    expect(out.action.invocations).toHaveLength(3);
+    const promptedClaims = out.action.invocations.flatMap((inv) => claimIdsInJudgePrompt(inv.prompt));
+    expect(promptedClaims.slice().sort()).toEqual(["ARCH-HEXAGONAL", "ARCH-HEXAGONAL", "FR-001", "FR-002"]);
+    // Each prompt embeds the PRD once, whatever the number of its claims.
+    for (const inv of out.action.invocations) {
+      expect(inv.prompt.split("<prd_excerpt>").length - 1).toBe(1);
+    }
 
     // The snapshot's parallel claim_ids/judges arrays are the direct
     // evidence of panel size per claim — count occurrences per claim_id.
@@ -152,18 +162,20 @@ describe("self-check judge-panel budget gate", () => {
 
     // Non-architecture (FR-*) invocations dispatch under diversity_models[0]
     // (the "standard subjective claims keep 1 haiku judge" default).
-    const snapshot = out.state.verification_plan!;
-    const frInvocations = out.action.invocations.filter((_, idx) =>
-      snapshot.claim_ids[idx].startsWith("FR-"),
+    const claimsOf = (inv: (typeof out.action.invocations)[number]) => claimIdsInJudgePrompt(inv.prompt);
+    const frInvocations = out.action.invocations.filter((inv) =>
+      claimsOf(inv).some((id) => id.startsWith("FR-")),
     );
+    expect(frInvocations).toHaveLength(1);
+    expect(claimsOf(frInvocations[0])).toEqual(["FR-001", "FR-002"]);
     for (const inv of frInvocations) {
       expect(inv.model).toBe(DEFAULT_VERIFY_BUDGET.diversity_models[0]);
     }
 
     // The architecture claim's 2 judges cycle through diversity_models —
     // one distinct model per slot, not the single judge_model default.
-    const archInvocations = out.action.invocations.filter((_, idx) =>
-      snapshot.claim_ids[idx].startsWith("ARCH-"),
+    const archInvocations = out.action.invocations.filter((inv) =>
+      claimsOf(inv).some((id) => id.startsWith("ARCH-")),
     );
     expect(archInvocations).toHaveLength(2);
     expect(archInvocations.map((inv) => inv.model)).toEqual(
@@ -213,7 +225,9 @@ describe("self-check judge-panel budget gate — model-diversity slots (arXiv:26
     const out = dispatchAction(state);
     expect(out.action.kind).toBe("spawn_subagents");
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
-    expect(out.action.invocations).toHaveLength(20);
+    expect(out.state.verification_plan!.claim_ids).toHaveLength(20);
+    // The 20 verdicts travel in one prompt per (judge, model) batch.
+    expect(out.action.invocations.length).toBeLessThan(20);
 
     // Every distinct claim_id present in the dispatched snapshot has at
     // least 1 judge — reduceJudgeRequests' invariant (limits >= 1).
@@ -261,7 +275,7 @@ describe("self-check judge-panel budget gate — over-cap decisions", () => {
 
     expect(out.action.kind).toBe("spawn_subagents");
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
-    expect(out.action.invocations.length).toBeLessThanOrEqual(
+    expect(out.state.verification_plan!.claim_ids.length).toBeLessThanOrEqual(
       DEFAULT_VERIFY_BUDGET.invocation_cap,
     );
     expect(out.state.verification_plan?.sampled).toBe(true);
@@ -287,7 +301,7 @@ describe("self-check judge-panel budget gate — 'Full fleet' / 'Skip' decisions
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
     // 28 FR claims * 1 + 1 architecture claim * 2 = 30, above the cap —
     // "Full fleet" bypasses the cap (but NOT the per-claim reduction).
-    expect(out.action.invocations).toHaveLength(30);
+    expect(out.state.verification_plan!.claim_ids).toHaveLength(30);
     expect(out.state.verification_plan?.sampled).toBe(false);
   });
 
@@ -376,8 +390,8 @@ describe("self-check judge-panel budget gate — Phase B degradation (follow-up,
     () => {
       const dispatched = dispatchSampledBatch();
       const sampledInvocations = dispatched.action.invocations;
-      const sampledCount = sampledInvocations.length;
-      expect(sampledCount).toBeGreaterThan(1);
+      expect(sampledInvocations.length).toBeGreaterThan(1);
+      const sampledCount = dispatched.state.verification_plan!.claim_ids.length;
 
       const batchResult: ActionResult = {
         kind: "subagent_batch_result",

@@ -90,6 +90,9 @@ export {
   type CannedDispatcherOptions,
 } from "./canned-dispatcher.js";
 export { defaultFakeSectionDraft } from "./canned-responses.js";
+// A host that answers a judge batch (one prompt per judge, issue #119) reads
+// the claim_ids it must answer for from the prompt with this helper.
+export { claimIdsInJudgePrompt } from "@prd-gen/verification";
 
 // Wave F2 — production-mode dispatcher (real subagents via AgentInvoker).
 // Companion to makeCannedDispatcher; consumed by

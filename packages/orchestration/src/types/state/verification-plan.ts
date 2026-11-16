@@ -22,7 +22,7 @@ import { AgentIdentitySchema } from "@prd-gen/core";
 export const VerificationPlanSnapshotSchema = z
   .object({
     batch_id: z.string(),
-    /** Claim IDs in dispatch order — index = invocation slot. */
+    /** Claim IDs in dispatch order — index = request slot (buildJudgeIndex maps slots to invocations). */
     claim_ids: z.array(z.string()),
     /** Judge identities, parallel to claim_ids by index. */
     judges: z.array(AgentIdentitySchema),
