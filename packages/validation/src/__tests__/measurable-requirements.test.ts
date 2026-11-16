@@ -844,7 +844,12 @@ describe("measurable_requirements (#118)", () => {
       // columns deep is left of it, since the tab expands to 4 columns and no
       // more, so the comment ends there and FR-002 is read (PR #310 review,
       // note 3: a line of one space no longer repeats the #308 test's FR-001).
-      ...["<?note", "   - Notes", "     <!-- open", "\t", "     - FR-002: Import is fast.", "?>"],
+      ...["<?note", "   - Notes", "     <!-- open", "\t", "     - FR-002: Import is fast.", "?>", ""],
+      // FR-003: the same line of one tab under an item whose content is 4
+      // columns deep is not left of it, so the comment goes on and FR-003
+      // stays hidden: with FR-001 and FR-002 this pins the tab to exactly 4
+      // columns, not to 2 to 4 (PR #311 review, note 2).
+      ...["<?note", "  - Notes", "    <!-- open", "\t", "    - FR-003: Sync is fast.", "?>"],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '1 requirement(s) state an unbounded quality with no number: FR-002 ("fast")',
