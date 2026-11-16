@@ -61,8 +61,12 @@ function opaqueEnds(line: string): readonly string[] | null {
  * line is text. It is modelled on that rule: the block may interrupt a
  * paragraph, opens less than 4 columns right of its container, and runs to
  * the first line that holds its end, or to the end of its container, or of
- * the source when it is never closed (§4.6: an unclosed `<!--` hides the
- * rest of its container). Linear in the lines it covers, times the four
+ * the source when it is never closed. Like markdown-it's rule, it stops at
+ * the first line left of its container's content, and a blank line inside a
+ * list item is one (its `sCount` is 0, under `blkIndent`), so an unclosed
+ * `<!--` in a list item hides the item only up to its first blank line,
+ * while at the top level it runs to the source's end (PR #307 review,
+ * note 1). Linear in the lines it covers, times the four
  * end tags at most. Since it is a block rule, a `<!--` or `<pre>` on a line
  * of a fenced or indented code block is code (PR #304 review, Codex P2), a fence inside
  * a comment or raw-text block opens nothing (PR #305 review, Codex P2 and

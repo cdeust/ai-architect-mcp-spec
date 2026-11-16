@@ -787,6 +787,28 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
+  it("ends an unclosed comment of a list item at its first blank line, and closes a raw-text block on its opening line (PR #307 review, notes 1 and 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      // FR-001: `<?note` opens an HTML block that a blank line does not end.
+      // In a list item, the blank line is left of the item's content, so the
+      // unclosed `<!--` ends there, as in markdown-it, and FR-001 is read.
+      ...["<?note", "- Notes", "  <!-- open", "", "  - FR-001: Export is fast.", "?>", ""],
+      // FR-002: at the HTML block's top level the same comment runs to the
+      // block's end, so FR-002 stays hidden.
+      ...["<?note", "<!-- open", "", "- FR-002: Import is fast.", "?>", ""],
+      // FR-003: the opening line already holds a raw-text end tag, so the
+      // block closes on it and the item under it is read (note 2).
+      ...["<div>", "<pre></style>", "- FR-003: Search is fast.", "</div>", ""],
+      // FR-004: with no end tag on the opening line, the block stays open.
+      ...["<div>", "<pre>", "- FR-004: Login is fast.", "</div>"],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast")',
+    ]);
+  });
+
   it("reads a line 4 columns right of a top-level defining item's container as text (PR #284 review, note 2)", () => {
     const content = [
       "## Requirements",
