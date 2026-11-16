@@ -22,11 +22,13 @@ import { requirementDefinitions } from "./requirement-definitions.js";
 // each number stands (digits, or a number word of NUMBER_VALUES). Two
 // statements contradict each other when their cut forms are the same, their
 // numbers differ, and every number that differs is a quantity: followed by a
-// unit of the `quantityUnits` lexicon concept (seconds, MB, %, times…; EN
-// and FR). A number that names rather than measures ("Tier 1", "Step 2",
-// `FR-001`) is not followed by a unit, so two statements that differ there
-// are about two different things and are not reported. Two spellings of the
-// same value ("two" and "2") are the same number.
+// unit of measure of the `quantityUnits` lexicon concept (seconds, MB, %,
+// fois…; EN and FR). A number that names rather than measures ("Tier 1",
+// "Step 2", `FR-001`) is not followed by such a unit, so two statements that
+// differ there are about two different things and are not reported; a count
+// noun ("users", "files") is not a unit, since it follows a naming number as
+// often ("Tier 1 users"). Two spellings of the same value ("two" and "2",
+// "1,000" and "1000") are the same number.
 //
 // It fires on the presence of a defect, so it is blocking, but not critical:
 // it sees only a contradiction of identical wording, and the unit list is a
@@ -34,7 +36,8 @@ import { requirementDefinitions } from "./requirement-definitions.js";
 // critical retry. A requirement is compared with the first requirement of
 // its cut form only, so the cost grows with the number of requirements, not
 // with its square: a third statement that differs from the second but agrees
-// with the first is not reported.
+// with the first is not reported. Every later requirement is compared, so a
+// second one that states the same value as a reported one is reported too.
 //
 // source: issue #118, seeded defect `contradiction` (FR-004 keeps the
 // confirmation for five seconds, against FR-003's two), which the document
@@ -89,11 +92,49 @@ export function unitOf(token: string): string | null {
   return null;
 }
 
+/**
+ * The value of a number written in digits, as a string. A separator followed
+ * by exactly three digits, when every separator is the same character and is
+ * followed by three digits, groups thousands: `1,000`, `1,000,000`,
+ * `1.000.000`. With two kinds of separator, the last one is the decimal mark
+ * (`1,000.5`, `1.000,5`). Any other separator is the decimal mark (`1,5`,
+ * `1.5`, `2.25`). A form that does not read as a number (`1.2.3`) is its own
+ * value, its digits as written, so two different forms never read as equal.
+ * source: review 1 of #318, note 1 (only the first comma was replaced, so
+ * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN).
+ */
+export function digitsValue(token: string): string {
+  const separators = token.match(/[.,]/gu) ?? [];
+  const groups = token.split(/[.,]/u);
+  const kinds = new Set(separators);
+  let normalized: string;
+  if (kinds.size === 2) {
+    const decimal = separators[separators.length - 1]!;
+    const at = token.lastIndexOf(decimal);
+    normalized = `${token.slice(0, at).replace(/[.,]/gu, "")}.${token.slice(at + 1)}`;
+  } else if (separators.length > 0 && groups.slice(1).every((g) => g.length === 3) && (separators.length > 1 || separators[0] === ",")) {
+    normalized = groups.join("");
+  } else if (separators.length === 1) {
+    normalized = groups.join(".");
+  } else {
+    normalized = token;
+  }
+  const value = Number(normalized);
+  return Number.isFinite(value) ? String(value) : token;
+}
+
 /** The value a number token stands for, as a string: `2` and `two` give "2". */
 function valueOf(token: string): string | null {
-  if (DIGITS.test(token)) return String(Number(token.replace(",", ".")));
+  if (DIGITS.test(token)) return digitsValue(token);
   const word = NUMBER_VALUES.get(token.toLowerCase());
   return word === undefined ? null : String(word);
+}
+
+/** The longest spelling a finding quotes; a longer one is cut and ends with "…". */
+const MAX_QUOTED_CHARS = 24;
+
+function quoted(spelling: string): string {
+  return spelling.length > MAX_QUOTED_CHARS ? `${spelling.slice(0, MAX_QUOTED_CHARS)}…` : spelling;
 }
 
 /** A statement cut into its form, with a slot for each number, and the numbers. */
@@ -155,42 +196,38 @@ export function contradictionAt(a: CutStatement, b: CutStatement): number {
   return first;
 }
 
-interface FormGroup {
-  /** The first requirement stated in this form: every later one is compared with it. */
-  readonly first: { readonly id: string; readonly cut: CutStatement };
-  /** The lists of values already met in this form, joined by a space. */
-  readonly seen: Set<string>;
+/** The first requirement stated in a cut form: every later one is compared with it. */
+interface FirstOfForm {
+  readonly id: string;
+  readonly cut: CutStatement;
 }
 
 export function checkDocumentContradictoryRequirements(
   sections: ReadonlyArray<{ type: SectionType; content: string }>,
 ): HardOutputRuleViolation[] {
-  const byForm = new Map<string, FormGroup>();
+  const byForm = new Map<string, FirstOfForm>();
   const flagged = new Set<string>();
-  const quoted: string[] = [];
+  const named: string[] = [];
   for (const section of sections) {
     // Each section is parsed on its own, as the other document rules read it.
     for (const { id, text } of requirementDefinitions(section.content)) {
       const cut = cutStatement(text);
       if (cut.values.length === 0) continue;
-      const key = cut.values.join(" ");
-      const group = byForm.get(cut.form);
-      if (group === undefined) {
-        byForm.set(cut.form, { first: { id, cut }, seen: new Set([key]) });
+      const first = byForm.get(cut.form);
+      if (first === undefined) {
+        byForm.set(cut.form, { id, cut });
         continue;
       }
-      if (group.seen.has(key)) continue;
-      group.seen.add(key);
       // A reused identifier is duplicate_requirement_ids' finding, not a contradiction.
-      if (group.first.id === id || flagged.has(id)) continue;
-      const at = contradictionAt(cut, group.first.cut);
+      if (first.id === id || flagged.has(id)) continue;
+      const at = contradictionAt(cut, first.cut);
       if (at === -1) continue;
       flagged.add(id);
-      quoted.push(`${id} ("${cut.spellings[at]}", against ${group.first.id}: "${group.first.cut.spellings[at]}")`);
+      named.push(`${id} ("${quoted(cut.spellings[at]!)}", against ${first.id}: "${quoted(first.cut.spellings[at]!)}")`);
     }
   }
   if (flagged.size === 0) return [];
-  const names = listedIds(quoted);
+  const names = listedIds(named);
   return [
     makeViolation(
       "contradictory_requirements",

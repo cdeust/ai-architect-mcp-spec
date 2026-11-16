@@ -120,23 +120,31 @@ export const QUALITY_LEXICON = {
   /**
    * Units of a quantity, in the singular (a plural is read by its final "s"
    * removed). A number followed by one measures something ("two seconds",
-   * "5 MB", "3 times"); a number followed by anything else names something
-   * ("Tier 1", "Step 2"). Matched as a whole token, lowercase.
-   * source: issue #118, seeded defect `contradiction`.
+   * "5 MB", "3 fois"); a number followed by anything else names something
+   * ("Tier 1", "Step 2"). Matched as a whole token, lowercase, in a statement
+   * of either language.
+   *
+   * Only units of measure are listed. A count noun (user, file, step, row,
+   * result…) follows a number that names as often as one that counts: in
+   * "Tier 1 users can export CSV." the 1 names a tier. A word that is also a
+   * verb is left out too ("time", "attempt", "click", "request": "Step 2
+   * times out"), and so is a unit of one language that is a common word of
+   * the other ("to", "go", "an", "o" for terabyte, gigabyte, year and byte
+   * read as English words): the statement's language is not known. Two
+   * requirements that differ in a count ("10 users" against "50 users") are
+   * therefore not reported; the rule is a heuristic and keeps its precision.
+   * source: issue #118, seeded defect `contradiction`; review 1 of #318,
+   * note 1.
    */
   quantityUnits: {
     en: [
       "%", "percent", "ms", "millisecond", "s", "sec", "second", "min", "minute", "h", "hr",
       "hour", "day", "week", "month", "year", "b", "byte", "kb", "mb", "gb", "tb", "kib", "mib",
-      "gib", "bit", "kbps", "mbps", "px", "pt", "em", "rem", "fps", "rps", "qps", "time",
-      "attempt", "click", "character", "char", "item", "result", "row", "record", "request",
-      "user", "line", "word", "page", "file", "step", "digit",
+      "gib", "bit", "kbps", "mbps", "px", "pt", "em", "rem", "fps", "rps", "qps",
     ],
     fr: [
-      "pourcent", "milliseconde", "seconde", "heure", "jour", "semaine", "mois", "an",
-      "année", "o", "octet", "ko", "mo", "go", "to", "fois", "tentative", "clic", "caractère",
-      "élément", "résultat", "ligne", "enregistrement", "requête", "utilisateur", "mot",
-      "fichier", "étape", "chiffre",
+      "pourcent", "milliseconde", "seconde", "heure", "jour", "semaine", "mois", "ans",
+      "année", "octet", "ko", "mo", "fois",
     ],
   },
   namedConstantSignals: {

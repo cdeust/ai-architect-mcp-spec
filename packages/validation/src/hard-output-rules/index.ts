@@ -70,7 +70,7 @@ import {
   checkGenericOverSpecific,
 } from "./rules/architecture-rules.js";
 
-// Code Quality Rules (19-24)
+// Code Quality Rules
 import {
   checkNoNestedTypes,
   checkSingleResponsibility,
@@ -86,7 +86,7 @@ import {
   checkDocumentACToTestCoverage,
 } from "./rules/coverage-rules.js";
 
-// Security Rules (25-32)
+// Security Rules
 import {
   checkNoHardcodedSecrets,
   checkInputValidationRequired,
@@ -98,7 +98,7 @@ import {
   checkSecureCommunication,
 } from "./rules/security-rules.js";
 
-// Data Protection Rules (33-38)
+// Data Protection Rules
 import {
   checkDataClassificationRequired,
   checkSensitiveDataProtection,
@@ -108,7 +108,7 @@ import {
   checkConsentAndErasureSupport,
 } from "./rules/data-protection-rules.js";
 
-// Resilience Rules (39-43)
+// Resilience Rules
 import {
   checkStructuredErrorHandling,
   checkResiliencePatterns,
@@ -117,14 +117,14 @@ import {
   checkConsistentErrorFormat,
 } from "./rules/resilience-rules.js";
 
-// Concurrency Rules (44-46)
+// Concurrency Rules
 import {
   checkConcurrencySafety,
   checkImmutabilityByDefault,
   checkAtomicOperations,
 } from "./rules/concurrency-rules.js";
 
-// Senior Quality Rules (47-52)
+// Senior Quality Rules
 import {
   checkNoMagicNumbers,
   checkDefensiveCoding,
@@ -134,7 +134,7 @@ import {
   checkDeprecationStrategy,
 } from "./rules/senior-quality-rules.js";
 
-// Testing Rules (53-58)
+// Testing Rules
 import {
   checkMandatoryTestCoverage,
   checkSecurityTestingRequired,
@@ -144,7 +144,7 @@ import {
   checkTestIsolation,
 } from "./rules/testing-rules.js";
 
-// Observability Rules (59-62)
+// Observability Rules
 import {
   checkStructuredLogging,
   checkDistributedTracing,
@@ -152,7 +152,7 @@ import {
   checkAlertingThresholds,
 } from "./rules/observability-rules.js";
 
-// Dependency Rules (63-64)
+// Dependency Rules
 import {
   checkDependencyVulnerabilityScanning,
   checkMinimalDependencyPrinciple,
@@ -210,7 +210,7 @@ function checkRule(
     case "deployment_rollback_plan":
       return checkDeploymentRollbackPlan(content, sectionType);
 
-    // Architecture & Code Quality (18-24)
+    // Architecture & Code Quality
     case "generic_over_specific":
       return checkGenericOverSpecific(content, sectionType);
     case "no_nested_types":
@@ -226,7 +226,7 @@ function checkRule(
     case "code_reusability":
       return checkCodeReusability(content, sectionType);
 
-    // Security (25-32)
+    // Security
     case "no_hardcoded_secrets":
       return checkNoHardcodedSecrets(content, sectionType);
     case "input_validation_required":
@@ -244,7 +244,7 @@ function checkRule(
     case "secure_communication":
       return checkSecureCommunication(content, sectionType);
 
-    // Data Protection (33-38)
+    // Data Protection
     case "data_classification_required":
       return checkDataClassificationRequired(content, sectionType);
     case "sensitive_data_protection":
@@ -258,7 +258,7 @@ function checkRule(
     case "consent_and_erasure_support":
       return checkConsentAndErasureSupport(content, sectionType);
 
-    // Error Handling & Resilience (39-43)
+    // Error Handling & Resilience
     case "structured_error_handling":
       return checkStructuredErrorHandling(content, sectionType);
     case "resilience_patterns":
@@ -270,7 +270,7 @@ function checkRule(
     case "consistent_error_format":
       return checkConsistentErrorFormat(content, sectionType);
 
-    // Concurrency (44-46)
+    // Concurrency
     case "concurrency_safety":
       return checkConcurrencySafety(content, sectionType);
     case "immutability_by_default":
@@ -278,7 +278,7 @@ function checkRule(
     case "atomic_operations":
       return checkAtomicOperations(content, sectionType);
 
-    // Senior Quality (47-52)
+    // Senior Quality
     case "no_magic_numbers":
       return checkNoMagicNumbers(content, sectionType);
     case "defensive_coding":
@@ -292,7 +292,7 @@ function checkRule(
     case "deprecation_strategy":
       return checkDeprecationStrategy(content, sectionType);
 
-    // Testing (53-58)
+    // Testing
     case "mandatory_test_coverage":
       return checkMandatoryTestCoverage(content, sectionType);
     case "security_testing_required":
@@ -306,7 +306,7 @@ function checkRule(
     case "test_isolation":
       return checkTestIsolation(content, sectionType);
 
-    // Observability (59-62)
+    // Observability
     case "structured_logging":
       return checkStructuredLogging(content, sectionType);
     case "distributed_tracing":
@@ -316,7 +316,7 @@ function checkRule(
     case "alerting_thresholds":
       return checkAlertingThresholds(content, sectionType);
 
-    // Dependencies (63-64)
+    // Dependencies
     case "dependency_vulnerability_scanning":
       return checkDependencyVulnerabilityScanning(content, sectionType);
     case "minimal_dependency_principle":
