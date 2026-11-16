@@ -14,7 +14,7 @@ const SECTION_RULES: Record<SectionType, readonly HardOutputRule[]> = {
   ],
   user_stories: ["no_self_referencing_deps"],
   technical_specification: [
-    // Architecture & Code Quality (18-24)
+    // Architecture & Code Quality
     "clean_architecture",
     "no_any_codable",
     "code_example_port_compliance",
@@ -25,7 +25,7 @@ const SECTION_RULES: Record<SectionType, readonly HardOutputRule[]> = {
     "factory_based_injection",
     "solid_compliance",
     "code_reusability",
-    // Security (25-32)
+    // Security
     "no_hardcoded_secrets",
     "input_validation_required",
     "output_encoding_injection_prevention",
@@ -34,36 +34,36 @@ const SECTION_RULES: Record<SectionType, readonly HardOutputRule[]> = {
     "cryptographic_standards",
     "rate_limiting_required",
     "secure_communication",
-    // Data Protection (33-38)
+    // Data Protection
     "data_classification_required",
     "sensitive_data_protection",
     "no_sensitive_data_in_logs",
     "data_minimization",
     "audit_trail_required",
     "consent_and_erasure_support",
-    // Error Handling & Resilience (39-43)
+    // Error Handling & Resilience
     "structured_error_handling",
     "resilience_patterns",
     "graceful_degradation",
     "transaction_boundaries",
     "consistent_error_format",
-    // Concurrency (44-46)
+    // Concurrency
     "concurrency_safety",
     "immutability_by_default",
     "atomic_operations",
-    // Senior Code Quality (47-52)
+    // Senior Code Quality
     "no_magic_numbers",
     "defensive_coding",
     "method_size_limits",
     "consistent_naming",
     "api_contract_documentation",
     "deprecation_strategy",
-    // Observability (59-62)
+    // Observability
     "structured_logging",
     "distributed_tracing",
     "no_pii_in_observability",
     "alerting_thresholds",
-    // Dependencies (63-64)
+    // Dependencies
     "dependency_vulnerability_scanning",
     "minimal_dependency_principle",
   ],

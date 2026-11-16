@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { isBlockingViolation } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
-import { unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
+import { digitsValue, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
 
 type Sections = ReadonlyArray<{ type: "requirements" | "user_stories"; content: string }>;
 
@@ -115,6 +115,77 @@ describe("contradictory_requirements (#118)", () => {
       "%",
       "mb",
     ]);
-    expect(["supports", "checks", "users"].map(unitOf)).toEqual([null, null, "user"]);
+    expect(["supports", "checks", "ans"].map(unitOf)).toEqual([null, null, "ans"]);
+  });
+
+  // Review 1 of #318, note 1: a count noun, a verb or a word of the other
+  // language after a naming number made two different things a contradiction.
+  it("does not read a count noun, a verb or a word of the other language as a unit", () => {
+    expect(["users", "files", "steps", "rows", "times", "attempts", "clicks", "requests", "to", "go", "an", "o"].map(unitOf)).toEqual(
+      Array(12).fill(null),
+    );
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Tier 1 users can export CSV. | Must | Pricing |",
+          "| FR-002 | Tier 2 users can export CSV. | Must | Pricing |",
+          "| FR-003 | Version 1 to 3 data is migrated. | Must | Data |",
+          "| FR-004 | Version 2 to 3 data is migrated. | Must | Data |",
+          "| FR-005 | Step 1 times out when idle. | Must | Flow |",
+          "| FR-006 | Step 2 times out when idle. | Must | Flow |",
+        ),
+      ),
+    ).toBe(undefined);
+  });
+
+  // Review 1 of #318, note 1: only the first comma was replaced, so 1,000 read as 1
+  // and every 1,000,000-style number as NaN, all equal to each other.
+  it("reads a thousands separator, a decimal mark, and keeps a form it cannot read as its own value", () => {
+    expect(["1,000", "1000", "1,000,000", "1.000.000", "1,000.5", "1.000,5", "1,5", "1.5", "2.25", "1.2.3"].map(digitsValue)).toEqual([
+      "1000", "1000", "1000000", "1000000", "1000.5", "1000.5", "1.5", "1.5", "2.25", "1.2.3",
+    ]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A request completes in 1,000 ms. | Must | SLO |",
+          "| FR-002 | A request completes in 1000 ms. | Must | SLO |",
+          "| NFR-001 | The archive holds 1,000,000 MB. | Must | Capacity |",
+          "| NFR-002 | The archive holds 2,000,000 MB. | Must | Capacity |",
+        ),
+      ),
+    ).toBe('1 requirement(s) state a quantity an earlier requirement states differently: NFR-002 ("2,000,000", against NFR-001: "1,000,000")');
+  });
+
+  // Review 1 of #318, note 2: a value already met hid every later requirement that stated it.
+  it("reports every later requirement that contradicts the first, after a reused identifier or a reported one", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A session expires after 30 minutes. | Must | Security |",
+          "| FR-001 | A session expires after 60 minutes. | Must | Security |",
+          "| FR-002 | A session expires after 60 minutes. | Must | Security |",
+        ),
+      ),
+    ).toBe('1 requirement(s) state a quantity an earlier requirement states differently: FR-002 ("60", against FR-001: "30")');
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A session expires after 30 minutes. | Must | Security |",
+          "| FR-002 | A session expires after 60 minutes. | Must | Security |",
+          "| FR-003 | A session expires after 60 minutes. | Must | Security |",
+        ),
+      ),
+    ).toBe(
+      "2 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("60", against FR-001: "30"), FR-003 ("60", against FR-001: "30")',
+    );
+  });
+
+  // Review 1 of #318, note 2: a spelling had no length cap in the message.
+  it("cuts a long spelling in the message", () => {
+    const long = "9".repeat(200);
+    expect(
+      messageOf(table("| FR-001 | A job runs for 1 s. | Must | Ops |", `| FR-002 | A job runs for ${long} s. | Must | Ops |`)),
+    ).toBe(`1 requirement(s) state a quantity an earlier requirement states differently: FR-002 ("${"9".repeat(24)}…", against FR-001: "1")`);
   });
 });
