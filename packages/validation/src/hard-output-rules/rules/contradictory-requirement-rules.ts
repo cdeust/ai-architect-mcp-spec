@@ -66,13 +66,54 @@ const NUMBER_VALUES: ReadonlyMap<string, number> = new Map([
 ]);
 
 /**
- * A number in digits (`2`, `1.5`, `1,5`), a run of letters, or any other
- * character but a space. Each alternative is a single possessive-like run
- * with no nested quantifier, so the scan is linear.
+ * A number in digits (`2`, `1.5`, `1,5`) with the letters and digits glued
+ * after it (`10MB`, `1b`), a word that starts with a letter and may hold
+ * digits (`B2B`, `v2`, `H264`), or any other character but a space. A word
+ * is one token, so the digit inside `B2B` is not a number and its `B` is not
+ * a unit; a glued run is split by `splitGlued`. Each alternative ends where
+ * its character class ends and none can fail after it started, so the scan
+ * is linear.
+ * source: review 1 of #319, note 3 (`Tier 1 B2B customers` read 1 as a
+ * quantity of bytes).
  */
-const TOKEN = /\p{N}+(?:[.,]\p{N}+)*|\p{L}+|[^\s\p{L}\p{N}]/gu;
+const TOKEN = /\p{N}+(?:[.,]\p{N}+)*[\p{L}\p{N}]*|\p{L}[\p{L}\p{N}]*|[^\s\p{L}\p{N}]/gu;
 
 const DIGITS = /^\p{N}/u;
+
+/** The number at the start of a token that starts with a digit. */
+const LEADING_NUMBER = /^\p{N}+(?:[.,]\p{N}+)*/u;
+
+/**
+ * The units read glued to a number although they are one letter: `5s`, `3h`.
+ * A glued `b` is left out: `Phase 1b`, `Step 2b` name a sub-step more often
+ * than `1b` writes a byte or a bit, which a PRD writes `1 B` or `1 KB`.
+ * Glued units of two letters or more (`10MB`, `200ms`) are all read.
+ * source: review 1 of #319, note 3.
+ */
+const GLUED_ONE_LETTER_UNITS: ReadonlySet<string> = new Set(["s", "h"]);
+
+/** A token that starts with a digit, read as a number and the unit glued to it, if any. */
+interface GluedToken {
+  readonly number: string;
+  /** The glued unit in its singular form, null when nothing is glued. */
+  readonly unit: string | null;
+}
+
+/**
+ * precondition: `token` starts with a digit.
+ * postcondition: the number and its glued unit when the rest is empty or a
+ * unit; null when the rest is anything else (`1a`, `2nd`, `3D`), so the
+ * token is a word and names something.
+ */
+export function splitGlued(token: string): GluedToken | null {
+  const number = token.match(LEADING_NUMBER)![0];
+  const rest = token.slice(number.length);
+  if (rest === "") return { number, unit: null };
+  if (!/^\p{L}+$/u.test(rest)) return null;
+  const unit = unitOf(rest);
+  if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
+  return { number, unit };
+}
 
 /** The units of the `quantityUnits` concept, lowercase. */
 const UNITS: ReadonlySet<string> = new Set(phrases("quantityUnits"));
@@ -98,10 +139,14 @@ export function unitOf(token: string): string | null {
  * followed by three digits, groups thousands: `1,000`, `1,000,000`,
  * `1.000.000`. With two kinds of separator, the last one is the decimal mark
  * (`1,000.5`, `1.000,5`). Any other separator is the decimal mark (`1,5`,
- * `1.5`, `2.25`). A form that does not read as a number (`1.2.3`) is its own
- * value, its digits as written, so two different forms never read as equal.
+ * `1.5`, `2.25`). A group of thousands never follows a leading `0`, so
+ * `0,250` and `0,001` read as decimals (0.25, 0.001). A form that does not
+ * read as a number (`1.2.3`) is its own value, its digits as written, so two
+ * different forms never read as equal. `1,500` stays 1500: it may be a
+ * French 1.5, which the statement's language does not settle.
  * source: review 1 of #318, note 1 (only the first comma was replaced, so
- * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN).
+ * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN); review 1
+ * of #319, note 2 (`0,250` read as 250).
  */
 export function digitsValue(token: string): string {
   const separators = token.match(/[.,]/gu) ?? [];
@@ -112,7 +157,7 @@ export function digitsValue(token: string): string {
     const decimal = separators[separators.length - 1]!;
     const at = token.lastIndexOf(decimal);
     normalized = `${token.slice(0, at).replace(/[.,]/gu, "")}.${token.slice(at + 1)}`;
-  } else if (separators.length > 0 && groups.slice(1).every((g) => g.length === 3) && (separators.length > 1 || separators[0] === ",")) {
+  } else if (separators.length > 0 && !groups[0]!.startsWith("0") && groups.slice(1).every((g) => g.length === 3) && (separators.length > 1 || separators[0] === ",")) {
     normalized = groups.join("");
   } else if (separators.length === 1) {
     normalized = groups.join(".");
@@ -121,13 +166,6 @@ export function digitsValue(token: string): string {
   }
   const value = Number(normalized);
   return Number.isFinite(value) ? String(value) : token;
-}
-
-/** The value a number token stands for, as a string: `2` and `two` give "2". */
-function valueOf(token: string): string | null {
-  if (DIGITS.test(token)) return digitsValue(token);
-  const word = NUMBER_VALUES.get(token.toLowerCase());
-  return word === undefined ? null : String(word);
 }
 
 /** The longest spelling a finding quotes; a longer one is cut and ends with "…". */
@@ -167,13 +205,32 @@ export function cutStatement(text: string): CutStatement {
   const measured: boolean[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
-    const value = valueOf(token);
-    if (value === null) {
+    if (DIGITS.test(token)) {
+      const glued = splitGlued(token);
+      if (glued === null) {
+        form.push(token.toLowerCase());
+        continue;
+      }
+      form.push(NUMBER_SLOT);
+      values.push(digitsValue(glued.number));
+      spellings.push(glued.number);
+      if (glued.unit !== null) {
+        // `10MB` and `10 MB` are one form.
+        form.push(glued.unit);
+        measured.push(true);
+        continue;
+      }
+      const next = tokens[i + 1];
+      measured.push(next !== undefined && unitOf(next) !== null);
+      continue;
+    }
+    const word = NUMBER_VALUES.get(token.toLowerCase());
+    if (word === undefined) {
       form.push(unitOf(token) ?? token.toLowerCase());
       continue;
     }
     form.push(NUMBER_SLOT);
-    values.push(value);
+    values.push(String(word));
     spellings.push(token);
     const next = tokens[i + 1];
     measured.push(next !== undefined && unitOf(next) !== null);
