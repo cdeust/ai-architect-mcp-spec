@@ -77,11 +77,28 @@ describe("testable_acceptance_criteria (#118)", () => {
   });
 
   it("leaves the requirement reader as it was: an AC line does not end an FR definition", () => {
-    const content = "- FR-001: Search must be fast\n  AC-001: within 200 ms.";
+    // A bold AC line is a definition form: read with the AC prefix it ends
+    // the FR text, so the default reader keeping it in FR-001 is a real check.
+    const content = "- FR-001: Search must be fast\n  **AC-001** within 200 ms.";
     expect(requirementDefinitions(content)).toEqual([
-      { id: "FR-001", text: ": Search must be fast\nAC-001: within 200 ms." },
+      { id: "FR-001", text: ": Search must be fast\n**AC-001** within 200 ms." },
     ]);
-    expect(requirementDefinitions(content, ["AC"])).toEqual([]);
+    expect(requirementDefinitions(content, ["FR", "AC"])).toEqual([
+      { id: "FR-001", text: ": Search must be fast" },
+      { id: "AC-001", text: " within 200 ms." },
+    ]);
+  });
+
+  it("does not read the French Like reaction \"J'aime\" as a feeling, but reads other elisions", () => {
+    for (const text of [
+      "Le bouton J'aime incrémente le compteur de 1.",
+      "Le bouton j\u2019adore s'affiche sous la photo.",
+    ]) {
+      expect(untestableTermIn(text), text).toBeNull();
+      expect(findings(`- AC-1: ${text}`), text).toEqual([]);
+    }
+    expect(untestableTermIn("Les lecteurs l'adorent.")).toBe("adorent");
+    expect(untestableTermIn("Les lecteurs l\u2019apprécient.")).toBe("apprécient");
   });
 
   it("refuses an identifier prefix that is not upper-case letters", () => {

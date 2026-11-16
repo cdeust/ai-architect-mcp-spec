@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 /**
- * 67 Hard Output Rules — 64 ported from HardOutputRule.swift, plus
+ * The Hard Output Rules, first ported from HardOutputRule.swift; #118 added
  * `dependency_targets_defined`, `measurable_requirements` and
- * `testable_acceptance_criteria` (#118).
+ * `testable_acceptance_criteria`. The count is `HardOutputRuleSchema.options
+ * .length`, not written here: a hand-kept count drifted (it read 67 for 74).
  * These are the #1 quality driver in the system (per Feynman/Ginzburg audit).
  * Each rule was added to fix a specific LLM failure mode observed in production.
  * Do not remove any rule without benchmarking the impact.
