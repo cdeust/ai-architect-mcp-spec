@@ -64,17 +64,20 @@ function opaqueEnds(line: string): readonly string[] | null {
  * the source when it is never closed. Like markdown-it's rule, it stops at
  * the first line left of its container's content: in a list item, an empty
  * line (its `sCount` is 0, under `blkIndent`), a line of fewer columns than
- * the item's content, or a dedented sibling item. `sCount` expands tabs, so a
- * line of one tab is 4 columns deep (PR #309 review, note 2). A comment in a
- * list item, closed further down or not, thus hides the item only up to that
- * line, while at the top level an unclosed one runs to the source's end (PR
- * #307 review, note 1; PR #308 review, notes 1 and 2). A line of whitespace
- * as many columns deep as the item's content does not stop it. Linear in the lines it covers, times the four
- * end tags at most. Since it is a block rule, a `<!--` or `<pre>` on a line
- * of a fenced or indented code block is code (PR #304 review, Codex P2), a fence inside
- * a comment or raw-text block opens nothing (PR #305 review, Codex P2 and
- * note 1), and a comment inside a list item stays in that item (PR #305
- * review, Codex P2 and note 2).
+ * the item's content, or a dedented sibling item. `sCount` expands tabs to
+ * the next tab stop, so a tab at the line start is 4 columns deep (PR #309
+ * review, note 2), while one after a block quote's `>` reaches the same stop
+ * from further right and counts fewer columns (2 after `>` or `> `; PR #310
+ * review, note 1). A comment in a list item, closed further down or not, thus
+ * hides the item only up to that line, while at the top level an unclosed one
+ * runs to the source's end (PR #307 review, note 1; PR #308 review, notes 1
+ * and 2). A line of whitespace as many columns deep as the item's content does
+ * not stop it. Linear in the lines it covers, times the four end tags at most
+ * (PR #310 review, note 2). Since it is a block rule, a `<!--` or `<pre>` on
+ * a line of a fenced or indented code block is code (PR #304 review, Codex
+ * P2), a fence inside a comment or raw-text block opens nothing (PR #305
+ * review, Codex P2 and note 1), and a comment inside a list item stays in
+ * that item (PR #305 review, Codex P2 and note 2).
  */
 export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
   if (state.sCount[startLine]! - state.blkIndent >= 4) return false;
