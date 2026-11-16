@@ -337,6 +337,8 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // Review 1 of #319, note 3: a number with a long glued run, and a long word of letters and digits.
       ["glued", (n) => "- FR-1: 1" + "a1".repeat(n) + " s"],
       ["alnum", (n) => "- FR-1: B" + "2B".repeat(n) + " 1 s"],
+      // Review 1 of #320, note 2: a long glued run of numbers and units, every one read.
+      ["durations", (n) => "- FR-1: 1" + "h1".repeat(n) + " s"],
     ];
     for (const [name, build] of builders) {
       const small = build(name === "rows" ? 2000 : 32000);
