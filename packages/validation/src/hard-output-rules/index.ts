@@ -18,6 +18,7 @@ import {
 import { checkDocumentDependencyTargetsDefined } from "./rules/dependency-target-rules.js";
 // Document-level measurable requirements (#118)
 import { checkDocumentMeasurableRequirements } from "./rules/measurable-requirement-rules.js";
+import { checkDocumentTestableAcceptanceCriteria } from "./rules/testable-acceptance-criteria-rules.js";
 
 // SP Rules (1, 8, 9)
 import {
@@ -325,6 +326,7 @@ function checkRule(
     case "ac_to_test_coverage":
     case "dependency_targets_defined":
     case "measurable_requirements":
+    case "testable_acceptance_criteria":
     case "post_generation_self_check":
     case "mandatory_codebase_analysis":
       return [];
@@ -405,6 +407,7 @@ const DOCUMENT_LEVEL_CHECKS: Readonly<
   dependency_targets_defined: ({ sections }) =>
     checkDocumentDependencyTargetsDefined(sections),
   measurable_requirements: ({ sections }) => checkDocumentMeasurableRequirements(sections),
+  testable_acceptance_criteria: ({ sections }) => checkDocumentTestableAcceptanceCriteria(sections),
 };
 
 export function validateDocument(

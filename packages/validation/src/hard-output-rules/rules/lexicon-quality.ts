@@ -1,8 +1,9 @@
 import type { LexiconConcept } from "./lexicon-types.js";
 
 /**
- * Bilingual concept groups consumed by senior-quality-rules.ts, and
- * `unboundedQualityTerms` by measurable-requirement-rules.ts.
+ * Bilingual concept groups consumed by senior-quality-rules.ts,
+ * `unboundedQualityTerms` by measurable-requirement-rules.ts, and
+ * `untestableOutcomeTerms` by testable-acceptance-criteria-rules.ts.
  */
 export const QUALITY_LEXICON = {
   /**
@@ -69,6 +70,50 @@ export const QUALITY_LEXICON = {
       "performante",
       "significatif",
       "significative",
+    ],
+  },
+  /**
+   * Verbs and adjectives that state how a person feels about the product
+   * ("Readers love the confirmation."). An acceptance criterion made of one
+   * names no behaviour a test can observe: it is not verifiable. Matched as
+   * whole words, like `unboundedQualityTerms`. Words with an ordinary
+   * testable sense in a criterion are left out: "like" (a preposition),
+   * "prefer" (`prefers-reduced-motion`), "satisfied" (a satisfied
+   * condition), "happy" (the happy path), "feel" (look and feel).
+   * source: ISO/IEC/IEEE 29148:2018 §5.2.5, a requirement is verifiable;
+   * §5.2.7, subjective language is to be avoided.
+   */
+  untestableOutcomeTerms: {
+    en: [
+      "love",
+      "loves",
+      "loved",
+      "enjoy",
+      "enjoys",
+      "enjoyed",
+      "delighted",
+      "appreciate",
+      "appreciates",
+      "appreciated",
+      "pleased",
+      "frustrated",
+      "annoyed",
+    ],
+    fr: [
+      "adore",
+      "adorent",
+      "aime",
+      "aiment",
+      "apprécie",
+      "apprécient",
+      "ravi",
+      "ravie",
+      "ravis",
+      "ravies",
+      "frustré",
+      "frustrés",
+      "agacé",
+      "agacés",
     ],
   },
   namedConstantSignals: {
