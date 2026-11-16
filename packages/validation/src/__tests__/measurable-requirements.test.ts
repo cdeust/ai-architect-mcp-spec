@@ -787,7 +787,7 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
-  it("ends an unclosed comment of a list item at its first blank line, and closes a raw-text block on its opening line (PR #307 review, notes 1 and 2)", () => {
+  it("ends a comment of a list item at the first line left of the item's content, and closes a raw-text block on its opening line (PR #307 review, notes 1 and 2)", () => {
     const content = [
       "## Requirements",
       "",
@@ -806,6 +806,29 @@ describe("measurable_requirements (#118)", () => {
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '2 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast")',
+    ]);
+  });
+
+  it("cuts a comment of a list item at a line left of the item's content, closed further down or not (PR #308 review, notes 1 and 2)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      // FR-001: a line of one space is left of the item's content (2
+      // columns), so the comment ends there and FR-001 is read.
+      ...["<?note", "- Notes", "  <!-- open", " ", "  - FR-001: Export is fast.", "?>", ""],
+      // FR-002: a line of two spaces is as deep as the content, so the
+      // comment goes on over it and FR-002 stays hidden.
+      ...["<?note", "- Notes", "  <!-- open", "  ", "  - FR-002: Import is fast.", "?>", ""],
+      // FR-003: a dedented sibling item is left of the content too.
+      ...["<?note", "- Notes", "  <!-- open", "- FR-003: Search is fast.", "?>", ""],
+      // FR-004: the cut does not depend on the comment being unclosed; one
+      // closed under the item is cut at the blank line as well.
+      ...["<?note", "- Notes", "  <!--", "", "  - FR-004: Login is fast.", "  -->", "?>", ""],
+      // FR-005: with no line left of the content, the closed comment hides it.
+      ...["<?note", "- Notes", "  <!--", "  - FR-005: Upload is fast.", "  -->", "?>"],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '3 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), FR-004 ("fast")',
     ]);
   });
 
