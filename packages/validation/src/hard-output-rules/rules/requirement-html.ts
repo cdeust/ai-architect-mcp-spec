@@ -23,23 +23,34 @@ export const isHtmlComment = (content: string): boolean => content.trimStart().s
 /** The raw-text tags of CommonMark 0.31.2 §4.6, start condition 1. */
 const RAW_TEXT_TAGS = ["pre", "script", "style", "textarea"] as const;
 
+/** What closes a comment (CommonMark 0.31.2 §4.6, end condition 2). */
+const COMMENT_ENDS = ["-->"] as const;
+
 /**
- * What closes the opaque block a line opens, or null: `-->` for a comment
- * (start condition 2: `<!--`), `</pre>` and the like for a raw-text block
+ * What closes a raw-text block: any of the four end tags, whichever tag
+ * opened it (CommonMark 0.31.2 §4.6, end condition 1, as markdown-it's
+ * `html_block` rule reads it), so `<pre>` / `</style>` closes the block
+ * (PR #306 review, note 1).
+ */
+const RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name) => `</${name}>`);
+
+/**
+ * What may close the opaque block a line opens, or null: `-->` for a comment
+ * (start condition 2: `<!--`), any raw-text end tag for a raw-text block
  * (start condition 1: `<pre`, `<script`, `<style` or `<textarea`, then a
  * space, a tab, `>` or the line's end, in any case). A raw-text block is not
  * markdown, so, like a code block, it defines nothing (PR #302 review,
  * note 1). Plain prefix tests, with no pattern.
  */
-function opaqueEnd(line: string): string | null {
-  if (line.startsWith("<!--")) return "-->";
+function opaqueEnds(line: string): readonly string[] | null {
+  if (line.startsWith("<!--")) return COMMENT_ENDS;
   const head = line.slice(0, 10).toLowerCase();
-  const tag = RAW_TEXT_TAGS.find((name) => {
+  const opensRawText = RAW_TEXT_TAGS.some((name) => {
     if (!head.startsWith(`<${name}`)) return false;
     const next = head.charAt(name.length + 1);
     return next === "" || next === " " || next === "\t" || next === ">";
   });
-  return tag === undefined ? null : `</${tag}>`;
+  return opensRawText ? RAW_TEXT_ENDS : null;
 }
 
 /**
@@ -51,8 +62,9 @@ function opaqueEnd(line: string): string | null {
  * paragraph, opens less than 4 columns right of its container, and runs to
  * the first line that holds its end, or to the end of its container, or of
  * the source when it is never closed (§4.6: an unclosed `<!--` hides the
- * rest). Linear in the lines it covers. Since it is a block rule, a `<!--` or `<pre>` on a line of a fenced
- * or indented code block is code (PR #304 review, Codex P2), a fence inside
+ * rest of its container). Linear in the lines it covers, times the four
+ * end tags at most. Since it is a block rule, a `<!--` or `<pre>` on a line
+ * of a fenced or indented code block is code (PR #304 review, Codex P2), a fence inside
  * a comment or raw-text block opens nothing (PR #305 review, Codex P2 and
  * note 1), and a comment inside a list item stays in that item (PR #305
  * review, Codex P2 and note 2).
@@ -60,10 +72,13 @@ function opaqueEnd(line: string): string | null {
 export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
   if (state.sCount[startLine]! - state.blkIndent >= 4) return false;
   const lineText = (line: number): string => state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]!);
-  const end = opaqueEnd(lineText(startLine));
-  if (end === null) return false;
+  const ends = opaqueEnds(lineText(startLine));
+  if (ends === null) return false;
   if (silent) return true;
-  const closes = (line: number): boolean => lineText(line).toLowerCase().includes(end);
+  const closes = (line: number): boolean => {
+    const text = lineText(line).toLowerCase();
+    return ends.some((end) => text.includes(end));
+  };
   let nextLine = startLine + 1;
   if (!closes(startLine)) {
     for (; nextLine < endLine; nextLine++) {

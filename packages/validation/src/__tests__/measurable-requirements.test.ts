@@ -694,7 +694,7 @@ describe("measurable_requirements (#118)", () => {
     ]);
   });
 
-  it("reads across a comment line, takes `<!-->` as a comment and an unclosed `<!--` as text, skips a nested raw-text block and reads a line-leading sub-identifier as one (PR #303 review, notes 1 to 3)", () => {
+  it("reads across a comment line, takes `<!-->` as a comment, reads the item above an unclosed `<!--`, skips a nested raw-text block and reads a line-leading sub-identifier as one (PR #303 review, notes 1 to 3)", () => {
     const content = [
       "## Requirements",
       "",
@@ -704,7 +704,8 @@ describe("measurable_requirements (#118)", () => {
       ...["**FR-001** Search must be fast", "<!-- x -->", "within 2 seconds.", ""],
       ...["<div>", "**FR-002** Search must be fast", "<!-- x -->", "within 2 seconds.", "", "## Next", ""],
       // FR-003: `<!-->` is a whole comment, so the item under it is read.
-      // FR-004: an unclosed `<!--` is text and hides nothing.
+      // FR-004: an unclosed `<!--` hides only what follows it in its
+      // container, so the item above it is read.
       ...["<div>", "<!-->", "- FR-003: Search must be fast.", ""],
       ...["<div>", "- FR-004: Export must be easy.", "<!-- open", "", "## Next", ""],
       // FR-005: a `<pre>` nested in a `<div>` defines nothing.
@@ -765,6 +766,24 @@ describe("measurable_requirements (#118)", () => {
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
       '3 requirement(s) state an unbounded quality with no number: FR-003 ("fast"), FR-005 ("fast"), FR-007 ("fast")',
+    ]);
+  });
+
+  it("closes a raw-text block of an HTML block on any raw-text end tag, whichever tag opened it (PR #306 review, note 1)", () => {
+    const content = [
+      "## Requirements",
+      "",
+      // FR-001: `</style>` closes the `<pre>` block (CommonMark 0.31.2
+      // §4.6, end condition 1), so the item under it is read.
+      ...["<div>", "<pre>", "</style>", "- FR-001: Search is fast.", "</div>", ""],
+      // FR-002: the same, with the end tag in upper case after text.
+      ...["<div>", "<textarea>", "draft </PRE>", "- FR-002: Import is fast.", "</div>", ""],
+      // FR-003: a line with no raw-text end tag keeps the block open, so the
+      // item under it stays hidden.
+      ...["<div>", "<script>", "</div>", "- FR-003: Export is fast.", "</script>", "</div>", ""],
+    ].join("\n");
+    expect(findings(content).map((v) => v.message)).toEqual([
+      '2 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-002 ("fast")',
     ]);
   });
 
