@@ -167,6 +167,7 @@ export const DOCUMENT_LEVEL_RULES = [
   "ac_to_test_coverage",
   "dependency_targets_defined",
   "measurable_requirements",
+  "testable_acceptance_criteria",
 ] as const satisfies readonly HardOutputRule[];
 
 /** A rule carried by DOCUMENT_LEVEL_RULES. */

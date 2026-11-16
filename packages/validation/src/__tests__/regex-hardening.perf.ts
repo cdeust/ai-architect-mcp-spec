@@ -32,6 +32,7 @@ import { validateSection } from "../index.js";
 import { checkProseSPTotal, checkSPArithmetic } from "../hard-output-rules/rules/sp-rules.js";
 import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
 import { checkDocumentMeasurableRequirements } from "../hard-output-rules/rules/measurable-requirement-rules.js";
+import { checkDocumentTestableAcceptanceCriteria } from "../hard-output-rules/rules/testable-acceptance-criteria-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -314,6 +315,19 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     const run = (input: string): void =>
       void checkDocumentMeasurableRequirements([{ type: "requirements", content: input }]);
     for (const head of ["| FR-1 | as", '| FR-1 | "if', "- FR-1: `as"]) {
+      const build = (n: number): string => head + " ".repeat(n) + "x";
+      const small = build(64000);
+      const large = build(128000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), head).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
+  it("space runs and unclosed quotes in an acceptance criterion (testable_acceptance_criteria)", () => {
+    const run = (input: string): void =>
+      void checkDocumentTestableAcceptanceCriteria([{ type: "acceptance_criteria", content: input }]);
+    for (const head of ["| AC-1 | lo", '| AC-1 | "love', "- AC-1: `love", "- AC-1: \u201clove"]) {
       const build = (n: number): string => head + " ".repeat(n) + "x";
       const small = build(64000);
       const large = build(128000);

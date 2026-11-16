@@ -1,4 +1,4 @@
-// Validation engine — 66 HOR rules + audit flags + cross-ref graph
+// Validation engine — 67 HOR rules + audit flags + cross-ref graph
 
 export {
   validateSection,

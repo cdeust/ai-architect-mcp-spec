@@ -41,7 +41,9 @@ const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = 
   scope_creep: [],
   missing_edge_case: [],
   inconsistent_terminology: [],
-  untestable_statement: [],
+  untestable_statement: [
+    'testable_acceptance_criteria: 1 acceptance criterion(s) state how a person feels, which no test can observe: AC-003 ("love")',
+  ],
 };
 
 const signature = (v: HardOutputRuleViolation): string =>
@@ -104,7 +106,7 @@ describe("seeded-defect regression fixture (#118)", () => {
     }
   });
 
-  it("recall on the rebuilt set, computed from the validator, is 5 of 10", () => {
+  it("recall on the rebuilt set, computed from the validator, is 6 of 10", () => {
     // Counted from validateDocument, not from EXPECTED_DIAGNOSES, so a rule
     // that starts or stops diagnosing a seed fails here as well.
     const caught = SEEDED_DEFECTS.filter(
@@ -115,6 +117,7 @@ describe("seeded-defect regression fixture (#118)", () => {
       "hallucinated_dependency",
       "missing_acceptance_criteria",
       "unmeasurable_requirement",
+      "untestable_statement",
       "wrong_number",
     ]);
   });

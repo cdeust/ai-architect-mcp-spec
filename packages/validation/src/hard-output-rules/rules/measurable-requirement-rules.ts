@@ -44,15 +44,7 @@ function escapeRegExp(text: string): string {
  * `user friendly` wins over a shorter overlapping phrase. Within a phrase a
  * space matches any run of spaces or tabs.
  */
-const UNBOUNDED_TERM = new RegExp(
-  String.raw`(?<!${WORD_CHAR})(?:` +
-    [...new Set(phrases("unboundedQualityTerms"))]
-      .sort((a, b) => b.length - a.length)
-      .map((p) => escapeRegExp(p).replace(/ /g, "[ \\t]+"))
-      .join("|") +
-    String.raw`)(?!${WORD_CHAR})`,
-  "iu",
-);
+const UNBOUNDED_TERM = wholeWordTerms(phrases("unboundedQualityTerms"));
 
 /**
  * A number in digits, or a number word other than "one": "one" and the
@@ -138,7 +130,30 @@ function quantitiesOf(text: string): string {
  */
 export function unboundedTermIn(text: string): string | null {
   if (NUMBER.test(quantitiesOf(text))) return null;
-  return UNBOUNDED_TERM.exec(text.replace(NAMED_TEXT, " "))?.[0] ?? null;
+  return UNBOUNDED_TERM.exec(withoutNamedText(text))?.[0] ?? null;
+}
+
+/** The text with its quoted text and code spans blanked: what it states, not what it names. */
+export function withoutNamedText(text: string): string {
+  return text.replace(NAMED_TEXT, " ");
+}
+
+/**
+ * Every phrase of `terms` as one whole-word alternation, case-insensitive,
+ * longest first so that a phrase wins over a shorter overlapping one. Within
+ * a phrase a space matches any run of spaces or tabs; a term must not touch
+ * a letter, a digit or a hyphen on either side.
+ */
+export function wholeWordTerms(terms: readonly string[]): RegExp {
+  return new RegExp(
+    String.raw`(?<!${WORD_CHAR})(?:` +
+      [...new Set(terms)]
+        .sort((a, b) => b.length - a.length)
+        .map((p) => escapeRegExp(p).replace(/ /g, "[ \\t]+"))
+        .join("|") +
+      String.raw`)(?!${WORD_CHAR})`,
+    "iu",
+  );
 }
 
 export function checkDocumentMeasurableRequirements(

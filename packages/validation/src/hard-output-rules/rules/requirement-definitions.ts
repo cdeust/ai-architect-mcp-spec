@@ -73,10 +73,41 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 
-/** A line of a block that opens with a requirement identifier, optionally bold or code; the rest of the line in group 2. */
-const DEFINING_LINE = /^(?:\*\*|\x60)?((?:FR|NFR)-\d{1,9})(?![\w-])(?:\*\*|\x60)?(.*)$/;
-/** A bold line: one that opens with a bold requirement identifier. */
-const BOLD_LINE = /^\*\*(?:FR|NFR)-\d{1,9}(?![\w-])/;
+/**
+ * The identifiers a reader of definitions looks for, as three patterns over
+ * one alternation of prefixes (`FR|NFR`): a line of a block that opens with
+ * an identifier, optionally bold or code, with the rest of the line in group
+ * 2; a bold line, one that opens with a bold identifier; and a table cell
+ * that is one identifier, optionally code. Requirements (`FR`, `NFR`) are
+ * the default; the Testable Acceptance Criteria rule reads `AC` definitions
+ * with the same block tree (testable-acceptance-criteria-rules.ts).
+ */
+interface DefinitionIds {
+  readonly definingLine: RegExp;
+  readonly boldLine: RegExp;
+  readonly cell: RegExp;
+}
+
+const idsCache = new Map<string, DefinitionIds>();
+
+/** The patterns for identifiers with one of `prefixes` (upper-case letters only). */
+function definitionIds(prefixes: readonly string[]): DefinitionIds {
+  const key = prefixes.join("|");
+  const cached = idsCache.get(key);
+  if (cached !== undefined) return cached;
+  if (!prefixes.every((prefix) => /^[A-Z]{1,10}$/.test(prefix))) throw new Error(`invalid identifier prefixes: ${key}`);
+  const id = String.raw`(?:${key})-\d{1,9}`;
+  const made: DefinitionIds = {
+    definingLine: new RegExp(String.raw`^(?:\*\*|\x60)?(${id})(?![\w-])(?:\*\*|\x60)?(.*)$`),
+    boldLine: new RegExp(String.raw`^\*\*${id}(?![\w-])`),
+    cell: new RegExp(String.raw`^\x60?(${id})\x60?$`),
+  };
+  idsCache.set(key, made);
+  return made;
+}
+
+/** Requirement identifiers: the default of `requirementDefinitions`. */
+const REQUIREMENT_PREFIXES = ["FR", "NFR"] as const;
 
 /** A leaf block a definition's text is read from: a paragraph, a heading or a table. */
 interface Leaf {
@@ -242,10 +273,10 @@ function tableBodyText(table: Leaf, end = table.rows.length): string {
 }
 
 /** The identifier a table row defines (its first cell, optionally code), or undefined. */
-const rowId = (cells: readonly string[]): string | undefined => /^\x60?((?:FR|NFR)-\d{1,9})\x60?$/.exec(cells[0] ?? "")?.[1];
+const rowId = (cells: readonly string[], ids: DefinitionIds): string | undefined => ids.cell.exec(cells[0] ?? "")?.[1];
 
 /** The requirement rows of a table: a row whose first cell is one identifier; its statement is the other cells less the metadata columns. */
-function tableDefinitions(table: Leaf): RequirementDefinition[] {
+function tableDefinitions(table: Leaf, ids: DefinitionIds): RequirementDefinition[] {
   const rows = table.rows;
   const [header] = rows;
   if (header === undefined) return [];
@@ -253,7 +284,7 @@ function tableDefinitions(table: Leaf): RequirementDefinition[] {
   const out: RequirementDefinition[] = [];
   rows.forEach((row, r) => {
     const cells = cellTexts(row);
-    const id = rowId(cells);
+    const id = rowId(cells, ids);
     if (id === undefined) return;
     // The header row is a definition only when its first cell is one; it
     // names no metadata column for itself.
@@ -276,12 +307,12 @@ const leafText = (leaf: Leaf): string => (leaf.type === "table" ? tableBodyText(
  * bold line only: a paragraph line that opens no list item defines a
  * requirement only as a bold line.
  */
-function definingId(source: string, boldOnly: boolean): { id: string; rest: string } | null {
+function definingId(source: string, boldOnly: boolean, ids: DefinitionIds): { id: string; rest: string } | null {
   // A continuation line keeps its indentation in the inline source; the
   // parser has already decided it is paragraph text (PR #299 review, Codex P2).
   const line = source.replace(/^[ \t]+/, "");
-  if (boldOnly && !BOLD_LINE.test(line)) return null;
-  const found = DEFINING_LINE.exec(line);
+  if (boldOnly && !ids.boldLine.test(line)) return null;
+  const found = ids.definingLine.exec(line);
   return found === null ? null : { id: found[1]!, rest: found[2]! };
 }
 
@@ -293,10 +324,10 @@ function definingId(source: string, boldOnly: boolean): { id: string; rest: stri
  * definition ends the text of the one before it, as the line scanner closed
  * it (PR #299 review, Codex P2).
  */
-function firstDefiningLine(leaf: Leaf): number {
-  if (leaf.type === "table") return leaf.rows.findIndex((row) => rowId(cellTexts(row)) !== undefined);
-  if (leaf.type === "heading") return definingId(leaf.inline, false) === null ? -1 : 0;
-  return leaf.inline.split("\n").findIndex((line, i) => definingId(line, !(leaf.opensItem && i === 0)) !== null);
+function firstDefiningLine(leaf: Leaf, ids: DefinitionIds): number {
+  if (leaf.type === "table") return leaf.rows.findIndex((row) => rowId(cellTexts(row), ids) !== undefined);
+  if (leaf.type === "heading") return definingId(leaf.inline, false, ids) === null ? -1 : 0;
+  return leaf.inline.split("\n").findIndex((line, i) => definingId(line, !(leaf.opensItem && i === 0), ids) !== null);
 }
 
 /**
@@ -305,8 +336,8 @@ function firstDefiningLine(leaf: Leaf): number {
  * `tableBodyText` reads them, so a bound stated there still counts (PR #300
  * review, Codex P2).
  */
-function textBeforeDefinition(leaf: Leaf): { text: string; ends: boolean } {
-  const at = firstDefiningLine(leaf);
+function textBeforeDefinition(leaf: Leaf, ids: DefinitionIds): { text: string; ends: boolean } {
+  const at = firstDefiningLine(leaf, ids);
   if (at < 0) return { text: leafText(leaf), ends: false };
   if (leaf.type === "table") return { text: at === 0 ? "" : tableBodyText(leaf, at), ends: true };
   return { text: leaf.type === "paragraph" ? leaf.inline.split("\n").slice(0, at).join("\n") : "", ends: true };
@@ -349,12 +380,12 @@ function withoutStatementMarkers(rest: string): string {
  * that list, not a bound (`withoutStatementMarkers`; PR #284 review, note 3;
  * PR #297 review, Codex P2).
  */
-function paragraphDefinitionText(rest: string, paragraph: Leaf, following: Iterable<Leaf> | null): string {
+function paragraphDefinitionText(rest: string, paragraph: Leaf, following: Iterable<Leaf> | null, ids: DefinitionIds): string {
   const lines = [withoutStatementMarkers(rest)];
   let last = paragraph.map[1];
   for (const leaf of following ?? []) {
     if (leaf.type !== "paragraph" || leaf.map[0] !== last) break;
-    const before = textBeforeDefinition(leaf);
+    const before = textBeforeDefinition(leaf, ids);
     if (before.text !== "") lines.push(before.text);
     if (before.ends) break;
     last = leaf.map[1];
@@ -368,18 +399,18 @@ function paragraphDefinitionText(rest: string, paragraph: Leaf, following: Itera
  * bold line (`Intro` / `**NFR-001** …`). Each one's text runs to the next
  * one in the paragraph; the last one's goes on with `following`.
  */
-function paragraphDefinitions(paragraph: Leaf, following: () => Iterable<Leaf>): RequirementDefinition[] {
+function paragraphDefinitions(paragraph: Leaf, following: () => Iterable<Leaf>, ids: DefinitionIds): RequirementDefinition[] {
   const lines = paragraph.inline.split("\n");
   const starts: { line: number; id: string; rest: string }[] = [];
   lines.forEach((line, i) => {
-    const found = definingId(line, !(paragraph.opensItem && i === 0));
+    const found = definingId(line, !(paragraph.opensItem && i === 0), ids);
     if (found !== null) starts.push({ line: i, ...found });
   });
   return starts.map((start, k) => {
     const next = starts[k + 1];
     const body = lines.slice(start.line + 1, next?.line ?? lines.length);
     const rest = [start.rest, ...body].join("\n");
-    return { id: start.id, text: paragraphDefinitionText(rest, paragraph, next === undefined ? following() : null) };
+    return { id: start.id, text: paragraphDefinitionText(rest, paragraph, next === undefined ? following() : null, ids) };
   });
 }
 
@@ -388,28 +419,37 @@ function paragraphDefinitions(paragraph: Leaf, following: () => Iterable<Leaf>):
  * next heading at any depth or level, or the next definition (a list item,
  * bold line or table row that defines a requirement; PR #299 review, Codex P2).
  */
-function headingBody(leaves: readonly Leaf[], at: number): string {
+function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): string {
   const lines: string[] = [];
   for (let k = at + 1; k < leaves.length && leaves[k]!.type !== "heading"; k++) {
-    const before = textBeforeDefinition(leaves[k]!);
+    const before = textBeforeDefinition(leaves[k]!, ids);
     if (before.text !== "") lines.push(before.text);
     if (before.ends) break;
   }
   return lines.join("\n");
 }
 
-/** The requirement definitions of a section, in document order: table rows, list items, headings and bold lines. */
-export function requirementDefinitions(content: string): RequirementDefinition[] {
+/**
+ * The requirement definitions of a section, in document order: table rows,
+ * list items, headings and bold lines. `prefixes` names the identifiers read
+ * (`FR` and `NFR` by default; upper-case letters only); a definition of
+ * another prefix is not one, so it does not end the text of the one before.
+ */
+export function requirementDefinitions(
+  content: string,
+  prefixes: readonly string[] = REQUIREMENT_PREFIXES,
+): RequirementDefinition[] {
+  const ids = definitionIds(prefixes);
   const leaves = leavesOf(content);
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
-      out.push(...tableDefinitions(leaf));
+      out.push(...tableDefinitions(leaf, ids));
       return;
     }
     if (leaf.type === "heading") {
-      const found = definingId(leaf.inline, false);
-      if (found !== null) out.push({ id: found.id, text: [found.rest, headingBody(leaves, at)].join("\n") });
+      const found = definingId(leaf.inline, false, ids);
+      if (found !== null) out.push({ id: found.id, text: [found.rest, headingBody(leaves, at, ids)].join("\n") });
       return;
     }
     // The blocks that may go on with the paragraph are the later leaves of
@@ -419,7 +459,7 @@ export function requirementDefinitions(content: string): RequirementDefinition[]
     function* following(): Generator<Leaf> {
       for (let k = at + 1; k < leaves.length && leaves[k]!.map[0] < leaf.containerEnd; k++) yield leaves[k]!;
     }
-    out.push(...paragraphDefinitions(leaf, following));
+    out.push(...paragraphDefinitions(leaf, following, ids));
   });
   return out;
 }
