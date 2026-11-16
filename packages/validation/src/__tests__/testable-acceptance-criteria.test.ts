@@ -103,6 +103,12 @@ describe("testable_acceptance_criteria (#118)", () => {
     expect(untestableTermIn("Le lecteur dit : j\u2019adore.")).toBe("adore");
     expect(untestableTermIn("Les lecteurs l'adorent.")).toBe("adorent");
     expect(untestableTermIn("Les lecteurs l\u2019apprécient.")).toBe("apprécient");
+    // Review 1 of #317, note 1: the verb "j'aime" is spelled as the button's
+    // name, so it is left out with it; "j'aiment" and "anti-j'aime" stay read.
+    expect(untestableTermIn("En tant que lecteur, j'aime la confirmation.")).toBeNull();
+    expect(untestableTermIn("Les lecteurs aiment la confirmation.")).toBe("aiment");
+    expect(untestableTermIn("Les lecteurs j'aiment le fil.")).toBe("aiment");
+    expect(untestableTermIn("Le bouton anti-j'aime est masqué.")).toBe("aime");
   });
 
   it("refuses an identifier prefix that is not upper-case letters", () => {

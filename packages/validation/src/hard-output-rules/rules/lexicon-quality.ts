@@ -2,8 +2,9 @@ import type { LexiconConcept } from "./lexicon-types.js";
 
 /**
  * Bilingual concept groups consumed by senior-quality-rules.ts,
- * `unboundedQualityTerms` by measurable-requirement-rules.ts, and
- * `untestableOutcomeTerms` by testable-acceptance-criteria-rules.ts.
+ * `unboundedQualityTerms` by measurable-requirement-rules.ts,
+ * `untestableOutcomeTerms` by testable-acceptance-criteria-rules.ts, and
+ * `quantityUnits` by contradictory-requirement-rules.ts.
  */
 export const QUALITY_LEXICON = {
   /**
@@ -114,6 +115,28 @@ export const QUALITY_LEXICON = {
       "frustrés",
       "agacé",
       "agacés",
+    ],
+  },
+  /**
+   * Units of a quantity, in the singular (a plural is read by its final "s"
+   * removed). A number followed by one measures something ("two seconds",
+   * "5 MB", "3 times"); a number followed by anything else names something
+   * ("Tier 1", "Step 2"). Matched as a whole token, lowercase.
+   * source: issue #118, seeded defect `contradiction`.
+   */
+  quantityUnits: {
+    en: [
+      "%", "percent", "ms", "millisecond", "s", "sec", "second", "min", "minute", "h", "hr",
+      "hour", "day", "week", "month", "year", "b", "byte", "kb", "mb", "gb", "tb", "kib", "mib",
+      "gib", "bit", "kbps", "mbps", "px", "pt", "em", "rem", "fps", "rps", "qps", "time",
+      "attempt", "click", "character", "char", "item", "result", "row", "record", "request",
+      "user", "line", "word", "page", "file", "step", "digit",
+    ],
+    fr: [
+      "pourcent", "milliseconde", "seconde", "heure", "jour", "semaine", "mois", "an",
+      "année", "o", "octet", "ko", "mo", "go", "to", "fois", "tentative", "clic", "caractère",
+      "élément", "résultat", "ligne", "enregistrement", "requête", "utilisateur", "mot",
+      "fichier", "étape", "chiffre",
     ],
   },
   namedConstantSignals: {

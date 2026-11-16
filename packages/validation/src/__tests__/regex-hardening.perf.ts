@@ -33,6 +33,7 @@ import { checkProseSPTotal, checkSPArithmetic } from "../hard-output-rules/rules
 import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
 import { checkDocumentMeasurableRequirements } from "../hard-output-rules/rules/measurable-requirement-rules.js";
 import { checkDocumentTestableAcceptanceCriteria } from "../hard-output-rules/rules/testable-acceptance-criteria-rules.js";
+import { checkDocumentContradictoryRequirements } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -321,6 +322,25 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       run(small);
       run(large);
       expect(growthRatio(run, small, large), head).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
+  it("many rows of one form with distinct quantities, and long number runs (contradictory_requirements)", () => {
+    const run = (input: string): void =>
+      void checkDocumentContradictoryRequirements([{ type: "requirements", content: input }]);
+    const builders: ReadonlyArray<readonly [string, (n: number) => string]> = [
+      // Every row shares one cut form and a new value: each is compared with the first only.
+      ["rows", (n) => Array.from({ length: n }, (_, i) => `| FR-${i + 1} | A session expires after ${i} minutes. |`).join("\n")],
+      // One statement of digits and separators, and one of number words.
+      ["digits", (n) => "- FR-1: " + "1.".repeat(n) + "2 s"],
+      ["words", (n) => "- FR-1: " + "two ".repeat(n) + "s"],
+    ];
+    for (const [name, build] of builders) {
+      const small = build(name === "rows" ? 2000 : 32000);
+      const large = build(name === "rows" ? 4000 : 64000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), name).toBeLessThan(QUADRATIC_GROWTH_CEILING);
     }
   });
 
