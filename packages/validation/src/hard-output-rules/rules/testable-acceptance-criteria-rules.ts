@@ -31,21 +31,21 @@ import { requirementDefinitions } from "./requirement-definitions.js";
 const OUTCOME_TERM = wholeWordTerms(phrases("untestableOutcomeTerms"));
 
 /**
- * A French word elided after the first-person "j'" ("J'aime", "j’adore").
- * The apostrophe is not a word character of `wholeWordTerms`, so without this
- * "J'aime" would read as the term "aime". In a criterion it is the name of the
- * French "Like" reaction ("Le bouton J'aime incrémente le compteur de 1."),
- * not a statement of how someone feels: a criterion does not state its
- * writer's own feeling. It is left out for the reason "like" is left out in
- * English. Other elisions stay read: "Les lecteurs l'adorent" states a
- * feeling. Linear: a fixed prefix then one letter class.
- * source: review 1 of #315, note 3.
+ * The French "Like" reaction, "J'aime" or "J’aime" as a whole word. The
+ * apostrophe is not a word character of `wholeWordTerms`, so without this the
+ * button name in "Le bouton J'aime incrémente le compteur de 1." would read as
+ * the term "aime". Only that name is left out: any other word elided after
+ * "j'" stays read, so "En tant que lecteur, j'apprécie la confirmation." is
+ * reported as "I appreciate the confirmation." is, and so are other elisions
+ * ("Les lecteurs l'adorent"). Linear: a fixed string between two one-character
+ * lookarounds, with no loop.
+ * source: review 1 of #315, note 3; review 1 of #316, note 1.
  */
-const FIRST_PERSON_ELISION = /(?<![\p{L}\p{N}-])j['’]\p{L}+/giu;
+const LIKE_REACTION = /(?<![\p{L}\p{N}-])j['’]aime(?![\p{L}\p{N}-])/giu;
 
-/** The first term of an acceptance-criterion text that states a feeling, outside quoted text, code spans and first-person elisions, else null. */
+/** The first term of an acceptance-criterion text that states a feeling, outside quoted text, code spans and the "J'aime" reaction, else null. */
 export function untestableTermIn(text: string): string | null {
-  const stated = withoutNamedText(text).replace(FIRST_PERSON_ELISION, " ");
+  const stated = withoutNamedText(text).replace(LIKE_REACTION, " ");
   return OUTCOME_TERM.exec(stated)?.[0] ?? null;
 }
 

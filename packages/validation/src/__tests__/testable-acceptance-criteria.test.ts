@@ -89,14 +89,18 @@ describe("testable_acceptance_criteria (#118)", () => {
     ]);
   });
 
-  it("does not read the French Like reaction \"J'aime\" as a feeling, but reads other elisions", () => {
+  it("does not read the French Like reaction \"J'aime\" as a feeling, but reads every other elision", () => {
     for (const text of [
       "Le bouton J'aime incrémente le compteur de 1.",
-      "Le bouton j\u2019adore s'affiche sous la photo.",
+      "Le bouton J\u2019aime s'affiche sous la photo.",
     ]) {
       expect(untestableTermIn(text), text).toBeNull();
       expect(findings(`- AC-1: ${text}`), text).toEqual([]);
     }
+    // Review 1 of #316, note 1: only the reaction's name is left out, not
+    // every word elided after "j'".
+    expect(untestableTermIn("En tant que lecteur, j'apprécie la confirmation.")).toBe("apprécie");
+    expect(untestableTermIn("Le lecteur dit : j\u2019adore.")).toBe("adore");
     expect(untestableTermIn("Les lecteurs l'adorent.")).toBe("adorent");
     expect(untestableTermIn("Les lecteurs l\u2019apprécient.")).toBe("apprécient");
   });
