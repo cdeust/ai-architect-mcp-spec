@@ -192,6 +192,8 @@ describe("contradictory_requirements (#118)", () => {
   // Review 1 of #319, note 2: a leading 0 read `,250` as a group of thousands.
   it("reads a comma after a leading 0 as a decimal mark", () => {
     expect(["0,250", "0,25", "0,001", "0.250", "00,500"].map(digitsValue)).toEqual(["0.25", "0.25", "0.001", "0.25", "0.5"]);
+    // Review 1 of #320, note 1: with two kinds of separator, the first after a leading 0 grouped thousands.
+    expect(["0,250.5", "0.250,5", "00,250.5", "1,000.5", "1.000,5"].map(digitsValue)).toEqual(["0,250.5", "0.250,5", "00,250.5", "1000.5", "1000.5"]);
     expect(
       messageOf(
         table(
@@ -208,16 +210,16 @@ describe("contradictory_requirements (#118)", () => {
   // after a naming number read as bytes.
   it("reads a word that holds digits as one word, and a unit glued to a number", () => {
     expect(["10MB", "200ms", "5s", "3h", "1b", "2a", "3D", "2nd", "1,000ms", "7"].map(splitGlued)).toEqual([
-      { number: "10", unit: "mb" },
-      { number: "200", unit: "ms" },
-      { number: "5", unit: "s" },
-      { number: "3", unit: "h" },
+      { numbers: ["10"], after: ["mb"] },
+      { numbers: ["200"], after: ["ms"] },
+      { numbers: ["5"], after: ["s"] },
+      { numbers: ["3"], after: ["h"] },
       null,
       null,
       null,
       null,
-      { number: "1,000", unit: "ms" },
-      { number: "7", unit: null },
+      { numbers: ["1,000"], after: ["ms"] },
+      { numbers: ["7"], after: [null] },
     ]);
     expect(
       messageOf(
@@ -243,6 +245,66 @@ describe("contradictory_requirements (#118)", () => {
     ).toBe(
       "2 requirement(s) state a quantity an earlier requirement states differently: " +
         'FR-002 ("25", against FR-001: "10"), FR-004 ("30", against FR-003: "5")',
+    );
+  });
+
+  // Review 1 of #320, note 1: `0,250.5` read as 250.5, so it equalled `250.5`.
+  it("does not read a leading 0 followed by two kinds of separator as a number", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A probe answers in 0,250.5 ms. | Must | SLO |",
+          "| FR-002 | A probe answers in 250.5 ms. | Must | SLO |",
+        ),
+      ),
+    ).toBe('1 requirement(s) state a quantity an earlier requirement states differently: FR-002 ("250.5", against FR-001: "0,250.5")');
+  });
+
+  // Review 1 of #320, note 2: `2h30` was one word since #320, so two durations
+  // written that way were no longer compared.
+  it("reads an hour-and-minute duration glued as one token", () => {
+    expect(["2h30", "10h30", "1h30m", "1h30min", "1a30", "1b30"].map(splitGlued)).toEqual([
+      { numbers: ["2", "30"], after: ["h", null] },
+      { numbers: ["10", "30"], after: ["h", null] },
+      { numbers: ["1", "30"], after: ["h", "m"] },
+      { numbers: ["1", "30"], after: ["h", "min"] },
+      null,
+      null,
+    ]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | La sauvegarde dure 2h30. | Must | Ops |",
+          "| FR-002 | La sauvegarde dure 3h30. | Must | Ops |",
+          "| FR-003 | The export runs for 2h30. | Must | Ops |",
+          "| FR-004 | The export runs for 2h45. | Must | Ops |",
+          "| FR-005 | A replay lasts 1h30m. | Must | Ops |",
+          "| FR-006 | A replay lasts 1h45m. | Must | Ops |",
+          "| FR-007 | Release 1a30 ships the export. | Must | Plan |",
+          "| FR-008 | Release 1a45 ships the export. | Must | Plan |",
+        ),
+      ),
+    ).toBe(
+      "3 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("3", against FR-001: "2"), FR-004 ("45", against FR-003: "30"), FR-006 ("45", against FR-005: "30")',
+    );
+  });
+
+  // Review 1 of #320, note 3: the glued line was always first, and only the
+  // later requirement's units decide, so the glued path decided nothing.
+  it("reports a glued unit on the later requirement", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Uploads up to 25 MB are accepted. | Must | Limits |",
+          "| FR-002 | Uploads up to 10MB are accepted. | Must | Limits |",
+          "| FR-003 | A retry waits 30 s. | Must | Ops |",
+          "| FR-004 | A retry waits 5s. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "2 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("10", against FR-001: "25"), FR-004 ("5", against FR-003: "30")',
     );
   });
 });

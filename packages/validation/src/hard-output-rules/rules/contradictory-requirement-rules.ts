@@ -67,12 +67,12 @@ const NUMBER_VALUES: ReadonlyMap<string, number> = new Map([
 
 /**
  * A number in digits (`2`, `1.5`, `1,5`) with the letters and digits glued
- * after it (`10MB`, `1b`), a word that starts with a letter and may hold
- * digits (`B2B`, `v2`, `H264`), or any other character but a space. A word
- * is one token, so the digit inside `B2B` is not a number and its `B` is not
- * a unit; a glued run is split by `splitGlued`. Each alternative ends where
- * its character class ends and none can fail after it started, so the scan
- * is linear.
+ * after it (`10MB`, `1b`, `2h30`), a word that starts with a letter and may
+ * hold digits (`B2B`, `v2`, `H264`), or any other character but a space. A
+ * word is one token, so the digit inside `B2B` is not a number and its `B` is
+ * not a unit; a glued run is split by `splitGlued`. Each alternative ends
+ * where its character class ends and none can fail after it started, so the
+ * scan is linear.
  * source: review 1 of #319, note 3 (`Tier 1 B2B customers` read 1 as a
  * quantity of bytes).
  */
@@ -80,8 +80,12 @@ const TOKEN = /\p{N}+(?:[.,]\p{N}+)*[\p{L}\p{N}]*|\p{L}[\p{L}\p{N}]*|[^\s\p{L}\p
 
 const DIGITS = /^\p{N}/u;
 
-/** The number at the start of a token that starts with a digit. */
-const LEADING_NUMBER = /^\p{N}+(?:[.,]\p{N}+)*/u;
+/**
+ * The runs of a token that starts with a digit: its leading number, then
+ * letters and digits by turns (`2h30` is `2`, `h`, `30`). The token holds no
+ * separator after its first letter, so the runs alternate.
+ */
+const GLUED_RUNS = /\p{N}+(?:[.,]\p{N}+)*|\p{L}+/gu;
 
 /**
  * The units read glued to a number although they are one letter: `5s`, `3h`.
@@ -92,27 +96,44 @@ const LEADING_NUMBER = /^\p{N}+(?:[.,]\p{N}+)*/u;
  */
 const GLUED_ONE_LETTER_UNITS: ReadonlySet<string> = new Set(["s", "h"]);
 
-/** A token that starts with a digit, read as a number and the unit glued to it, if any. */
-interface GluedToken {
-  readonly number: string;
-  /** The glued unit in its singular form, null when nothing is glued. */
-  readonly unit: string | null;
+/** A token that starts with a digit, read as its numbers and what is glued after each. */
+export interface GluedToken {
+  /** The numbers, in order, as the token writes them. */
+  readonly numbers: readonly string[];
+  /**
+   * What is glued after each number: a unit in its singular form, another
+   * word lowercase (only after a later number: `1h30m`), null when nothing is.
+   */
+  readonly after: readonly (string | null)[];
 }
 
 /**
  * precondition: `token` starts with a digit.
- * postcondition: the number and its glued unit when the rest is empty or a
- * unit; null when the rest is anything else (`1a`, `2nd`, `3D`), so the
- * token is a word and names something.
+ * postcondition: the numbers of the token and what is glued after each when
+ * the letters after the first number are a unit, or there are none (`7`,
+ * `10MB`, `2h30`, `10h30`, `1h30m`); null when they are anything else (`1a`,
+ * `2nd`, `3D`, `1b`), so the token is a word and names something. A later
+ * number is part of the quantity the first one starts (the 30 minutes of
+ * `2h30`), so the letters after it are a unit when they name one and a word
+ * otherwise (the `m` of `1h30m`, which the lexicon does not list). Linear in
+ * the length of the token.
+ * source: review 1 of #320, note 2 (`2h30` read as a word since #320, so
+ * `dure 2h30` against `dure 3h30` was no longer reported).
  */
 export function splitGlued(token: string): GluedToken | null {
-  const number = token.match(LEADING_NUMBER)![0];
-  const rest = token.slice(number.length);
-  if (rest === "") return { number, unit: null };
-  if (!/^\p{L}+$/u.test(rest)) return null;
-  const unit = unitOf(rest);
-  if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
-  return { number, unit };
+  const runs = token.match(GLUED_RUNS)!;
+  if (runs.length > 1) {
+    const unit = unitOf(runs[1]!);
+    if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
+  }
+  const numbers: string[] = [];
+  const after: (string | null)[] = [];
+  for (let i = 0; i < runs.length; i += 2) {
+    numbers.push(runs[i]!);
+    const letters = runs[i + 1];
+    after.push(letters === undefined ? null : (unitOf(letters) ?? letters.toLowerCase()));
+  }
+  return { numbers, after };
 }
 
 /** The units of the `quantityUnits` concept, lowercase. */
@@ -140,24 +161,29 @@ export function unitOf(token: string): string | null {
  * `1.000.000`. With two kinds of separator, the last one is the decimal mark
  * (`1,000.5`, `1.000,5`). Any other separator is the decimal mark (`1,5`,
  * `1.5`, `2.25`). A group of thousands never follows a leading `0`, so
- * `0,250` and `0,001` read as decimals (0.25, 0.001). A form that does not
- * read as a number (`1.2.3`) is its own value, its digits as written, so two
- * different forms never read as equal. `1,500` stays 1500: it may be a
+ * `0,250` and `0,001` read as decimals (0.25, 0.001), and a form with two
+ * kinds of separator after a leading `0` (`0,250.5`, `0.250,5`), whose first
+ * separator could only group thousands, does not read as a number. A form
+ * that does not read as a number (`1.2.3`) is its own value, its digits as
+ * written, so two different forms never read as equal. `1,500` stays 1500: it may be a
  * French 1.5, which the statement's language does not settle.
  * source: review 1 of #318, note 1 (only the first comma was replaced, so
  * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN); review 1
- * of #319, note 2 (`0,250` read as 250).
+ * of #319, note 2 (`0,250` read as 250); review 1 of #320, note 1 (`0,250.5`
+ * read as 250.5).
  */
 export function digitsValue(token: string): string {
   const separators = token.match(/[.,]/gu) ?? [];
   const groups = token.split(/[.,]/u);
   const kinds = new Set(separators);
+  const leadingZero = groups[0]!.startsWith("0");
   let normalized: string;
   if (kinds.size === 2) {
+    if (leadingZero) return token;
     const decimal = separators[separators.length - 1]!;
     const at = token.lastIndexOf(decimal);
     normalized = `${token.slice(0, at).replace(/[.,]/gu, "")}.${token.slice(at + 1)}`;
-  } else if (separators.length > 0 && !groups[0]!.startsWith("0") && groups.slice(1).every((g) => g.length === 3) && (separators.length > 1 || separators[0] === ",")) {
+  } else if (separators.length > 0 && !leadingZero && groups.slice(1).every((g) => g.length === 3) && (separators.length > 1 || separators[0] === ",")) {
     normalized = groups.join("");
   } else if (separators.length === 1) {
     normalized = groups.join(".");
@@ -211,17 +237,18 @@ export function cutStatement(text: string): CutStatement {
         form.push(token.toLowerCase());
         continue;
       }
-      form.push(NUMBER_SLOT);
-      values.push(digitsValue(glued.number));
-      spellings.push(glued.number);
-      if (glued.unit !== null) {
-        // `10MB` and `10 MB` are one form.
-        form.push(glued.unit);
-        measured.push(true);
-        continue;
+      for (let k = 0; k < glued.numbers.length; k++) {
+        form.push(NUMBER_SLOT);
+        values.push(digitsValue(glued.numbers[k]!));
+        spellings.push(glued.numbers[k]!);
+        const after = glued.after[k] ?? null;
+        // `10MB` and `10 MB`, `2h30` and `2 h 30`, are one form.
+        if (after !== null) form.push(after);
+        // A later number continues the quantity of the first (`2h30`); the
+        // first is measured by its glued unit, or by the unit of the next token.
+        const next = tokens[i + 1];
+        measured.push(k > 0 || after !== null || (next !== undefined && unitOf(next) !== null));
       }
-      const next = tokens[i + 1];
-      measured.push(next !== undefined && unitOf(next) !== null);
       continue;
     }
     const word = NUMBER_VALUES.get(token.toLowerCase());
