@@ -847,8 +847,9 @@ describe("measurable_requirements (#118)", () => {
       ...["<?note", "   - Notes", "     <!-- open", "\t", "     - FR-002: Import is fast.", "?>", ""],
       // FR-003: the same line of one tab under an item whose content is 4
       // columns deep is not left of it, so the comment goes on and FR-003
-      // stays hidden: with FR-001 and FR-002 this pins the tab to exactly 4
-      // columns, not to 2 to 4 (PR #311 review, note 2).
+      // stays hidden: with FR-002 this pins the tab to exactly 4 columns, not
+      // to 2 to 4 (PR #311 review, note 2); FR-001 adds no bound to the two
+      // (PR #312 review, note 3).
       ...["<?note", "  - Notes", "    <!-- open", "\t", "    - FR-003: Sync is fast.", "?>"],
     ].join("\n");
     expect(findings(content).map((v) => v.message)).toEqual([
