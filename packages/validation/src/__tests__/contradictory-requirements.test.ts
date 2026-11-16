@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { isBlockingViolation } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
-import { digitsValue, splitGlued, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
+import { cutStatement, digitsValue, splitGlued, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
 
 type Sections = ReadonlyArray<{ type: "requirements" | "user_stories"; content: string }>;
 
@@ -280,8 +280,8 @@ describe("contradictory_requirements (#118)", () => {
           "| FR-004 | The export runs for 2h45. | Must | Ops |",
           "| FR-005 | A replay lasts 1h30m. | Must | Ops |",
           "| FR-006 | A replay lasts 1h45m. | Must | Ops |",
-          "| FR-007 | Release 1a30 ships the export. | Must | Plan |",
-          "| FR-008 | Release 1a45 ships the export. | Must | Plan |",
+          "| FR-007 | Release 1b30 ships the export. | Must | Plan |",
+          "| FR-008 | Release 1b45 ships the export. | Must | Plan |",
         ),
       ),
     ).toBe(
@@ -306,5 +306,54 @@ describe("contradictory_requirements (#118)", () => {
       "2 requirement(s) state a quantity an earlier requirement states differently: " +
         'FR-002 ("10", against FR-001: "25"), FR-004 ("5", against FR-003: "30")',
     );
+  });
+
+  // Review 1 of #321, note 1: only the glued form measured its minutes, and
+  // only the later requirement's measures were read, so the finding depended
+  // on which form came first.
+  it("measures the minutes of a spaced or glued duration in either order", () => {
+    expect(cutStatement("dure 2 h 30.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 1 h 30 m.").measured).toEqual([true, true]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for 2 h 30. | Must | Ops |",
+          "| FR-002 | The export runs for 2h45. | Must | Ops |",
+          "| FR-003 | A replay lasts 1h30. | Must | Ops |",
+          "| FR-004 | A replay lasts 1 h 45. | Must | Ops |",
+          "| FR-005 | A backup lasts 1 h 30 m. | Must | Ops |",
+          "| FR-006 | A backup lasts 1h45m. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "3 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("45", against FR-001: "30"), FR-004 ("45", against FR-003: "30"), FR-006 ("45", against FR-005: "30")',
+    );
+  });
+
+  // Review 1 of #321, note 2: any later number glued after a unit was read,
+  // so a half-year, a semester or a cell layout was a quantity again.
+  it("reads a later glued number only as the two-digit minutes of an hour", () => {
+    expect(["2024H1", "2025S1", "4s2p", "2h5", "2h30s", "2h30x", "1h30m5"].map(splitGlued)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The report covers 2024H1. | Must | Plan |",
+          "| FR-002 | The report covers 2024H2. | Must | Plan |",
+          "| FR-003 | Courses open in 2025S1. | Must | Plan |",
+          "| FR-004 | Courses open in 2025S2. | Must | Plan |",
+          "| FR-005 | The pack is wired 4s2p. | Must | Hardware |",
+          "| FR-006 | The pack is wired 4s3p. | Must | Hardware |",
+        ),
+      ),
+    ).toBe(undefined);
   });
 });
