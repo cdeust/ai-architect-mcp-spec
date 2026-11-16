@@ -2,15 +2,16 @@ import { z } from "zod";
 
 /**
  * The Hard Output Rules, first ported from HardOutputRule.swift; #118 added
- * `dependency_targets_defined`, `measurable_requirements` and
- * `testable_acceptance_criteria`. The count is `HardOutputRuleSchema.options
- * .length`, not written here: a hand-kept count drifted (it read 67 for 74).
+ * `dependency_targets_defined`, `measurable_requirements`,
+ * `testable_acceptance_criteria` and `contradictory_requirements`. The count
+ * is `HardOutputRuleSchema.options.length`; neither it nor the position of a
+ * rule is written by hand here, since both drifted when rules were added.
  * These are the #1 quality driver in the system (per Feynman/Ginzburg audit).
  * Each rule was added to fix a specific LLM failure mode observed in production.
  * Do not remove any rule without benchmarking the impact.
  */
 export const HardOutputRuleSchema = z.enum([
-  // Core PRD Rules (1-17+)
+  // Core PRD Rules
   "sp_arithmetic",
   "no_self_referencing_deps",
   "ac_numbering",
@@ -38,7 +39,8 @@ export const HardOutputRuleSchema = z.enum([
   "dependency_targets_defined",
   "measurable_requirements",
   "testable_acceptance_criteria",
-  // Architecture & Code Quality (18-24)
+  "contradictory_requirements",
+  // Architecture & Code Quality
   "generic_over_specific",
   "no_nested_types",
   "single_responsibility",
@@ -46,7 +48,7 @@ export const HardOutputRuleSchema = z.enum([
   "factory_based_injection",
   "solid_compliance",
   "code_reusability",
-  // Security (25-32)
+  // Security
   "no_hardcoded_secrets",
   "input_validation_required",
   "output_encoding_injection_prevention",
@@ -55,43 +57,43 @@ export const HardOutputRuleSchema = z.enum([
   "cryptographic_standards",
   "rate_limiting_required",
   "secure_communication",
-  // Data Protection & Compliance (33-38)
+  // Data Protection & Compliance
   "data_classification_required",
   "sensitive_data_protection",
   "no_sensitive_data_in_logs",
   "data_minimization",
   "audit_trail_required",
   "consent_and_erasure_support",
-  // Error Handling & Resilience (39-43)
+  // Error Handling & Resilience
   "structured_error_handling",
   "resilience_patterns",
   "graceful_degradation",
   "transaction_boundaries",
   "consistent_error_format",
-  // Concurrency & State Management (44-46)
+  // Concurrency & State Management
   "concurrency_safety",
   "immutability_by_default",
   "atomic_operations",
-  // Senior Code Quality Standards (47-52)
+  // Senior Code Quality Standards
   "no_magic_numbers",
   "defensive_coding",
   "method_size_limits",
   "consistent_naming",
   "api_contract_documentation",
   "deprecation_strategy",
-  // Comprehensive Testing (53-58)
+  // Comprehensive Testing
   "mandatory_test_coverage",
   "security_testing_required",
   "performance_testing_required",
   "no_production_data_in_tests",
   "edge_case_negative_tests",
   "test_isolation",
-  // Observability & Monitoring (59-62)
+  // Observability & Monitoring
   "structured_logging",
   "distributed_tracing",
   "no_pii_in_observability",
   "alerting_thresholds",
-  // Dependency & Supply Chain (63-64)
+  // Dependency & Supply Chain
   "dependency_vulnerability_scanning",
   "minimal_dependency_principle",
 ]);
@@ -109,6 +111,7 @@ const NON_CRITICAL_RULES: ReadonlySet<HardOutputRule> = new Set([
   "deployment_rollback_plan",
   "measurable_requirements",
   "testable_acceptance_criteria",
+  "contradictory_requirements",
   "explicit_access_control",
   "code_reusability",
   "immutability_by_default",

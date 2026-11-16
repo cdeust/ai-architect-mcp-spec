@@ -19,6 +19,7 @@ import { checkDocumentDependencyTargetsDefined } from "./rules/dependency-target
 // Document-level measurable requirements (#118)
 import { checkDocumentMeasurableRequirements } from "./rules/measurable-requirement-rules.js";
 import { checkDocumentTestableAcceptanceCriteria } from "./rules/testable-acceptance-criteria-rules.js";
+import { checkDocumentContradictoryRequirements } from "./rules/contradictory-requirement-rules.js";
 
 // SP Rules (1, 8, 9)
 import {
@@ -327,6 +328,7 @@ function checkRule(
     case "dependency_targets_defined":
     case "measurable_requirements":
     case "testable_acceptance_criteria":
+    case "contradictory_requirements":
     case "post_generation_self_check":
     case "mandatory_codebase_analysis":
       return [];
@@ -408,6 +410,7 @@ const DOCUMENT_LEVEL_CHECKS: Readonly<
     checkDocumentDependencyTargetsDefined(sections),
   measurable_requirements: ({ sections }) => checkDocumentMeasurableRequirements(sections),
   testable_acceptance_criteria: ({ sections }) => checkDocumentTestableAcceptanceCriteria(sections),
+  contradictory_requirements: ({ sections }) => checkDocumentContradictoryRequirements(sections),
 };
 
 export function validateDocument(

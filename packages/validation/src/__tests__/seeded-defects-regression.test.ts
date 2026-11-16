@@ -26,7 +26,9 @@ import {
  * at fault, so a rule that flags the wrong one fails here.
  */
 const EXPECTED_DIAGNOSES: Readonly<Record<DefectCategory, readonly string[]>> = {
-  contradiction: [],
+  contradiction: [
+    'contradictory_requirements: 1 requirement(s) state a quantity an earlier requirement states differently: FR-004 ("five", against FR-003: "two")',
+  ],
   missing_acceptance_criteria: ["fr_to_ac_coverage: 1 FR(s) have no acceptance criteria: FR-003"],
   unmeasurable_requirement: [
     'measurable_requirements: 1 requirement(s) state an unbounded quality with no number: FR-004 ("fast")',
@@ -106,13 +108,14 @@ describe("seeded-defect regression fixture (#118)", () => {
     }
   });
 
-  it("recall on the rebuilt set, computed from the validator, is 6 of 10", () => {
+  it("recall on the rebuilt set, computed from the validator, is 7 of 10", () => {
     // Counted from validateDocument, not from EXPECTED_DIAGNOSES, so a rule
     // that starts or stops diagnosing a seed fails here as well.
     const caught = SEEDED_DEFECTS.filter(
       (d) => blockingFindingsBeyondControl(d.sections).length > 0,
     ).map((d) => d.category);
     expect(caught.sort()).toEqual([
+      "contradiction",
       "duplicate_requirement",
       "hallucinated_dependency",
       "missing_acceptance_criteria",
