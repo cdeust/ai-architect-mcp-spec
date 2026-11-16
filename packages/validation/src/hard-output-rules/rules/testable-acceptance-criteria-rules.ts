@@ -30,9 +30,23 @@ import { requirementDefinitions } from "./requirement-definitions.js";
 
 const OUTCOME_TERM = wholeWordTerms(phrases("untestableOutcomeTerms"));
 
-/** The first term of an acceptance-criterion text that states a feeling, outside quoted text and code spans, else null. */
+/**
+ * A French word elided after the first-person "j'" ("J'aime", "j’adore").
+ * The apostrophe is not a word character of `wholeWordTerms`, so without this
+ * "J'aime" would read as the term "aime". In a criterion it is the name of the
+ * French "Like" reaction ("Le bouton J'aime incrémente le compteur de 1."),
+ * not a statement of how someone feels: a criterion does not state its
+ * writer's own feeling. It is left out for the reason "like" is left out in
+ * English. Other elisions stay read: "Les lecteurs l'adorent" states a
+ * feeling. Linear: a fixed prefix then one letter class.
+ * source: review 1 of #315, note 3.
+ */
+const FIRST_PERSON_ELISION = /(?<![\p{L}\p{N}-])j['’]\p{L}+/giu;
+
+/** The first term of an acceptance-criterion text that states a feeling, outside quoted text, code spans and first-person elisions, else null. */
 export function untestableTermIn(text: string): string | null {
-  return OUTCOME_TERM.exec(withoutNamedText(text))?.[0] ?? null;
+  const stated = withoutNamedText(text).replace(FIRST_PERSON_ELISION, " ");
+  return OUTCOME_TERM.exec(stated)?.[0] ?? null;
 }
 
 export function checkDocumentTestableAcceptanceCriteria(
