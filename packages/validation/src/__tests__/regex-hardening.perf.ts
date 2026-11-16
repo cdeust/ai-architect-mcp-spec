@@ -337,6 +337,21 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
     }
   });
 
+  // Review 1 of #316, note 3: the "J'aime" exemption runs on every criterion
+  // text, so runs of its prefix and of the whole name are measured.
+  it("runs of the \"J'aime\" prefix and name in an acceptance criterion (testable_acceptance_criteria)", () => {
+    const run = (input: string): void =>
+      void checkDocumentTestableAcceptanceCriteria([{ type: "acceptance_criteria", content: input }]);
+    for (const unit of ["j'", "j\u2019aim", "j'aime ", "j'aimej'aime"]) {
+      const build = (n: number): string => "- AC-1: " + unit.repeat(n) + "love";
+      const small = build(8000);
+      const large = build(16000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), unit).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
   it("runs of opening curly or guillemet quotes with no closing mark (measurable_requirements)", () => {
     const run = (input: string): void =>
       void checkDocumentMeasurableRequirements([{ type: "requirements", content: input }]);
