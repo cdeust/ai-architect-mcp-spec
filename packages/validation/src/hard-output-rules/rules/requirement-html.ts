@@ -66,13 +66,13 @@ function opaqueEnds(line: string): readonly string[] | null {
  * line (its `sCount` is 0, under `blkIndent`), a line of fewer columns than
  * the item's content, or a dedented sibling item. `sCount` expands tabs to
  * the next tab stop, so a tab at the line start is 4 columns deep (PR #309
- * review, note 2). In a block quote, the tab stop counts from the line
- * start while `sCount` counts from the quote's content, so what a tab adds
- * to `sCount` depends on the tab's own column, not on the `>`'s: with the
- * `>` at column 0 it adds 2 (after `>` or `> `; PR #310 review, note 1),
- * and with the `>` at column 2 it adds 0 after `  >` but 4 after `  > `
- * (1 after ` >`, 3 after `   >`; PR #311 review, note 1; PR #312 review,
- * note 2). A comment in a list item, closed further down or not, thus
+ * review, note 2). In a block quote, `sCount` leaves out the one optional
+ * space column after the `>` (a space, or the first column of a tab) and
+ * counts every other column, a tab reaching the next tab stop counted from
+ * the line start. So a tab right after `>` adds its width minus 1 and a tab
+ * after `> ` its full width: `>\t` and `> \t` add 2, ` >\t` 1, `  >\t` 0,
+ * `   >\t` 3 and `  > \t` 4 (measured with markdown-it 14; PR #313
+ * review, note 1). A comment in a list item, closed further down or not, thus
  * hides the item only up to that line, while at the top level an unclosed one
  * runs to the source's end (PR #307 review, note 1; PR #308 review, notes 1
  * and 2). A line of whitespace as many columns deep as the item's content does
