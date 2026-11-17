@@ -331,6 +331,38 @@ describe("contradictory_requirements (#118)", () => {
     );
   });
 
+  // Review 2 of #322, notes 1 and 2: any number after a spaced hour was read
+  // as minutes, so a count after an hour was a quantity, and a one-digit
+  // spaced minute was measured where its glued form is a word.
+  it("reads a number after a spaced hour as minutes only with the bounds of a glued duration", () => {
+    expect(cutStatement("Within 1 hour 10 users are notified.").measured).toEqual([true, false]);
+    expect(cutStatement("dure 2 h 5.").measured).toEqual([true, false]);
+    expect(cutStatement("dure 2 h 5 min.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h 30, puis s'arrête.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h 30 m").measured).toEqual([true, true]);
+    expect(cutStatement("dure deux heures trente.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h 30 45.").measured).toEqual([true, false, false]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Within 1 hour 10 users are notified. | Must | Ops |",
+          "| FR-002 | Within 1 hour 50 users are notified. | Must | Ops |",
+          "| FR-003 | The export runs for 2 h 5. | Must | Ops |",
+          "| FR-004 | The export runs for 2 h 7. | Must | Ops |",
+          "| FR-005 | The export runs for 2h5. | Must | Ops |",
+          "| FR-006 | The export runs for 2h7. | Must | Ops |",
+          "| FR-007 | A replay lasts 1 h 30, then stops. | Must | Ops |",
+          "| FR-008 | A replay lasts 1h45, then stops. | Must | Ops |",
+          "| FR-009 | A backup lasts 2 h 5 min. | Must | Ops |",
+          "| FR-010 | A backup lasts 2 h 7 min. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "2 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-008 ("45", against FR-007: "30"), FR-010 ("7", against FR-009: "5")',
+    );
+  });
+
   // Review 1 of #321, note 2: any later number glued after a unit was read,
   // so a half-year, a semester or a cell layout was a quantity again.
   it("reads a later glued number only as the two-digit minutes of an hour", () => {
