@@ -790,6 +790,13 @@ describe("contradictory_requirements (#118)", () => {
 
   // Review 1 of #336, note 3: removing the final `normalize("NFC")` of
   // `folded` passed every test, and one case, `2h30ｍ`, covered two calls.
+  it("keeps a superscript, subscript or circled form of a digit, and folds one of a letter", () => {
+    expect(folded("x10\u00b2")).toBe("x10\u00b2");
+    expect(folded("\u2082\u2461\u00bd")).toBe("\u2082\u2461\u00bd");
+    // `ⁿ`, `ₐ`, `Ⓗ` hold no digit once in their compatibility form.
+    expect(folded("\u207f\u2090\u24bd")).toBe("nah");
+  });
+
   it("recomposes the characters of a word, and folds a glued minute unit for each of its two reads", () => {
     expect(folded("cafe\u0301")).toBe("caf\u00e9");
     // Two conjoining jamo are one syllable once recomposed; a statement
@@ -804,9 +811,10 @@ describe("contradictory_requirements (#118)", () => {
       "1 requirement(s) state a quantity an earlier requirement states differently: " +
         'FR-002 ("5", against FR-001: "2")',
     );
-    // `isGluedMinuteUnit` alone: the token is read as a duration.
-    expect(splitGlued("2h30ｍ")).not.toBe(null);
-    // The minutes of `splitGlued` alone: what is glued after them is `m`.
+    // Fails when either call goes back to `toLowerCase`: `isGluedMinuteUnit`
+    // then rejects the token (null), the minutes of `splitGlued` then keep `ｍ`.
     expect(splitGlued("2h30ｍ")?.after).toEqual(["h", "m"]);
+    // Tells the two apart: fails only when `isGluedMinuteUnit` goes back.
+    expect(splitGlued("2h30ｍ")).not.toBe(null);
   });
 });
