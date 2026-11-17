@@ -30,9 +30,12 @@ export const VerifyBudgetConfigSchema = z.object({
    */
   architecture_judges_per_claim: z.number().int().positive(),
   /**
-   * Above this invocation count (post-reduction, pre-sampling), self-check
-   * emits `ask_user` instead of dispatching `spawn_subagents` — see
-   * handlers/self-check-verify-budget.ts:buildBudgetGateQuestion.
+   * Above this count of (judge × claim) verdicts requested (post-reduction,
+   * pre-sampling), self-check emits `ask_user` instead of dispatching
+   * `spawn_subagents` — see
+   * handlers/self-check-verify-budget.ts:buildBudgetGateQuestion. Since
+   * issue #119 one invocation carries every claim of a judge, so the
+   * dispatched invocation count is at most this number, usually far below.
    */
   invocation_cap: z.number().int().positive(),
   /**

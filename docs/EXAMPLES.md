@@ -203,7 +203,7 @@ prd-output/run_lzx8f/
 
 ### Step 11 — Self-check (multi-judge verification)
 
-After file export, the runner enters `self_check`. **Phase A:** plans the verification batch — extracts atomic claims from every section, selects per-claim panels (e.g., `[liskov, alexander, dijkstra, architect]` for an architecture claim; `[fermi, carnot, curie, erlang]` for a performance claim). Emits a `spawn_subagents` action with one invocation per `(claim × judge)` pair.
+After file export, the runner enters `self_check`. **Phase A:** plans the verification batch — extracts atomic claims from every section, selects per-claim panels (e.g., `[liskov, alexander, dijkstra, architect]` for an architecture claim; `[fermi, carnot, curie, erlang]` for a performance claim). Emits a `spawn_subagents` action with one invocation per judge and dispatch model: its prompt embeds the PRD once and lists every claim that judge evaluates, and the judge answers one JSON array of verdicts keyed by `claim_id` (#119).
 
 ```
   → envelope {

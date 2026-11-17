@@ -49,6 +49,7 @@ import {
   fakeReviewReport,
   fakeTestingReport,
 } from "./canned-responses.js";
+import { claimIdsInJudgePrompt } from "@prd-gen/verification";
 
 export interface CannedDispatcherOptions {
   /**
@@ -120,9 +121,9 @@ export function makeCannedDispatcher(
   const pr_gate_answer = opts.pr_gate_answer ?? "No";
   const pr_creation_footer_present = opts.pr_creation_footer_present ?? true;
 
-  function pickFakeAgentResponse(invocation_id: string): string {
+  function pickFakeAgentResponse(invocation_id: string, prompt: string): string {
     if (invocation_id.startsWith(SELF_CHECK_JUDGE_INV_PREFIX)) {
-      return fakeJudgeVerdict();
+      return fakeJudgeVerdict(claimIdsInJudgePrompt(prompt));
     }
     if (invocation_id.startsWith(CLARIFICATION_COMPOSE_INV_PREFIX)) {
       return fakeClarificationQuestion();
@@ -331,7 +332,7 @@ export function makeCannedDispatcher(
   ): ActionResult {
     const responses = action.invocations.map((inv) => ({
       invocation_id: inv.invocation_id,
-      raw_text: pickFakeAgentResponse(inv.invocation_id),
+      raw_text: pickFakeAgentResponse(inv.invocation_id, inv.prompt),
     }));
     return {
       kind: "subagent_batch_result",

@@ -355,7 +355,7 @@ describe("pipeline KPIs", () => {
     //   2. claim count > 0 (so we know the path actually fired)
     //   3. evaluateGates(kpis, false) flags distribution_pass_rate_max
     //      ONLY if rate > 0.95 — at 50/50 the gate must NOT fire
-    const { makeCannedDispatcher } = await import("@prd-gen/orchestration");
+    const { makeCannedDispatcher, claimIdsInJudgePrompt } = await import("@prd-gen/orchestration");
     const baseDispatch = makeCannedDispatcher({
       freeform_answer: "benchmark-answer",
       graph_path: "/tmp/benchmark/graph",
@@ -371,22 +371,24 @@ describe("pipeline KPIs", () => {
           i.invocation_id.startsWith("self_check_judge_"),
         )
       ) {
-        // Replace each judge response with alternating PASS/FAIL.
+        // Replace each judge response with alternating PASS/FAIL per claim:
+        // one prompt per judge carries several claims (issue #119), so the
+        // response is an array with one verdict per claim_id of the prompt.
         return {
           kind: "subagent_batch_result",
           batch_id: action.batch_id,
-          responses: action.invocations.map((inv) => {
-            const verdict = judgeCount++ % 2 === 0 ? "PASS" : "FAIL";
-            return {
-              invocation_id: inv.invocation_id,
-              raw_text: JSON.stringify({
-                verdict,
+          responses: action.invocations.map((inv) => ({
+            invocation_id: inv.invocation_id,
+            raw_text: JSON.stringify(
+              claimIdsInJudgePrompt(inv.prompt).map((claim_id) => ({
+                claim_id,
+                verdict: judgeCount++ % 2 === 0 ? "PASS" : "FAIL",
                 rationale: "mixed-verdict synthetic",
                 caveats: [],
                 confidence: 0.9,
-              }),
-            };
-          }),
+              })),
+            ),
+          })),
         };
       }
       // Delegate everything else to the canned dispatcher.

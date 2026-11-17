@@ -47,5 +47,7 @@ export {
 // Judge prompt construction
 export {
   buildJudgePrompt,
+  buildBatchedJudgePrompt,
+  claimIdsInJudgePrompt,
   type BuiltJudgePrompt,
 } from "./judge-prompt.js";
