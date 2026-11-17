@@ -43,22 +43,27 @@ const HOLDS_DIGIT = /\p{Nd}/u;
  * fullwidth letter as its letter (`Ｈ` → `H`, `ｓ` → `s`), a fullwidth or
  * mathematical digit as its ASCII digit, and a composed form as one (`ﬁ` →
  * `fi`), so `２０２４Ｈ１` and `2024H1`, or `５ ｓ` and `5 s`, read alike. A
- * superscript, a subscript, a circled or a fraction form (`²`, `₂`, `②`,
- * `½`) is kept: its compatibility form is a digit, but it writes another
- * number than that digit in a word (`x10²` is a hundred, `x102` is not), so
- * `x10²` and `x102` stay two words. It leaves the digits of a script with
+ * superscript, a subscript, a circled or a fraction form of a digit (`²`,
+ * `₂`, `②`, `½`) is kept: its compatibility form is a digit, but it writes
+ * another number than that digit in a word (`x10²` is a hundred, `x102` is
+ * not), so `x10²` and `x102` stay two words; one of a letter (`ⁿ`, `ₐ`,
+ * `Ⓗ`) holds no digit and is folded to its letter. It leaves the digits of a script with
  * its own shapes (`٣`) as they are: `asciiDigits` writes those. The kept
  * characters are left as they are, and the others recomposed (NFC), as NFKC
  * of the whole token would. Linear in the length.
  * source: review 1 of #334, note 2 (a fullwidth letter was only lowercased,
- * `Ｈ` to `ｈ`, which `unitOf` does not read as a unit, so `splitGlued`
- * rejected the token `２０２４Ｈ１` at its letters, before reading its `１`,
- * and the word kept `ｈ`: `Release ２０２４Ｈ１ waits 2 s` and `Release 2024H1
- * waits 5 s` were two forms); review 1 of #335, note 2 (NFKC of the whole
+ * `Ｈ` to `ｈ`, so the word `２０２４Ｈ１` kept `ｈ` where the word `2024H1` is
+ * `2024h`: `Release ２０２４Ｈ１ waits 2 s` and `Release 2024H1 waits 5 s` were
+ * two forms; both tokens were words either way, `splitGlued` rejecting
+ * `2024H1` at its one-digit `1` and `２０２４Ｈ１` at its `ｈ`, no unit for
+ * `unitOf`, so the `ｈ` the word kept was the only cause); review 1 of #335,
+ * note 2 (NFKC of the whole
  * token wrote `²` as `2`, so `Grid x10² waits 2 s` and `Grid x102 waits 5 s`
  * were one form and were reported); review 1 of #336, notes 1 and 3 (the
  * reason `２０２４Ｈ１` was rejected; no test failed without the NFC
- * recomposition: two conjoining jamo, `\u1100\u1161`, are one syllable `가`).
+ * recomposition: two conjoining jamo, `\u1100\u1161`, are one syllable `가`);
+ * review 1 of #337, notes 1 and 2 (the rejection by `splitGlued` was given as
+ * the cause of the two forms; a form of a letter was said to be kept).
  */
 export function folded(token: string): string {
   let out = "";
