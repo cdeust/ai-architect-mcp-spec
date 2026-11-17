@@ -621,6 +621,21 @@ describe("contradictory_requirements (#118)", () => {
       "1 requirement(s) state a quantity an earlier requirement states differently: " +
         'FR-003 ("3", against FR-001: "2")',
     );
+    // Review 1 of #333, note 3: FR-003 contradicts FR-002 alone (3 against 2
+    // hours, both measured), so it is reported only if it is compared with
+    // FR-002, which the first of the form, measuring its minutes, excludes.
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A job lasts 2h30 before stopping. | Must | Ops |",
+          "| FR-002 | A job lasts 3 h 30 before stopping. | Must | Ops |",
+          "| FR-003 | A job lasts 2h30 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("3", against FR-001: "2")',
+    );
     // The documented limit: FR-003 contradicts FR-002 alone, which is the first of no reference.
     expect(
       messageOf(
@@ -628,6 +643,33 @@ describe("contradictory_requirements (#118)", () => {
           "| FR-001 | A job lasts 2 h 5 before stopping. | Must | Ops |",
           "| FR-002 | A job lasts 2 h 7 before stopping. | Must | Ops |",
           "| FR-003 | A job lasts 3h07 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(undefined);
+  });
+
+  // Review 1 of #333, note 2: a word or a rejected glued token kept the script
+  // of its digits, so two statements that differ only by it were two forms.
+  it("reads the digits of a word of any script as ASCII digits", () => {
+    expect(cutStatement("Release ２０２４H1 waits 2 s.").form).toBe(cutStatement("Release 2024H1 waits 2 s.").form);
+    expect(cutStatement("Build v２ waits 2 s.").form).toBe(cutStatement("Build v2 waits 2 s.").form);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Release ２０２４H1 waits 2 s. | Must | Ops |",
+          "| FR-002 | Release 2024H1 waits 5 s. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    // Two words that differ by their value still make two forms.
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Release ２０２４H1 waits 2 s. | Must | Ops |",
+          "| FR-002 | Release 2024H2 waits 5 s. | Must | Ops |",
         ),
       ),
     ).toBe(undefined);

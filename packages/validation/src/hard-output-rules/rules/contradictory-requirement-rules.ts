@@ -5,7 +5,7 @@ import type {
 import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
 import { phrases } from "./lexicon.js";
-import { asciiDigits, isMinuteDigits } from "./minute-digits.js";
+import { asciiDigits, isMinuteDigits, wordOf } from "./minute-digits.js";
 import { requirementDefinitions } from "./requirement-definitions.js";
 
 // Document-Level Rule: Contradictory Requirements
@@ -184,17 +184,20 @@ export function unitOf(token: string): string | null {
  * `0,250` and `0,001` read as decimals (0.25, 0.001), and a form with two
  * kinds of separator after a leading `0` (`0,250.5`, `0.250,5`), whose first
  * separator could only group thousands, does not read as a number. A form
- * that does not read as a number (`1.2.3`) is its own value, its digits as
- * written, so two different forms never read as equal. `1,500` stays 1500: it may be a
- * French 1.5, which the statement's language does not settle.
+ * that does not read as a number (`1.2.3`) is its own value, its separators
+ * and digits as written once each digit is in ASCII, so two such forms read
+ * as equal only when they differ by the script of their digits. `1,500` stays
+ * 1500: it may be a French 1.5, which the statement's language does not settle.
  * The decimal digits of any script are read as their ASCII digits first, so
  * `３０`, `٣٠` and `30` have one value, 30, and a form that does not read as
- * a number is its value in ASCII digits (`１.２.３` is `1.2.3`).
+ * a number is its value in ASCII digits (`１.２.３` and `1.2.3` are one value).
  * source: review 1 of #318, note 1 (only the first comma was replaced, so
  * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN); review 1
  * of #319, note 2 (`0,250` read as 250); review 1 of #320, note 1 (`0,250.5`
  * read as 250.5); review 1 of #332, note 1 (`２h３０` against `2h30` was
- * reported: `Number` reads only ASCII digits, so `３０` was its own value).
+ * reported: `Number` reads only ASCII digits, so `３０` was its own value);
+ * review 1 of #333, note 1 (this docstring still said that two different
+ * forms that do not read as a number never read as equal).
  */
 export function digitsValue(spelling: string): string {
   const token = asciiDigits(spelling);
@@ -335,7 +338,7 @@ export function cutStatement(text: string): CutStatement {
     if (DIGITS.test(token)) {
       const glued = splitGlued(token);
       if (glued === null) {
-        form.push(token.toLowerCase());
+        form.push(wordOf(token));
         continue;
       }
       for (let k = 0; k < glued.numbers.length; k++) {
@@ -352,7 +355,7 @@ export function cutStatement(text: string): CutStatement {
     }
     const word = NUMBER_VALUES.get(token.toLowerCase());
     if (word === undefined) {
-      form.push(unitOf(token) ?? token.toLowerCase());
+      form.push(unitOf(token) ?? wordOf(token));
       continue;
     }
     slots.push(form.length);
