@@ -89,6 +89,8 @@ export const SECTIONS_BY_CONTEXT: Record<PRDContext, readonly SectionType[]> = {
     "deployment",
     "timeline",
   ],
+  // #119: "overview, functional requirements, acceptance criteria, tests".
+  tiny: ["overview", "requirements", "acceptance_criteria", "testing"],
 } as const;
 
 /**

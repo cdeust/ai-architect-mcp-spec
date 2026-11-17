@@ -49,7 +49,18 @@ export const VERDICT_VALUES = /** @type {const} */ ([
  * @returns {string|null}
  */
 function findFirstBalancedObject(text) {
-  const start = text.indexOf("{");
+  return findFirstBalanced(text, text.indexOf("{"));
+}
+
+/**
+ * Same scan from `start` (an index of `{` or `[`), counting both kinds of
+ * bracket, so an array of objects closes on its own `]`.
+ *
+ * @param {string} text
+ * @param {number} start
+ * @returns {string|null}
+ */
+function findFirstBalanced(text, start) {
   if (start === -1) return null;
 
   let depth = 0;
@@ -70,9 +81,9 @@ function findFirstBalancedObject(text) {
     }
     if (ch === '"') {
       inString = true;
-    } else if (ch === "{") {
+    } else if (ch === "{" || ch === "[") {
       depth++;
-    } else if (ch === "}") {
+    } else if (ch === "}" || ch === "]") {
       depth--;
       if (depth === 0) {
         return text.slice(start, i + 1);
@@ -106,6 +117,16 @@ export function extractVerdict(rawText) {
     );
   }
 
+  return toVerdict(parsed);
+}
+
+/**
+ * Validate one parsed value as a verdict.
+ *
+ * @param {unknown} parsed
+ * @returns {Verdict}
+ */
+function toVerdict(parsed) {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("extractVerdict: parsed value is not an object");
   }
@@ -133,4 +154,110 @@ export function extractVerdict(rawText) {
     caveats,
     confidence,
   };
+}
+
+/**
+ * @typedef {Verdict & {claim_id?: string}} ClaimVerdict
+ */
+
+/**
+ * Read a reply to a single-claim prompt or to a batched one (one prompt per
+ * judge, issue #119: packages/verification/src/judge-prompt.ts
+ * buildBatchedJudgePrompt asks for a JSON array with one object per
+ * claim_id).
+ *
+ * Postcondition: reads the first verdict-shaped JSON value of the reply
+ * (isVerdictShaped: a footnote `[1]` or an aside `{see below}` is skipped).
+ * When it is an array, returns `{verdicts}`, one ClaimVerdict per element,
+ * each carrying its string `claim_id`; when it is an object, returns
+ * `{verdict}`, with its `claim_id` when the object has a string one. Throws on the first element that is not
+ * a valid verdict or lacks a claim_id, like extractVerdict — never returns a
+ * partial list, so a host does not mistake a dropped claim for an answer.
+ *
+ * @param {string} rawText
+ * @returns {{verdict: ClaimVerdict} | {verdicts: ClaimVerdict[]}}
+ */
+export function extractVerdicts(rawText) {
+  if (typeof rawText !== "string" || rawText.trim().length === 0) {
+    throw new Error("extractVerdicts: empty reply — no JSON to parse");
+  }
+  const parsed = firstParsedJson(rawText);
+  if (!Array.isArray(parsed)) {
+    const verdict = toVerdict(parsed);
+    const claimId = parsed && typeof parsed === "object" ? /** @type {Record<string, unknown>} */ (parsed).claim_id : undefined;
+    return { verdict: typeof claimId === "string" ? { claim_id: claimId, ...verdict } : verdict };
+  }
+  const verdicts = parsed.map((item, i) => {
+    const claimId = item && typeof item === "object" ? /** @type {Record<string, unknown>} */ (item).claim_id : undefined;
+    if (typeof claimId !== "string" || claimId.length === 0) {
+      throw new Error(`extractVerdicts: element ${i} has no string "claim_id"`);
+    }
+    return { claim_id: claimId, ...toVerdict(item) };
+  });
+  return { verdicts };
+}
+
+/**
+ * The first balanced `[...]` or `{...}` of `text` that parses as JSON. A
+ * balanced span of prose that is not JSON (`Verdict for [AC-001]: {...}`) is
+ * skipped and the scan resumes after it, as packages/core extractJsonValue
+ * does (review of #326); a bracket that never closes ends the scan, so a cut
+ * array is refused rather than read as its first object, and each character
+ * is scanned once. A span that parses but is not a verdict or a list of
+ * verdicts (a footnote `[1]`, a checkbox `[ ]`) is skipped too (review note 3
+ * of #326).
+ *
+ * @param {string} text
+ * @returns {unknown}
+ */
+function firstParsedJson(text) {
+  /** @type {Error|undefined} */
+  let lastError;
+  let start = nextOpening(text, 0);
+  while (start !== -1) {
+    const candidate = findFirstBalanced(text, start);
+    if (candidate === null) {
+      throw new Error(`extractVerdicts: no balanced JSON ${text[start] === "[" ? "array" : "object"} found in reply`);
+    }
+    try {
+      const value = JSON.parse(candidate);
+      if (isVerdictShaped(value)) return value;
+      lastError = new Error("a JSON value that is not a verdict or a list of verdicts");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    start = nextOpening(text, start + candidate.length);
+  }
+  throw new Error(
+    lastError
+      ? `extractVerdicts: no candidate JSON parsed: ${lastError.message}`
+      : "extractVerdicts: no JSON array or object found in reply",
+  );
+}
+
+/**
+ * @param {string} text
+ * @param {number} from
+ * @returns {number}
+ */
+function nextOpening(text, from) {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === "[" || text[i] === "{") return i;
+  }
+  return -1;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isVerdictShaped(value) {
+  // Same rule as the self-check's isVerdictShaped (self-check-verdicts.ts):
+  // an incomplete element does not make the array prose; extractVerdicts
+  // then refuses the array by naming that element (Codex review of #327).
+  /** @param {unknown} v */
+  const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+  /** @param {unknown} v */
+  const answers = (v) => isObject(v) && ("verdict" in /** @type {object} */ (v) || "claim_id" in /** @type {object} */ (v));
+  return Array.isArray(value) ? value.length > 0 && value.every(isObject) && value.some(answers) : answers(value);
 }

@@ -134,13 +134,20 @@ export function fakePrCreationReport(footerPresent: boolean): string {
   return lines.join("\n");
 }
 
-export function fakeJudgeVerdict(): string {
-  return JSON.stringify({
-    verdict: "PASS",
-    rationale: "Canned synthetic verdict.",
-    caveats: [],
-    confidence: 0.9,
-  });
+/**
+ * A canned PASS for each claim a judge prompt asks about: a JSON array with
+ * one verdict per claim_id (the batched judge prompt of issue #119).
+ */
+export function fakeJudgeVerdict(claimIds: readonly string[]): string {
+  return JSON.stringify(
+    claimIds.map((claim_id) => ({
+      claim_id,
+      verdict: "PASS",
+      rationale: "Canned synthetic verdict.",
+      caveats: [],
+      confidence: 0.9,
+    })),
+  );
 }
 
 export function fakeClarificationQuestion(): string {

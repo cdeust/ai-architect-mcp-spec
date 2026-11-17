@@ -102,7 +102,7 @@ describe("makeCannedDispatcher routing", () => {
           invocation_id: "self_check_judge_0001",
           subagent_type: "zetetic-team-subagents:genius:fermi",
           description: "judge claim FR-001",
-          prompt: "...",
+          prompt: "<claim>\nid: FR-001\ntype: fr_traceability\n</claim>\n<claim>\nid: FR-002\n</claim>",
           isolation: "none",
         },
       ],
@@ -114,10 +114,15 @@ describe("makeCannedDispatcher routing", () => {
     expect(out.kind).toBe("subagent_batch_result");
     expect(out.responses).toHaveLength(1);
     const raw = out.responses[0].raw_text!;
-    const parsed = JSON.parse(raw) as { verdict: string; confidence: number };
-    expect(parsed.verdict).toBe("PASS");
-    expect(parsed.confidence).toBeGreaterThan(0);
-    expect(parsed.confidence).toBeLessThanOrEqual(1);
+    // One verdict per claim of the batched prompt (issue #119), each naming
+    // its claim_id, which the self-check requires (review note 2 of #325).
+    const parsed = JSON.parse(raw) as Array<{ claim_id: string; verdict: string; confidence: number }>;
+    expect(parsed.map((v) => v.claim_id)).toEqual(["FR-001", "FR-002"]);
+    for (const v of parsed) {
+      expect(v.verdict).toBe("PASS");
+      expect(v.confidence).toBeGreaterThan(0);
+      expect(v.confidence).toBeLessThanOrEqual(1);
+    }
   });
 
   it("spawn_subagents routes section_generate_<type> through the section-draft producer", () => {

@@ -208,19 +208,19 @@ export function buildBudgetGateQuestion(
   return {
     kind: "ask_user" as const,
     question_id: VERIFY_BUDGET_QUESTION_ID,
-    header: "Judge panel exceeds the invocation budget",
+    header: "Judge panel exceeds the verdict budget",
     description:
-      `Self-check's multi-judge verification would dispatch ${invocationCount} judge invocations ` +
+      `Self-check's multi-judge verification would request ${invocationCount} judge verdicts ` +
       `(default: ${config.judges_per_claim} judge/claim, ${config.architecture_judges_per_claim} for architecture claims), ` +
-      `above the ${config.invocation_cap}-invocation budget. Choose how to proceed.`,
+      `above the ${config.invocation_cap}-verdict budget. Choose how to proceed.`,
     options: [
       {
         label: VERIFY_BUDGET_OPTION_SAMPLE,
-        description: `Sample down to ${config.invocation_cap} invocations, covering every claim type at least once.`,
+        description: `Sample down to ${config.invocation_cap} verdicts, covering every claim type at least once.`,
       },
       {
         label: VERIFY_BUDGET_OPTION_FULL,
-        description: `Run all ${invocationCount} invocations despite the budget (explicit override).`,
+        description: `Request all ${invocationCount} verdicts despite the budget (explicit override).`,
       },
       {
         label: VERIFY_BUDGET_OPTION_SKIP,

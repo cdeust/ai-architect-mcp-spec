@@ -29,7 +29,7 @@ import {
 import { validateDocument } from "@prd-gen/validation";
 import {
   planDocumentVerification,
-  buildJudgePrompt,
+  buildBatchedJudgePrompt,
   buildMechanicalVerdicts,
 } from "@prd-gen/verification";
 import {
@@ -52,8 +52,8 @@ import { handlePrdValidation } from "./self-check-prd-validation.js";
 import { withDocumentScore } from "./self-check-quality-score.js";
 import { concludeWithObservations } from "./self-check-observations.js";
 import {
-  invocationIdFor,
   buildJudgeIndex,
+  groupJudgeIndex,
   parseVerdicts,
   computeMechanicalVerdicts,
   countSubjectiveClaims,
@@ -86,37 +86,38 @@ function gatherSections(state: PipelineState) {
 }
 
 /**
- * precondition:  `requests` is the FINAL invocation set — already reduced
+ * precondition:  `requests` is the FINAL request set — already reduced
  *                (reduceJudgeRequests) and, if the budget gate fired,
  *                sampled or explicitly overridden. This function performs
  *                no further filtering.
- * postcondition: one spawn_subagents invocation per request, in the same
- *                order, each carrying `model`/`effort` — `model` comes from
- *                assignJudgeModels (architecture claims cycle through
- *                `config.diversity_models`; every other claim dispatches
- *                under `config.diversity_models[0]`) — no judge invocation
- *                is dispatched under the session model by default (source:
- *                measured e2e run run_mrlqa0aj_u2rh15; see
+ * postcondition: one spawn_subagents invocation per (judge, model) batch of
+ *                buildJudgeIndex, in order of first appearance: the judge
+ *                sees all its claims in one prompt that embeds the PRD once
+ *                (issue #119). Each invocation carries `model`/`effort` —
+ *                `model` comes from assignJudgeModels (architecture claims
+ *                cycle through `config.diversity_models`; every other claim
+ *                dispatches under `config.diversity_models[0]`) — no judge
+ *                invocation is dispatched under the session model by default
+ *                (source: measured e2e run run_mrlqa0aj_u2rh15; see
  *                self-check-verify-budget.ts module doc).
  */
 function buildVerifyAction(
   requests: readonly JudgeRequest[],
   config: VerifyBudgetConfig,
 ): NextAction {
-  const models = assignJudgeModels(requests, config);
   return {
     kind: "spawn_subagents",
     purpose: "judge",
     batch_id: VERIFY_BATCH_ID,
-    invocations: requests.map((req, idx) => {
-      const built = buildJudgePrompt(req);
+    invocations: groupJudgeIndex(buildJudgeIndex(requests, config)).map((group) => {
+      const built = buildBatchedJudgePrompt(group.map((e) => e.request));
       return {
-        invocation_id: invocationIdFor(idx),
-        subagent_type: agentSubagentType(req.judge),
+        invocation_id: group[0].invocation_id,
+        subagent_type: agentSubagentType(group[0].request.judge),
         description: built.description,
         prompt: built.prompt,
         isolation: "none" as const,
-        model: models[idx],
+        model: group[0].model,
         effort: config.judge_effort,
       };
     }),
@@ -265,8 +266,9 @@ function finalize(
  *
  * precondition:  `requests` is non-empty and already reduced/sampled.
  * postcondition: verification_plan.claim_ids/judges are parallel arrays,
- *                index-aligned with the dispatched invocations (invariant
- *                enforced by VerificationPlanSnapshotSchema's refine).
+ *                index-aligned with the final request set (invariant enforced
+ *                by VerificationPlanSnapshotSchema's refine); several requests
+ *                share one invocation when buildJudgeIndex batches them.
  */
 function dispatchVerify(
   state: PipelineState,
@@ -505,20 +507,17 @@ function parseVerdictsFromSnapshot(
   // Mutation occurred between phases — degrade gracefully. We still know the
   // exact judge identity for each slot (snapshot.judges[idx]), so attribution
   // in ConsensusVerdict.judges and Bayesian reliability lookups remain correct.
-  const byId = new Map(
-    batchResult.responses.map((r) => [r.invocation_id, r]),
-  );
+  // The batch an index fell in depends on the claims Phase A dispatched, which
+  // no longer rederive, so no response can be matched to a slot here.
   const out: JudgeVerdict[] = [];
   for (let idx = 0; idx < snapshot.claim_ids.length; idx++) {
     const claim_id = snapshot.claim_ids[idx];
     const judge = snapshot.judges[idx];
-    const response = byId.get(invocationIdFor(idx));
     out.push({
       judge,
       claim_id,
       verdict: "INCONCLUSIVE",
       rationale:
-        response?.error ??
         "Plan mismatch between Phase A and Phase B — original verdict cannot be parsed without JudgeRequest context",
       caveats: ["plan_mismatch", `mismatch_kind:${mismatchKind}`],
       confidence: 0,

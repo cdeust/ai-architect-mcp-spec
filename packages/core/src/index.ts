@@ -105,7 +105,7 @@ export {
 } from "./domain/agent.js";
 
 // Utils
-export { extractJsonObject } from "./utils/json-extract.js";
+export { extractJsonObject, extractJsonValue } from "./utils/json-extract.js";
 
 // Persistence
 export {
