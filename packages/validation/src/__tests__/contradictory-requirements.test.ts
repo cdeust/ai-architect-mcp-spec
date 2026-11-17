@@ -566,4 +566,70 @@ describe("contradictory_requirements (#118)", () => {
         'FR-002 ("４５", against FR-001: "３０")',
     );
   });
+
+  // Review 1 of #332, note 1: `Number` reads only ASCII digits, so a digit of
+  // another script was its own value and `２h３０` contradicted `2h30`.
+  it("reads the decimal digits of any script by their value", () => {
+    expect(["３０", "٣٠", "𝟑𝟎", "１,０００", "１.５", "１.２.３", "2٣"].map(digitsValue)).toEqual([
+      "30",
+      "30",
+      "30",
+      "1000",
+      "1.5",
+      "1.2.3",
+      "23",
+    ]);
+    expect(cutStatement("The export runs for ２h３０.").values).toEqual(cutStatement("The export runs for 2h30.").values);
+    expect(cutStatement("The export runs for ２h３０.").spellings).toEqual(["２", "３０"]);
+    for (const other of ["2h30", "2h٣٠", "２ h ３０"]) {
+      expect(
+        messageOf(
+          table(
+            "| FR-001 | The export runs for ２h３０. | Must | Ops |",
+            `| FR-002 | The export runs for ${other}. | Must | Ops |`,
+          ),
+        ),
+        other,
+      ).toBe(undefined);
+    }
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for ２h３０. | Must | Ops |",
+          "| FR-002 | The export runs for 3h30. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("3", against FR-001: "２")',
+    );
+  });
+
+  // Review 1 of #332, note 3: the references of a form with one duration are
+  // not the first of each set of measured numbers for a requirement that
+  // measures its minutes; the `references` docstring states what is compared.
+  it("compares a requirement that measures its minutes with the first of the form and the first that measures them", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A job lasts 2h30 before stopping. | Must | Ops |",
+          "| FR-002 | A job lasts 2 h 5 before stopping. | Must | Ops |",
+          "| FR-003 | A job lasts 3h30 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-003 ("3", against FR-001: "2")',
+    );
+    // The documented limit: FR-003 contradicts FR-002 alone, which is the first of no reference.
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A job lasts 2 h 5 before stopping. | Must | Ops |",
+          "| FR-002 | A job lasts 2 h 7 before stopping. | Must | Ops |",
+          "| FR-003 | A job lasts 3h07 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(undefined);
+  });
 });

@@ -357,9 +357,26 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
               ` then ${i} s. |`,
           ).join("\n"),
       ],
+      // Review 1 of #332, note 2: with `% 1024` every row from 1024 on meets an
+      // earlier row of its set, so a return to comparing all pairs, which stops
+      // at the first contradiction, stayed under the ceiling. Here every row
+      // measures its own set of minutes (the bits of the row number, below
+      // 4096), no two rows contradict each other, and all pairs would be
+      // compared.
+      [
+        "distinct",
+        (n) =>
+          Array.from(
+            { length: n },
+            (_, i) =>
+              `| FR-${i + 1} | A job lasts ` +
+              Array.from({ length: 12 }, (_, b) => `${b + 1} h ${(i >> b) & 1 ? 30 : 5},`).join(" ") +
+              ` then ${i} s. |`,
+          ).join("\n"),
+      ],
     ];
     for (const [name, build] of builders) {
-      const rows = name === "rows" || name === "measured";
+      const rows = name === "rows" || name === "measured" || name === "distinct";
       const small = build(rows ? 2000 : 32000);
       const large = build(rows ? 4000 : 64000);
       run(small);
