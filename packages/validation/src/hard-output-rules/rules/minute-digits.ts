@@ -51,11 +51,14 @@ const HOLDS_DIGIT = /\p{Nd}/u;
  * characters are left as they are, and the others recomposed (NFC), as NFKC
  * of the whole token would. Linear in the length.
  * source: review 1 of #334, note 2 (a fullwidth letter was only lowercased,
- * `Ｈ` to `ｈ`, so the word `２０２４Ｈ１`, which `splitGlued` rejects since
- * its `１` has one digit, kept `ｈ`, and `Release ２０２４Ｈ１ waits 2 s` and
- * `Release 2024H1 waits 5 s` were two forms); review 1 of #335, note 2 (NFKC
- * of the whole token wrote `²` as `2`, so `Grid x10² waits 2 s` and `Grid
- * x102 waits 5 s` were one form and were reported).
+ * `Ｈ` to `ｈ`, which `unitOf` does not read as a unit, so `splitGlued`
+ * rejected the token `２０２４Ｈ１` at its letters, before reading its `１`,
+ * and the word kept `ｈ`: `Release ２０２４Ｈ１ waits 2 s` and `Release 2024H1
+ * waits 5 s` were two forms); review 1 of #335, note 2 (NFKC of the whole
+ * token wrote `²` as `2`, so `Grid x10² waits 2 s` and `Grid x102 waits 5 s`
+ * were one form and were reported); review 1 of #336, notes 1 and 3 (the
+ * reason `２０２４Ｈ１` was rejected; no test failed without the NFC
+ * recomposition: two conjoining jamo, `\u1100\u1161`, are one syllable `가`).
  */
 export function folded(token: string): string {
   let out = "";
