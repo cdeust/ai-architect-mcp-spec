@@ -1,6 +1,6 @@
 // The decimal digits of any script, for contradictory-requirement-rules.ts:
 // the minutes of an hour-and-minute duration (two digits, read by their
-// value) and the ASCII spelling of a number's digits.
+// value) and the ASCII spelling of the digits of a number or a word.
 
 /** A decimal digit of any script: `3`, `３` (fullwidth), `٣` (Arabic-Indic). */
 const DECIMAL_DIGIT = /^\p{Nd}$/u;
@@ -30,6 +30,18 @@ export function asciiDigits(spelling: string): string {
   let out = "";
   for (const ch of spelling) out += DECIMAL_DIGIT.test(ch) ? String(digitValue(ch)) : ch;
   return out;
+}
+
+/**
+ * A word of a cut form: lowercase, with each decimal digit of any script
+ * written as its ASCII digit, so `２０２４H1` and `2024H1` are one word, as
+ * `２h３０` and `2h30` are one duration (contradictory-requirement-rules.ts, digitsValue).
+ * source: review 1 of #333, note 2 (a word or a rejected glued token kept the
+ * script of its digits, so `Release ２０２４H1 waits 2 s` and `Release 2024H1
+ * waits 5 s` were two forms and were not compared).
+ */
+export function wordOf(token: string): string {
+  return asciiDigits(token.toLowerCase());
 }
 
 /**
