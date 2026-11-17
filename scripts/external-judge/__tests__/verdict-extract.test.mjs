@@ -126,3 +126,10 @@ test("extractVerdicts: skips a footnote or checkbox that parses as JSON but is n
   assert.equal(out.verdicts[0].claim_id, "A");
   assert.throws(() => extractVerdicts("only [1] and [2] here"), /not a verdict/);
 });
+
+test("extractVerdicts: an incomplete element is named, not read as prose (Codex review of #327)", () => {
+  assert.throws(
+    () => extractVerdicts('[{"claim_id":"A","verdict":"FAIL","rationale":"r","confidence":0.5},{"claim_id":"B"}]'),
+    /"verdict" must be one of/,
+  );
+});

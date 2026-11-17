@@ -166,10 +166,11 @@ function toVerdict(parsed) {
  * buildBatchedJudgePrompt asks for a JSON array with one object per
  * claim_id).
  *
- * Postcondition: when the first JSON value of the reply is an array, returns
- * `{verdicts}`, one ClaimVerdict per element, each carrying its string
- * `claim_id`; when it is an object, returns `{verdict}`, with its `claim_id`
- * when the object has a string one. Throws on the first element that is not
+ * Postcondition: reads the first verdict-shaped JSON value of the reply
+ * (isVerdictShaped: a footnote `[1]` or an aside `{see below}` is skipped).
+ * When it is an array, returns `{verdicts}`, one ClaimVerdict per element,
+ * each carrying its string `claim_id`; when it is an object, returns
+ * `{verdict}`, with its `claim_id` when the object has a string one. Throws on the first element that is not
  * a valid verdict or lacks a claim_id, like extractVerdict — never returns a
  * partial list, so a host does not mistake a dropped claim for an answer.
  *
@@ -251,7 +252,12 @@ function nextOpening(text, from) {
  * @returns {boolean}
  */
 function isVerdictShaped(value) {
+  // Same rule as the self-check's isVerdictShaped (self-check-verdicts.ts):
+  // an incomplete element does not make the array prose; extractVerdicts
+  // then refuses the array by naming that element (Codex review of #327).
   /** @param {unknown} v */
-  const hasVerdict = (v) => typeof v === "object" && v !== null && "verdict" in v;
-  return Array.isArray(value) ? value.length > 0 && value.every(hasVerdict) : hasVerdict(value);
+  const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+  /** @param {unknown} v */
+  const answers = (v) => isObject(v) && ("verdict" in /** @type {object} */ (v) || "claim_id" in /** @type {object} */ (v));
+  return Array.isArray(value) ? value.length > 0 && value.every(isObject) && value.some(answers) : answers(value);
 }
