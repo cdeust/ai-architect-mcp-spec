@@ -79,20 +79,27 @@ const NUMBER_VALUES: ReadonlyMap<string, number> = new Map([
  * word is one token, so the digit inside `B2B` is not a number and its `B` is
  * not a unit; a glued run is split by `splitGlued`. Each alternative ends
  * where its character class ends and none can fail after it started, so the
- * scan is linear.
+ * scan is linear. A combining mark (`\p{M}`) after a letter or a digit is
+ * part of its token, so a decomposed `cafe\u0301` is one word, the word
+ * `café` once folded (`folded` recomposes it); a mark after a space or a
+ * symbol starts a token of its own.
  * source: review 1 of #319, note 3 (`Tier 1 B2B customers` read 1 as a
- * quantity of bytes).
+ * quantity of bytes); #118, slice after #339 (a combining accent cut its word
+ * in two, so a decomposed `café` and a composed one were two forms).
  */
-const TOKEN = /\p{N}+(?:[.,]\p{N}+)*[\p{L}\p{N}]*|\p{L}[\p{L}\p{N}]*|[^\s\p{L}\p{N}]/gu;
+const TOKEN = /\p{N}+(?:[.,]\p{N}+)*[\p{L}\p{M}\p{N}]*|\p{L}[\p{L}\p{M}\p{N}]*|[^\s\p{L}\p{N}]/gu;
 
 const DIGITS = /^\p{N}/u;
 
 /**
  * The runs of a token that starts with a digit: its leading number, then
  * letters and digits by turns (`2h30` is `2`, `h`, `30`). The token holds no
- * separator after its first letter, so the runs alternate.
+ * separator after its first letter, so the runs alternate. A combining mark
+ * belongs to the run of letters it follows, or starts one after a digit, so
+ * the runs cover every character of the token (`5s\u0301` is `5`, `s\u0301`,
+ * no unit).
  */
-const GLUED_RUNS = /\p{N}+(?:[.,]\p{N}+)*|\p{L}+/gu;
+const GLUED_RUNS = /\p{N}+(?:[.,]\p{N}+)*|[\p{L}\p{M}]+/gu;
 
 /**
  * The units read glued to a number although they are one letter: `5s`, `3h`.
