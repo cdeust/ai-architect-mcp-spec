@@ -133,14 +133,20 @@ type RawVerdict = z.infer<typeof RawVerdictSchema>;
 type ParsedVerdict = RawVerdict | { failure: string };
 
 /**
- * A judge answer is an object with a `verdict` field or an array of such
- * objects; anything else in the reply (a footnote `[1]`, a checkbox `[ ]`, an
- * aside `{see below}`) is prose, skipped by extractJsonValue (review note 3
- * of #326).
+ * A judge answer is an object with a `verdict` or a `claim_id`, or a
+ * non-empty array of objects of which one at least has one of the two;
+ * anything else in the reply (a footnote `[1]`, a checkbox `[ ]`, an aside
+ * `{see below}`) is prose, skipped by extractJsonValue (review note 3 of
+ * #326). An array element that is incomplete (`{"claim_id": "B"}`) does not
+ * make the array prose: readJudgeResponse degrades that claim alone and
+ * keeps its siblings' verdicts (Codex review of #327).
  */
 function isVerdictShaped(value: unknown): boolean {
-  const hasVerdict = (v: unknown) => typeof v === "object" && v !== null && "verdict" in v;
-  return Array.isArray(value) ? value.length > 0 && value.every(hasVerdict) : hasVerdict(value);
+  const isObject = (v: unknown): v is object => typeof v === "object" && v !== null && !Array.isArray(v);
+  const answers = (v: unknown) => isObject(v) && ("verdict" in v || "claim_id" in v);
+  return Array.isArray(value)
+    ? value.length > 0 && value.every(isObject) && value.some(answers)
+    : answers(value);
 }
 
 /**

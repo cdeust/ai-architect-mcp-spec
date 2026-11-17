@@ -125,3 +125,15 @@ describe("parseVerdicts skips JSON of the prose before the answer (review note 3
     expect(out.map((v) => v.verdict)).toEqual(["PASS", "FAIL"]);
   });
 });
+
+describe("an incomplete element keeps its siblings' verdicts (Codex review of #327)", () => {
+  it("degrades only the claim whose object has no verdict", () => {
+    const index = buildJudgeIndex([request("FR-001"), request("FR-002")], DEFAULT_VERIFY_BUDGET);
+    const raw = JSON.stringify([verdict("FR-001", "FAIL"), { claim_id: "FR-002" }]);
+    const out = parseVerdicts(index, batch([{ invocation_id: index[0].invocation_id, raw_text: raw }]));
+    expect(out[0].verdict).toBe("FAIL");
+    expect(out[1].verdict).toBe("INCONCLUSIVE");
+    expect(out[1].caveats).toContain("parse_error");
+    expect(out[1].rationale).toMatch(/invalid verdict for claim_id FR-002/);
+  });
+});
