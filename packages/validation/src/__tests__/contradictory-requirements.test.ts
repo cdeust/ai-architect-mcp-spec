@@ -508,4 +508,62 @@ describe("contradictory_requirements (#118)", () => {
     expect(cutStatement("dure 2h30 45.").measured).toEqual([true, true, false]);
     expect(cutStatement("dure 2 h 30 45.").measured).toEqual([true, false, false]);
   });
+
+  // Review 1 of #331, note 1: a reused identifier was compared with the other
+  // references of the form once the first was no longer the only one.
+  it("leaves a reused identifier to duplicate_requirement_ids when the form has several references", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | A job lasts 2 h 30 before stopping. | Must | Ops |",
+          "| FR-002 | A job lasts 3h30 before stopping. | Must | Ops |",
+          "| FR-001 | A job lasts 2 h 30 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("3", against FR-001: "2")',
+    );
+  });
+
+  // Review 1 of #331, note 2: a number that names is measured by no statement
+  // of the form, so the reference that measures every number did not exist.
+  it("compares with the first that measures every number the form can measure, beside a naming number", () => {
+    expect(cutStatement("Tier 1 users wait 2 h 30.").measurable).toEqual([false, true, true]);
+    expect(cutStatement("Tier 1 users wait 2 h 5.").measurable).toEqual([false, true, true]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Tier 1 users wait 2 h 5 before stopping. | Must | Ops |",
+          "| FR-002 | Tier 1 users wait 2h30 before stopping. | Must | Ops |",
+          "| FR-003 | Tier 1 users wait 3 h 30 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-003 ("3", against FR-002: "2")',
+    );
+  });
+
+  // Review 1 of #331, note 3: `/^[0-5][0-9]$/` read only ASCII digits.
+  it("reads two decimal digits of any script as minutes from 00 to 59", () => {
+    expect(splitGlued("２h３０")).toEqual({ numbers: ["２", "３０"], after: ["h", null] });
+    expect(splitGlued("2h٣٠")).toEqual({ numbers: ["2", "٣٠"], after: ["h", null] });
+    expect(splitGlued("２h６０")).toBe(null);
+    expect(splitGlued("2h𝟓𝟗")).toEqual({ numbers: ["2", "𝟓𝟗"], after: ["h", null] });
+    expect(splitGlued("2h𝟔𝟎")).toBe(null);
+    expect(cutStatement("dure 2 h ３０.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h ７５.").measured).toEqual([true, false]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for ２h３０. | Must | Ops |",
+          "| FR-002 | The export runs for ２h４５. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("４５", against FR-001: "３０")',
+    );
+  });
 });

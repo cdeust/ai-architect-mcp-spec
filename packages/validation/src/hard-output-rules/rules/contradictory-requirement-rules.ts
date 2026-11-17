@@ -39,7 +39,7 @@ import { requirementDefinitions } from "./requirement-definitions.js";
 // first requirement that does not measure a number would hide every later
 // contradiction there. A requirement is therefore compared with at most three
 // earlier ones of its cut form: the first, the first that measures the same
-// numbers, and the first that measures all of them (`references`). The cost
+// numbers, and the first that measures all it can (`references`). The cost
 // grows with the number of requirements, not with its square: a third
 // statement that differs from the second but agrees with the one it is
 // compared with is not reported. Every later requirement is compared, so a
@@ -119,14 +119,36 @@ export interface GluedToken {
  */
 const HOUR_UNITS: ReadonlySet<string> = new Set(["h", "hr", "hour", "heure"]);
 
+/** A decimal digit of any script: `3`, `３` (fullwidth), `٣` (Arabic-Indic). */
+const DECIMAL_DIGIT = /^\p{Nd}$/u;
+
 /**
- * The minutes of an hour-and-minute duration: two digits from 00 to 59
- * (`2h30`, `2h05`, `2 h 30`). `2h75` and `2 h 60` count no minutes.
+ * precondition: `digit` is one decimal digit (DECIMAL_DIGIT).
+ * postcondition: its value, 0 to 9. Unicode encodes the decimal digits of each
+ * script as one contiguous run from 0 to 9, and adjacent runs (the five of
+ * the mathematical digits) are whole runs of ten, so the value is the distance
+ * from the start of the run, modulo 10. At most 49 steps back.
+ */
+function digitValue(digit: string): number {
+  const at = digit.codePointAt(0)!;
+  let start = at;
+  while (start > 0 && DECIMAL_DIGIT.test(String.fromCodePoint(start - 1))) start--;
+  return (at - start) % 10;
+}
+
+/**
+ * The minutes of an hour-and-minute duration: two decimal digits from 00
+ * to 59, in any script (`2h30`, `2h05`, `2 h 30`, `２h３０`). `2h75` and
+ * `2 h 60` count no minutes.
  * source: review 1 of #330, note 2 (any two digits up to 99 were minutes, so
  * `2 h 60` against `2 h 75` was reported and `2 hours sixty` against
- * `2 hours seventy` was not).
+ * `2 hours seventy` was not); review 1 of #331, note 3 (`/^[0-5][0-9]$/`
+ * read only ASCII digits, so `２h３０` became a word).
  */
-const GLUED_MINUTES = /^[0-5][0-9]$/u;
+function isMinuteDigits(spelling: string): boolean {
+  const digits = [...spelling];
+  return digits.length === 2 && digits.every((d) => DECIMAL_DIGIT.test(d)) && digitValue(digits[0]!) <= 5;
+}
 
 /** What may follow the minutes of a glued duration: nothing, `m`, or a unit of a minute. */
 function isGluedMinuteUnit(letters: string): boolean {
@@ -157,7 +179,7 @@ export function splitGlued(token: string): GluedToken | null {
   const unit = unitOf(runs[1]!);
   if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
   if (runs.length === 2) return { numbers: [runs[0]!], after: [unit] };
-  if (!HOUR_UNITS.has(unit) || runs.length > 4 || !GLUED_MINUTES.test(runs[2]!)) return null;
+  if (!HOUR_UNITS.has(unit) || runs.length > 4 || !isMinuteDigits(runs[2]!)) return null;
   const minuteUnit = runs[3];
   if (minuteUnit === undefined) return { numbers: [runs[0]!, runs[2]!], after: [unit, null] };
   if (!isGluedMinuteUnit(minuteUnit)) return null;
@@ -239,6 +261,8 @@ export interface CutStatement {
   readonly spellings: readonly string[];
   /** For each number, whether it is a quantity (`isMeasured`). */
   readonly measured: readonly boolean[];
+  /** For each number, whether a statement of the form can measure it (`isMeasurable`). */
+  readonly measurable: readonly boolean[];
 }
 
 /**
@@ -263,7 +287,7 @@ function endsSpacedMinutes(next: string | undefined): boolean {
 
 /**
  * A number word that can count the minutes of an hour: its value is between
- * 10 and 59, the minutes GLUED_MINUTES reads that are written without a
+ * 10 and 59, the minutes isMinuteDigits reads that are written without a
  * leading 0, so a word and its digits read alike (`two hours five` is not
  * minutes, as `2 h 5` is not; `sixty` is not, as `2 h 60` is not).
  * `deux heures cinq` is left out with `2 h 5`.
@@ -279,7 +303,7 @@ function isMinuteWord(spelling: string): boolean {
  * Whether the number at `slot` of a cut form, spelled `spelling`, is a
  * quantity: a unit follows it (`5 s`, `10 mb`), or it counts the minutes of
  * a spaced duration. Spaced minutes follow a number and a unit of an hour,
- * are two digits from 00 to 59 (GLUED_MINUTES, the bound `splitGlued` puts on
+ * are two digits from 00 to 59 (isMinuteDigits, the bound `splitGlued` puts on
  * the digits of glued minutes) or a number word from 10 to 59, and are
  * followed by nothing, a mark or `m` (`2 h 30`, `1 h 30 m`, `deux heures
  * trente`): that bound on what follows is `endsSpacedMinutes`, not
@@ -305,7 +329,22 @@ function isMeasured(form: readonly string[], slot: number, spelling: string): bo
   const next = form[slot + 1];
   if (next !== undefined && UNITS.has(next)) return true;
   if (slot < 2 || !HOUR_UNITS.has(form[slot - 1]!) || form[slot - 2] !== NUMBER_SLOT) return false;
-  return (GLUED_MINUTES.test(spelling) || isMinuteWord(spelling)) && endsSpacedMinutes(next);
+  return (isMinuteDigits(spelling) || isMinuteWord(spelling)) && endsSpacedMinutes(next);
+}
+
+/**
+ * Whether the number at `slot` of a cut form can be a quantity in some
+ * statement of that form: a unit follows it, or it stands where the minutes
+ * of a duration stand (after a number and a unit of an hour). Every number
+ * `isMeasured` or `splitGlued` measures is measurable; the converse depends on
+ * the spelling (`2 h 5`), on the glue (`2h30 before`) and on what follows.
+ * The answer depends on the form only, so every statement of a form has the
+ * same measurable numbers.
+ */
+function isMeasurable(form: readonly string[], slot: number): boolean {
+  const next = form[slot + 1];
+  if (next !== undefined && UNITS.has(next)) return true;
+  return slot >= 2 && HOUR_UNITS.has(form[slot - 1]!) && form[slot - 2] === NUMBER_SLOT;
 }
 
 /** precondition: none. postcondition: the cut form of the statement of `text`, linear in its length. */
@@ -347,7 +386,8 @@ export function cutStatement(text: string): CutStatement {
     spellings.push(token);
   }
   const measured = slots.map((slot, i) => gluedMinutes.has(i) || isMeasured(form, slot, spellings[i]!));
-  return { form: form.join(" "), values, spellings, measured };
+  const measurable = slots.map((slot) => isMeasurable(form, slot));
+  return { form: form.join(" "), values, spellings, measured, measurable };
 }
 
 /**
@@ -384,27 +424,37 @@ interface FormReferences {
   readonly byMeasured: Map<string, Reference>;
 }
 
-/** The numbers a cut statement measures, as a key: `1` for a quantity, `0` otherwise. */
+/** A set of numbers of a cut statement, as a key: `1` for a number in the set, `0` otherwise. */
+function keyOf(set: readonly boolean[]): string {
+  return set.map((m) => (m ? "1" : "0")).join("");
+}
+
+/** The numbers a cut statement measures, as a key. */
 function measuredKey(cut: CutStatement): string {
-  return cut.measured.map((m) => (m ? "1" : "0")).join("");
+  return keyOf(cut.measured);
 }
 
 /**
  * precondition: `refs` holds the requirements of the cut form of `cut`.
  * postcondition: the earlier requirements `cut` is compared with, in order,
  * each once: the first of the form, the first that measures the same numbers,
- * and the first that measures every number. Only the minutes of a duration
- * are measured in one statement of a form and not in another, so for a form
- * with one duration these are the first of each set of measured numbers it
- * holds; a form with several durations can hold more sets than three, and a
- * requirement is then not compared with the first of the others. Three
- * references at most, so the cost of the rule stays linear.
+ * and the first that measures every number the form can measure
+ * (`isMeasurable`): a number that names (`Tier 1`) is measured by no
+ * statement of the form, so it does not keep that reference from existing.
+ * Only the minutes of a duration are measured in one statement of a form and
+ * not in another, so a form with one duration holds two sets of measured
+ * numbers, and these references are the first of each; a form with several
+ * durations can hold more sets than three, and a requirement is then not
+ * compared with the first of the others. Three references at most, so the
+ * cost of the rule stays linear.
  * source: review 1 of #330, note 1 (`2 h 5`, then `2 h 30`, then `2 h 45`
  * reported nothing: the first did not measure its minutes, and every later
- * requirement was compared with it only).
+ * requirement was compared with it only); review 1 of #331, note 2 (the key
+ * of every number could not exist in a form with a naming number, so `Tier 1
+ * … 2 h 5`, `… 2 h 30`, `… 2 h 45` reported nothing).
  */
 function references(refs: FormReferences, cut: CutStatement): Reference[] {
-  const all = "1".repeat(cut.measured.length);
+  const all = keyOf(cut.measurable);
   const found = [refs.first, refs.byMeasured.get(measuredKey(cut)), refs.byMeasured.get(all)];
   const unique: Reference[] = [];
   for (const ref of found) if (ref !== undefined && !unique.includes(ref)) unique.push(ref);
@@ -432,7 +482,10 @@ export function checkDocumentContradictoryRequirements(
       const candidates = references(refs, cut);
       if (!refs.byMeasured.has(key)) refs.byMeasured.set(key, { id, cut });
       // A reused identifier is duplicate_requirement_ids' finding, not a contradiction.
-      if (flagged.has(id)) continue;
+      // source: review 1 of #331, note 1 (FR-001, FR-002, then FR-001 again was
+      // reported against FR-002 once the first of the form was no longer the
+      // only reference).
+      if (refs.first.id === id || flagged.has(id)) continue;
       for (const ref of candidates) {
         if (ref.id === id) continue;
         const at = contradictionAt(cut, ref.cut);

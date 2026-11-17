@@ -340,9 +340,12 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       // Review 1 of #320, note 2: a long glued run of numbers and units, every one read.
       ["durations", (n) => "- FR-1: 1" + "h1".repeat(n) + " s"],
       // Review 1 of #330, note 1: rows of one form whose twelve spaced durations
-      // measure their minutes or not by the bits of the row number, so the rows
-      // hold up to 4096 sets of measured numbers; each row is compared with three
-      // references at most.
+      // measure their minutes or not by the bits of the row number modulo 1024,
+      // so the rows hold up to 1024 sets of measured numbers; each row is
+      // compared with three references at most. Review 1 of #331, note 3: the
+      // second row measures every number and a row from 1024 on meets the first
+      // of its set, so the "same measured" and "all measured" references are
+      // both compared.
       [
         "measured",
         (n) =>
@@ -350,7 +353,7 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
             { length: n },
             (_, i) =>
               `| FR-${i + 1} | A job lasts ` +
-              Array.from({ length: 12 }, (_, b) => `${b + 1} h ${(i >> b) & 1 ? 30 : 5},`).join(" ") +
+              Array.from({ length: 12 }, (_, b) => `${b + 1} h ${i === 1 || ((i % 1024) >> b) & 1 ? 30 : 5},`).join(" ") +
               ` then ${i} s. |`,
           ).join("\n"),
       ],
