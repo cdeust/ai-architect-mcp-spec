@@ -412,7 +412,9 @@ describe("contradictory_requirements (#118)", () => {
   // Review 1 of #321, note 2: any later number glued after a unit was read,
   // so a half-year, a semester or a cell layout was a quantity again.
   it("reads a later glued number only as the two-digit minutes of an hour", () => {
-    expect(["2024H1", "2025S1", "4s2p", "2h5", "2h30s", "2h30x", "1h30m5"].map(splitGlued)).toEqual([
+    expect(["2024H1", "2025S1", "4s2p", "2h5", "2h30s", "2h30x", "1h30m5", "2h60", "2h75"].map(splitGlued)).toEqual([
+      null,
+      null,
       null,
       null,
       null,
@@ -433,5 +435,77 @@ describe("contradictory_requirements (#118)", () => {
         ),
       ),
     ).toBe(undefined);
+  });
+
+  // Review 1 of #330, note 1: each requirement was compared with the first of
+  // its form only, so a first one that did not measure its minutes hid every
+  // later contradiction of those minutes.
+  it("compares a requirement with the first of its form that measures the same numbers, and the first that measures all", () => {
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export lasts 2 h 5. | Must | Ops |",
+          "| FR-002 | The export lasts 2 h 30. | Must | Ops |",
+          "| FR-003 | The export lasts 2 h 45. | Must | Ops |",
+          "| FR-004 | A sync lasts 3 h 30 before stopping. | Must | Ops |",
+          "| FR-005 | A sync lasts 3h45 before stopping. | Must | Ops |",
+          "| FR-006 | A sync lasts 4 h 45 before stopping. | Must | Ops |",
+          "| FR-007 | A backup lasts 1 h 5. | Must | Ops |",
+          "| FR-008 | A backup lasts 1 h 30. | Must | Ops |",
+          "| FR-009 | A backup lasts 2 h 5. | Must | Ops |",
+          "| FR-010 | A scan lasts 2h30 before stopping. | Must | Ops |",
+          "| FR-011 | A scan lasts 2 h 45 before stopping. | Must | Ops |",
+          "| FR-012 | A scan lasts 3 h 45 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "4 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-003 ("45", against FR-002: "30"), FR-006 ("4", against FR-005: "3"), FR-009 ("2", against FR-007: "1"), ' +
+        'FR-012 ("3", against FR-011: "2")',
+    );
+    // A requirement that agrees with every reference it is compared with is not reported.
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export lasts 2 h 5. | Must | Ops |",
+          "| FR-002 | The export lasts 2 h 30. | Must | Ops |",
+          "| FR-003 | The export lasts 2 h 7. | Must | Ops |",
+        ),
+      ),
+    ).toBe(undefined);
+  });
+
+  // Review 1 of #330, note 2: two digits up to 99 counted minutes, where a
+  // number word counted them only up to 59.
+  it("reads two digits as minutes only from 00 to 59, as a number word", () => {
+    expect(cutStatement("dure 2 h 59.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h 05.").measured).toEqual([true, true]);
+    expect(cutStatement("dure 2 h 60.").measured).toEqual([true, false]);
+    expect(cutStatement("dure 2 hours sixty.").measured).toEqual([true, false]);
+    expect(splitGlued("2h59")).toEqual({ numbers: ["2", "59"], after: ["h", null] });
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for 2 h 60. | Must | Ops |",
+          "| FR-002 | The export runs for 2 h 75. | Must | Ops |",
+          "| FR-003 | The export runs for 2h60. | Must | Ops |",
+          "| FR-004 | The export runs for 2h75. | Must | Ops |",
+          "| FR-005 | The export runs for 2 hours sixty. | Must | Ops |",
+          "| FR-006 | The export runs for 2 hours seventy. | Must | Ops |",
+          "| FR-007 | A replay lasts 1 h 50. | Must | Ops |",
+          "| FR-008 | A replay lasts 1 h 55. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-008 ("55", against FR-007: "50")',
+    );
+  });
+
+  // Review 1 of #330, note 3: a number after glued minutes keeps them a
+  // quantity, a number after spaced minutes does not.
+  it("measures glued minutes before a number, and spaced minutes only before nothing, a mark or m", () => {
+    expect(cutStatement("dure 2h30 45.").measured).toEqual([true, true, false]);
+    expect(cutStatement("dure 2 h 30 45.").measured).toEqual([true, false, false]);
   });
 });
