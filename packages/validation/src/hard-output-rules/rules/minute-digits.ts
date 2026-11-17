@@ -33,19 +33,37 @@ export function asciiDigits(spelling: string): string {
   return out;
 }
 
+/** A string that holds a decimal digit of any script. */
+const HOLDS_DIGIT = /\p{Nd}/u;
+
 /**
- * `token` folded as a word or a unit is read: its compatibility form (NFKC),
- * lowercase. NFKC writes a fullwidth letter as its letter (`Ｈ` → `H`, `ｓ` →
- * `s`), a fullwidth or mathematical digit as its ASCII digit, and a composed
- * form as one (`ﬁ` → `fi`), so `２０２４Ｈ１` and `2024H1`, or `５ ｓ` and
- * `5 s`, read alike. It leaves the digits of a script with its own shapes
- * (`٣`) as they are: `asciiDigits` writes those. Linear in the length.
+ * `token` folded as a word or a unit is read: each character in its
+ * compatibility form (NFKC), lowercase, except a character that is not a
+ * decimal digit and whose compatibility form holds one. NFKC writes a
+ * fullwidth letter as its letter (`Ｈ` → `H`, `ｓ` → `s`), a fullwidth or
+ * mathematical digit as its ASCII digit, and a composed form as one (`ﬁ` →
+ * `fi`), so `２０２４Ｈ１` and `2024H1`, or `５ ｓ` and `5 s`, read alike. A
+ * superscript, a subscript, a circled or a fraction form (`²`, `₂`, `②`,
+ * `½`) is kept: its compatibility form is a digit, but it writes another
+ * number than that digit in a word (`x10²` is a hundred, `x102` is not), so
+ * `x10²` and `x102` stay two words. It leaves the digits of a script with
+ * its own shapes (`٣`) as they are: `asciiDigits` writes those. The kept
+ * characters are left as they are, and the others recomposed (NFC), as NFKC
+ * of the whole token would. Linear in the length.
  * source: review 1 of #334, note 2 (a fullwidth letter was only lowercased,
- * `Ｈ` to `ｈ`, which is no unit, so `Release ２０２４Ｈ１ waits 2 s` and
- * `Release 2024H1 waits 5 s` were two forms).
+ * `Ｈ` to `ｈ`, so the word `２０２４Ｈ１`, which `splitGlued` rejects since
+ * its `１` has one digit, kept `ｈ`, and `Release ２０２４Ｈ１ waits 2 s` and
+ * `Release 2024H1 waits 5 s` were two forms); review 1 of #335, note 2 (NFKC
+ * of the whole token wrote `²` as `2`, so `Grid x10² waits 2 s` and `Grid
+ * x102 waits 5 s` were one form and were reported).
  */
 export function folded(token: string): string {
-  return token.normalize("NFKC").toLowerCase();
+  let out = "";
+  for (const ch of token) {
+    const compatible = ch.normalize("NFKC");
+    out += !DECIMAL_DIGIT.test(ch) && HOLDS_DIGIT.test(compatible) ? ch : compatible;
+  }
+  return out.normalize("NFC").toLowerCase();
 }
 
 /**

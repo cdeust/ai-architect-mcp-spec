@@ -743,4 +743,48 @@ describe("contradictory_requirements (#118)", () => {
       ),
     ).toBe(undefined);
   });
+
+  // Review 1 of #335, note 1: four calls of `folded` had no test that fails
+  // when they go back to `toLowerCase`: the number words, `isMinuteWord`,
+  // `isGluedMinuteUnit` and the minutes of `splitGlued`.
+  it("reads a fullwidth number word, minute word and glued minute unit as their letters", () => {
+    const reported = (id: string, value: string, earlier: string): string =>
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+      `${id} ("${value}", against FR-001: "${earlier}")`;
+    expect(
+      messageOf(
+        table("| FR-001 | A job runs for ｆｉｖｅ seconds. | Must | Ops |", "| FR-002 | A job runs for two seconds. | Must | Ops |"),
+      ),
+    ).toBe(reported("FR-002", "two", "ｆｉｖｅ"));
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for 2 hours ｔｈｉｒｔｙ. | Must | Ops |",
+          "| FR-002 | The export runs for 2 hours ｆｏｒｔｙ. | Must | Ops |",
+        ),
+      ),
+    ).toBe(reported("FR-002", "ｆｏｒｔｙ", "ｔｈｉｒｔｙ"));
+    expect(
+      messageOf(table("| FR-001 | The export runs for 2h30ｍ. | Must | Ops |", "| FR-002 | The export runs for 2h45m. | Must | Ops |")),
+    ).toBe(reported("FR-002", "45", "30"));
+  });
+
+  // Review 1 of #335, note 2: NFKC of the whole token wrote `²` as `2`, so
+  // `x10²` and `x102` were one word.
+  it("keeps a superscript, a subscript or a circled digit of a word as it is written", () => {
+    expect(folded("x10²")).toBe("x10²");
+    expect(folded("CO₂")).toBe("co₂");
+    expect(folded("step②")).toBe("step②");
+    expect(folded("Ｘ１０²")).toBe("x10²");
+    expect(folded("ﬁle")).toBe("file");
+    expect(
+      messageOf(table("| FR-001 | Grid x10² waits 2 s. | Must | Ops |", "| FR-002 | Grid x102 waits 5 s. | Must | Ops |")),
+    ).toBe(undefined);
+    expect(
+      messageOf(table("| FR-001 | Grid x10² waits 2 s. | Must | Ops |", "| FR-002 | Grid x10² waits 5 s. | Must | Ops |")),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+  });
 });
