@@ -788,15 +788,17 @@ describe("contradictory_requirements (#118)", () => {
     );
   });
 
-  // Review 1 of #336, note 3: removing the final `normalize("NFC")` of
-  // `folded` passed every test, and one case, `2h30ｍ`, covered two calls.
-  it("keeps a superscript, subscript or circled form of a digit, and folds one of a letter", () => {
+  // Review 1 of #337, note 2: a superscript, subscript, circled or fraction
+  // form was said to be kept whatever it held; only one of a digit is.
+  it("keeps a superscript, subscript, circled or fraction form of a digit, and folds one of a letter", () => {
     expect(folded("x10\u00b2")).toBe("x10\u00b2");
     expect(folded("\u2082\u2461\u00bd")).toBe("\u2082\u2461\u00bd");
     // `ⁿ`, `ₐ`, `Ⓗ` hold no digit once in their compatibility form.
     expect(folded("\u207f\u2090\u24bd")).toBe("nah");
   });
 
+  // Review 1 of #336, note 3: removing the final `normalize("NFC")` of
+  // `folded` passed every test, and one case, `2h30ｍ`, covered two calls.
   it("recomposes the characters of a word, and folds a glued minute unit for each of its two reads", () => {
     expect(folded("cafe\u0301")).toBe("caf\u00e9");
     // Two conjoining jamo are one syllable once recomposed; a statement
@@ -811,10 +813,11 @@ describe("contradictory_requirements (#118)", () => {
       "1 requirement(s) state a quantity an earlier requirement states differently: " +
         'FR-002 ("5", against FR-001: "2")',
     );
-    // Fails when either call goes back to `toLowerCase`: `isGluedMinuteUnit`
-    // then rejects the token (null), the minutes of `splitGlued` then keep `ｍ`.
-    expect(splitGlued("2h30ｍ")?.after).toEqual(["h", "m"]);
-    // Tells the two apart: fails only when `isGluedMinuteUnit` goes back.
+    // Checked first, so it tells the two calls apart (review 1 of #338,
+    // note 1): fails only when `isGluedMinuteUnit` goes back to
+    // `toLowerCase`, which then rejects the token (null).
     expect(splitGlued("2h30ｍ")).not.toBe(null);
+    // Then fails only when the minutes of `splitGlued` go back: they keep `ｍ`.
+    expect(splitGlued("2h30ｍ")?.after).toEqual(["h", "m"]);
   });
 });
