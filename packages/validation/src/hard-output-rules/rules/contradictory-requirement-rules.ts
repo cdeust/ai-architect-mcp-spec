@@ -238,19 +238,45 @@ function statementOf(text: string): string {
 }
 
 /**
- * Whether the number at `slot` of a cut form is a quantity: a unit follows
- * it (`5 s`, `10 mb`), or it follows a number and a unit of an hour, so it
- * counts the minutes of that hour (`2 h 30`, `2h30`, `1h30m`). It reads the
- * form only, so two statements of one form measure the same numbers, whether
- * they write the duration glued or spaced and in whichever order they come.
- * source: review 1 of #321, note 1 (`2 h 30` then `2h45` was reported, but
- * `2h30` then `2 h 45` was not: only the glued form measured its minutes, and
- * only the later statement's measures were read).
+ * What may follow the minutes of a spaced duration in a cut form: nothing, a
+ * mark (`.`, `,`, `)`), or `m`. A word is not: in `1 hour 10 users` the `10`
+ * counts users, not minutes. A unit of a minute is read by `isMeasured`'s
+ * first test, like any unit.
  */
-function isMeasured(form: readonly string[], slot: number): boolean {
+function endsSpacedMinutes(next: string | undefined): boolean {
+  if (next === undefined || next === "m") return true;
+  return next !== NUMBER_SLOT && !/^[\p{L}\p{N}]/u.test(next);
+}
+
+/** A number word that can count the minutes of an hour: its value is below 60. */
+function isMinuteWord(spelling: string): boolean {
+  const value = NUMBER_VALUES.get(spelling.toLowerCase());
+  return value !== undefined && value < 60;
+}
+
+/**
+ * Whether the number at `slot` of a cut form, spelled `spelling`, is a
+ * quantity: a unit follows it (`5 s`, `10 mb`), or it counts the minutes of
+ * an hour. Minutes follow a number and a unit of an hour, are two digits (or
+ * a number word below 60) and are followed by nothing, a mark or `m` (`2 h
+ * 30`, `2h30`, `1h30m`, `deux heures trente`), the bounds `splitGlued` puts
+ * on a glued duration. It reads the form and the spelling only, so two
+ * statements of one form measure the same numbers, in whichever order they
+ * come; a glued and a spaced duration measure their minutes alike when the
+ * minutes have two digits. With one digit, only a unit of a minute makes the
+ * spaced number a quantity (`2 h 5 min`); `2 h 5` is not, and a glued `2h5`
+ * or `2h5min` is a word.
+ * source: review 1 of #321, note 1 (`2 h 30` then `2h45` was reported, but
+ * `2h30` then `2 h 45` was not); review 2 of #322, notes 1 and 2 (any number
+ * after a spaced hour was read as minutes, so `Within 1 hour 10 users …`
+ * against `… 50 users …` was reported, and `2 h 5` against `2 h 7` was,
+ * where `2h5` against `2h7` was not).
+ */
+function isMeasured(form: readonly string[], slot: number, spelling: string): boolean {
   const next = form[slot + 1];
   if (next !== undefined && UNITS.has(next)) return true;
-  return slot >= 2 && HOUR_UNITS.has(form[slot - 1]!) && form[slot - 2] === NUMBER_SLOT;
+  if (slot < 2 || !HOUR_UNITS.has(form[slot - 1]!) || form[slot - 2] !== NUMBER_SLOT) return false;
+  return (GLUED_MINUTES.test(spelling) || isMinuteWord(spelling)) && endsSpacedMinutes(next);
 }
 
 /** precondition: none. postcondition: the cut form of the statement of `text`, linear in its length. */
@@ -288,7 +314,7 @@ export function cutStatement(text: string): CutStatement {
     values.push(String(word));
     spellings.push(token);
   }
-  const measured = slots.map((slot) => isMeasured(form, slot));
+  const measured = slots.map((slot, i) => isMeasured(form, slot, spellings[i]!));
   return { form: form.join(" "), values, spellings, measured };
 }
 
