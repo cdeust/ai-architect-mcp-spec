@@ -94,10 +94,33 @@ export async function runCalibration(groundTruth, config, runJudgeFn) {
   const rows = [];
   for (const claim of groundTruth.claims) {
     const prompt = buildClaimPrompt(claim);
-    const result = await runJudgeFn(config, prompt);
+    const result = oneClaimResult(await runJudgeFn(config, prompt), claim.claim_id);
     rows.push({ claim, result });
   }
   return rows;
+}
+
+/**
+ * A calibration prompt asks about one claim, but a model may wrap its answer
+ * in a JSON array, which runJudge returns as `verdicts` (issue #119). Read a
+ * one-element array that names the requested claim as that claim's
+ * `verdict`; any other array is a per-claim error, never a success that
+ * summarize() cannot read (Codex review of #326).
+ *
+ * @param {any} result
+ * @param {string} claimId
+ * @returns {any}
+ */
+export function oneClaimResult(result, claimId) {
+  if (result.status !== "ok" || !Array.isArray(result.verdicts)) return result;
+  const { verdicts, ...rest } = result;
+  if (verdicts.length === 1 && verdicts[0].claim_id === claimId) {
+    return { ...rest, verdict: verdicts[0] };
+  }
+  return {
+    status: "error",
+    reason: `expected one verdict for ${claimId}, got ${verdicts.length}: ${verdicts.map((v) => v.claim_id).join(", ")}`,
+  };
 }
 
 /**

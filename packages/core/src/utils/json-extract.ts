@@ -26,20 +26,25 @@ export function extractJsonObject(text: string): unknown {
 }
 
 /**
- * Extract the first JSON array or object that parses. Same tolerance as
- * extractJsonObject (fences, preamble, trailing prose). Used where a
- * response is a list (a batched judge verdict, issue #119) but a single
- * object stays a valid answer for a list of one. A bracketed span of the
- * prose that is balanced but not valid JSON (`Verdict for [AC-001]: {...}`)
- * is skipped and the scan goes on after it (review note 1 of #325), where
- * it used to fail the whole response. Each character is scanned once: a
- * skipped span is not re-read, and a bracket that never closes ends the
- * scan, so a reply of many unclosed brackets stays linear.
+ * Extract the first JSON array or object that parses and that `accept`
+ * keeps. Same tolerance as extractJsonObject (fences, preamble, trailing
+ * prose). Used where a response is a list (a batched judge verdict, issue
+ * #119). A bracketed span of the prose that is balanced but not valid JSON
+ * (`Verdict for [AC-001]: {...}`) is skipped and the scan goes on after it
+ * (review note 1 of #325); so is a span that parses but that `accept`
+ * refuses, such as a footnote `[1]` before the answer (review note 3 of
+ * #326). Each character is scanned once: a skipped span is not re-read, and
+ * a bracket that never closes ends the scan, so a reply of many unclosed
+ * brackets stays linear.
  *
- * postcondition: returns the first balanced candidate that parses; throws
- *                when none is found, with the failure of the last one tried.
+ * postcondition: returns the first balanced candidate that parses and that
+ *                `accept` keeps (every one by default); throws when none is
+ *                found, with the failure of the last one tried.
  */
-export function extractJsonValue(text: string): unknown {
+export function extractJsonValue(
+  text: string,
+  accept: (value: unknown) => boolean = () => true,
+): unknown {
   const stripped = stripFences(text);
   let lastError: Error | undefined;
   let start = nextOpening(stripped, 0);
@@ -47,7 +52,9 @@ export function extractJsonValue(text: string): unknown {
     const kind = stripped[start] === "[" ? "array" : "object";
     const end = balancedEnd(stripped, start, kind);
     try {
-      return JSON.parse(stripped.slice(start, end + 1));
+      const value: unknown = JSON.parse(stripped.slice(start, end + 1));
+      if (accept(value)) return value;
+      lastError = new Error(`a JSON ${kind} that is not of the expected shape`);
     } catch (err) {
       lastError = err as Error;
     }

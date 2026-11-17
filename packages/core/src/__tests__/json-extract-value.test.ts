@@ -47,3 +47,15 @@ describe("extractJsonValue skips a bracket of the prose (review note 1 of #325)"
     expect(() => extractJsonValue("see [note] and {aside}")).toThrow();
   });
 });
+
+describe("extractJsonValue with a shape filter (review note 3 of #326)", () => {
+  const isList = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "object" && x !== null);
+
+  it("skips a span that parses but that the filter refuses", () => {
+    expect(extractJsonValue('See [1] and [ ]: [{"claim_id": "A"}]', isList)).toEqual([{ claim_id: "A" }]);
+  });
+
+  it("throws, naming the shape, when every span is refused", () => {
+    expect(() => extractJsonValue("only [1] here", isList)).toThrow(/expected shape/);
+  });
+});
