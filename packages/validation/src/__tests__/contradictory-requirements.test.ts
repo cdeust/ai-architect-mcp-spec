@@ -887,6 +887,11 @@ describe("contradictory_requirements (#118)", () => {
   // `ś`, not the `s` of the seconds, and `deux\u0301` is no number. Before
   // that slice the mark was cut off as a symbol, so `s` and `deux` were read.
   it("reads a unit or a number word that carries a mark as a word", () => {
+    // Review 1 of #342, note 1: like `unitOf("anne\u0301es")` above, this line
+    // holds without the slice after #339, since `unitOf` reads only `folded`
+    // and `UNITS`. So do the `values` line of `2 s\u0301` and the two lines
+    // without a mark; only the `measured` line of `2 s\u0301` and the `values`
+    // line of `deux\u0301` fail without that slice.
     expect(unitOf("s\u0301")).toBe(null);
     const marked = cutStatement("Sync waits 2 s\u0301.");
     expect(marked.values).toEqual(["2"]);
