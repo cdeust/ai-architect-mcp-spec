@@ -790,7 +790,7 @@ describe("contradictory_requirements (#118)", () => {
 
   // Review 1 of #337, note 2: a superscript, subscript, circled or fraction
   // form was said to be kept whatever it held; only one of a digit is.
-  it("keeps a superscript, subscript, circled or fraction form of a digit, and folds one of a letter", () => {
+  it("keeps a superscript, subscript, circled or fraction form of a digit (², ₂, ②, ½), and folds one of a letter", () => {
     expect(folded("x10\u00b2")).toBe("x10\u00b2");
     expect(folded("\u2082\u2461\u00bd")).toBe("\u2082\u2461\u00bd");
     // `ⁿ`, `ₐ`, `Ⓗ` hold no digit once in their compatibility form.
@@ -802,8 +802,8 @@ describe("contradictory_requirements (#118)", () => {
   it("recomposes the characters of a word, and folds a glued minute unit for each of its two reads", () => {
     expect(folded("cafe\u0301")).toBe("caf\u00e9");
     // Two conjoining jamo are one syllable once recomposed; a statement
-    // token holds them both (they are letters), where a combining accent
-    // starts a token of its own.
+    // token holds them both (they are letters), as it holds a combining
+    // accent after a letter (see the decomposed `café` test below).
     expect(folded("\u1100\u1161")).toBe("\uac00");
     expect(
       messageOf(
@@ -814,10 +814,37 @@ describe("contradictory_requirements (#118)", () => {
         'FR-002 ("5", against FR-001: "2")',
     );
     // Checked first, so it tells the two calls apart (review 1 of #338,
-    // note 1): fails only when `isGluedMinuteUnit` goes back to
-    // `toLowerCase`, which then rejects the token (null).
+    // note 1): of the two calls of `folded`, fails only when
+    // `isGluedMinuteUnit` goes back to `toLowerCase`, which then rejects the
+    // token (null). Any other change that makes the token null (`unitOf`,
+    // `GLUED_RUNS`) fails here too (review 1 of #339, note 3).
     expect(splitGlued("2h30ｍ")).not.toBe(null);
-    // Then fails only when the minutes of `splitGlued` go back: they keep `ｍ`.
+    // Reached only once the token is not null, so of the two calls of
+    // `folded` it fails only when the minutes of `splitGlued` go back: they
+    // keep `ｍ`.
     expect(splitGlued("2h30ｍ")?.after).toEqual(["h", "m"]);
+  });
+
+  // #118, slice after #339: `TOKEN` cut a word at a combining accent
+  // (`\p{M}` was in no class but the symbol one), so a decomposed `café`
+  // and a composed one were two forms and were not compared.
+  it("reads a combining accent after a letter as part of its word", () => {
+    expect(
+      messageOf(
+        table("| FR-001 | The cafe\u0301 job waits 2 s. | Must | Ops |", "| FR-002 | The caf\u00e9 job waits 5 s. | Must | Ops |"),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    expect(cutStatement("The cafe\u0301 job waits 2 s.").form).toBe(cutStatement("The caf\u00e9 job waits 2 s.").form);
+  });
+
+  it("keeps a combining mark glued after a number in its token", () => {
+    // `s\u0301` is no unit, so the token is a word, not `5` seconds.
+    expect(splitGlued("5s\u0301")).toBe(null);
+    expect(cutStatement("Step 5s\u0301 waits 2 s.").values).toEqual(["2"]);
+    // A mark after a digit starts a run of letters, which no unit names.
+    expect(splitGlued("5\u0301")).toBe(null);
   });
 });
