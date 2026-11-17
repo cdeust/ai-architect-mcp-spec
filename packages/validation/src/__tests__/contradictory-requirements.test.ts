@@ -860,8 +860,14 @@ describe("contradictory_requirements (#118)", () => {
 
   // Review 1 of #340, note 2: since the slice after #339, a decomposed unit
   // or number word is one token, so it is read as a unit or a number, where
-  // it had been cut at its mark into words that named nothing.
+  // it had been cut at its mark into words that named nothing. This is one
+  // half of that change; the other half is the next test (review 1 of #341,
+  // note 1).
   it("reads a decomposed unit and a decomposed number word as a quantity", () => {
+    // Review 1 of #341, note 2: this line holds without the slice after #339,
+    // since `unitOf` reads neither `TOKEN` nor `GLUED_RUNS`; it only says that
+    // `anne\u0301es` is the unit once it is one token. The `messageOf` and
+    // `cutStatement` lines below are the ones that fail without that slice.
     expect(unitOf("anne\u0301es")).toBe("ann\u00e9e");
     expect(
       messageOf(
@@ -873,5 +879,20 @@ describe("contradictory_requirements (#118)", () => {
     );
     expect(cutStatement("Retry ze\u0301ro fois.").values).toEqual(["0"]);
     expect(cutStatement("Retry ze\u0301ro fois.").form).toBe(cutStatement("Retry deux fois.").form);
+  });
+
+  // Review 1 of #341, note 1: the other half of the slice after #339. A mark
+  // now stays in the token it follows, so a unit or a number word that
+  // carries one is no longer that unit or that number: `s\u0301` is the word
+  // `ś`, not the `s` of the seconds, and `deux\u0301` is no number. Before
+  // that slice the mark was cut off as a symbol, so `s` and `deux` were read.
+  it("reads a unit or a number word that carries a mark as a word", () => {
+    expect(unitOf("s\u0301")).toBe(null);
+    const marked = cutStatement("Sync waits 2 s\u0301.");
+    expect(marked.values).toEqual(["2"]);
+    expect(marked.measured).toEqual([false]);
+    expect(cutStatement("Sync waits 2 s.").measured).toEqual([true]);
+    expect(cutStatement("Retry deux\u0301 fois.").values).toEqual([]);
+    expect(cutStatement("Retry deux fois.").values).toEqual(["2"]);
   });
 });
