@@ -847,4 +847,31 @@ describe("contradictory_requirements (#118)", () => {
     // A mark after a digit starts a run of letters, which no unit names.
     expect(splitGlued("5\u0301")).toBe(null);
   });
+
+  // Review 1 of #340, note 3: no test covered a mark inside a glued
+  // duration. `h\u0301` has no composed form and is no unit of an hour;
+  // `m\u0301` composes to `ḿ`, which is not the `m` of the minutes.
+  it("reads a glued duration with a mark on its hour or minute unit as a word", () => {
+    expect(splitGlued("2h\u030130")).toBe(null);
+    expect(splitGlued("2h30m\u0301")).toBe(null);
+    expect(cutStatement("Sync 2h\u030130 waits 2 s.").values).toEqual(["2"]);
+    expect(cutStatement("Sync 2h30m\u0301 waits 2 s.").values).toEqual(["2"]);
+  });
+
+  // Review 1 of #340, note 2: since the slice after #339, a decomposed unit
+  // or number word is one token, so it is read as a unit or a number, where
+  // it had been cut at its mark into words that named nothing.
+  it("reads a decomposed unit and a decomposed number word as a quantity", () => {
+    expect(unitOf("anne\u0301es")).toBe("ann\u00e9e");
+    expect(
+      messageOf(
+        table("| FR-001 | Logs are kept 2 anne\u0301es. | Must | Ops |", "| FR-002 | Logs are kept 5 anne\u0301es. | Must | Ops |"),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    expect(cutStatement("Retry ze\u0301ro fois.").values).toEqual(["0"]);
+    expect(cutStatement("Retry ze\u0301ro fois.").form).toBe(cutStatement("Retry deux fois.").form);
+  });
 });
