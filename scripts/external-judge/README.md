@@ -96,7 +96,16 @@ or, with no key configured:
 ```json
 {"status":"skipped","reason":"no credentials — set EXTERNAL_JUDGE_API_KEY (or provider-specific GEMINI_API_KEY)"}
 ```
-`skipped` and `error` never carry a `verdict` field — the host must not
+A batched judge prompt (one prompt per judge, issue #119) is answered with a
+JSON array; the result then carries `verdicts`, one object per element with
+its `claim_id`, instead of `verdict`:
+```json
+{"status":"ok","verdicts":[{"claim_id":"FR-001","verdict":"PASS","rationale":"...","caveats":[],"confidence":0.85}],"model":"gemini-2.0-flash","provider":"gemini","latency_ms":842}
+```
+The host passes `verdicts` back as the invocation's `raw_text` (a JSON
+array); an element without a string `claim_id` or with an invalid verdict is
+an `error`, never a partial list.
+`skipped` and `error` never carry a `verdict` or `verdicts` field — the host must not
 treat their absence as any particular verdict. This is the graceful-
 degradation contract: no API key configured means no verdict is produced,
 never a fabricated one.

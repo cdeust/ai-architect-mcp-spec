@@ -226,8 +226,9 @@ describe("self-check judge-panel budget gate — model-diversity slots (arXiv:26
     expect(out.action.kind).toBe("spawn_subagents");
     if (out.action.kind !== "spawn_subagents") throw new Error("unreachable");
     expect(out.state.verification_plan!.claim_ids).toHaveLength(20);
-    // The 20 verdicts travel in one prompt per (judge, model) batch.
-    expect(out.action.invocations.length).toBeLessThan(20);
+    // The 20 verdicts travel in one prompt per (judge, model) batch: the 18
+    // FR claims in one, the architecture claim's two judges in one each.
+    expect(out.action.invocations).toHaveLength(3);
 
     // Every distinct claim_id present in the dispatched snapshot has at
     // least 1 judge — reduceJudgeRequests' invariant (limits >= 1).

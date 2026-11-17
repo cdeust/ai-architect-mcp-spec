@@ -22,32 +22,53 @@ export function extractJsonObject(text: string): unknown {
   const stripped = stripFences(text);
   const start = stripped.indexOf("{");
   if (start === -1) throw new Error("no JSON object found in response");
-  return parseBalanced(stripped, start, "object");
+  return JSON.parse(stripped.slice(start, balancedEnd(stripped, start, "object") + 1));
 }
 
 /**
- * Extract the first balanced JSON array or object, whichever opens first.
- * Same tolerance as extractJsonObject (fences, preamble, trailing prose).
- * Used where a response is a list (a batched judge verdict, issue #119) but
- * a single object stays a valid answer for a list of one.
+ * Extract the first JSON array or object that parses. Same tolerance as
+ * extractJsonObject (fences, preamble, trailing prose). Used where a
+ * response is a list (a batched judge verdict, issue #119) but a single
+ * object stays a valid answer for a list of one. A bracketed span of the
+ * prose that is balanced but not valid JSON (`Verdict for [AC-001]: {...}`)
+ * is skipped and the scan goes on after it (review note 1 of #325), where
+ * it used to fail the whole response. Each character is scanned once: a
+ * skipped span is not re-read, and a bracket that never closes ends the
+ * scan, so a reply of many unclosed brackets stays linear.
  *
- * postcondition: returns the parsed array or object; throws when neither is
- *                found or the first one is unbalanced or malformed.
+ * postcondition: returns the first balanced candidate that parses; throws
+ *                when none is found, with the failure of the last one tried.
  */
 export function extractJsonValue(text: string): unknown {
   const stripped = stripFences(text);
-  const obj = stripped.indexOf("{");
-  const arr = stripped.indexOf("[");
-  if (obj === -1 && arr === -1) throw new Error("no JSON array or object found in response");
-  const start = arr !== -1 && (obj === -1 || arr < obj) ? arr : obj;
-  return parseBalanced(stripped, start, stripped[start] === "[" ? "array" : "object");
+  let lastError: Error | undefined;
+  let start = nextOpening(stripped, 0);
+  while (start !== -1) {
+    const kind = stripped[start] === "[" ? "array" : "object";
+    const end = balancedEnd(stripped, start, kind);
+    try {
+      return JSON.parse(stripped.slice(start, end + 1));
+    } catch (err) {
+      lastError = err as Error;
+    }
+    start = nextOpening(stripped, end + 1);
+  }
+  throw lastError ?? new Error("no JSON array or object found in response");
+}
+
+function nextOpening(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === "[" || text[i] === "{") return i;
+  }
+  return -1;
 }
 
 function stripFences(text: string): string {
   return text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "");
 }
 
-function parseBalanced(stripped: string, start: number, kind: "object" | "array"): unknown {
+/** Index of the bracket that closes the one at `start`; throws when none does. */
+function balancedEnd(stripped: string, start: number, kind: "object" | "array"): number {
   let depth = 0;
   let inString = false;
   let escape = false;
@@ -69,9 +90,7 @@ function parseBalanced(stripped: string, start: number, kind: "object" | "array"
     if (ch === "{" || ch === "[") depth++;
     else if (ch === "}" || ch === "]") {
       depth--;
-      if (depth === 0) {
-        return JSON.parse(stripped.slice(start, i + 1));
-      }
+      if (depth === 0) return i;
     }
   }
   throw new Error(`unbalanced JSON ${kind} in response`);

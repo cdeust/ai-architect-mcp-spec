@@ -136,20 +136,18 @@ export function fakePrCreationReport(footerPresent: boolean): string {
 
 /**
  * A canned PASS for each claim a judge prompt asks about: a JSON array with
- * one verdict per claim_id (the batched judge prompt of issue #119). With no
- * claim_id (a caller that has no prompt), the single-object form, which the
- * parser accepts for an invocation of one claim.
+ * one verdict per claim_id (the batched judge prompt of issue #119).
  */
-export function fakeJudgeVerdict(claimIds: readonly string[] = []): string {
-  const verdict = {
-    verdict: "PASS",
-    rationale: "Canned synthetic verdict.",
-    caveats: [],
-    confidence: 0.9,
-  };
-  return claimIds.length === 0
-    ? JSON.stringify(verdict)
-    : JSON.stringify(claimIds.map((claim_id) => ({ claim_id, ...verdict })));
+export function fakeJudgeVerdict(claimIds: readonly string[]): string {
+  return JSON.stringify(
+    claimIds.map((claim_id) => ({
+      claim_id,
+      verdict: "PASS",
+      rationale: "Canned synthetic verdict.",
+      caveats: [],
+      confidence: 0.9,
+    })),
+  );
 }
 
 export function fakeClarificationQuestion(): string {

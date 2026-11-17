@@ -34,8 +34,11 @@ export const VerifyBudgetConfigSchema = z.object({
    * pre-sampling), self-check emits `ask_user` instead of dispatching
    * `spawn_subagents` — see
    * handlers/self-check-verify-budget.ts:buildBudgetGateQuestion. Since
-   * issue #119 one invocation carries every claim of a judge, so the
-   * dispatched invocation count is at most this number, usually far below.
+   * issue #119 one invocation carries every claim of a (judge, model) pair,
+   * so the dispatched invocation count is at most the verdict count, which
+   * is at most this number unless the user chose "Full fleet". Nothing
+   * bounds how many claims one invocation carries: a cap would need a
+   * measured prompt size limit, which the repository does not have yet.
    */
   invocation_cap: z.number().int().positive(),
   /**

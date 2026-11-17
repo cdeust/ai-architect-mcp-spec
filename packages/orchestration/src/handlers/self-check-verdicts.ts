@@ -139,9 +139,12 @@ type ParsedVerdict = RawVerdict | { failure: string };
  * postcondition: one entry per claim_id. A JSON array is matched by
  *                claim_id: a claim with no object, an invalid object or two
  *                objects gets a failure. A single object is accepted only
- *                for an invocation of one claim (the shape of the former
- *                one-claim prompt), and only if any claim_id it carries is
- *                that claim's. Throws when the response holds no JSON at all.
+ *                for an invocation of one claim, and only when its claim_id
+ *                is that claim's: an object without claim_id (the answer to
+ *                the former one-claim prompt, which a run saved by an older
+ *                server may hold for a renumbered invocation id) is refused
+ *                rather than credited to another claim (review note 2 of
+ *                #325). Throws when the response holds no JSON at all.
  */
 function readJudgeResponse(
   rawText: string,
@@ -153,8 +156,8 @@ function readJudgeResponse(
     if (claimIds.length !== 1) {
       throw new Error(`expected a JSON array of ${claimIds.length} verdicts, got one object`);
     }
-    const parsed = RawVerdictSchema.extend({ claim_id: z.string().optional() }).parse(value);
-    if (parsed.claim_id !== undefined && parsed.claim_id !== claimIds[0]) {
+    const parsed = RawBatchedVerdictSchema.parse(value);
+    if (parsed.claim_id !== claimIds[0]) {
       throw new Error(`verdict for claim_id ${parsed.claim_id}, expected ${claimIds[0]}`);
     }
     out.set(claimIds[0], parsed);
