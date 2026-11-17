@@ -1,6 +1,7 @@
 // The decimal digits of any script, for contradictory-requirement-rules.ts:
 // the minutes of an hour-and-minute duration (two digits, read by their
-// value) and the ASCII spelling of the digits of a number or a word.
+// value), the ASCII spelling of the digits of a number or a word, and the
+// folded spelling of a word or a unit (letters of any width, lowercase).
 
 /** A decimal digit of any script: `3`, `３` (fullwidth), `٣` (Arabic-Indic). */
 const DECIMAL_DIGIT = /^\p{Nd}$/u;
@@ -33,15 +34,32 @@ export function asciiDigits(spelling: string): string {
 }
 
 /**
- * A word of a cut form: lowercase, with each decimal digit of any script
- * written as its ASCII digit, so `２０２４H1` and `2024H1` are one word, as
- * `２h３０` and `2h30` are one duration (contradictory-requirement-rules.ts, digitsValue).
+ * `token` folded as a word or a unit is read: its compatibility form (NFKC),
+ * lowercase. NFKC writes a fullwidth letter as its letter (`Ｈ` → `H`, `ｓ` →
+ * `s`), a fullwidth or mathematical digit as its ASCII digit, and a composed
+ * form as one (`ﬁ` → `fi`), so `２０２４Ｈ１` and `2024H1`, or `５ ｓ` and
+ * `5 s`, read alike. It leaves the digits of a script with its own shapes
+ * (`٣`) as they are: `asciiDigits` writes those. Linear in the length.
+ * source: review 1 of #334, note 2 (a fullwidth letter was only lowercased,
+ * `Ｈ` to `ｈ`, which is no unit, so `Release ２０２４Ｈ１ waits 2 s` and
+ * `Release 2024H1 waits 5 s` were two forms).
+ */
+export function folded(token: string): string {
+  return token.normalize("NFKC").toLowerCase();
+}
+
+/**
+ * A word of a cut form: folded (`folded`), with each decimal digit of any
+ * script written as its ASCII digit, so `２０２４Ｈ１`, `٢٠٢٤H1` and `2024H1`
+ * are one word, as `２h３０` and `2h30` are one duration
+ * (contradictory-requirement-rules.ts, digitsValue).
  * source: review 1 of #333, note 2 (a word or a rejected glued token kept the
  * script of its digits, so `Release ２０２４H1 waits 2 s` and `Release 2024H1
- * waits 5 s` were two forms and were not compared).
+ * waits 5 s` were two forms and were not compared); review 1 of #334, note 2
+ * (its letters were not folded).
  */
 export function wordOf(token: string): string {
-  return asciiDigits(token.toLowerCase());
+  return asciiDigits(folded(token));
 }
 
 /**

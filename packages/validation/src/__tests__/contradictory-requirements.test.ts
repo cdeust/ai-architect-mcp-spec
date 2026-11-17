@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { isBlockingViolation } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
 import { cutStatement, digitsValue, splitGlued, unitOf } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
+import { folded } from "../hard-output-rules/rules/minute-digits.js";
 
 type Sections = ReadonlyArray<{ type: "requirements" | "user_stories"; content: string }>;
 
@@ -671,6 +672,74 @@ describe("contradictory_requirements (#118)", () => {
           "| FR-001 | Release ２０２４H1 waits 2 s. | Must | Ops |",
           "| FR-002 | Release 2024H2 waits 5 s. | Must | Ops |",
         ),
+      ),
+    ).toBe(undefined);
+  });
+
+  // Review 1 of #334, note 1: two forms that do not read as a number are
+  // equal exactly when they are identical once their digits are in ASCII.
+  it("reads two forms that do not read as a number as equal exactly when their ASCII spellings are identical", () => {
+    expect(["1.2.3", "１.２.３", "1.2.4", "0,250.5", "0,250.5"].map(digitsValue)).toEqual([
+      "1.2.3",
+      "1.2.3",
+      "1.2.4",
+      "0,250.5",
+      "0,250.5",
+    ]);
+  });
+
+  // Review 1 of #334, note 2: a fullwidth letter was only lowercased (`Ｈ` to
+  // `ｈ`), so a word or a unit written with one was another word.
+  it("folds the letters of a word or a unit to their compatibility form", () => {
+    expect(folded("２０２４Ｈ１")).toBe("2024h1");
+    expect(cutStatement("Release ２０２４Ｈ１ waits 2 s.").form).toBe(cutStatement("Release 2024H1 waits 2 s.").form);
+    expect(unitOf("ｓ")).toBe("s");
+    expect(unitOf("ＭＢ")).toBe("mb");
+    expect(cutStatement("A job runs for ５ ｓ.").measured).toEqual([true]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Release ２０２４Ｈ１ waits 2 s. | Must | Ops |",
+          "| FR-002 | Release 2024H1 waits 5 s. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    expect(
+      messageOf(table("| FR-001 | A job runs for ５ ｓ. | Must | Ops |", "| FR-002 | A job runs for 7 s. | Must | Ops |")),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("7", against FR-001: "５")',
+    );
+    // A glued duration whose unit of an hour is fullwidth reads as `2h30`.
+    expect(cutStatement("The export runs for ２ｈ３０.").form).toBe(cutStatement("The export runs for 2h30.").form);
+    // Two words whose letters differ still make two forms.
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | Release ２０２４Ｈ１ waits 2 s. | Must | Ops |",
+          "| FR-002 | Release 2024S1 waits 5 s. | Must | Ops |",
+        ),
+      ),
+    ).toBe(undefined);
+  });
+
+  // Review 1 of #334, note 3: the branch of a plain word (`v２`) was checked
+  // by its form only, with no finding and no negative case.
+  it("reports two statements whose words differ only by the script of their digits", () => {
+    expect(
+      messageOf(
+        table("| FR-001 | Build v２ waits 2 s. | Must | Ops |", "| FR-002 | Build v2 waits 5 s. | Must | Ops |"),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    expect(
+      messageOf(
+        table("| FR-001 | Build v２ waits 2 s. | Must | Ops |", "| FR-002 | Build v3 waits 5 s. | Must | Ops |"),
       ),
     ).toBe(undefined);
   });

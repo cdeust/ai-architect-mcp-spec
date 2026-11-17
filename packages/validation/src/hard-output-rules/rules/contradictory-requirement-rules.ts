@@ -5,7 +5,7 @@ import type {
 import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
 import { phrases } from "./lexicon.js";
-import { asciiDigits, isMinuteDigits, wordOf } from "./minute-digits.js";
+import { asciiDigits, folded, isMinuteDigits, wordOf } from "./minute-digits.js";
 import { requirementDefinitions } from "./requirement-definitions.js";
 
 // Document-Level Rule: Contradictory Requirements
@@ -123,7 +123,7 @@ const HOUR_UNITS: ReadonlySet<string> = new Set(["h", "hr", "hour", "heure"]);
 /** What may follow the minutes of a glued duration: nothing, `m`, or a unit of a minute. */
 function isGluedMinuteUnit(letters: string): boolean {
   const unit = unitOf(letters);
-  return letters.toLowerCase() === "m" || unit === "min" || unit === "minute";
+  return folded(letters) === "m" || unit === "min" || unit === "minute";
 }
 
 /**
@@ -153,7 +153,7 @@ export function splitGlued(token: string): GluedToken | null {
   const minuteUnit = runs[3];
   if (minuteUnit === undefined) return { numbers: [runs[0]!, runs[2]!], after: [unit, null] };
   if (!isGluedMinuteUnit(minuteUnit)) return null;
-  return { numbers: [runs[0]!, runs[2]!], after: [unit, unitOf(minuteUnit) ?? minuteUnit.toLowerCase()] };
+  return { numbers: [runs[0]!, runs[2]!], after: [unit, unitOf(minuteUnit) ?? folded(minuteUnit)] };
 }
 
 /** The units of the `quantityUnits` concept, lowercase. */
@@ -165,10 +165,12 @@ const NUMBER_SLOT = "\u0000";
 /**
  * The unit a token names, in its singular form, else null. A unit is listed
  * in the singular; a plural is read by its final "s" removed ("seconds",
- * "secondes"), unless the token is itself listed ("ms", "mois", "fois").
+ * "secondes"), unless the token is itself listed ("ms", "mois", "fois"). The
+ * token is folded first (`folded`), so `ｓ`, `ＭＢ` and `％` are `s`, `mb`, `%`.
+ * source: review 1 of #334, note 2.
  */
 export function unitOf(token: string): string | null {
-  const word = token.toLowerCase();
+  const word = folded(token);
   if (UNITS.has(word)) return word;
   if (word.length > 2 && word.endsWith("s") && UNITS.has(word.slice(0, -1))) return word.slice(0, -1);
   return null;
@@ -186,7 +188,8 @@ export function unitOf(token: string): string | null {
  * separator could only group thousands, does not read as a number. A form
  * that does not read as a number (`1.2.3`) is its own value, its separators
  * and digits as written once each digit is in ASCII, so two such forms read
- * as equal only when they differ by the script of their digits. `1,500` stays
+ * as equal exactly when they are identical once their digits are in ASCII
+ * (`１.２.３`, `1.2.3`). `1,500` stays
  * 1500: it may be a French 1.5, which the statement's language does not settle.
  * The decimal digits of any script are read as their ASCII digits first, so
  * `３０`, `٣٠` and `30` have one value, 30, and a form that does not read as
@@ -197,7 +200,9 @@ export function unitOf(token: string): string | null {
  * read as 250.5); review 1 of #332, note 1 (`２h３０` against `2h30` was
  * reported: `Number` reads only ASCII digits, so `３０` was its own value);
  * review 1 of #333, note 1 (this docstring still said that two different
- * forms that do not read as a number never read as equal).
+ * forms that do not read as a number never read as equal); review 1 of #334,
+ * note 1 (it said they are equal only when they differ by the script of
+ * their digits, leaving out two identical forms).
  */
 export function digitsValue(spelling: string): string {
   const token = asciiDigits(spelling);
@@ -273,7 +278,7 @@ function endsSpacedMinutes(next: string | undefined): boolean {
  * was reported, `2 h 5` against `2 h 7` was not); review 1 of #330, note 2.
  */
 function isMinuteWord(spelling: string): boolean {
-  const value = NUMBER_VALUES.get(spelling.toLowerCase());
+  const value = NUMBER_VALUES.get(folded(spelling));
   return value !== undefined && value >= 10 && value < 60;
 }
 
@@ -353,7 +358,7 @@ export function cutStatement(text: string): CutStatement {
       }
       continue;
     }
-    const word = NUMBER_VALUES.get(token.toLowerCase());
+    const word = NUMBER_VALUES.get(folded(token));
     if (word === undefined) {
       form.push(unitOf(token) ?? wordOf(token));
       continue;
