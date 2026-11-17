@@ -108,32 +108,47 @@ export interface GluedToken {
 }
 
 /**
+ * The units of an hour, singular, that a number of minutes can follow
+ * (`2h30`, `2 h 30`, `2 heures 30`).
+ */
+const HOUR_UNITS: ReadonlySet<string> = new Set(["h", "hr", "hour", "heure"]);
+
+/** The minutes of a glued hour-and-minute duration: two digits (`2h30`, `2h05`). */
+const GLUED_MINUTES = /^\p{N}{2}$/u;
+
+/** What may follow the minutes of a glued duration: nothing, `m`, or a unit of a minute. */
+function isGluedMinuteUnit(letters: string): boolean {
+  const unit = unitOf(letters);
+  return letters.toLowerCase() === "m" || unit === "min" || unit === "minute";
+}
+
+/**
  * precondition: `token` starts with a digit.
  * postcondition: the numbers of the token and what is glued after each when
- * the letters after the first number are a unit, or there are none (`7`,
- * `10MB`, `2h30`, `10h30`, `1h30m`); null when they are anything else (`1a`,
- * `2nd`, `3D`, `1b`), so the token is a word and names something. A later
- * number is part of the quantity the first one starts (the 30 minutes of
- * `2h30`), so the letters after it are a unit when they name one and a word
- * otherwise (the `m` of `1h30m`, which the lexicon does not list). Linear in
- * the length of the token.
- * source: review 1 of #320, note 2 (`2h30` read as a word since #320, so
- * `dure 2h30` against `dure 3h30` was no longer reported).
+ * the token is a number alone (`7`), a number and a unit (`10MB`, `5s`), or a
+ * duration in hours and minutes: a unit of an hour, then two digits, then
+ * nothing, `m` or a unit of a minute (`2h30`, `10h30`, `1h30m`, `1h30min`);
+ * null otherwise, so the token is a word and names something: letters that
+ * are not a unit (`1a`, `2nd`, `3D`), a one-letter unit not read glued
+ * (`1b`, see GLUED_ONE_LETTER_UNITS), or a later number that is not the
+ * minutes of an hour (`2024H1`, `2025S1`, `4s2p`, `1b30`, `2h5`). The `m`
+ * after the minutes is kept lowercase: the lexicon does not list it as a
+ * unit. Linear in the length of the token.
+ * source: review 1 of #320, note 2 (`2h30` read as a word since #320);
+ * review 1 of #321, note 2 (any later number was read, so `2024H1` against
+ * `2024H2` was reported, where it had been a word).
  */
 export function splitGlued(token: string): GluedToken | null {
   const runs = token.match(GLUED_RUNS)!;
-  if (runs.length > 1) {
-    const unit = unitOf(runs[1]!);
-    if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
-  }
-  const numbers: string[] = [];
-  const after: (string | null)[] = [];
-  for (let i = 0; i < runs.length; i += 2) {
-    numbers.push(runs[i]!);
-    const letters = runs[i + 1];
-    after.push(letters === undefined ? null : (unitOf(letters) ?? letters.toLowerCase()));
-  }
-  return { numbers, after };
+  if (runs.length === 1) return { numbers: [runs[0]!], after: [null] };
+  const unit = unitOf(runs[1]!);
+  if (unit === null || (unit.length === 1 && !GLUED_ONE_LETTER_UNITS.has(unit))) return null;
+  if (runs.length === 2) return { numbers: [runs[0]!], after: [unit] };
+  if (!HOUR_UNITS.has(unit) || runs.length > 4 || !GLUED_MINUTES.test(runs[2]!)) return null;
+  const minuteUnit = runs[3];
+  if (minuteUnit === undefined) return { numbers: [runs[0]!, runs[2]!], after: [unit, null] };
+  if (!isGluedMinuteUnit(minuteUnit)) return null;
+  return { numbers: [runs[0]!, runs[2]!], after: [unit, unitOf(minuteUnit) ?? minuteUnit.toLowerCase()] };
 }
 
 /** The units of the `quantityUnits` concept, lowercase. */
@@ -209,7 +224,7 @@ export interface CutStatement {
   readonly values: readonly string[];
   /** The spelling of each number, in order, as the statement writes it. */
   readonly spellings: readonly string[];
-  /** For each number, whether a unit follows it. */
+  /** For each number, whether it is a quantity (`isMeasured`). */
   readonly measured: readonly boolean[];
 }
 
@@ -222,15 +237,30 @@ function statementOf(text: string): string {
   return text.split(" | ")[0]!.replace(/^[\s:–—-]+/u, "");
 }
 
+/**
+ * Whether the number at `slot` of a cut form is a quantity: a unit follows
+ * it (`5 s`, `10 mb`), or it follows a number and a unit of an hour, so it
+ * counts the minutes of that hour (`2 h 30`, `2h30`, `1h30m`). It reads the
+ * form only, so two statements of one form measure the same numbers, whether
+ * they write the duration glued or spaced and in whichever order they come.
+ * source: review 1 of #321, note 1 (`2 h 30` then `2h45` was reported, but
+ * `2h30` then `2 h 45` was not: only the glued form measured its minutes, and
+ * only the later statement's measures were read).
+ */
+function isMeasured(form: readonly string[], slot: number): boolean {
+  const next = form[slot + 1];
+  if (next !== undefined && UNITS.has(next)) return true;
+  return slot >= 2 && HOUR_UNITS.has(form[slot - 1]!) && form[slot - 2] === NUMBER_SLOT;
+}
+
 /** precondition: none. postcondition: the cut form of the statement of `text`, linear in its length. */
 export function cutStatement(text: string): CutStatement {
   const tokens = statementOf(text).match(TOKEN) ?? [];
   const form: string[] = [];
   const values: string[] = [];
   const spellings: string[] = [];
-  const measured: boolean[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]!;
+  const slots: number[] = [];
+  for (const token of tokens) {
     if (DIGITS.test(token)) {
       const glued = splitGlued(token);
       if (glued === null) {
@@ -238,16 +268,13 @@ export function cutStatement(text: string): CutStatement {
         continue;
       }
       for (let k = 0; k < glued.numbers.length; k++) {
+        slots.push(form.length);
         form.push(NUMBER_SLOT);
         values.push(digitsValue(glued.numbers[k]!));
         spellings.push(glued.numbers[k]!);
         const after = glued.after[k] ?? null;
         // `10MB` and `10 MB`, `2h30` and `2 h 30`, are one form.
         if (after !== null) form.push(after);
-        // A later number continues the quantity of the first (`2h30`); the
-        // first is measured by its glued unit, or by the unit of the next token.
-        const next = tokens[i + 1];
-        measured.push(k > 0 || after !== null || (next !== undefined && unitOf(next) !== null));
       }
       continue;
     }
@@ -256,19 +283,21 @@ export function cutStatement(text: string): CutStatement {
       form.push(unitOf(token) ?? token.toLowerCase());
       continue;
     }
+    slots.push(form.length);
     form.push(NUMBER_SLOT);
     values.push(String(word));
     spellings.push(token);
-    const next = tokens[i + 1];
-    measured.push(next !== undefined && unitOf(next) !== null);
   }
+  const measured = slots.map((slot) => isMeasured(form, slot));
   return { form: form.join(" "), values, spellings, measured };
 }
 
 /**
  * The index of the first number at which `a` and `b`, of one cut form,
  * contradict each other, else -1: their values differ somewhere, and every
- * number that differs is followed by a unit.
+ * number that differs is a quantity (`isMeasured`). Both statements have one
+ * form, so they measure the same numbers and the result does not depend on
+ * which one comes first.
  */
 export function contradictionAt(a: CutStatement, b: CutStatement): number {
   let first = -1;
