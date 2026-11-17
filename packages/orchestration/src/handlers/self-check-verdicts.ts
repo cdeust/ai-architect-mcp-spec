@@ -133,6 +133,17 @@ type RawVerdict = z.infer<typeof RawVerdictSchema>;
 type ParsedVerdict = RawVerdict | { failure: string };
 
 /**
+ * A judge answer is an object with a `verdict` field or an array of such
+ * objects; anything else in the reply (a footnote `[1]`, a checkbox `[ ]`, an
+ * aside `{see below}`) is prose, skipped by extractJsonValue (review note 3
+ * of #326).
+ */
+function isVerdictShaped(value: unknown): boolean {
+  const hasVerdict = (v: unknown) => typeof v === "object" && v !== null && "verdict" in v;
+  return Array.isArray(value) ? value.length > 0 && value.every(hasVerdict) : hasVerdict(value);
+}
+
+/**
  * One judge response, read for the claims of its invocation.
  *
  * precondition:  `claimIds` are the distinct claim_ids of one invocation.
@@ -150,7 +161,7 @@ function readJudgeResponse(
   rawText: string,
   claimIds: readonly string[],
 ): ReadonlyMap<string, ParsedVerdict> {
-  const value = extractJsonValue(rawText);
+  const value = extractJsonValue(rawText, isVerdictShaped);
   const out = new Map<string, ParsedVerdict>();
   if (!Array.isArray(value)) {
     if (claimIds.length !== 1) {

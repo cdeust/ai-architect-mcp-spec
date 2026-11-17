@@ -102,9 +102,11 @@ its `claim_id`, instead of `verdict`:
 ```json
 {"status":"ok","verdicts":[{"claim_id":"FR-001","verdict":"PASS","rationale":"...","caveats":[],"confidence":0.85}],"model":"gemini-2.0-flash","provider":"gemini","latency_ms":842}
 ```
-The host passes `verdicts` back as the invocation's `raw_text` (a JSON
-array); an element without a string `claim_id` or with an invalid verdict is
-an `error`, never a partial list.
+A host that relays this result to the self-check passes `verdicts` back as
+the invocation's `raw_text` (a JSON array); no host code in this repository
+does that today, the executor being run by hand as shown above. An element
+without a string `claim_id` or with an invalid verdict makes the call an
+`error`, never a partial list.
 `skipped` and `error` never carry a `verdict` or `verdicts` field — the host must not
 treat their absence as any particular verdict. This is the graceful-
 degradation contract: no API key configured means no verdict is produced,

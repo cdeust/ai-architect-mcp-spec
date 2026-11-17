@@ -116,3 +116,12 @@ describe("parseVerdicts reads a batched answer per claim", () => {
     expect(bare.caveats).toContain("parse_error");
   });
 });
+
+describe("parseVerdicts skips JSON of the prose before the answer (review note 3 of #326)", () => {
+  it("reads the verdict array after a footnote [1] and a checkbox [ ]", () => {
+    const index = buildJudgeIndex([request("FR-001"), request("FR-002")], DEFAULT_VERIFY_BUDGET);
+    const raw = `As noted in [1], with [ ] open: ${JSON.stringify([verdict("FR-001"), verdict("FR-002", "FAIL")])}`;
+    const out = parseVerdicts(index, batch([{ invocation_id: index[0].invocation_id, raw_text: raw }]));
+    expect(out.map((v) => v.verdict)).toEqual(["PASS", "FAIL"]);
+  });
+});

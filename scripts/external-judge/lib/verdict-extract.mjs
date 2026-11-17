@@ -180,26 +180,13 @@ export function extractVerdicts(rawText) {
   if (typeof rawText !== "string" || rawText.trim().length === 0) {
     throw new Error("extractVerdicts: empty reply — no JSON to parse");
   }
-  const obj = rawText.indexOf("{");
-  const arr = rawText.indexOf("[");
-  if (arr === -1 || (obj !== -1 && obj < arr)) {
-    const verdict = withClaimId(extractVerdict(rawText), findFirstBalancedObject(rawText));
-    return { verdict };
+  const parsed = firstParsedJson(rawText);
+  if (!Array.isArray(parsed)) {
+    const verdict = toVerdict(parsed);
+    const claimId = parsed && typeof parsed === "object" ? /** @type {Record<string, unknown>} */ (parsed).claim_id : undefined;
+    return { verdict: typeof claimId === "string" ? { claim_id: claimId, ...verdict } : verdict };
   }
-  const candidate = findFirstBalanced(rawText, arr);
-  if (!candidate) {
-    throw new Error("extractVerdicts: no balanced JSON array found in reply");
-  }
-  /** @type {unknown} */
-  let parsed;
-  try {
-    parsed = JSON.parse(candidate);
-  } catch (err) {
-    throw new Error(
-      `extractVerdicts: candidate JSON array failed to parse: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  const verdicts = /** @type {unknown[]} */ (parsed).map((item, i) => {
+  const verdicts = parsed.map((item, i) => {
     const claimId = item && typeof item === "object" ? /** @type {Record<string, unknown>} */ (item).claim_id : undefined;
     if (typeof claimId !== "string" || claimId.length === 0) {
       throw new Error(`extractVerdicts: element ${i} has no string "claim_id"`);
@@ -210,11 +197,61 @@ export function extractVerdicts(rawText) {
 }
 
 /**
- * @param {Verdict} verdict
- * @param {string|null} candidate the object extractVerdict read
- * @returns {ClaimVerdict}
+ * The first balanced `[...]` or `{...}` of `text` that parses as JSON. A
+ * balanced span of prose that is not JSON (`Verdict for [AC-001]: {...}`) is
+ * skipped and the scan resumes after it, as packages/core extractJsonValue
+ * does (review of #326); a bracket that never closes ends the scan, so a cut
+ * array is refused rather than read as its first object, and each character
+ * is scanned once. A span that parses but is not a verdict or a list of
+ * verdicts (a footnote `[1]`, a checkbox `[ ]`) is skipped too (review note 3
+ * of #326).
+ *
+ * @param {string} text
+ * @returns {unknown}
  */
-function withClaimId(verdict, candidate) {
-  const claimId = candidate ? JSON.parse(candidate).claim_id : undefined;
-  return typeof claimId === "string" ? { claim_id: claimId, ...verdict } : verdict;
+function firstParsedJson(text) {
+  /** @type {Error|undefined} */
+  let lastError;
+  let start = nextOpening(text, 0);
+  while (start !== -1) {
+    const candidate = findFirstBalanced(text, start);
+    if (candidate === null) {
+      throw new Error(`extractVerdicts: no balanced JSON ${text[start] === "[" ? "array" : "object"} found in reply`);
+    }
+    try {
+      const value = JSON.parse(candidate);
+      if (isVerdictShaped(value)) return value;
+      lastError = new Error("a JSON value that is not a verdict or a list of verdicts");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    start = nextOpening(text, start + candidate.length);
+  }
+  throw new Error(
+    lastError
+      ? `extractVerdicts: no candidate JSON parsed: ${lastError.message}`
+      : "extractVerdicts: no JSON array or object found in reply",
+  );
+}
+
+/**
+ * @param {string} text
+ * @param {number} from
+ * @returns {number}
+ */
+function nextOpening(text, from) {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === "[" || text[i] === "{") return i;
+  }
+  return -1;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isVerdictShaped(value) {
+  /** @param {unknown} v */
+  const hasVerdict = (v) => typeof v === "object" && v !== null && "verdict" in v;
+  return Array.isArray(value) ? value.length > 0 && value.every(hasVerdict) : hasVerdict(value);
 }

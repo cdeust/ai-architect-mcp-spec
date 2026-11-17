@@ -100,3 +100,29 @@ test("extractVerdicts: refuses an element without claim_id or with an invalid ve
   );
   assert.throws(() => extractVerdicts('[{"claim_id":"A"'), /no balanced JSON array/);
 });
+
+// Codex review of #326: a bracketed identifier in the prose before the JSON
+// is skipped, as the core extractor does, not read as the answer.
+test("extractVerdicts: skips a bracketed span of prose before the verdict", () => {
+  const out = extractVerdicts('Verdict for [AC-001]: {"claim_id":"AC-001","verdict":"PASS","rationale":"ok","confidence":0.9}');
+  assert.ok("verdict" in out);
+  assert.equal(out.verdict.claim_id, "AC-001");
+  assert.equal(out.verdict.verdict, "PASS");
+  const list = extractVerdicts('See {note} then [{"claim_id":"B","verdict":"FAIL","rationale":"r","confidence":0.4}]');
+  assert.ok("verdicts" in list);
+  assert.equal(list.verdicts[0].claim_id, "B");
+});
+
+test("extractVerdicts: a cut array is refused, not read as its first object", () => {
+  assert.throws(
+    () => extractVerdicts('[{"claim_id":"A","verdict":"PASS","rationale":"r","confidence":0.5}'),
+    /no balanced JSON array/,
+  );
+});
+
+test("extractVerdicts: skips a footnote or checkbox that parses as JSON but is no verdict", () => {
+  const out = extractVerdicts('Per [1] and [ ] pending: [{"claim_id":"A","verdict":"PASS","rationale":"r","confidence":0.5}]');
+  assert.ok("verdicts" in out);
+  assert.equal(out.verdicts[0].claim_id, "A");
+  assert.throws(() => extractVerdicts("only [1] and [2] here"), /not a verdict/);
+});
