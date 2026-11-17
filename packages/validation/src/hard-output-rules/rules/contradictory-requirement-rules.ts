@@ -248,29 +248,37 @@ function endsSpacedMinutes(next: string | undefined): boolean {
   return next !== NUMBER_SLOT && !/^[\p{L}\p{N}]/u.test(next);
 }
 
-/** A number word that can count the minutes of an hour: its value is below 60. */
+/**
+ * A number word that can count the minutes of an hour: its value is between
+ * 10 and 59, the values of two digits written without a leading 0, so a word
+ * and its digits read alike (`two hours five` is not minutes, as `2 h 5` is
+ * not). `deux heures cinq` is left out with `2 h 5`.
+ * source: review 1 of #329, note 3 (`2 hours five` against `2 hours seven`
+ * was reported, `2 h 5` against `2 h 7` was not).
+ */
 function isMinuteWord(spelling: string): boolean {
   const value = NUMBER_VALUES.get(spelling.toLowerCase());
-  return value !== undefined && value < 60;
+  return value !== undefined && value >= 10 && value < 60;
 }
 
 /**
  * Whether the number at `slot` of a cut form, spelled `spelling`, is a
  * quantity: a unit follows it (`5 s`, `10 mb`), or it counts the minutes of
  * an hour. Minutes follow a number and a unit of an hour, are two digits (or
- * a number word below 60) and are followed by nothing, a mark or `m` (`2 h
- * 30`, `2h30`, `1h30m`, `deux heures trente`), the bounds `splitGlued` puts
- * on a glued duration. It reads the form and the spelling only, so two
- * statements of one form measure the same numbers, in whichever order they
- * come; a glued and a spaced duration measure their minutes alike when the
- * minutes have two digits. With one digit, only a unit of a minute makes the
- * spaced number a quantity (`2 h 5 min`); `2 h 5` is not, and a glued `2h5`
- * or `2h5min` is a word.
+ * a number word from 10 to 59) and are followed by nothing, a mark or `m` (`2 h
+ * 30`, `1 h 30 m`, `deux heures trente`), the bounds `splitGlued` puts on a
+ * glued duration. The minutes of a glued duration `splitGlued` accepted are
+ * measured by `cutStatement` whatever follows the token (`2h30 before`). A
+ * glued and a spaced duration therefore measure their minutes alike when the
+ * minutes have two digits and no word follows them. With one digit, only a
+ * unit of a minute makes the spaced number a quantity (`2 h 5 min`); `2 h 5`
+ * is not, and a glued `2h5` or `2h5min` is a word.
  * source: review 1 of #321, note 1 (`2 h 30` then `2h45` was reported, but
  * `2h30` then `2 h 45` was not); review 2 of #322, notes 1 and 2 (any number
  * after a spaced hour was read as minutes, so `Within 1 hour 10 users …`
  * against `… 50 users …` was reported, and `2 h 5` against `2 h 7` was,
- * where `2h5` against `2h7` was not).
+ * where `2h5` against `2h7` was not); Codex review of #329, P2 (`2h30
+ * before stopping` lost the minutes `splitGlued` had read).
  */
 function isMeasured(form: readonly string[], slot: number, spelling: string): boolean {
   const next = form[slot + 1];
@@ -286,6 +294,8 @@ export function cutStatement(text: string): CutStatement {
   const values: string[] = [];
   const spellings: string[] = [];
   const slots: number[] = [];
+  // The numbers `splitGlued` read as the minutes of a glued duration: a quantity whatever follows the token.
+  const gluedMinutes = new Set<number>();
   for (const token of tokens) {
     if (DIGITS.test(token)) {
       const glued = splitGlued(token);
@@ -294,6 +304,7 @@ export function cutStatement(text: string): CutStatement {
         continue;
       }
       for (let k = 0; k < glued.numbers.length; k++) {
+        if (k > 0) gluedMinutes.add(slots.length);
         slots.push(form.length);
         form.push(NUMBER_SLOT);
         values.push(digitsValue(glued.numbers[k]!));
@@ -314,22 +325,25 @@ export function cutStatement(text: string): CutStatement {
     values.push(String(word));
     spellings.push(token);
   }
-  const measured = slots.map((slot, i) => isMeasured(form, slot, spellings[i]!));
+  const measured = slots.map((slot, i) => gluedMinutes.has(i) || isMeasured(form, slot, spellings[i]!));
   return { form: form.join(" "), values, spellings, measured };
 }
 
 /**
  * The index of the first number at which `a` and `b`, of one cut form,
  * contradict each other, else -1: their values differ somewhere, and every
- * number that differs is a quantity (`isMeasured`). Both statements have one
- * form, so they measure the same numbers and the result does not depend on
- * which one comes first.
+ * number that differs is a quantity in both statements. Two statements of one
+ * form can measure a number differently (`2 h 5` and `2 h 30`, or a glued
+ * `2h30 before` and a spaced `2 h 30 before`), so both are read and the
+ * result does not depend on which one comes first.
+ * source: Codex review of #329, P2 (`2 h 5` then `2 h 30` was reported, the
+ * reverse order was not).
  */
 export function contradictionAt(a: CutStatement, b: CutStatement): number {
   let first = -1;
   for (let i = 0; i < a.values.length; i++) {
     if (a.values[i] === b.values[i]) continue;
-    if (!a.measured[i]) return -1;
+    if (!a.measured[i] || !b.measured[i]) return -1;
     if (first === -1) first = i;
   }
   return first;
