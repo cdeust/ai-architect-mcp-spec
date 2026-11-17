@@ -97,3 +97,34 @@ test("runJudge: never fabricates a verdict when the model reply has no parseable
     globalThis.fetch = originalFetch;
   }
 });
+
+test("runJudge: a batched reply (issue #119) returns every verdict with its claim_id", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "gemini-2.0-flash",
+        choices: [
+          {
+            message: {
+              content:
+                '[{"claim_id":"FR-001","verdict":"PASS","rationale":"a","caveats":[],"confidence":0.9},' +
+                '{"claim_id":"FR-002","verdict":"NEEDS-RUNTIME","rationale":"b","caveats":[],"confidence":0.6}]',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  try {
+    const result = await runJudge(
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", timeoutMs: 5000 },
+      "prompt text",
+    );
+    assert.equal(result.status, "ok");
+    assert.equal(result.verdict, undefined);
+    assert.deepEqual(result.verdicts.map((v) => [v.claim_id, v.verdict]), [["FR-001", "PASS"], ["FR-002", "NEEDS-RUNTIME"]]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

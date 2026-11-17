@@ -98,13 +98,21 @@ describe("parseVerdicts reads a batched answer per claim", () => {
     expect(missing.every((v) => v.rationale === "no response")).toBe(true);
   });
 
-  it("accepts the single-object answer for an invocation of one claim, and checks its claim_id", () => {
+  it("accepts a single object for an invocation of one claim only when it names that claim", () => {
     const one = buildJudgeIndex([request("AC-001")], DEFAULT_VERIFY_BUDGET);
     const oid = one[0].invocation_id;
-    expect(parseVerdicts(one, batch([{ invocation_id: oid, raw_text: JSON.stringify(verdict(undefined, "FAIL")) }]))[0].verdict).toBe("FAIL");
-    expect(parseVerdicts(one, batch([{ invocation_id: oid, raw_text: JSON.stringify([verdict("AC-001")]) }]))[0].verdict).toBe("PASS");
-    const wrong = parseVerdicts(one, batch([{ invocation_id: oid, raw_text: JSON.stringify(verdict("AC-999")) }]))[0];
+    const read = (raw: unknown) => parseVerdicts(one, batch([{ invocation_id: oid, raw_text: JSON.stringify(raw) }]))[0];
+    expect(read(verdict("AC-001", "FAIL")).verdict).toBe("FAIL");
+    expect(read([verdict("AC-001")]).verdict).toBe("PASS");
+    const wrong = read(verdict("AC-999"));
     expect(wrong.verdict).toBe("INCONCLUSIVE");
     expect(wrong.rationale).toMatch(/AC-999/);
+    // Review note 2 of #325: an answer without claim_id (the shape of the
+    // former one-claim prompt, which a run saved mid-self_check by the old
+    // server may still hold for a renumbered invocation id) is a parse_error,
+    // never a verdict credited to whatever claim now holds that id.
+    const bare = read(verdict(undefined));
+    expect(bare.verdict).toBe("INCONCLUSIVE");
+    expect(bare.caveats).toContain("parse_error");
   });
 });

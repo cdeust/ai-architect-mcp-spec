@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractVerdict } from "../lib/verdict-extract.mjs";
+import { extractVerdict, extractVerdicts } from "../lib/verdict-extract.mjs";
 
 test("extractVerdict: parses a clean JSON-only reply", () => {
   const raw = '{"verdict":"PASS","rationale":"looks fine","caveats":[],"confidence":0.9}';
@@ -66,4 +66,37 @@ test("extractVerdict: throws when rationale is missing or empty", () => {
     () => extractVerdict('{"verdict":"PASS","rationale":"","confidence":0.5}'),
     /rationale.*non-empty/,
   );
+});
+
+// Issue #119: one batched prompt per judge is answered with an array of
+// verdicts keyed by claim_id; every element and its claim_id must survive.
+test("extractVerdicts: keeps every element of a batched array with its claim_id", () => {
+  const reply =
+    'Here:\n```json\n[{"claim_id":"FR-001","verdict":"PASS","rationale":"ok","caveats":["a]"],"confidence":0.8},' +
+    '{"claim_id":"FR-002","verdict":"FAIL","rationale":"bad","confidence":1.4}]\n```';
+  const out = extractVerdicts(reply);
+  assert.ok("verdicts" in out);
+  assert.deepEqual(
+    out.verdicts.map((v) => [v.claim_id, v.verdict, v.confidence]),
+    [["FR-001", "PASS", 0.8], ["FR-002", "FAIL", 1]],
+  );
+  assert.deepEqual(out.verdicts[0].caveats, ["a]"]);
+});
+
+test("extractVerdicts: a single object stays one verdict and keeps a claim_id it carries", () => {
+  const out = extractVerdicts('{"claim_id":"AC-1","verdict":"PASS","rationale":"r","caveats":[],"confidence":0.5}');
+  assert.ok("verdict" in out);
+  assert.equal(out.verdict.claim_id, "AC-1");
+  const bare = extractVerdicts('{"verdict":"PASS","rationale":"r","caveats":["x [y]"],"confidence":0.5}');
+  assert.ok("verdict" in bare);
+  assert.equal(bare.verdict.claim_id, undefined);
+});
+
+test("extractVerdicts: refuses an element without claim_id or with an invalid verdict, never a partial list", () => {
+  assert.throws(() => extractVerdicts('[{"verdict":"PASS","rationale":"r","confidence":0.5}]'), /element 0 has no string "claim_id"/);
+  assert.throws(
+    () => extractVerdicts('[{"claim_id":"A","verdict":"PASS","rationale":"r","confidence":0.5},{"claim_id":"B","verdict":"MAYBE","rationale":"r","confidence":0.5}]'),
+    /"verdict" must be one of/,
+  );
+  assert.throws(() => extractVerdicts('[{"claim_id":"A"'), /no balanced JSON array/);
 });

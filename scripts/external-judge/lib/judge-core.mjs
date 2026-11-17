@@ -15,11 +15,11 @@
  */
 
 import { callChatCompletions } from "./openai-client.mjs";
-import { extractVerdict } from "./verdict-extract.mjs";
+import { extractVerdicts } from "./verdict-extract.mjs";
 
 /**
  * @typedef {{status: "skipped", reason: string}} SkippedResult
- * @typedef {{status: "ok", verdict: import("./verdict-extract.mjs").Verdict, model: string, provider: string, latency_ms: number}} OkResult
+ * @typedef {{status: "ok", model: string, provider: string, latency_ms: number} & ({verdict: import("./verdict-extract.mjs").ClaimVerdict} | {verdicts: import("./verdict-extract.mjs").ClaimVerdict[]})} OkResult
  * @typedef {{status: "error", reason: string}} ErrorResult
  * @typedef {SkippedResult|OkResult|ErrorResult} JudgeResult
  */
@@ -46,10 +46,12 @@ export async function runJudge(config, promptText) {
   const startedAt = Date.now();
   try {
     const { content } = await callChatCompletions(config, promptText);
-    const verdict = extractVerdict(content);
+    // A batched judge prompt (issue #119) is answered with an array: `verdicts`
+    // keeps every element and its claim_id; a single object stays `verdict`.
+    const extracted = extractVerdicts(content);
     return {
       status: "ok",
-      verdict,
+      ...extracted,
       model: config.model,
       provider: config.provider,
       latency_ms: Date.now() - startedAt,
