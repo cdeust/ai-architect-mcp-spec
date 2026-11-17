@@ -339,10 +339,26 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       ["alnum", (n) => "- FR-1: B" + "2B".repeat(n) + " 1 s"],
       // Review 1 of #320, note 2: a long glued run of numbers and units, every one read.
       ["durations", (n) => "- FR-1: 1" + "h1".repeat(n) + " s"],
+      // Review 1 of #330, note 1: rows of one form whose twelve spaced durations
+      // measure their minutes or not by the bits of the row number, so the rows
+      // hold up to 4096 sets of measured numbers; each row is compared with three
+      // references at most.
+      [
+        "measured",
+        (n) =>
+          Array.from(
+            { length: n },
+            (_, i) =>
+              `| FR-${i + 1} | A job lasts ` +
+              Array.from({ length: 12 }, (_, b) => `${b + 1} h ${(i >> b) & 1 ? 30 : 5},`).join(" ") +
+              ` then ${i} s. |`,
+          ).join("\n"),
+      ],
     ];
     for (const [name, build] of builders) {
-      const small = build(name === "rows" ? 2000 : 32000);
-      const large = build(name === "rows" ? 4000 : 64000);
+      const rows = name === "rows" || name === "measured";
+      const small = build(rows ? 2000 : 32000);
+      const large = build(rows ? 4000 : 64000);
       run(small);
       run(large);
       expect(growthRatio(run, small, large), name).toBeLessThan(QUADRATIC_GROWTH_CEILING);
