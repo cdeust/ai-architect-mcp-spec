@@ -787,4 +787,26 @@ describe("contradictory_requirements (#118)", () => {
         'FR-002 ("5", against FR-001: "2")',
     );
   });
+
+  // Review 1 of #336, note 3: removing the final `normalize("NFC")` of
+  // `folded` passed every test, and one case, `2h30ｍ`, covered two calls.
+  it("recomposes the characters of a word, and folds a glued minute unit for each of its two reads", () => {
+    expect(folded("cafe\u0301")).toBe("caf\u00e9");
+    // Two conjoining jamo are one syllable once recomposed; a statement
+    // token holds them both (they are letters), where a combining accent
+    // starts a token of its own.
+    expect(folded("\u1100\u1161")).toBe("\uac00");
+    expect(
+      messageOf(
+        table("| FR-001 | The \u1100\u1161 job waits 2 s. | Must | Ops |", "| FR-002 | The \uac00 job waits 5 s. | Must | Ops |"),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-002 ("5", against FR-001: "2")',
+    );
+    // `isGluedMinuteUnit` alone: the token is read as a duration.
+    expect(splitGlued("2h30ｍ")).not.toBe(null);
+    // The minutes of `splitGlued` alone: what is glued after them is `m`.
+    expect(splitGlued("2h30ｍ")?.after).toEqual(["h", "m"]);
+  });
 });
