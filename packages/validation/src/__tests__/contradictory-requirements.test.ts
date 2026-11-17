@@ -363,6 +363,52 @@ describe("contradictory_requirements (#118)", () => {
     );
   });
 
+  // Codex review of #329, two P2: only the later requirement's measures were
+  // read, so `2 h 5` then `2 h 30` was reported and the reverse was not; and a
+  // glued duration followed by a word lost the minutes `splitGlued` had read.
+  it("reads the measures of both requirements and keeps the minutes of a glued duration before a word", () => {
+    expect(cutStatement("The export lasts 2h30 before stopping.").measured).toEqual([true, true]);
+    expect(cutStatement("The export lasts 2 h 30 before stopping.").measured).toEqual([true, false]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export lasts 2 h 5. | Must | Ops |",
+          "| FR-002 | The export lasts 2 h 30. | Must | Ops |",
+          "| FR-003 | A replay lasts 1 h 30. | Must | Ops |",
+          "| FR-004 | A replay lasts 1 h 5. | Must | Ops |",
+          "| FR-005 | A backup lasts 2h30 before stopping. | Must | Ops |",
+          "| FR-006 | A backup lasts 2h45 before stopping. | Must | Ops |",
+          "| FR-007 | A sync lasts 3 h 30 before stopping. | Must | Ops |",
+          "| FR-008 | A sync lasts 3h45 before stopping. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-006 ("45", against FR-005: "30")',
+    );
+  });
+
+  // Review 1 of #329, note 3: a one-digit number word counted minutes, where
+  // its digits do not.
+  it("reads a number word as minutes only from 10 to 59, as two digits", () => {
+    expect(cutStatement("dure deux heures cinq.").measured).toEqual([true, false]);
+    expect(cutStatement("dure deux heures dix.").measured).toEqual([true, true]);
+    expect(cutStatement("dure deux heures soixante.").measured).toEqual([true, false]);
+    expect(
+      messageOf(
+        table(
+          "| FR-001 | The export runs for 2 hours five. | Must | Ops |",
+          "| FR-002 | The export runs for 2 hours seven. | Must | Ops |",
+          "| FR-003 | La sauvegarde dure deux heures trente. | Must | Ops |",
+          "| FR-004 | La sauvegarde dure deux heures quinze. | Must | Ops |",
+        ),
+      ),
+    ).toBe(
+      "1 requirement(s) state a quantity an earlier requirement states differently: " +
+        'FR-004 ("quinze", against FR-003: "trente")',
+    );
+  });
+
   // Review 1 of #321, note 2: any later number glued after a unit was read,
   // so a half-year, a semester or a cell layout was a quantity again.
   it("reads a later glued number only as the two-digit minutes of an hour", () => {
