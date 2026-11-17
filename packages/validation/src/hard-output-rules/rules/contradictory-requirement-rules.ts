@@ -5,7 +5,7 @@ import type {
 import { makeViolation } from "./helpers.js";
 import { listedIds } from "./listed-ids.js";
 import { phrases } from "./lexicon.js";
-import { isMinuteDigits } from "./minute-digits.js";
+import { asciiDigits, isMinuteDigits } from "./minute-digits.js";
 import { requirementDefinitions } from "./requirement-definitions.js";
 
 // Document-Level Rule: Contradictory Requirements
@@ -187,12 +187,17 @@ export function unitOf(token: string): string | null {
  * that does not read as a number (`1.2.3`) is its own value, its digits as
  * written, so two different forms never read as equal. `1,500` stays 1500: it may be a
  * French 1.5, which the statement's language does not settle.
+ * The decimal digits of any script are read as their ASCII digits first, so
+ * `３０`, `٣٠` and `30` have one value, 30, and a form that does not read as
+ * a number is its value in ASCII digits (`１.２.３` is `1.2.3`).
  * source: review 1 of #318, note 1 (only the first comma was replaced, so
  * `1,000` read as 1 and `1,000,000` as NaN, equal to any other NaN); review 1
  * of #319, note 2 (`0,250` read as 250); review 1 of #320, note 1 (`0,250.5`
- * read as 250.5).
+ * read as 250.5); review 1 of #332, note 1 (`２h３０` against `2h30` was
+ * reported: `Number` reads only ASCII digits, so `３０` was its own value).
  */
-export function digitsValue(token: string): string {
+export function digitsValue(spelling: string): string {
+  const token = asciiDigits(spelling);
   const separators = token.match(/[.,]/gu) ?? [];
   const groups = token.split(/[.,]/u);
   const kinds = new Set(separators);
@@ -412,16 +417,28 @@ function measuredKey(cut: CutStatement): string {
  * (`isMeasurable`): a number that names (`Tier 1`) is measured by no
  * statement of the form, so it does not keep that reference from existing.
  * Only the minutes of a duration are measured in one statement of a form and
- * not in another, so a form with one duration holds two sets of measured
- * numbers, and these references are the first of each; a form with several
- * durations can hold more sets than three, and a requirement is then not
- * compared with the first of the others. Three references at most, so the
- * cost of the rule stays linear.
+ * not in another. A form with one duration therefore holds two sets of
+ * measured numbers, with and without its minutes. A requirement that does not
+ * measure its minutes is compared with the first of each set; one that
+ * measures them is compared with the first of the form and the first that
+ * measures them, so not with the first of the other set when the first of
+ * the form measures its minutes (`2h30 before`, `2 h 5 before`, `3h30
+ * before`: the third is not compared with the second). A
+ * requirement is never compared with one that is the first of no reference,
+ * so a contradiction with it alone is not reported: `2 h 5 before`, `2 h 7
+ * before`, `3h07 before` reports nothing, where the third states the hours of
+ * the second differently. A form with several durations
+ * can hold more sets than three, and a requirement is then not compared with
+ * the first of the others. Three references at most, so the cost of the rule
+ * stays linear.
  * source: review 1 of #330, note 1 (`2 h 5`, then `2 h 30`, then `2 h 45`
  * reported nothing: the first did not measure its minutes, and every later
  * requirement was compared with it only); review 1 of #331, note 2 (the key
  * of every number could not exist in a form with a naming number, so `Tier 1
- * … 2 h 5`, `… 2 h 30`, `… 2 h 45` reported nothing).
+ * … 2 h 5`, `… 2 h 30`, `… 2 h 45` reported nothing); review 1 of #332,
+ * note 3 (this docstring said the references of a form with one duration
+ * were the first of each set, which does not hold for a requirement that
+ * measures its minutes).
  */
 function references(refs: FormReferences, cut: CutStatement): Reference[] {
   const all = keyOf(cut.measurable);

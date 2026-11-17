@@ -1,6 +1,6 @@
-// The minutes of an hour-and-minute duration written in digits, for
-// contradictory-requirement-rules.ts: two decimal digits of any script, read
-// by their value.
+// The decimal digits of any script, for contradictory-requirement-rules.ts:
+// the minutes of an hour-and-minute duration (two digits, read by their
+// value) and the ASCII spelling of a number's digits.
 
 /** A decimal digit of any script: `3`, `３` (fullwidth), `٣` (Arabic-Indic). */
 const DECIMAL_DIGIT = /^\p{Nd}$/u;
@@ -17,6 +17,19 @@ function digitValue(digit: string): number {
   let start = at;
   while (start > 0 && DECIMAL_DIGIT.test(String.fromCodePoint(start - 1))) start--;
   return (at - start) % 10;
+}
+
+/**
+ * `spelling` with each decimal digit of any script written as its ASCII
+ * digit (`２h３０` → `2h30`, `2h٣٠` → `2h30`); every other character is kept.
+ * `Number` reads only ASCII digits, so a value is read from this spelling.
+ * source: review 1 of #332, note 1 (`２h３０` against `2h30` was reported:
+ * the digits kept their own script as their value).
+ */
+export function asciiDigits(spelling: string): string {
+  let out = "";
+  for (const ch of spelling) out += DECIMAL_DIGIT.test(ch) ? String(digitValue(ch)) : ch;
+  return out;
 }
 
 /**
