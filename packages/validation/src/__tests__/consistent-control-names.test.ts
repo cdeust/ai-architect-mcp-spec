@@ -127,6 +127,38 @@ describe("consistent_control_names (#118)", () => {
     expect(namedControlsIn('The toolbar shows "Two" buttons.')).toEqual([]);
   });
 
+  it("reads every French keyword form in capitals as no name, and a keyword in title case as a name", () => {
+    // Review 1 of #347, note 2: ten of the fourteen French entries had no
+    // test, and the plurals and the future were read as names.
+    for (const keyword of [
+      "DOIT", "DOIVENT", "DEVRAIT", "DEVRAIENT", "DEVRA", "DEVRONT", "PEUT", "PEUVENT", "POURRA", "POURRONT",
+      "OBLIGATOIRE", "OBLIGATOIRES", "RECOMMANDÉ", "RECOMMANDÉE", "RECOMMANDÉS", "RECOMMANDÉES",
+      "OPTIONNEL", "OPTIONNELLE", "OPTIONNELS", "OPTIONNELLES",
+      "FACULTATIF", "FACULTATIVE", "FACULTATIFS", "FACULTATIVES",
+    ]) {
+      expect(namedControlsIn(`Le bouton ${keyword} rester visible.`), keyword).toEqual([]);
+    }
+    // A keyword not written in capitals is a name, as RFC 2119 writes them in
+    // capitals: "l'onglet Recommandé" is a tab named Recommandé.
+    expect(namedControlsIn("Le lecteur ouvre l'onglet Recommandé.").map((c) => c.key)).toEqual(["recommandé"]);
+    expect(messageOf(COPY_FR, "- AC-001: Le lecteur ouvre l'onglet Recommandé.")).toBe(
+      "1 acceptance criterion(s) name a control no requirement names: AC-001 (\"onglet Recommandé\")",
+    );
+    expect(messageOf(COPY_FR, "- AC-001: The reader opens the Recommended tab.")).toBe(
+      '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Recommended tab")',
+    );
+  });
+
+  it("reads a decomposed accent as part of its name", () => {
+    // Review 1 of #347, note 3: NAME stopped at U+0301, so the NFD keyword
+    // "RECOMMANDE\u0301" gave the key "recommande" and was read as a control.
+    expect(namedControlsIn("Le bouton RECOMMANDE\u0301 rester visible.")).toEqual([]);
+    // A mark with no composed form stays in its word: "Q\u0301" has none.
+    expect(namedControlsIn("The Q\u0301x button works.").map((c) => c.key)).toEqual(["q\u0301x"]);
+    // The NFD and NFC spellings of one name are one name.
+    expect(messageOf("- FR-001: Each page shows a Re\u0301sume\u0301 button.", "- AC-001: Then the Résumé button works.")).toBeUndefined();
+  });
+
   it("does not report a name after a line end or a statement colon: two known misses", () => {
     // Review 1 of #346, note 1. A definition's text joins its blocks with a
     // line end, which a hard wrap cannot be told from, and "AC-001:" opens

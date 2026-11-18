@@ -28,8 +28,9 @@ import { quoted } from "./contradictory-requirement-rules.js";
 // a requirement. When no requirement names a control there is no term to be
 // inconsistent with, and nothing is reported. Code spans are not read. In a
 // criterion, a name that opens a sentence is not checked: its capital may be
-// the sentence's ("External links open in a new tab"). Determiners, the RFC
-// 2119 keywords and number words are not names. A finding quotes at most 24
+// the sentence's ("External links open in a new tab"). Determiners and
+// number words are not names, nor are the RFC 2119 keywords written in
+// capitals. A finding quotes at most 24
 // characters of the control, as contradictory_requirements does.
 //
 // The finding is blocking but not critical: what is a name is a heuristic (a
@@ -105,18 +106,8 @@ const NOT_A_NAME: ReadonlySet<string> = new Set([
   "mes",
   "aucun",
   "aucune",
-  // The requirement keywords of RFC 2119, written in capitals before a verb:
-  // in "The File menu MUST list Save" the French pattern read "menu MUST" as
-  // a control named "MUST". And number words, which count controls ("Two
-  // buttons", "deux boutons") rather than name one.
-  // source: review 1 of #345, note 2.
-  "must",
-  "shall",
-  "should",
-  "may",
-  "required",
-  "recommended",
-  "optional",
+  // Number words, which count controls ("Two buttons", "deux boutons")
+  // rather than name one. source: review 1 of #345, note 2.
   "two",
   "three",
   "four",
@@ -134,25 +125,59 @@ const NOT_A_NAME: ReadonlySet<string> = new Set([
   "huit",
   "neuf",
   "dix",
-  // The French forms of those keywords, written in capitals after the noun:
-  // in "Le bouton DOIT copier le code" the French pattern read "bouton DOIT"
-  // as a control named "DOIT". "NE" opens the negative form ("NE DOIT PAS").
-  // source: review 1 of #346, note 2.
+]);
+
+/**
+ * The requirement keywords of RFC 2119 and their French forms. They are not
+ * names when written in capitals, as RFC 2119 writes them: in "The File menu
+ * MUST list Save" and "Le bouton DOIT copier le code" the French pattern read
+ * "menu MUST" and "bouton DOIT" as controls named "MUST" and "DOIT" (review 1
+ * of #345, note 2; review 1 of #346, note 2). "NE" opens the negative form
+ * ("NE DOIT PAS"). Written otherwise the word is a name: "l'onglet
+ * Recommandé" is a tab named Recommandé (review 1 of #347, note 2). The
+ * French list holds the plural of each adjective and the future of each verb
+ * ("OBLIGATOIRES", "DEVRA", "POURRONT"), source: review 1 of #347, note 2.
+ */
+const REQUIREMENT_KEYWORDS: ReadonlySet<string> = new Set([
+  "must",
+  "shall",
+  "should",
+  "may",
+  "required",
+  "recommended",
+  "optional",
   "doit",
   "doivent",
   "devrait",
   "devraient",
+  "devra",
+  "devront",
   "peut",
   "peuvent",
+  "pourra",
+  "pourront",
   "ne",
   "obligatoire",
+  "obligatoires",
   "recommandé",
   "recommandée",
+  "recommandés",
+  "recommandées",
   "optionnel",
   "optionnelle",
+  "optionnels",
+  "optionnelles",
   "facultatif",
   "facultative",
+  "facultatifs",
+  "facultatives",
 ]);
+
+/** Whether a name, as written, is not a name: a determiner, a number word, or a keyword in capitals. */
+function isNotAName(name: string, key: string): boolean {
+  if (NOT_A_NAME.has(key)) return true;
+  return REQUIREMENT_KEYWORDS.has(key) && name === name.toUpperCase();
+}
 
 /** A noun as written lowercase or capitalized ("button", "Button"), as one alternation. */
 function nounAlternation(nouns: readonly string[]): string {
@@ -164,10 +189,16 @@ function nounAlternation(nouns: readonly string[]): string {
   return [...forms].sort((a, b) => b.length - a.length).join("|");
 }
 
-const NOT_WORD_BEFORE = String.raw`(?<![\p{L}\p{N}-])`;
-const NOT_WORD_AFTER = String.raw`(?![\p{L}\p{N}-])`;
-/** A capitalized word: the name. One loop over letters and digits, so linear from each word start. */
-const NAME = String.raw`(\p{Lu}[\p{L}\p{N}]*)`;
+const NOT_WORD_BEFORE = String.raw`(?<![\p{L}\p{M}\p{N}-])`;
+const NOT_WORD_AFTER = String.raw`(?![\p{L}\p{M}\p{N}-])`;
+/**
+ * A capitalized word: the name. One loop over letters, combining marks and
+ * digits, so linear from each word start. The text is read in NFC, and a mark
+ * with no composed form still belongs to its word: "RECOMMANDE" + U+0301 was
+ * cut at the mark and read as a control named "RECOMMANDE" (review 1 of #347,
+ * note 3).
+ */
+const NAME = String.raw`(\p{Lu}[\p{L}\p{M}\p{N}]*)`;
 
 /** English: the name, optionally quoted, then the noun ("Copy button", "\"Copy\" button"). */
 const EN_CONTROL = new RegExp(
@@ -185,11 +216,12 @@ const FR_CONTROL = new RegExp(
  * The text with its code spans blanked. A code span opens on a run of
  * backticks and closes on the next run of the same length (``Clone button``
  * is one span), and may go over a line end; a run with no closer is literal.
- * This is the CommonMark pairing within one paragraph, not all of it: the
- * text of a definition joins its blocks, so a span can close across a
- * paragraph or table-cell boundary, and a backslash before a backtick is not
- * read as an escape (review 1 of #346, note 3). One scan lists the runs, and the closer of each length is
- * looked for from a pointer that only moves forward, so the scan is linear: a
+ * This is not CommonMark's pairing, even within one paragraph: a backslash
+ * before a backtick is not read as an escape, and since the text of a
+ * definition joins its blocks, a span can close across a paragraph or
+ * table-cell boundary (review 1 of #346, note 3; review 1 of #347, note 1).
+ * One scan lists the runs, and the closer of each length is looked for from
+ * a pointer that only moves forward, so the scan is linear: a
  * pattern with a back-reference rescanned the rest of the text from each
  * unclosed run.
  * source: Codex review of #345 (P2, a double-backtick span was read).
@@ -269,13 +301,13 @@ function opensSentence(text: string, at: number): boolean {
 
 /** The named controls of a definition text, in order, code spans left out. */
 export function namedControlsIn(text: string): NamedControl[] {
-  const read = withoutCodeSpans(text);
+  const read = withoutCodeSpans(text.normalize("NFC"));
   const out: { at: number; control: NamedControl }[] = [];
   for (const pattern of [EN_CONTROL, FR_CONTROL]) {
     for (const match of read.matchAll(pattern)) {
       const name = match[1]!;
-      const key = name.normalize("NFC").toLowerCase();
-      if (NOT_A_NAME.has(key)) continue;
+      const key = name.toLowerCase();
+      if (isNotAName(name, key)) continue;
       const first = pattern === EN_CONTROL && opensSentence(read, match.index);
       out.push({ at: match.index, control: { key, written: match[0], opensSentence: first } });
     }
