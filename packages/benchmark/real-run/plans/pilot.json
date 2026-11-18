@@ -1,0 +1,15 @@
+{
+  "description": "build a simple feature for OAuth login",
+  "prd_context": "feature",
+  "answers": {},
+  "policies": {
+    "tiered": { "draft": { "model": "sonnet", "effort": "medium" } }
+  },
+  "arms": [
+    { "name": "standard-as-emitted", "request_size": "standard", "policy": "as-emitted", "mode": "sequential" },
+    { "name": "tiny-as-emitted", "request_size": "tiny", "policy": "as-emitted", "mode": "sequential" },
+    { "name": "standard-tiered", "request_size": "standard", "policy": "tiered", "mode": "sequential" },
+    { "name": "tiny-tiered", "request_size": "tiny", "policy": "tiered", "mode": "sequential" },
+    { "name": "tiny-tiered-parallel", "request_size": "tiny", "policy": "tiered", "mode": "parallel" }
+  ]
+}
