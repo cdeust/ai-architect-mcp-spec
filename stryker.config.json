@@ -5,7 +5,7 @@
   "vitest": { "configFile": "vitest.config.mts", "pool": "forks" },
   "coverageAnalysis": "perTest",
   "mutate": [],
-  "ignorePatterns": [".mcp.json", ".claude", "coverage", "reports"],
+  "ignorePatterns": ["/.mcp.json", "/.claude", "/coverage", "/reports"],
   "thresholds": { "high": 100, "low": 100, "break": null },
   "reporters": ["progress", "json"],
   "jsonReporter": { "fileName": "reports/mutation/mutation.json" },

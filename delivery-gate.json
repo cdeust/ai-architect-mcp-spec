@@ -42,28 +42,37 @@
     "profile": "loopback"
   },
   "guard": {
+    "git": "(?:^|[|;&\\n(]|['\"])\\s*(?:\\S+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:\\S+=\\S*\\s+)*)?git\\b",
     "push": [
-      "\\bgit\\b(?![^|;&\\n]*\\b(?:stash|commit)\\b)[^|;&\\n]*\\bpush\\b"
+      "${git}[^|;&\\n\"']*\\bpush\\b"
     ],
     "refuse": [
       {
-        "pattern": "--no-veri[fy]*\\b",
+        "pattern": "${git}[^|;&\\n\"']*\\bpush\\b[^|;&\\n\"']*\\s--no-veri[fy]*\\b",
         "why": "the command turns off the pre-push hook of the delivery gate (--no-verify)."
       },
       {
-        "pattern": "(?<!--unset\\s)(?<!--unset-all\\s)\\bcore\\.hookspath\\b",
+        "pattern": "\\s-c\\s*core\\.hookspath\\s*=|\\bconfig\\b[^|;&\\n]*\\bcore\\.hookspath\\s+[^\\s|;&]",
         "why": "the command moves git's hooks away from the pre-push hook of the delivery gate (core.hooksPath)."
       },
       {
-        "pattern": "\\b(?:send-pack|http-push)\\b",
+        "pattern": "${git}[^|;&\\n\"']*\\b(?:send-pack|http-push)\\b",
         "why": "the command sends commits without git's pre-push hook."
       },
       {
-        "pattern": "\\bpush\\b[^|;&\\n]*(?:\\s--force|\\s-[a-z]*f[a-z]*\\b|\\s\\+\\S|\\s--mirror\\b)",
+        "pattern": "${git}[^|;&\\n\"']*\\bpush\\b[^|;&\\n\"']*(?:\\s--force(?:-with-lease|-if-includes)?\\b|\\s-[a-eg-z]*f[a-z]*(?=\\s|$)|\\s\\+[\\w./-]+(?=:|\\s|$)|\\s--mirror\\b)",
         "why": "a forced push is never used in this repository (docs/agent-guidance.md, CI contract, rule 3)."
       },
       {
-        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=[^|;&\\n]*\\s(?:-X|--method|-f|-F|--field|--raw-field|--input))",
+        "pattern": "\\bgh\\s+pr\\s+merge\\b",
+        "why": "no agent merges by hand in this repository: the review verdict decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
+      },
+      {
+        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=[^|;&\\n]*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",
+        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
+      },
+      {
+        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?![^|;&\\n]*\\s(?:-X\\s*|--method[\\s=]+)GET\\b)(?=[^|;&\\n]*\\s(?:-f|-F|--field|--raw-field|--input))",
         "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
       },
       {

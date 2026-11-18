@@ -65,11 +65,18 @@ export function validateConfig(raw) {
   if (!isTextList(raw.carry)) fail("carry must be a list of directory names");
   const guard = raw.guard;
   if (guard === null || typeof guard !== "object") fail("guard must be an object");
+  expression(guard.git, "guard.git");
+  // `${git}` in an expression of the guard stands for `guard.git`: git as a
+  // command, not as a word of a message.
+  const written = (source, where) => {
+    if (!isText(source)) fail(`${where} must be a regular expression`);
+    expression(fill(source, { git: guard.git }), where);
+  };
   if (!Array.isArray(guard.push)) fail("guard.push must be a list");
-  guard.push.forEach((source, index) => expression(source, `guard.push[${index}]`));
+  guard.push.forEach((source, index) => written(source, `guard.push[${index}]`));
   if (!Array.isArray(guard.refuse)) fail("guard.refuse must be a list");
   guard.refuse.forEach((rule, index) => {
-    expression(rule?.pattern, `guard.refuse[${index}].pattern`);
+    written(rule?.pattern, `guard.refuse[${index}].pattern`);
     if (!isText(rule.why)) fail(`guard.refuse[${index}].why must say why`);
   });
   if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
@@ -184,6 +191,25 @@ export function judgeMutants(report, changes) {
 // ─── Sandbox profiles ───────────────────────────────────────────────────────
 
 /**
+ * precondition:  `path` is a PATH value; `separator` the one of the
+ *                platform; `isAbsolute(dir)` says whether an entry is
+ *                absolute; `inside(dir)` whether it lies in a tree that is
+ *                judged or that an operation writes.
+ * postcondition: PATH for the sandbox runtime and for the operation: the
+ *                absolute entries that are in none of those trees, in order.
+ *                The runtime starts programs by name before the sandbox is
+ *                up; an entry a check can write, or a relative one read from
+ *                the copy, would hand it a program of the judged tree to run
+ *                outside the sandbox.
+ */
+export function safePath(path, separator, { isAbsolute, inside }) {
+  return path
+    .split(separator)
+    .filter((dir) => dir !== "" && isAbsolute(dir) && !inside(dir))
+    .join(separator);
+}
+
+/**
  * precondition:  `value` is JSON; `vars` gives each `${name}` a string, or a
  *                list of strings.
  * postcondition: `value` with every `${name}` of every string replaced. An
@@ -246,7 +272,9 @@ export function resolveProfile(profile, vars, hostEnv) {
  *                each path the profile denies that is there; a read of each
  *                path it denies that is there; and the host's port, when the
  *                profile does not grant the loopback. `created` lists the
- *                files a sandbox that does not hold would leave behind.
+ *                files a sandbox that does not hold would leave behind;
+ *                `expected` is the line the canary prints when every attempt
+ *                was refused.
  */
 export function canaryPlan(srt, { kindOf, keep, hostPort, mark }) {
   const args = [];
@@ -270,7 +298,11 @@ export function canaryPlan(srt, { kindOf, keep, hostPort, mark }) {
   }
   const port = srt.network.allowLocalBinding !== true;
   if (port) args.push("--connect", String(hostPort));
-  return { args, created, proves: { writes, reads, port } };
+  // What the canary prints when every attempt was refused: the gate reads
+  // that line, not a status alone, which the runtime also gives a command
+  // that was ended before it finished.
+  const expected = `canary: ${args.length / 2} attempt(s), all refused`;
+  return { args, created, expected, proves: { writes, reads, port } };
 }
 
 // ─── Verdicts ───────────────────────────────────────────────────────────────
@@ -352,9 +384,11 @@ export function guardDecision(call, guard) {
   }
   const command = call?.tool_input?.command;
   if (typeof command !== "string") return { kind: "allow" };
-  const rule = guard.refuse.find(({ pattern }) => new RegExp(pattern, "i").test(command));
+  // Whatever the case of the command; `${git}` is `guard.git`.
+  const matches = (source) => new RegExp(fill(source, { git: guard.git }), "i").test(command);
+  const rule = guard.refuse.find(({ pattern }) => matches(pattern));
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
-  if (guard.push.some((source) => new RegExp(source, "i").test(command))) return { kind: "push" };
+  if (guard.push.some(matches)) return { kind: "push" };
   return { kind: "allow" };
 }
 
@@ -476,6 +510,11 @@ export async function runGate(config, ports) {
         return 1;
       }
       log(`[gate] mutation: ${judged} mutant(s) on the changed lines, all detected`);
+      // A changed file the report does not name has nothing the tool mutates
+      // (types, re-exports), or was left out by the tool: it is said, so
+      // that the second case is seen.
+      const unreported = files.filter((file) => !Object.hasOwn(report.files, file));
+      if (unreported.length > 0) log(`[gate] mutation: no mutant in ${unreported.join(", ")}`);
     }
 
     ports.recordVerdict(tree, {

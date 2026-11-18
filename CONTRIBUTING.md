@@ -140,7 +140,11 @@ Three layers, and what each one holds against:
   under each profile, with a canary, a write in the worktree, the git
   directory, the gate's checkout, the home and a directory outside, each
   write and read the profile denies, and, for `offline`, a port of the host;
-  it refuses to run when one succeeds. There is no unsandboxed fallback. A
+  it refuses to run when one succeeds, or when the canary does not say that
+  every attempt was refused. There is no unsandboxed fallback. The sandbox
+  runtime and the operation get a PATH without any entry of the judged tree
+  or of the run, and without relative entries: the runtime starts programs
+  by name before the sandbox is up. A
   check passes when its command ran to its end with status 0: the sandbox
   runtime exits 0 when its command is ended by a signal, so the gate asks the
   command for a mark of its success as well.
@@ -150,9 +154,11 @@ Three layers, and what each one holds against:
   script, another tool), and it refuses one whose tree has no passed verdict.
   It runs the gate of the main checkout and accepts the verdicts of that
   gate only (a verdict names the hash of the gate's code, configuration and
-  profiles): a change that rewrites the gate is judged by the gate it
-  replaces, run from the main checkout
-  (`node <main>/scripts/gate/gate.mjs run` in the worktree).
+  profiles). `pnpm gate` in a worktree hands the run over to the gate of the
+  main checkout when it has one, so a change that rewrites the gate is
+  judged by the gate that is checked out there, not by its own. The hook is
+  not installed where the main checkout has no gate: it would refuse every
+  push.
 - **The guard of the session, against going around the hook.** The
   `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
   while the pre-push hook is not the one git will run, and what the rules of
@@ -176,6 +182,14 @@ What the gate does not hold against, and what does:
 - A change that only deletes lines: no line of it is left to mutate.
 - On macOS, under `loopback`, a service of the host that listens on
   localhost; and what is readable outside the user's home.
+- What the canary does not try: that nothing outside the machine is
+  reachable (it tries a port of the host, for `offline` only), and a hard
+  link from outside into the directory of the run. Those rest on the sandbox
+  runtime.
+- The guard reads git where a command starts (after a separator, a quote,
+  `env`, `command` and the like). A commit message that opens on `git push`
+  is read as a push; a push behind a wrapper the expression does not know is
+  not seen by the guard, and is still judged by git's hook.
 
 What the gate runs, what counts as production code, what an operation may
 reach and what the guard refuses are in `delivery-gate.json` and

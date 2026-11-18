@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   Refusal,
@@ -28,6 +28,7 @@ import {
   pushedCommits,
   resolveProfile,
   runGate,
+  safePath,
   unsafeNames,
   validateConfig,
   verdictRefusal,
@@ -85,6 +86,9 @@ describe("validateConfig", () => {
       [withValue("carry", ["node_modules", ""]), "carry must be a list of directory names"],
       [without("guard"), "guard must be an object"],
       [withValue("guard", null), "guard must be an object"],
+      [without("guard.git"), "guard.git must be a regular expression"],
+      [withValue("guard.git", "("), "guard.git is not a regular expression"],
+      [withValue("guard.push", ["${nope}"]), "variable ${nope} is not defined"],
       [without("guard.push"), "guard.push must be a list"],
       [withValue("guard.push", [7]), "guard.push[0] must be a regular expression"],
       [withValue("guard.push", ["ok", "["]), "guard.push[1] is not a regular expression"],
@@ -104,7 +108,8 @@ describe("validateConfig", () => {
         thrown = error;
       }
       expect(thrown, message).toBeInstanceOf(Refusal);
-      expect(thrown.message, message).toContain(`delivery-gate.json: ${message}`);
+      expect(thrown.message, message).toContain(message);
+      if (!message.startsWith("variable ")) expect(thrown.message, message).toContain(`delivery-gate.json: ${message}`);
     }
   });
 
@@ -295,6 +300,20 @@ describe("fill and resolveProfile", () => {
   });
 });
 
+describe("safePath", () => {
+  const options = {
+    isAbsolute: (dir) => dir.startsWith("/"),
+    inside: (dir) => dir.startsWith("/w/") || dir === "/w",
+  };
+
+  it("keeps the absolute entries outside the judged and written trees, in order", () => {
+    const path = "/w/node_modules/.bin:/usr/bin::./node_modules/.bin:/w:bin:/opt/tools/bin:/bin";
+    expect(safePath(path, ":", options)).toBe("/usr/bin:/opt/tools/bin:/bin");
+    expect(safePath("", ":", options)).toBe("");
+    expect(safePath("/a;/w/x;/b", ";", options)).toBe("/a;/b");
+  });
+});
+
 describe("the profiles of the gate", () => {
   const names = readdirSync(join(HERE, "profiles")).map((file) => file.replace(/\.json$/, ""));
   const profile = (name) => readJson(HERE, "profiles", `${name}.json`);
@@ -357,6 +376,9 @@ describe("canaryPlan", () => {
     // What a sandbox that does not hold would leave: the gate removes it.
     expect(created).toEqual(["/w/mark-1", "/git/mark-1", "/shared/mark-1"]);
     expect(proves).toEqual({ writes: 4, reads: 2, port: true });
+    // The line the canary prints when all seven were refused.
+    expect(plan().expected).toBe("canary: 7 attempt(s), all refused");
+    expect(plan({ allowLocalBinding: true }).expected).toBe("canary: 6 attempt(s), all refused");
   });
 
   it("does not try the host's port under a profile that grants the loopback", () => {
@@ -471,22 +493,30 @@ describe("guardDecision", () => {
   const decide = (command) => guardDecision(bash(command), guard);
   const why = (index) => guard.refuse[index].why;
 
-  it("sees a push in every way of writing it, from any tool that carries a command", () => {
+  it("sees a push in the ways a session writes it, from any tool that carries a command", () => {
     for (const command of [
       "git push",
       "git push -u origin fix/x",
+      "git push -u origin fix/119-commit-size",
+      "git -c commit.gpgsign=false push",
       "git -C /repo push",
       "git --no-pager push",
       "git --git-dir=/r/.git push origin main",
       "git -c alias.p=push p",
       "cd x && git push",
       "git commit -m wip && git push",
+      "git stash push -m wip",
+      // A message that opens on the command is read as one: the price of reading `sh -c 'git push'`.
+      'git commit -m "git push is refused without a verdict"',
       "command git push",
       "env X=1 git push",
+      "GIT_TRACE=1 git push",
+      "time git push",
+      "(cd x; git push)",
       "sh -c 'git push'",
-      'git "push"',
       "GIT PUSH",
       "git\tpush",
+      "git subtree push --prefix=x origin y",
     ]) {
       expect(decide(command), command).toEqual({ kind: "push" });
     }
@@ -501,6 +531,8 @@ describe("guardDecision", () => {
       ["git -c core.hooksPath=/dev/null push", 1],
       ["git -c core.hookspath=/dev/null push", 1],
       ["git config core.hooksPath /tmp/h", 1],
+      ["git config --global core.hooksPath /tmp/h", 1],
+      ["git config set core.hooksPath /tmp/h", 1],
       ["git send-pack origin HEAD", 2],
       ["git http-push https://example.invalid/r.git", 2],
       ["git push --force origin x", 3],
@@ -508,26 +540,73 @@ describe("guardDecision", () => {
       ["git push -f", 3],
       ["git push -uf origin x", 3],
       ["git push origin +HEAD:main", 3],
+      ["git push origin +main", 3],
       ["git push --mirror", 3],
-      ["gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", 4],
-      ["gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc", 4],
-      ["gh api -XPUT repos/o/r/contents/README.md -fcontent=x", 4],
-      ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 4],
-      ["gh api -X PUT repos/o/r/pulls/3/merge", 4],
-      ["gh api repos/o/r/merges --field base=main --field head=x", 4],
-      ["gh api repos/o/r/git/trees --input tree.json", 4],
-      ["gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { commit { oid } } }'", 5],
-      ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 6],
+      ["gh pr merge 3 --squash", 4],
+      ["gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc", 5],
+      ["gh api -XPUT repos/o/r/contents/README.md -fcontent=x", 5],
+      ["gh api -X PUT repos/o/r/pulls/3/merge", 5],
+      ["gh api --method POST repos/o/r/git/trees --input tree.json", 5],
+      ["gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", 6],
+      ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 6],
+      ["gh api repos/o/r/merges --field base=main --field head=x", 6],
+      ["gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { commit { oid } } }'", 7],
+      ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 8],
     ];
     for (const [command, rule] of cases) {
       expect(decide(command), command).toEqual({ kind: "refuse", reason: why(rule) });
     }
     expect(why(0)).toContain("--no-verify");
     expect(why(3)).toContain("forced push");
+    expect(why(4)).toContain("merges by hand");
+  });
+
+  it("does not refuse ordinary work that only looks like one of those", () => {
+    // Each of these is a push, or nothing: never a refusal.
+    const pushes = [
+      "git push -u origin feature/force-retry",
+      "git push origin fix/-f",
+      "tar -xf a.tar && git push",
+      "ls -f; git push",
+      "git push --follow-tags",
+      "git push origin v1.2.3",
+    ];
+    for (const command of pushes) expect(decide(command), command).toEqual({ kind: "push" });
+    const nothing = [
+      'git commit -m "pre-push hook: chmod +x"',
+      'git commit -m "document git push --force"',
+      'git commit -m "the push of the gate"',
+      "echo use git push to deliver",
+      "git commit --no-verify -m wip",
+      "git config --get core.hooksPath",
+      "git config --unset core.hooksPath",
+      "git config unset core.hooksPath",
+      "git config --get core.hooksPath && echo set",
+      "rm -f x",
+      "grep -f patterns file",
+      'gh pr create --title "fix: pre-push hook" -F body.md',
+      "gh pr view 3",
+      "gh pr merge --help >/dev/null || true; gh pr view 3".replace("gh pr merge --help >/dev/null || true; ", ""),
+      // Reading through the API, and writing what is not a delivery (a comment).
+      "gh api repos/o/r/pulls/3",
+      "gh api repos/o/r/pulls",
+      "gh api -X GET repos/o/r/pulls -f state=all",
+      "gh api --method GET repos/o/r/pulls -f state=all",
+      "gh api repos/o/r/contents/README.md",
+      "gh api repos/o/r/issues/3/comments -f body=done",
+      "gh api repos/o/r/pulls/3/comments -f body=done",
+      "gh api graphql -f query='query { viewer { login } }'",
+      "git status",
+      "git log --oneline",
+      "git fetch origin",
+      "pnpm test",
+      "git pushd",
+    ];
+    for (const command of nothing) expect(decide(command), command).toEqual({ kind: "allow" });
   });
 
   it("sees a push when any one of several expressions matches, whatever the case", () => {
-    const two = { push: ["\\bdeliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
+    const two = { git: "make", push: ["${git} deliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
     expect(guardDecision(bash("make SHIP"), two)).toEqual({ kind: "push" });
     expect(guardDecision(bash("make deliver"), two)).toEqual({ kind: "push" });
     expect(guardDecision(bash("make build"), two)).toEqual({ kind: "allow" });
@@ -543,29 +622,7 @@ describe("guardDecision", () => {
     expect(guard.refusedTools).toEqual(expect.arrayContaining(["mcp__github__push_files", "mcp__github__create_or_update_file"]));
   });
 
-  it("lets every other call through", () => {
-    for (const command of [
-      "git status",
-      "git log --oneline",
-      "git fetch origin",
-      // Not a push: a stash, a commit whose message says the word, the way to undo a moved hooks path.
-      "git stash push -m wip",
-      'git commit -m "push the button"',
-      "git config --unset core.hooksPath",
-      "gh pr view 3",
-      "gh pr create --fill",
-      // Reading through the API, and writing what is not a delivery (a comment).
-      "gh api repos/o/r/pulls/3",
-      "gh api repos/o/r/pulls",
-      "gh api repos/o/r/contents/README.md",
-      "gh api repos/o/r/issues/3/comments -f body=done",
-      "gh api repos/o/r/pulls/3/comments -f body=done",
-      "gh api graphql -f query='query { viewer { login } }'",
-      "pnpm test",
-      "git pushd",
-    ]) {
-      expect(decide(command), command).toEqual({ kind: "allow" });
-    }
+  it("lets a call that carries no command through", () => {
     for (const call of [
       { tool_name: "Read", tool_input: { file_path: "git push" } },
       { tool_name: "Bash", tool_input: {} },
@@ -779,6 +836,17 @@ describe("runGate", () => {
     expect(w.lines.at(-2)).toBe(`[gate] Survived: src/a.ts:5 Bool -> ${"x".repeat(80)}`);
   });
 
+  it("says which changed files the report does not name", async () => {
+    const w = world({ files: ["src/a.ts", "src/types.ts", "src/index.ts"] });
+    expect(await runGate(config, w.ports)).toBe(0);
+    expect(w.lines.at(-2)).toBe("[gate] mutation: no mutant in src/types.ts, src/index.ts");
+    // Nothing is said when the report names them all.
+    expect(world().lines.some((line) => line.includes("no mutant in"))).toBe(false);
+    const all = world();
+    await runGate(config, all.ports);
+    expect(all.lines.some((line) => line.includes("no mutant in"))).toBe(false);
+  });
+
   it("judges the mutants of each changed file on its own changed lines", async () => {
     const elsewhere = { ...survivor, location: { start: { line: 50, column: 1 }, end: { line: 50, column: 2 } } };
     const w = world({
@@ -816,6 +884,7 @@ describe("the canary, run as a process", () => {
     writeFileSync(file, "content");
     const out = canary("--write", join(dir, "new"), "--append", file, "--read", file, "--list", dir);
     expect(out.status).toBe(1);
+    // No line says that all were refused.
     expect(out.stdout.trim().split("\n")).toEqual([`wrote ${join(dir, "new")}`, `opened ${file} for writing`, `read ${file}`, `listed ${dir}`]);
     // An append adds nothing: a file the canary could open is left as it was.
     expect(readFileSync(file, "utf8")).toBe("content");
@@ -824,7 +893,9 @@ describe("the canary, run as a process", () => {
   it("does not overwrite a file that is there", () => {
     const file = join(mkdtempSync(join(tmpdir(), "canary-")), "file");
     writeFileSync(file, "content");
-    expect(canary("--write", file).status).toBe(0);
+    const out = canary("--write", file);
+    expect(out.status).toBe(0);
+    expect(out.stdout.trim()).toBe("canary: 1 attempt(s), all refused");
     expect(readFileSync(file, "utf8")).toBe("content");
   });
 
@@ -833,7 +904,7 @@ describe("the canary, run as a process", () => {
     // Port 1 of the loopback has no listener: the connection is refused.
     const out = canary("--write", missing, "--append", missing, "--read", missing, "--list", missing, "--connect", "1");
     expect(out.status).toBe(0);
-    expect(out.stdout).toBe("");
+    expect(out.stdout.trim()).toBe("canary: 5 attempt(s), all refused");
   });
 
   it("fails on an argument it does not know or that has no target, instead of proving nothing", () => {
@@ -913,6 +984,16 @@ describe("the program, in a real repository with a real push", () => {
     expect(refused.stderr).toContain("is another hook");
     expect(hook("git push").stderr).toContain("another pre-push hook is installed");
     writeFileSync(path, shim);
+  });
+
+  it("does not install the hook in a repository whose main checkout has no gate: it would refuse every push", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "gate-nogate-")));
+    const other = join(base, "other");
+    git(base, "init", "-q", other);
+    const out = gate(other, "install");
+    expect(out.status).toBe(2);
+    expect(out.stderr).toContain("the main checkout has no gate yet");
+    expect(existsSync(join(other, ".git/hooks/pre-push"))).toBe(false);
   });
 
   it("refuses, in git itself, a push of a commit whose tree has no verdict", () => {
@@ -1002,7 +1083,8 @@ describe("the program, in a real repository with a real push", () => {
     expect(hook("git push").status).toBe(0);
   });
 
-  describe("run, with a stand-in for the sandbox runtime", () => {
+  // The gate itself runs on macOS and Linux only: the sandbox runtime does.
+  describe.skipIf(process.platform === "win32")("run, with a stand-in for the sandbox runtime", () => {
     // The stand-in runs the command it is given with no isolation at all,
     // except that it answers the canary as told: the adapters of `run` are
     // what is tested here (the copy, the mark of success, the verdict), not
@@ -1011,8 +1093,10 @@ describe("the program, in a real repository with a real push", () => {
     const stub = (canary) => `#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 const argv = process.argv.slice(process.argv.indexOf("--") + 1);
-if (argv.some((arg) => arg.endsWith("canary.mjs"))) {
-  ${canary === "holds" ? "process.exit(0);" : ""}
+const canaryAt = argv.findIndex((arg) => arg.endsWith("canary.mjs"));
+if (canaryAt !== -1) {
+  ${canary === "holds" ? 'console.log(`canary: ${(argv.length - canaryAt - 1) / 2} attempt(s), all refused`); process.exit(0);' : ""}
+  ${canary === "silent" ? "process.exit(0);" : ""}
 }
 if (argv.includes("--die")) process.exit(0); // as the runtime does when its command is ended by a signal
 const out = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
@@ -1046,7 +1130,7 @@ process.exit(out.status ?? 1);
       writeFileSync(join(runtime, "package.json"), JSON.stringify({ name: "@anthropic-ai/sandbox-runtime", bin: { srt: "cli.mjs" } }));
       mkdirSync(join(repo, "carried"));
       writeFileSync(join(repo, "carried/installed.txt"), "installed");
-      writeFileSync(join(repo, ".gitignore"), "node_modules\ncarried\nleft-behind.txt\n");
+      writeFileSync(join(repo, ".gitignore"), "node_modules\ncarried\nleft-behind.txt\n.claude/worktrees/\n");
       writeFileSync(join(repo, "tracked.txt"), "committed");
       git(repo, "init", "-q", "-b", "trunk");
       git(repo, "add", ".");
@@ -1118,6 +1202,56 @@ process.exit(out.status ?? 1);
       setRuntime("holds");
     });
 
+    it("refuses when the canary ends with status 0 without saying that all was refused", () => {
+      setRuntime("silent");
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain("the sandbox does not hold under profile offline: the canary could not run");
+      setRuntime("holds");
+    });
+
+    it("gives the operation a PATH with no entry of the judged tree, and none that is relative", () => {
+      setChecks([{ name: "path", profile: "offline", command: node(`require("fs").writeFileSync(process.argv[1], process.env.PATH)`, join(repo, "..", "path.txt")) }]);
+      const out = spawnSync(process.execPath, [join(repo, "scripts/gate/gate.mjs"), "run"], {
+        ...PROCESS,
+        cwd: repo,
+        env: { ...GIT_ENV, PATH: [join(repo, "node_modules/.bin"), "./node_modules/.bin", process.env.PATH].join(delimiter) },
+      });
+      expect(out.status, out.stderr).toBe(0);
+      const seen = readFileSync(join(repo, "..", "path.txt"), "utf8").split(delimiter);
+      expect(seen).not.toContain(join(repo, "node_modules/.bin"));
+      expect(seen).not.toContain("./node_modules/.bin");
+      expect(seen.length).toBeGreaterThan(0);
+    });
+
+    it("hands a run started from a worktree's own gate over to the gate of the main checkout", () => {
+      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
+      const worktree = join(repo, ".claude/worktrees/w");
+      git(repo, "worktree", "add", "-q", worktree, "-b", "topic");
+      // The worktree changes its own gate: it is not the one that judges.
+      writeFileSync(join(worktree, "delivery-gate.json"), "{}");
+      git(worktree, "add", ".");
+      git(worktree, "commit", "-q", "-m", "a gate that would refuse to load");
+      const out = spawnSync(process.execPath, [join(worktree, "scripts/gate/gate.mjs"), "run"], { ...PROCESS, cwd: worktree });
+      expect(out.stderr).toContain(`[gate] judged by the gate of the main checkout: ${join(repo, "scripts/gate/gate.mjs")}`);
+      expect(out.status, out.stderr).toBe(0);
+      const tree = git(worktree, "rev-parse", "HEAD^{tree}");
+      expect(readJson(repo, ".git/delivery-gate", `${tree}.json`)).toMatchObject({ tree, passed: true, gate: own("hash").stdout.trim() });
+    });
+
+    it("removes the directory a killed run left, and leaves the one of a run that is alive", () => {
+      const runs = join(repo, ".git/delivery-gate");
+      const dead = join(runs, "run-dead");
+      const alive = join(runs, "run-alive");
+      for (const [dir, pid] of [[dead, "999999999"], [alive, String(process.pid)]]) {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "pid"), pid);
+      }
+      mkdirSync(join(runs, "run-nopid"));
+      expect(runGateIn().status).toBe(0);
+      expect(readdirSync(runs).filter((name) => name.startsWith("run-"))).toEqual(["run-alive"]);
+    });
+
     it("refuses when the sandbox runtime is not installed", () => {
       const pkg = join(repo, "node_modules/@anthropic-ai/sandbox-runtime/package.json");
       const original = readFileSync(pkg, "utf8");
@@ -1159,6 +1293,7 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(".claude/setti
       "Bash(git merge-base *)",
       // In two parts: scripts/tests/test_no_main_comparison.py forbids the word in scripts/.
       "Bash(gh pr update" + "-branch *)",
+      "Bash(gh pr merge *)",
       "Bash(git push --force*)",
       "Bash(git push * --force*)",
       "Bash(git push -f*)",
@@ -1173,7 +1308,7 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(".claude/setti
     }
   });
 
-  it("allows only the gate without asking: nothing that runs the project's code outside its sandbox", () => {
+  it("allows only the gate without asking", () => {
     expect(settings.permissions.allow).toEqual(["Bash(pnpm gate)"]);
   });
 

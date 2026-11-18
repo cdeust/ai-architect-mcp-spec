@@ -10,6 +10,7 @@
       "Read(**/*.key)",
       "Bash(git merge-base *)",
       "Bash(gh pr update-branch *)",
+      "Bash(gh pr merge *)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git push * --force*)",

@@ -41,9 +41,9 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Refusal, canaryPlan, guardDecision, guardHook, prePush, resolveProfile, runGate, validateConfig } from "./gate-lib.mjs";
+import { Refusal, canaryPlan, guardDecision, guardHook, prePush, resolveProfile, runGate, safePath, validateConfig } from "./gate-lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The checkout this gate belongs to: its files judge, they are not judged. */
@@ -154,28 +154,48 @@ const kindOf = (path) => {
  * holds the copy of the committed tree (tree/), and the temporary directory
  * and home of the operations. It is the only place an operation writes.
  */
-function makeRun({ git, root, common }, config) {
+function makeRun({ git, root, common }, config, commit) {
   const runtime = sandboxRuntime();
   const sh = findOnPath("sh", [root, LAUNCHER]);
-  mkdirSync(join(common, "delivery-gate"), { recursive: true });
-  const run = realpathSync(mkdtempSync(join(common, "delivery-gate", "run-")));
+  const runs = join(common, "delivery-gate");
+  mkdirSync(runs, { recursive: true });
+  // A run that was killed leaves its directory: one whose process is gone is removed here.
+  for (const name of readdirSync(runs).filter((entry) => entry.startsWith("run-"))) {
+    let alive = true;
+    try {
+      process.kill(Number(readFileSync(join(runs, name, "pid"), "utf8")), 0);
+    } catch {
+      alive = false;
+    }
+    if (!alive) rmSync(join(runs, name), { recursive: true, force: true });
+  }
+  const run = realpathSync(mkdtempSync(join(runs, "run-")));
+  writeFileSync(join(run, "pid"), String(process.pid));
   const tree = join(run, "tree");
   const settingsDir = realpathSync(mkdtempSync(join(tmpdir(), "gate-settings-")));
   const home = realpathSync(homedir());
+  // PATH for the runtime and the operation: nothing a check can write, and
+  // nothing relative, which the runtime would read from the copy.
+  const written = [root, LAUNCHER, run];
+  const path = safePath(process.env.PATH ?? "", delimiter, {
+    isAbsolute,
+    inside: (dir) => written.some((place) => inside(resolve(dir), place)),
+  });
+  const hostEnv = { ...process.env, PATH: path };
   // What an operation may read of the user's home: the tools PATH names there.
-  const toolchain = (process.env.PATH ?? "")
+  const toolchain = path
     .split(delimiter)
     .filter((dir) => dir !== "" && existsSync(dir))
     .map((dir) => realpathSync(dir))
-    .filter((dir) => inside(dir, home) && !inside(dir, root));
+    .filter((dir) => inside(dir, home));
   const vars = { home, run, launcher: LAUNCHER, toolchain };
 
-  /** The committed tree, as git checks it out, then the installed dependencies of the worktree. */
+  /** The tree of the commit, as git checks it out, then the installed dependencies of the worktree. */
   const prepare = () => {
     for (const dir of ["tmp", "home", "tree"]) mkdirSync(join(run, dir));
     const index = { GIT_INDEX_FILE: join(run, "index") };
-    git(["read-tree", "HEAD"], index);
-    git(["checkout-index", "--all", `--prefix=${tree}${sep}`], index);
+    git(["read-tree", commit], index);
+    git(["checkout-index", "--all", `--prefix=${tree}/`], index);
     // Ignored directories the configuration names (node_modules): what is
     // installed is not in the commit, and the checks need it.
     const ignored = git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]).split("\0");
@@ -201,7 +221,7 @@ function makeRun({ git, root, common }, config) {
 
   /** Start `argv` in the copy, under the profile; the settings file is outside what the operation writes. */
   const start = (profileName, argv, stdio) => {
-    const resolved = resolveProfile(loadProfile(profileName), vars, process.env);
+    const resolved = resolveProfile(loadProfile(profileName), vars, hostEnv);
     const settings = join(settingsDir, `${profileName}.json`);
     writeFileSync(settings, JSON.stringify(resolved.srt));
     const out = spawnSync(process.execPath, [runtime, "--settings", settings, "--", ...argv], {
@@ -217,12 +237,12 @@ function makeRun({ git, root, common }, config) {
    * true when the command ran to its end with status 0. The sandbox runtime
    * exits 0 when its command is ended by SIGINT or SIGTERM, so its status
    * alone does not say that: the command leaves a mark when it succeeds, at
-   * a path only this process and the wrapper know.
+   * a path only this process and the wrapper know. The path is the wrapper's
+   * `$0`, not text of its script: no character of it is read by the shell.
    */
   const sandboxed = (argv, profileName) => {
     const mark = join(run, "tmp", `done-${randomBytes(16).toString("hex")}`);
-    const script = `"$@" && : > '${mark}'`;
-    const { out } = start(profileName, [sh, "-c", script, "sh", ...argv], "inherit");
+    const { out } = start(profileName, [sh, "-c", '"$@" && : > "$0"', mark, ...argv], "inherit");
     const done = existsSync(mark);
     rmSync(mark, { force: true });
     return out.status === 0 && done;
@@ -239,7 +259,7 @@ function makeRun({ git, root, common }, config) {
     await new Promise((done) => server.listen(0, "127.0.0.1", done));
     let created = [];
     try {
-      const srt = resolveProfile(loadProfile(profileName), vars, process.env).srt;
+      const srt = resolveProfile(loadProfile(profileName), vars, hostEnv).srt;
       const plan = canaryPlan(srt, {
         kindOf,
         keep: [root, common, LAUNCHER, home, outside],
@@ -248,9 +268,10 @@ function makeRun({ git, root, common }, config) {
       });
       created = plan.created;
       const { out } = start(profileName, [process.execPath, join(HERE, "canary.mjs"), ...plan.args], ["ignore", "pipe", "pipe"]);
-      if (out.status !== 0) {
+      const said = (out.stdout ?? "").trim();
+      if (out.status !== 0 || said !== plan.expected) {
         throw new Refusal(
-          `the sandbox does not hold under profile ${profileName}: ${(out.stdout ?? "").trim() || (out.stderr ?? "").trim() || "the canary could not run"}`,
+          `the sandbox does not hold under profile ${profileName}: ${said || (out.stderr ?? "").trim() || "the canary could not run"}`,
         );
       }
       const { writes, reads, port } = plan.proves;
@@ -269,31 +290,48 @@ function makeRun({ git, root, common }, config) {
 
 const log = (line) => console.error(line);
 
+/**
+ * The gate that judges is the one of the main checkout, when it has one: the
+ * pre-push hook accepts its verdicts only, and a worktree's own copy may be
+ * the change that is judged. A worktree's gate hands the run over to it.
+ */
+function mainGate(common) {
+  const main = resolve(common, "..");
+  const path = join(main, "scripts", "gate", "gate.mjs");
+  return main !== LAUNCHER && existsSync(path) ? path : null;
+}
+
 async function run() {
-  const config = loadConfig();
   const repo = repository(process.cwd());
-  const { prepare, dispose, sandboxed, proveIsolation, tree } = makeRun(repo, config);
-  // The directory of the run is removed however the run ends.
-  process.once("SIGINT", () => {
-    dispose();
-    process.exit(130);
-  });
+  const { git, root } = repo;
+  const other = mainGate(repo.common);
+  if (other !== null) {
+    log(`[gate] judged by the gate of the main checkout: ${other}`);
+    return spawnSync(process.execPath, [other, "run"], { cwd: root, stdio: "inherit" }).status ?? 2;
+  }
+  const config = loadConfig();
+  // The commit that is judged and the base it is compared with, read once:
+  // the copy, the diff and the verdict are of these two, whatever is
+  // committed or fetched while the gate runs.
+  const commit = git(["rev-parse", "--verify", "HEAD^{commit}"]).trim();
+  const base = git(["rev-parse", "--verify", `${config.base}^{commit}`]).trim();
+  const made = makeRun(repo, config, commit);
   try {
-    return await runGate(config, ports(config, repo, { prepare, dispose, sandboxed, proveIsolation, tree }));
+    return await runGate(config, ports(config, repo, made, commit, base));
   } finally {
-    dispose();
+    made.dispose();
   }
 }
 
-function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsolation, tree }) {
-  // The change: the commits since the point where the work left `base`.
+function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsolation, tree }, commit, base) {
+  // The change: the commits since the point where the work left the base.
   // `--text` and `--no-textconv`: an attribute of the tree cannot turn a
   // file's diff into "binary files differ". Names come NUL-separated, so git
   // quotes none of them.
-  const diff = (...args) => git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "--merge-base", config.base, "HEAD", ...args]);
+  const diff = (...args) => git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "--merge-base", base, commit, ...args]);
   return {
     log,
-    headTree: () => git(["rev-parse", "HEAD^{tree}"]).trim(),
+    headTree: () => git(["rev-parse", `${commit}^{tree}`]).trim(),
     status: () => git(["status", "--porcelain", "--untracked-files=all"]).trimEnd(),
     changedFiles: () => diff("--name-only", "--diff-filter=d", "-z").split("\0").filter((name) => name !== ""),
     fileDiff: (_, file) => diff("-U0", "--", file),
@@ -360,6 +398,12 @@ function hookProblem({ git, common }) {
 
 function install() {
   const repo = repository(process.cwd());
+  // The hook runs the gate of the main checkout: without one there, it
+  // would refuse every push of the repository.
+  const main = join(repo.common, "..", "scripts", "gate", "gate.mjs");
+  if (!existsSync(main)) {
+    throw new Refusal(`the main checkout has no gate yet (${resolve(main)}): install the hook once the gate is on its branch`);
+  }
   const path = join(repo.common, "hooks", "pre-push");
   if (existsSync(path) && readFileSync(path, "utf8") !== SHIM) {
     throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);

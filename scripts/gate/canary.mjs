@@ -9,8 +9,9 @@
  *   --list <path>      list the directory
  *   --connect <port>   reach 127.0.0.1:<port>
  *
- * One line per attempt that succeeded; exit 1 if any did, 0 if every one was
- * refused. An argument it does not know is a failure: a canary that skips an
+ * One line per attempt that succeeded, and exit 1 if any did. When every one
+ * was refused, one line that says how many, and exit 0: the gate reads the
+ * line. An argument it does not know is a failure: a canary that skips an
  * attempt proves nothing.
  */
 import { appendFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -56,4 +57,5 @@ for (let i = 0; i < args.length; i += 2) {
 }
 await Promise.all(pending);
 for (const breach of breaches) console.log(breach);
+if (breaches.length === 0) console.log(`canary: ${args.length / 2} attempt(s), all refused`);
 process.exit(breaches.length === 0 ? 0 : 1);
