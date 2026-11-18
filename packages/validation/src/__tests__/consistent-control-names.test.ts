@@ -219,13 +219,21 @@ describe("consistent_control_names (#118)", () => {
     // Review 1 of #346, note 1. A definition's text joins its blocks with a
     // line end, which a hard wrap cannot be told from, and "AC-001:" opens
     // the statement; so these criteria are not reported. This test pins the
-    // misses: a change that reports them must update it and the CHANGELOG.
+    // misses: a change that reports them must update it, the comment of
+    // SENTENCE_BOUNDARY and the CHANGELOG. Emphasis marks must stay left out
+    // before a name (opensSentence): without "*", "**FR-001:** Should link…"
+    // defines a control named "should" again (review 1 of #349, note 2;
+    // review 1 of #351, note 3).
     expect(messageOf(COPY_FR, "- AC-001: Every code block has exactly one\n  Clone control.")).toBeUndefined();
     expect(messageOf(COPY_FR, "- AC-001: Clone button copies the code.")).toBeUndefined();
+    // The colon outside the bold already opened the statement before #350.
+    expect(messageOf(COPY_FR, "- **AC-001**: Clone button copies the code.")).toBeUndefined();
     // Review 1 of #350, note 1: since #350 emphasis marks are left out before
-    // a name, so the second miss covers a bold identifier and a bold name too.
+    // a name, so the second miss covers an identifier bold with its colon and
+    // a name in bold or in italics too (review 1 of #351, note 2).
     expect(messageOf(COPY_FR, "- **AC-001:** Clone button copies the code.")).toBeUndefined();
     expect(messageOf(COPY_FR, "- AC-001: **Clone button** copies the code.")).toBeUndefined();
+    expect(messageOf(COPY_FR, "- AC-001: _Clone button_ copies the code.")).toBeUndefined();
   });
 
   it("quotes at most 24 characters of a long control name", () => {
