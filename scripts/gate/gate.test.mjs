@@ -180,6 +180,7 @@ describe("blanketDisables", () => {
       "// Stryker restore all",
       "const c = 'Strykers disable nothing';",
       "// Stryker disable next-linear",
+      "//  Stryker  disable   next-line all: equivalent: spaces do not make it a blanket",
     ].join("\n");
     expect(blanketDisables(source)).toEqual([1, 5, 6, 9]);
     expect(blanketDisables("")).toEqual([]);
@@ -523,6 +524,13 @@ describe("guardDecision", () => {
     }
     expect(why(0)).toContain("--no-verify");
     expect(why(3)).toContain("forced push");
+  });
+
+  it("sees a push when any one of several expressions matches, whatever the case", () => {
+    const two = { push: ["\\bdeliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
+    expect(guardDecision(bash("make SHIP"), two)).toEqual({ kind: "push" });
+    expect(guardDecision(bash("make deliver"), two)).toEqual({ kind: "push" });
+    expect(guardDecision(bash("make build"), two)).toEqual({ kind: "allow" });
   });
 
   it("refuses the tools that send content the gate cannot judge", () => {

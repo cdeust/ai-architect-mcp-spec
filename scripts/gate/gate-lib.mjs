@@ -30,7 +30,7 @@ const isArgv = (value) => isTextList(value) && value.length > 0;
 function expression(source, where) {
   if (!isText(source)) throw new Refusal(`delivery-gate.json: ${where} must be a regular expression`);
   try {
-    return new RegExp(source, "i");
+    return new RegExp(source);
   } catch (error) {
     throw new Refusal(`delivery-gate.json: ${where} is not a regular expression (${error.message})`);
   }
