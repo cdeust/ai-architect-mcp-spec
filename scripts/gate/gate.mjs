@@ -461,7 +461,8 @@ const shim = (ref) =>
     "# Written by `pnpm gate:install`.",
     `ref='${ref}'`,
     'if git cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
-    "  dir=$(mktemp -d) || exit 1",
+    // In TMPDIR when it is set: without a template, mktemp of macOS ignores it.
+    '  dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-hook.XXXXXX") || exit 1',
     "  trap 'rm -rf \"$dir\"' EXIT",
     `  git archive "$ref" ${GATE_PATHS.join(" ")} | tar -x -C "$dir" || exit 1`,
     '  node "$dir/scripts/gate/gate.mjs" pre-push "$@"',

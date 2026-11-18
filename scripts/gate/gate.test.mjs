@@ -935,7 +935,7 @@ describe("the canary, run as a process", () => {
   });
 });
 
-describe("the program, in a real repository with a real push", () => {
+describe("the program, in a real repository with a real push", { timeout: 60_000 }, () => {
   let main;
   let remote;
   const git = (cwd, ...args) => {
@@ -1108,7 +1108,8 @@ describe("the program, in a real repository with a real push", () => {
   // The gate itself runs on macOS and Linux only, on the Node its sandbox runtime needs.
   const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
   const gateRuns = process.platform !== "win32" && (nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 12));
-  describe.skipIf(!gateRuns)("run, with a stand-in for the sandbox runtime", () => {
+  // Each test starts the gate once or twice, and each start copies a tree: well above the 5 s default under load.
+  describe.skipIf(!gateRuns)("run, with a stand-in for the sandbox runtime", { timeout: 120_000 }, () => {
     // The stand-in runs the command it is given with no isolation at all,
     // except that it answers the canary as told: the adapters of `run` are
     // what is tested here (the copy, the mark of success, the verdict), not
