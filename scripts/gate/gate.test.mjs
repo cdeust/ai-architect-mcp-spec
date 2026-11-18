@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -604,6 +604,7 @@ describe("guardDecision", () => {
       "git --no-pager push",
       "git --git-dir=/r/.git push origin main",
       "git --git-dir /r/.git --work-tree /r push",
+      "git --config-env http.extraheader=TOKEN --attr-source HEAD push",
       "cd x && git push",
       "git commit -m wip && git push",
       'git commit -m "a message" && git push',
@@ -614,6 +615,7 @@ describe("guardDecision", () => {
       "(cd x; git push)",
       "echo ready\ngit push",
       'echo "$(git push)"',
+      "eval git push",
       "GIT PUSH",
       "git\tpush",
     ]) {
@@ -623,7 +625,21 @@ describe("guardDecision", () => {
   });
 
   it("does not take the word push for a push when it is not git's subcommand", () => {
-    for (const command of ["git stash push -m wip", "git checkout -b fix/push-guard", "git log --grep push", "git branch -D push", "git commit -m push", "git pushd"]) {
+    for (const command of [
+      "git stash push -m wip",
+      "git checkout -b fix/push-guard",
+      "git log --grep push",
+      "git branch -D push",
+      "git commit -m push",
+      "git pushd",
+      // The value of an option of git is not its subcommand.
+      "git -c push.default=current status",
+      "git -C push status",
+      "git --git-dir push status",
+      "git --work-tree push --git-dir push log",
+      "git --config-env push status",
+      "git --attr-source push log",
+    ]) {
       expect(decide(command), command).toEqual({ kind: "allow" });
     }
   });
@@ -636,6 +652,8 @@ describe("guardDecision", () => {
       ["cd x && git push --no-verify", 0],
       ["git -C /repo push --no-verify", 0],
       ['echo "$(git push --no-verify)"', 0],
+      ["git --config-env a=B push --no-verify", 0],
+      ["eval git push --no-verify", 0],
       ["git -c core.hooksPath=/dev/null push", 1],
       ["git -c core.hookspath=/dev/null push", 1],
       ["git config core.hooksPath /tmp/h", 1],
@@ -729,6 +747,25 @@ describe("guardDecision", () => {
       "pnpm test",
     ];
     for (const command of nothing) expect(decide(command), command).toEqual({ kind: "allow" });
+  });
+
+  it("reads the options of git one way only: a long run of them is read at once", () => {
+    // `-c -c -c …`: each `-c` could be read as an option with the next word
+    // as its value, or as an option without one. An expression that allows
+    // both tries every split, and a hook that runs out of time lets the call
+    // through. Forty words are enough to tell the two apart, and few enough
+    // for the slow one to end and fail here.
+    // source: measured on 2026-11-18 with the expression of #359, one
+    // decision: 30 words 127 ms, 34 words 883 ms (about 1.6 times more per
+    // word, so forty take some 16 s); with this one, 600 words 0.2 ms.
+    const options = Array.from({ length: 40 }, () => "-c").join(" ");
+    const started = process.hrtime.bigint();
+    expect(decide(`git ${options} status`)).toEqual({ kind: "allow" });
+    expect(decide(`git ${options} push`)).toEqual({ kind: "push" });
+    expect(decide(`git ${options} -c x push --force`).kind).toBe("refuse");
+    // The word after the last pair is git's subcommand: this one is not a push.
+    expect(decide(`git ${options} x push --force`)).toEqual({ kind: "allow" });
+    expect(Number(process.hrtime.bigint() - started) / 1e6).toBeLessThan(2000);
   });
 
   it("sees a push when any one of several expressions matches, whatever the case", () => {
@@ -1496,6 +1533,82 @@ process.exit(out.status ?? 1);
       expect(out.status, out.stderr).toBe(0);
       expect(existsSync(ran)).toBe(false);
       git(repo, "config", "--unset", "filter.planted.smudge");
+    });
+
+    it("refuses a commit whose link would be written through another of its links", () => {
+      const outside = join(repo, "..", "through-a-link");
+      mkdirSync(outside, { recursive: true });
+      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
+      // A tree with a link `A` that leads outside, and a link `a/b/x`. On a disk that does not
+      // tell `A` from `a`, the directory `a` of that link is the link `A`.
+      const blob = (content) => spawnSync("git", ["hash-object", "-w", "--stdin"], { ...PROCESS, cwd: work, input: content }).stdout.trim();
+      const tree = (entries) => spawnSync("git", ["mktree"], { ...PROCESS, cwd: work, input: entries.join("\n") + "\n" }).stdout.trim();
+      const inner = tree([`040000 tree ${tree([`120000 blob ${blob("anywhere")}\tx`])}\tb`]);
+      const root = tree([...git(work, "ls-tree", "HEAD").split("\n"), `120000 blob ${blob(outside)}\tA`, `040000 tree ${inner}\ta`]);
+      const commitId = spawnSync("git", ["commit-tree", root, "-p", "HEAD", "-m", "links"], { ...PROCESS, cwd: work }).stdout.trim();
+      // The commit is made the tip without being checked out here: git itself would not write it on such a disk.
+      git(work, "reset", "-q", "--soft", commitId);
+      git(work, "read-tree", commitId);
+      git(work, "update-index", "--skip-worktree", "A", "a/b/x");
+      expect(git(work, "status", "--porcelain")).toBe("");
+
+      const out = runGateIn();
+      const tellsCaseApart = !existsSync(join(repo, "TRACKED.TXT"));
+      if (tellsCaseApart) {
+        expect(out.status, out.stderr).toBe(0);
+      } else {
+        expect(out.status).toBe(2);
+        expect(out.stderr).toContain("a/b/x would be written through a, which is not a directory of the copy");
+        expect(verdictOf()).toBeNull();
+      }
+      // Nothing was made where the link leads: no file, and no directory on the way.
+      expect(readdirSync(outside)).toEqual([]);
+      git(work, "update-index", "--no-skip-worktree", "A", "a/b/x");
+    });
+
+    it("refuses a commit whose link stands where a carried directory goes, or on the way to it", () => {
+      const outside = join(repo, "..", "carried-through-a-link");
+      mkdirSync(outside, { recursive: true });
+      const blob = (content) => spawnSync("git", ["hash-object", "-w", "--stdin"], { ...PROCESS, cwd: work, input: content }).stdout.trim();
+      const tree = (entries) => spawnSync("git", ["mktree"], { ...PROCESS, cwd: work, input: entries.join("\n") + "\n" }).stdout.trim();
+      // The commit holds a link `name`; the working tree holds, ignored, the
+      // carried directory at `carried`. The link is the tip without being
+      // checked out: git is told not to look at it there.
+      const judge = (name, carried) => {
+        setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
+        const root = tree([...git(work, "ls-tree", "HEAD").split("\n"), `120000 blob ${blob(outside)}\t${name}`]);
+        const commitId = spawnSync("git", ["commit-tree", root, "-p", "HEAD", "-m", "a link"], { ...PROCESS, cwd: work }).stdout.trim();
+        git(work, "reset", "-q", "--soft", commitId);
+        git(work, "read-tree", commitId);
+        git(work, "update-index", "--skip-worktree", name);
+        mkdirSync(join(work, carried), { recursive: true });
+        writeFileSync(join(work, carried, "installed.txt"), "installed");
+        expect(git(work, "status", "--porcelain")).toBe("");
+        const out = runGateIn();
+        git(work, "update-index", "--no-skip-worktree", name);
+        return out;
+      };
+
+      // The link is on the way: `sub` leads outside, and `sub/carried` is carried.
+      const through = judge("sub", "sub/carried");
+      expect(through.status).toBe(2);
+      expect(through.stderr).toContain("sub/carried would be written through sub, which is not a directory of the copy");
+      expect(verdictOf()).toBeNull();
+      expect(readdirSync(outside)).toEqual([]);
+      rmSync(join(work, "sub"), { recursive: true });
+
+      // The link is the place itself, on a disk that does not tell `Carried`
+      // from `carried` (under the same name, git lists no carried directory).
+      const over = judge("Carried", "carried");
+      const tellsCaseApart = !existsSync(join(repo, "TRACKED.TXT"));
+      if (tellsCaseApart) {
+        expect(over.status, over.stderr).toBe(0);
+      } else {
+        expect(over.status).toBe(2);
+        expect(over.stderr).toContain("carried would be written over a path the commit already holds in the copy");
+        expect(verdictOf()).toBeNull();
+      }
+      expect(readdirSync(outside)).toEqual([]);
     });
 
     it("mutates the changed production files, and says which ones the report does not name", () => {

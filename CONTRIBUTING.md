@@ -226,10 +226,16 @@ What the gate does not hold against, and what does:
   text they carry: a quoted string and a here-document are not read, so a
   comment, a commit message or a script that names a refused command is not
   refused. What the shell runs inside a string (a command substitution) is
-  read. What a program is handed as a string is not (`sh -c '…'`), nor a
-  quoted word of a command (a quoted refspec, a quoted payload for the API),
-  nor a push through an alias. Its rules are a list of known ways, not a
-  proof; a push it does not see is still judged by git's hook.
+  read up to its first closing parenthesis: a subshell or a second
+  substitution inside it ends the reading there, and what follows in the
+  string is taken for text. Not read at all: what a program is handed as a
+  string (`sh -c '…'`), a quoted word of a command (a quoted refspec, a
+  quoted payload for the API), a push through an alias, and a command that
+  follows a word of the shell's grammar (`then`, `do`, `{`, `!`) or a
+  comment with an apostrophe. Its rules are a list of known ways, not a
+  proof; a push it does not see is still judged by git's hook, and
+  `--no-verify` written in one of those ways is stopped by nothing on the
+  machine.
 
 What the gate runs, what counts as production code, what an operation may
 reach and what the guard refuses are in `delivery-gate.json` and
