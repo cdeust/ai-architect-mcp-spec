@@ -3,8 +3,9 @@ import type { LexiconConcept } from "./lexicon-types.js";
 /**
  * Bilingual concept groups consumed by senior-quality-rules.ts,
  * `unboundedQualityTerms` by measurable-requirement-rules.ts,
- * `untestableOutcomeTerms` by testable-acceptance-criteria-rules.ts, and
- * `quantityUnits` by contradictory-requirement-rules.ts.
+ * `untestableOutcomeTerms` by testable-acceptance-criteria-rules.ts,
+ * `quantityUnits` by contradictory-requirement-rules.ts, and `controlNouns`
+ * by control-name-rules.ts.
  */
 export const QUALITY_LEXICON = {
   /**
@@ -145,6 +146,56 @@ export const QUALITY_LEXICON = {
     fr: [
       "pourcent", "milliseconde", "seconde", "heure", "jour", "semaine", "mois", "ans",
       "année", "octet", "ko", "mo", "fois",
+    ],
+  },
+  /**
+   * Nouns of a user-interface control, singular and plural. A control is
+   * named by a capitalized word before the noun in English ("the Copy
+   * button") and after it in French ("le bouton Copier"); the two lists are
+   * read in that order, so they are not merged by `phrases`. Only nouns that
+   * name a control a person acts on are listed: "label", "message", "text",
+   * "page" or "section" name content, and "field" or "champ" a datum as often
+   * as an input.
+   * source: issue #118, seeded defect `inconsistent_terminology` ("Clone
+   * control" for the "Copy button").
+   */
+  controlNouns: {
+    en: [
+      "button",
+      "buttons",
+      "control",
+      "controls",
+      "link",
+      "links",
+      "toggle",
+      "toggles",
+      "switch",
+      "checkbox",
+      "checkboxes",
+      "dropdown",
+      "dropdowns",
+      "menu",
+      "menus",
+      "tab",
+      "tabs",
+      "icon",
+      "icons",
+    ],
+    fr: [
+      "bouton",
+      "boutons",
+      "contrôle",
+      "contrôles",
+      "lien",
+      "liens",
+      "interrupteur",
+      "interrupteurs",
+      "menu",
+      "menus",
+      "onglet",
+      "onglets",
+      "icône",
+      "icônes",
     ],
   },
   namedConstantSignals: {
