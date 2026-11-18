@@ -199,7 +199,7 @@ const toolCheckHealth = server.tool(
 
 // ─── Tool 4: get_prd_context_info (context-tools.ts) ─────────────────────────
 
-const contextHandles = registerContextTools(server);
+const toolGetPrdContextInfo = registerContextTools(server).get_prd_context_info;
 
 // ─── Tool 5: list_available_strategies ───────────────────────────────────────
 
@@ -399,7 +399,7 @@ const ALL_TOOL_HANDLES: Record<string, RegisteredTool> = {
   get_config: toolGetConfig,
   read_skill_config: toolReadSkillConfig,
   check_health: toolCheckHealth,
-  ...contextHandles,
+  get_prd_context_info: toolGetPrdContextInfo,
   list_available_strategies: toolListStrategies,
   validate_prd_section: toolValidateSection,
   validate_prd_document: toolValidateDocument,

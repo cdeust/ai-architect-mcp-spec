@@ -130,7 +130,7 @@ const toolCheckHealth = server.tool("check_health", "Check system health — ver
     };
 });
 // ─── Tool 4: get_prd_context_info (context-tools.ts) ─────────────────────────
-const contextHandles = registerContextTools(server);
+const toolGetPrdContextInfo = registerContextTools(server).get_prd_context_info;
 // ─── Tool 5: list_available_strategies ───────────────────────────────────────
 const toolListStrategies = server.tool("list_available_strategies", "List thinking strategies available to the pipeline.", {}, { readOnlyHint: true }, async () => {
     return {
@@ -271,7 +271,7 @@ const ALL_TOOL_HANDLES = {
     get_config: toolGetConfig,
     read_skill_config: toolReadSkillConfig,
     check_health: toolCheckHealth,
-    ...contextHandles,
+    get_prd_context_info: toolGetPrdContextInfo,
     list_available_strategies: toolListStrategies,
     validate_prd_section: toolValidateSection,
     validate_prd_document: toolValidateDocument,
