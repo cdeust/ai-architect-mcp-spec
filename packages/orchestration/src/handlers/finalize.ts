@@ -33,6 +33,7 @@
 import { appendError, type PipelineState } from "../types/state.js";
 import type { HandlerAction, NextAction } from "../types/actions.js";
 import type { StepHandler } from "../runner.js";
+import { prdSections, runRequestSize } from "../section-plan.js";
 
 export const REMEMBER_CORRELATION_ID = "self_check_remember";
 
@@ -125,9 +126,7 @@ function buildRememberContent(
   state: PipelineState,
   pending: PendingCompletion,
 ): string {
-  const sectionsTotal = state.sections.filter(
-    (s) => s.section_type !== "jira_tickets",
-  ).length;
+  const sectionsTotal = prdSections(state.sections).length;
   const hasJiraTickets = state.sections.some(
     (s) => s.section_type === "jira_tickets" && s.content,
   );
@@ -141,7 +140,7 @@ function buildRememberContent(
     `PRD context: ${state.prd_context ?? "unknown"}`,
     `Sections: ${sectionsTotal} planned. JIRA tickets generated: ${hasJiraTickets ? "yes" : "no"}.`,
     "",
-    pending.summary,
+    completionSummary(state, pending),
     "",
     ...(postSpecsSummary ? [postSpecsSummary, ""] : []),
     `Exported files (verifiable references):`,
@@ -165,10 +164,23 @@ function rememberAction(
   };
 }
 
-function doneAction(pending: PendingCompletion): NextAction {
+/**
+ * postcondition: the summary of the self-check, with the size the run was
+ *                held to on its second line: what its sections and rounds
+ *                followed. The line is written here, from the state, and not
+ *                kept in the pending completion: a run checkpointed after its
+ *                self-check by a version that did not know the size says it
+ *                too when it finishes.
+ */
+function completionSummary(state: PipelineState, pending: PendingCompletion): string {
+  const [headline, ...rest] = pending.summary.split("\n");
+  return [headline, `Request size: ${runRequestSize(state)}.`, ...rest].join("\n");
+}
+
+function doneAction(state: PipelineState, pending: PendingCompletion): NextAction {
   return {
     kind: "done",
-    summary: pending.summary,
+    summary: completionSummary(state, pending),
     artifacts: pending.artifacts,
     verification: pending.verification,
     ...(pending.outcome ? { outcome: pending.outcome } : {}),
@@ -187,7 +199,7 @@ function emitRememberOrDone(
   if (state.run_remembered) {
     return {
       state: { ...state, current_step: "complete", pending_completion: null },
-      action: doneAction(pending),
+      action: doneAction(state, pending),
     };
   }
   return {

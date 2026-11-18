@@ -123,7 +123,7 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
       question_id: QUESTION_ID,
       header: "Which kind of PRD?",
       description:
-        "I couldn't infer the PRD type from your request. Pick the closest match — this configures clarification depth and section count.",
+        "I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them.",
       // source: protocol constraint. AskUserActionSchema.options enforces
       // .max(4) at the schema level (types/actions.ts). Slicing here ensures
       // a tier with >4 allowed contexts doesn't fail Zod parsing on the

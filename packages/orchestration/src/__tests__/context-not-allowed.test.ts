@@ -44,6 +44,10 @@ describe("a kind of PRD that is not allowed", () => {
   });
 
   it("is still taken when it is the allowed one", () => {
-    expect(step({ state: atContextDetection("x", "feature") }).state.prd_context).toBe("feature");
+    const out = step({ state: atContextDetection("x", "feature") });
+    expect(out.state.prd_context).toBe("feature");
+    // Not refused: a refusal would keep the declared kind in the state too.
+    expect(out.action.kind).not.toBe("failed");
+    expect(out.state.current_step).not.toBe("context_detection");
   });
 });

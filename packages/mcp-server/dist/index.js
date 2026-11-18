@@ -6,7 +6,7 @@ import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PRD_CONTEXT_CONFIGS, CAPABILITIES, STRATEGY_TIERS, SectionTypeSchema, } from "@prd-gen/core";
+import { PRD_CONTEXT_CONFIGS, PRDContextSchema, CAPABILITIES, STRATEGY_TIERS, SectionTypeSchema, } from "@prd-gen/core";
 import { getEvidenceRepo } from "./evidence-db-path.js";
 import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
@@ -130,18 +130,8 @@ const toolCheckHealth = server.tool("check_health", "Check system health — ver
 });
 // ─── Tool 4: get_prd_context_info ────────────────────────────────────────────
 const toolGetPrdContextInfo = server.tool("get_prd_context_info", "Get configuration for a specific PRD context type", {
-    context: z
-        .enum([
-        "proposal",
-        "feature",
-        "bug",
-        "incident",
-        "poc",
-        "mvp",
-        "release",
-        "cicd",
-    ])
-        .describe("The PRD context type"),
+    // The kinds of PRD, from the one list start_pipeline reads too.
+    context: PRDContextSchema.describe("The PRD context type"),
 }, { readOnlyHint: true }, async ({ context }) => {
     const config = PRD_CONTEXT_CONFIGS[context];
     return {

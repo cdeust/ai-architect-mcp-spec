@@ -13,10 +13,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   PRD_CONTEXT_CONFIGS,
+  PRDContextSchema,
   CAPABILITIES,
   STRATEGY_TIERS,
   SectionTypeSchema,
-  type PRDContext,
 } from "@prd-gen/core";
 
 import { getEvidenceRepo } from "./evidence-db-path.js";
@@ -204,22 +204,12 @@ const toolGetPrdContextInfo = server.tool(
   "get_prd_context_info",
   "Get configuration for a specific PRD context type",
   {
-    context: z
-      .enum([
-        "proposal",
-        "feature",
-        "bug",
-        "incident",
-        "poc",
-        "mvp",
-        "release",
-        "cicd",
-      ])
-      .describe("The PRD context type"),
+    // The kinds of PRD, from the one list start_pipeline reads too.
+    context: PRDContextSchema.describe("The PRD context type"),
   },
   { readOnlyHint: true },
   async ({ context }) => {
-    const config = PRD_CONTEXT_CONFIGS[context as PRDContext];
+    const config = PRD_CONTEXT_CONFIGS[context];
     return {
       content: [{ type: "text" as const, text: JSON.stringify(config, null, 2) }],
     };

@@ -120,6 +120,16 @@ export function runRequestSize(state: { prd_context: PRDContext | null; request_
 }
 
 /**
+ * postcondition: the sections of the PRD itself, in order. The JIRA tickets
+ *                are stored among the sections of a run but are generated
+ *                from the PRD, after it: they are no section of the plan, and
+ *                are neither validated nor counted with it.
+ */
+export function prdSections<S extends { section_type: SectionType }>(sections: readonly S[]): S[] {
+  return sections.filter((s) => s.section_type !== "jira_tickets");
+}
+
+/**
  * Section-specific Cortex recall query templates.
  * Mirror the table in SKILL.md "Section-Adaptive Retrieval via Cortex".
  */

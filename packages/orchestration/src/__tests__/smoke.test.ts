@@ -186,7 +186,8 @@ describe("end-to-end smoke run", () => {
     // The run says its size where a reader looks for it.
     const completion = (result: SmokeRunResult) =>
       result.transitions.length > 0 && result.finalAction.kind === "done" ? result.finalAction.summary : "";
-    expect(completion(tiny)).toContain("\nRequest size: tiny.\nSections: ");
+    // The JIRA tickets are stored beside the four sections and are not counted with them.
+    expect(completion(tiny)).toContain("\nRequest size: tiny.\nSections: 4/4 passed, 0 failed.\n");
     // One fact per line, no empty line and none at the end.
     expect(completion(tiny)).not.toMatch(/\n\n|\n$/);
     expect(completion(standard)).toContain("\nRequest size: standard.\nSections: ");
