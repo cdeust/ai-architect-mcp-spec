@@ -96,7 +96,7 @@ sent back rather than merged with a follow-up promise.
   See `packages/benchmark/src/__tests__/pipeline-kpis.test.ts` for examples.
 - **Mutation survival check.** When adding a test, ask: "what mutation would
   this test fail to catch?" If the answer is "any non-trivial one," the test
-  is too weak.
+  is too weak. The delivery gate asks the same question with Stryker, below.
 - **Coverage by package:**
   - `core` / `validation` / `meta-prompting`: contract tests for every public
     surface.
@@ -106,6 +106,139 @@ sent back rather than merged with a follow-up promise.
   - `ecosystem-adapters`: unconditional schema-contract pin against the
     live `ai-architect-mcp-codebase` wire shapes (see
     `docs/INTEGRATION-TESTING.md`).
+
+### The delivery gate
+
+`pnpm gate` judges a commit before it is pushed. It runs the checks listed
+in `delivery-gate.json` (build, the unit suite with coverage, perf, the
+Python suites of `scripts/tests`), then mutation testing of the
+production files the commits touch (`stryker.config.json`). Every mutant
+that touches a changed line must be detected by a test. One that no test can
+tell from the original is marked on the line above, with its reason:
+`// Stryker disable next-line <Mutator>: equivalent: <why>`. A mark without
+that reason does not pass, and a file that turns mutation off for more than
+one line fails the gate.
+
+The gate judges the committed tree: it refuses work that is not committed.
+It writes that tree, each file as git stores it (no checkout, so no filter
+of the machine runs on it), into a directory of its own, beside the verdicts
+in the git directory, with the installed dependencies of the worktree
+(`carry` in `delivery-gate.json`), runs everything there, records a verdict
+for the tree, and removes the directory. The worktree is never written: what
+a check leaves behind is in the copy, so the verdict is for the tree the
+checks ran on, and nothing a check wrote stays to be run later.
+
+Three layers, and what each one holds against:
+
+- **The sandbox, against what a check executes** (dependencies, build
+  scripts, tests). Each operation is started in its own sandbox
+  (`@anthropic-ai/sandbox-runtime`) with the profile `delivery-gate.json`
+  names for it, in `scripts/gate/profiles/`. A profile is the contract of
+  the operation: `offline` (build, perf) has no network; `loopback` (unit,
+  mutation testing) adds the loopback the tests' servers need, which on macOS
+  is every local port. Both write the directory of the run and nothing else,
+  and read nothing of the user's home but that directory, the files of the
+  gate that judges, and the tools: the directories of PATH, the one of node
+  with the packages installed beside it, and the real directory of each
+  program a check starts. Before it runs anything, the gate tries
+  under each profile, with a canary, a write in the worktree, the git
+  directory, the files of the gate, the home and a directory outside, each
+  write and read the profile denies, and, for `offline`, a port of the host;
+  it refuses to run when one succeeds, or when the canary does not say that
+  every attempt was refused. What this process reads back from the copy (a
+  source, the mutation report) is refused when a link leads it outside the
+  copy, a link put in place of the copy itself included. There is no unsandboxed fallback. The sandbox
+  runtime and the operation get a PATH without any entry of the judged tree
+  or of the run, and without relative entries: the runtime starts programs
+  by name before the sandbox is up. A
+  check passes when its command ran to its end with status 0: the sandbox
+  runtime exits 0 when its command is ended by a signal, so the gate asks the
+  command for a mark of its success as well.
+- **The pre-push hook of git, against a push that skipped the gate.**
+  `pnpm gate:install` puts it in the git directory, for every worktree. Git
+  tells it the tip of each ref a push sends, whatever wrote the command (an
+  alias, a script, another tool), and it refuses a tip whose tree has no
+  passed verdict. The tip is what the ref becomes; a commit below it is not
+  judged on its own. The hook names node and git by their paths and sets its
+  own PATH.
+  The gate that judges, and the gate that reads the verdict, is the one of
+  the base revision (`base` in `delivery-gate.json`: `origin/main`) as git
+  has it, not a file of a checkout. `pnpm gate` takes that gate out of git
+  and hands the run over to it. The hook, which no commit reaches, does the
+  same before it reads a verdict: it names the revision it was installed
+  with, which must be a branch of a remote that has the gate, and where that
+  revision has no gate (not fetched, pruned, another remote) it refuses the
+  push; it never reads a gate from a checkout. A verdict names the hash of
+  the gate that wrote it (code, configuration, profiles). So, with the hook
+  installed, a commit that changes the gate, in a worktree or in the main
+  checkout, is judged by the gate it replaces: the verdict of the gate it
+  brings is refused at the push. While the base has no gate, `pnpm gate`
+  lets the gate of the checkout judge (nothing is there to judge the first
+  one) and the hook cannot be installed. After a change of the gate is
+  merged, verdicts of the gate before it are no longer accepted: run the
+  gate again.
+- **The guard of the session, against going around the hook.** The
+  `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
+  while the pre-push hook is not the one git will run, and what the rules of
+  `guard.refuse` name: turning the hook off (`--no-verify`,
+  `core.hooksPath`), a forced push, a write to the repository through the
+  API; and the GitHub tools that send content from their input. In a
+  session that runs on a hosted runner or in a cloud session
+  (`guard.hosted`: `GITHUB_ACTIONS`, `CLAUDE_CODE_REMOTE`), a push needs no
+  hook: such a checkout has none, and no verdict, and what it pushes is
+  judged by the Pipeline before it can merge; the refusals hold there too.
+  Until the Pipeline runs the mutation testing, a change delivered from
+  there is not judged by it.
+  `.claude/settings.json` is the one permission file of the repository.
+
+What the gate does not hold against, and what does:
+
+- A session that writes a verdict file by hand, or moves the base revision,
+  on purpose: the session can write what the gate writes. A command written
+  to escape the guard's expressions: they are a list of known ways, not a
+  proof. A tool that pushes without running git's hooks. The hosted Pipeline
+  is what holds there; it does not run the mutation testing yet.
+- The truth of the results: they come from the tree that is judged. A test
+  suite that lies passes.
+- Dependencies that are not the ones of the lockfile: the copy takes
+  `node_modules` as it is in the worktree. The hosted Pipeline installs from
+  the lockfile.
+- A change that only deletes lines: no line of it is left to mutate.
+- On macOS, under `loopback`, a service of the host that listens on
+  localhost; and what is readable outside the user's home.
+- What the canary does not try: that nothing outside the machine is
+  reachable (it tries a port of the host, for `offline` only), and a hard
+  link from outside into the directory of the run. Those rest on the sandbox
+  runtime.
+- The base revision is what the local repository has under that name: a
+  fetch that is not made judges with the gate of an older base, and a ref
+  moved by hand judges with whatever it names.
+- The sandbox runtime is the one installed in the main checkout, or in the
+  worktree when the main checkout has none; the hash of the gate does not
+  cover it, so a change of its version is judged with the new one.
+- The guard of the session reads its rules from the checkout, and is off in
+  a checkout whose commit has no gate. Git's hook is not: it has its own
+  revision.
+- The `ci-contract` check needs PyYAML where the Python of PATH finds it
+  without the user's home (a system or Homebrew install): a user-site or
+  virtual-environment install under the home is not readable in the sandbox.
+- The guard reads the commands of what a tool hands to a shell, not the
+  text they carry: a quoted string and a here-document are not read, so a
+  comment, a commit message or a script that names a refused command is not
+  refused. What the shell runs inside a string (a command substitution) is
+  read. What a program is handed as a string is not (`sh -c '…'`), nor a
+  quoted word of a command (a quoted refspec, a quoted payload for the API),
+  nor a push through an alias. Its rules are a list of known ways, not a
+  proof; a push it does not see is still judged by git's hook.
+
+What the gate runs, what counts as production code, what an operation may
+reach and what the guard refuses are in `delivery-gate.json` and
+`scripts/gate/profiles/`: change those files, not `scripts/gate/*.mjs`. The
+decisions are in `gate-lib.mjs`, tested with doubles and inside the gate's
+own mutation perimeter; `gate.mjs` holds the adapters and is tested as a
+program: a real repository, a real push, and a run with a stand-in for the
+sandbox runtime. The sandbox runtime itself is proved by the canary at each
+run. It needs Node 22.12 or later, and macOS or Linux.
 
 ---
 

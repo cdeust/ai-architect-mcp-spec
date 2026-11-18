@@ -32,5 +32,5 @@ test("plan and calibration sources carry no commit gate", () => {
   );
   const output = [run.error, run.stdout, run.stderr].filter(Boolean).join("\n");
   expect(run.status, output).toBe(0);
-  expect(output).toMatch(/^Ran 2 tests/m);
+  expect(output).toMatch(/^Ran 3 tests/m);
 }, GUARD_TIMEOUT_MS);

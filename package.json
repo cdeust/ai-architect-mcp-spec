@@ -15,6 +15,8 @@
     "check:identity": "node scripts/check-distribution-identity.mjs",
     "check:docs": "node scripts/check-doc-claims.mjs",
     "test:watch": "vitest",
+    "gate": "node scripts/gate/gate.mjs run",
+    "gate:install": "node scripts/gate/gate.mjs install",
     "test:external-judge": "node --test scripts/external-judge/__tests__/*.test.mjs",
     "lint": "pnpm -r --workspace-concurrency=1 run lint",
     "clean": "pnpm -r clean && node scripts/clean.mjs mcp-server/index.js",
@@ -24,6 +26,9 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.83",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@vitest/coverage-v8": "^5.1.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",

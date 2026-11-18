@@ -80,6 +80,32 @@ the prompt was written before the contract, and the repository's own standards a
    its absence, comes with the key or after it; a key the validator requires leaves
    `ci.json` after the validator stopped requiring it.
 
+## The delivery gate
+
+`CONTRIBUTING.md`, "The delivery gate", and `.claude/skills/deliver/SKILL.md`
+bind every agent that pushes from a machine of its own: the commit is judged
+by `pnpm gate` before it is pushed, and git's pre-push hook refuses a commit
+without a passed verdict.
+
+The gate does not replace rule 8 of the CI contract above: rule 8 still
+applies. What the gate plays of it, on a clean copy of the commit: the build,
+the unit suite with its coverage thresholds (`pnpm test:coverage`), the perf
+suite, and the Python suites of `scripts/tests` (those of the `regression`
+command of `ci.json`, and the two guards beside them); then mutation testing
+of the changed lines, which rule 8 does not ask for. What stays the agent's
+job: whatever a command of `ci.json` does that `delivery-gate.json` does not
+list, and the pull request body, with each command and its passed, failed
+and skipped counts, read from the gate's output.
+
+A session on a hosted runner or in a cloud session has no hook and no
+verdict, and cannot be asked for them: its push is let through, and the
+Pipeline judges it. The refusals of the guard apply there too, in the ways
+it knows (`CONTRIBUTING.md` lists what it does not read): no forced push, no
+`--no-verify`, no merge by hand, no write to the repository through the
+API. An agent whose machine cannot run the sandbox does not go around
+the gate: it holds under rule 3 of the next section (an access it does not
+have), naming the sandbox.
+
 ## Issues: no issue waits for the owner
 
 Owner instruction of 12 November 2026: the owner does not answer questions on issues and

@@ -1,0 +1,111 @@
+{
+  "base": "origin/main",
+  "carry": [
+    "node_modules"
+  ],
+  "checks": [
+    {
+      "name": "build",
+      "profile": "offline",
+      "command": [
+        "pnpm",
+        "build"
+      ]
+    },
+    {
+      "name": "unit",
+      "profile": "loopback",
+      "command": [
+        "pnpm",
+        "test:coverage"
+      ]
+    },
+    {
+      "name": "perf",
+      "profile": "offline",
+      "command": [
+        "pnpm",
+        "test:perf"
+      ]
+    },
+    {
+      "name": "ci-contract",
+      "profile": "offline",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_*.py"
+      ]
+    }
+  ],
+  "mutation": {
+    "production": "^(?:packages/[^/]+/src/(?!.*__tests__/).*(?<!\\.d)\\.ts|scripts/gate/gate-lib\\.mjs)$",
+    "command": [
+      "pnpm",
+      "exec",
+      "stryker",
+      "run",
+      "${launcher}/stryker.config.json"
+    ],
+    "report": "reports/mutation/mutation.json",
+    "profile": "loopback"
+  },
+  "guard": {
+    "start": "^(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?",
+    "git": "${start}git(?:\\s+(?:-[cC]\\s+\\S+|--(?:git-dir|work-tree|namespace)\\s+\\S+|-\\S+))*",
+    "push": [
+      "${git}\\s+push\\b"
+    ],
+    "hosted": [
+      "GITHUB_ACTIONS",
+      "CLAUDE_CODE_REMOTE"
+    ],
+    "refuse": [
+      {
+        "pattern": "${git}\\s+push\\b.*\\s--no-veri[fy]*\\b",
+        "why": "the command turns off the pre-push hook of the delivery gate (--no-verify)."
+      },
+      {
+        "pattern": "${start}git\\b.*\\s-c\\s*core\\.hookspath\\s*=|${git}\\s+config\\b.*\\bcore\\.hookspath\\s+\\S",
+        "why": "the command moves git's hooks away from the pre-push hook of the delivery gate (core.hooksPath)."
+      },
+      {
+        "pattern": "${git}\\s+(?:send-pack|http-push)\\b",
+        "why": "the command sends commits without git's pre-push hook."
+      },
+      {
+        "pattern": "${git}\\s+push\\b.*(?:\\s--force(?:-with-lease|-if-includes)?\\b|\\s-[a-eg-z]*f[a-z]*(?=\\s|$)|\\s\\+[\\w./-]+(?=:|\\s|$)|\\s--mirror\\b)",
+        "why": "a forced push is never used in this repository (docs/agent-guidance.md, CI contract, rule 3)."
+      },
+      {
+        "pattern": "${start}gh\\s+pr\\s+merge\\b",
+        "why": "no agent merges by hand in this repository: the review verdict decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
+      },
+      {
+        "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=.*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",
+        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
+      },
+      {
+        "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?!.*\\s(?:-X\\s*|--method[\\s=]+)GET\\b)(?=.*\\s(?:-f|-F|--field|--raw-field|--input))",
+        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
+      },
+      {
+        "pattern": "${start}curl\\b.*\\s(?:https?://)?api\\.github\\.com(?:[/:\\s]|$)",
+        "why": "the command reaches the GitHub API outside the tools the delivery gate guards."
+      }
+    ],
+    "refusedTools": [
+      "mcp__github__push_files",
+      "mcp__github__create_or_update_file",
+      "mcp__github__delete_file",
+      "mcp__github__merge_pull_request",
+      "mcp__github__update_pull_request_branch"
+    ]
+  }
+}
