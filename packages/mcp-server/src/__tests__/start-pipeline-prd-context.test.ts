@@ -63,13 +63,18 @@ async function started(args: Record<string, unknown>) {
   return { ...body.state, summary: envelope.state_summary, messages: envelope.messages.map((m) => m.text) };
 }
 
-/** true when the server refuses the call, as a tool error or as a protocol error. */
-async function refused(args: Record<string, unknown>): Promise<boolean> {
+/**
+ * What the server answers when it refuses the call, as a tool error or as a
+ * protocol error (SDK versions differ); null when it accepts it. The text is
+ * returned so a test can see the refusal is about the input it sent, and not
+ * any other failure.
+ */
+async function refusal(args: Record<string, unknown>): Promise<string | null> {
   try {
     const res = await call("start_pipeline", { feature_description: DESCRIPTION, skip_preflight: true, ...args });
-    return res.isError === true;
-  } catch {
-    return true; // SDK versions that raise the validation error as McpError
+    return res.isError === true ? res.content.map((part) => part.text).join("\n") : null;
+  } catch (error) {
+    return String((error as Error).message);
   }
 }
 
@@ -156,10 +161,10 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
   });
 
   it("refuses a kind or a size that is not one, before any run starts", async () => {
-    expect(await refused({ prd_context: "huge" })).toBe(true);
+    expect(await refusal({ prd_context: "huge" })).toContain("prd_context");
     // A size is not a kind, and a kind is not a size.
-    expect(await refused({ prd_context: "tiny" })).toBe(true);
-    expect(await refused({ request_size: "bug" })).toBe(true);
-    expect(await refused({ prd_context: "bug", request_size: "tiny" })).toBe(false);
+    expect(await refusal({ prd_context: "tiny" })).toContain("prd_context");
+    expect(await refusal({ request_size: "bug" })).toContain("request_size");
+    expect(await refusal({ prd_context: "bug", request_size: "tiny" })).toBeNull();
   });
 });
