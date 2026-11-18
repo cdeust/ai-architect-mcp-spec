@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -97,6 +97,8 @@ describe("validateConfig", () => {
       [withValue("guard.refuse", [null]), "guard.refuse[0].pattern must be a regular expression"],
       [withValue("guard.refuse", [{ pattern: "x", why: "y" }, { pattern: "(", why: "y" }]), "guard.refuse[1].pattern is not a regular expression"],
       [withValue("guard.refuse", [{ pattern: "x" }]), "guard.refuse[0].why must say why"],
+      [without("guard.hosted"), "guard.hosted must be a list of environment variable names"],
+      [withValue("guard.hosted", "GITHUB_ACTIONS"), "guard.hosted must be a list of environment variable names"],
       [without("guard.refusedTools"), "guard.refusedTools must be a list of tool names"],
       [withValue("guard.refusedTools", ["a", ""]), "guard.refusedTools must be a list of tool names"],
     ];
@@ -640,11 +642,12 @@ describe("guardDecision", () => {
 
 describe("guardHook", () => {
   const guard = CONFIG.guard;
-  const run = (command, problem = null) => {
+  const run = (command, problem = null, env = {}) => {
     const lines = [];
     let asked = 0;
     const code = guardHook({ tool_name: "Bash", tool_input: { command } }, guard, {
       hookProblem: () => ((asked += 1), problem),
+      env,
       log: (line) => lines.push(line),
     });
     return { code, lines, asked };
@@ -671,6 +674,20 @@ describe("guardHook", () => {
     expect(out.code).toBe(2);
     expect(out.asked).toBe(0);
     expect(out.lines).toEqual([`Refused: ${guard.refuse[0].why}`]);
+  });
+
+  it("lets a push through on the hosted pipeline, where no hook is, and still refuses what is refused everywhere", () => {
+    // A runner of GitHub Actions, and a cloud session of Claude Code (its documented variable).
+    expect(guard.hosted).toEqual(["GITHUB_ACTIONS", "CLAUDE_CODE_REMOTE"]);
+    const hosted = { GITHUB_ACTIONS: "true" };
+    expect(run("git push origin fix/x", "no pre-push hook is installed", hosted)).toEqual({ code: 0, lines: [], asked: 0 });
+    expect(run("git push", "no pre-push hook is installed", { CLAUDE_CODE_REMOTE: "true" }).code).toBe(0);
+    expect(run("git push --force", "no pre-push hook is installed", hosted).code).toBe(2);
+    expect(run("gh pr merge 3", null, hosted).code).toBe(2);
+    // Only the value "true" says so, and only a variable the configuration names.
+    for (const env of [{ GITHUB_ACTIONS: "false" }, { GITHUB_ACTIONS: "" }, { CI: "true" }, {}]) {
+      expect(run("git push", "no pre-push hook is installed", env).code, JSON.stringify(env)).toBe(2);
+    }
   });
 });
 
@@ -872,7 +889,11 @@ describe("runGate", () => {
 // ─── The program, as git and Claude Code run it ─────────────────────────────
 
 /** git with no configuration of the machine: no signing, no global hooks. */
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" };
+const EMPTY_GIT_CONFIG = join(mkdtempSync(join(tmpdir(), "gate-gitconfig-")), "config");
+writeFileSync(EMPTY_GIT_CONFIG, "");
+// The variables of `guard.hosted` are taken out: where one is "true" the guard lets a push through, and these tests are about the hook.
+const { GITHUB_ACTIONS: _runner, CLAUDE_CODE_REMOTE: _cloud, ...HOST_ENV } = process.env;
+const GIT_ENV = { ...HOST_ENV, GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" };
 const PROCESS = { encoding: "utf8", env: GIT_ENV, timeout: 30_000 };
 
 describe("the canary, run as a process", () => {

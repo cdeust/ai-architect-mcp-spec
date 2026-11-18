@@ -46,6 +46,10 @@
     "push": [
       "${git}[^|;&\\n\"']*\\bpush\\b"
     ],
+    "hosted": [
+      "GITHUB_ACTIONS",
+      "CLAUDE_CODE_REMOTE"
+    ],
     "refuse": [
       {
         "pattern": "${git}[^|;&\\n\"']*\\bpush\\b[^|;&\\n\"']*\\s--no-veri[fy]*\\b",

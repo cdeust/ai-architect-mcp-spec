@@ -441,7 +441,7 @@ function runHook() {
     // in no repository: the project's rules apply
   }
   if (here.common !== project.common) return 0;
-  return guardHook(call, guard, { hookProblem: () => hookProblem(here), log });
+  return guardHook(call, guard, { hookProblem: () => hookProblem(here), env: process.env, log });
 }
 
 const COMMANDS = { run, "pre-push": runPrePush, hook: runHook, install, hash: () => (console.log(gateHash()), 0) };

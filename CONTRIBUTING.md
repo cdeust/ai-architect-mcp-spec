@@ -164,7 +164,13 @@ Three layers, and what each one holds against:
   while the pre-push hook is not the one git will run, and what the rules of
   `guard.refuse` name: turning the hook off (`--no-verify`,
   `core.hooksPath`), a forced push, a write to the repository through the
-  API; and the GitHub tools that send content from their input.
+  API; and the GitHub tools that send content from their input. In a
+  session that runs on a hosted runner or in a cloud session
+  (`guard.hosted`: `GITHUB_ACTIONS`, `CLAUDE_CODE_REMOTE`), a push needs no
+  hook: such a checkout has none, and no verdict, and what it pushes is
+  judged by the Pipeline before it can merge; the refusals hold there too.
+  Until the Pipeline runs the mutation testing, a change delivered from
+  there is not judged by it.
   `.claude/settings.json` is the one permission file of the repository.
 
 What the gate does not hold against, and what does:

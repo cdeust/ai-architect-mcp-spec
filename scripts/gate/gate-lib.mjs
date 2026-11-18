@@ -76,6 +76,7 @@ export function validateConfig(raw) {
     written(rule?.pattern, `guard.refuse[${index}].pattern`);
     if (!isText(rule.why)) fail(`guard.refuse[${index}].why must say why`);
   });
+  if (!isTextList(guard.hosted)) fail("guard.hosted must be a list of environment variable names");
   if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
   return raw;
 }
@@ -393,9 +394,15 @@ export function guardDecision(call, guard) {
 
 /**
  * ports: hookProblem() — null when the pre-push hook of the gate is the one
- *        git will run, else why not; log(line).
+ *        git will run, else why not; env — the environment of the session;
+ *        log(line).
  * postcondition: 0 to let the call through, 2 to block it (the exit code a
- *                PreToolUse hook blocks on).
+ *                PreToolUse hook blocks on). A refusal holds everywhere. A
+ *                push needs the pre-push hook in place, except in a session
+ *                that runs on the hosted pipeline (a variable of
+ *                `guard.hosted` is "true"): the checkout of a runner has no
+ *                hook and no verdict, and what it pushes is judged by the
+ *                pipeline before it can merge.
  */
 export function guardHook(call, guard, ports) {
   const decision = guardDecision(call, guard);
@@ -404,6 +411,7 @@ export function guardHook(call, guard, ports) {
     ports.log(`Refused: ${decision.reason}`);
     return 2;
   }
+  if (guard.hosted.some((name) => ports.env[name] === "true")) return 0;
   const problem = ports.hookProblem();
   if (problem === null) return 0;
   ports.log(`Push refused: the pre-push hook of the delivery gate is not in place (${problem}). Run \`pnpm gate:install\`.`);
