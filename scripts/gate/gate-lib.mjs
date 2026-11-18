@@ -475,14 +475,15 @@ export function commandsOf(text) {
         flush();
         i += 1;
         skipBodies();
-      } else if (ch === "(" && close !== undefined) {
-        // Inside a command substitution of a string, a parenthesis opens a
-        // level of its own: what closes it does not close the substitution.
+      } else if (ch === "(") {
+        // A parenthesis opens a level of its own: inside a command
+        // substitution of a string, what closes it does not close the
+        // substitution.
         flush();
         i += 1;
         commands(")");
-      } else if (";&|()`".includes(ch)) {
-        // Where a command ends: a subshell and a command substitution hold commands of their own.
+      } else if (";&|)`".includes(ch)) {
+        // Where a command ends.
         flush();
         i += 1;
       } else {
