@@ -45,6 +45,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -84,12 +85,23 @@ function findOnPath(program, outside) {
   throw new Refusal(`${program} is not on PATH outside the tree that is judged`);
 }
 
+// source: provisional heuristic. What git prints here is a diff, a list of
+// names or the blobs of one commit; the largest, the blobs of this
+// repository, is under 16 MiB. 256 MiB leaves room, and is a bound, not a
+// tuned value: beyond it the gate refuses instead of reading on.
+const GIT_OUTPUT_LIMIT = 256 * 1024 * 1024;
+
 function makeGit(gitPath, cwd) {
-  return (args, env = {}) => {
-    const out = spawnSync(gitPath, args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, ...env } });
-    if (out.status !== 0) throw new Refusal(`git ${args.join(" ")}: ${(out.stderr ?? "").trim() || out.error?.message}`);
+  const start = (args, options) => {
+    const out = spawnSync(gitPath, args, { cwd, maxBuffer: GIT_OUTPUT_LIMIT, ...options, env: { ...process.env, ...options.env } });
+    if (out.status !== 0) throw new Refusal(`git ${args.join(" ")}: ${String(out.stderr ?? "").trim() || out.error?.message}`);
     return out.stdout;
   };
+  const git = (args, env = {}) => start(args, { encoding: "utf8", env });
+  /** The same, as bytes: what git stores, with nothing decoded. */
+  git.bytes = (args, input) => start(args, { input, env: {} });
+  git.path = gitPath;
+  return git;
 }
 
 /**
@@ -232,12 +244,34 @@ function makeRun({ git, root, common }, config, commit) {
   ].filter((dir) => inside(dir, home));
   const vars = { home, run, launcher: LAUNCHER, toolchain };
 
-  /** The tree of the commit, as git checks it out, then the installed dependencies of the worktree. */
+  /**
+   * The tree of the commit, then the installed dependencies of the worktree.
+   * Each file is the blob git stores, written as it is: no checkout, so no
+   * filter of the machine (a smudge filter, git-lfs) runs on what the commit
+   * names, outside the sandbox, before anything is proved.
+   */
   const prepare = () => {
     for (const dir of ["tmp", "home", "tree"]) mkdirSync(join(run, dir));
-    const index = { GIT_INDEX_FILE: join(run, "index") };
-    git(["read-tree", commit], index);
-    git(["checkout-index", "--all", `--prefix=${tree}/`], index);
+    const entries = git(["ls-tree", "-r", "-z", "--full-tree", commit])
+      .split("\0")
+      .filter((entry) => entry !== "")
+      .map((entry) => /^(\d+) (\w+) ([0-9a-f]+)\t([\s\S]+)$/.exec(entry))
+      .filter((entry) => entry !== null && entry[2] === "blob"); // a submodule has no blob here
+    // One git for all the blobs: "<sha> blob <size>\n<bytes>\n" for each, in order.
+    const blobs = git.bytes(["cat-file", "--batch"], entries.map((entry) => entry[3]).join("\n") + "\n");
+    let at = 0;
+    for (const [, mode, , sha, path] of entries) {
+      const headerEnd = blobs.indexOf(0x0a, at);
+      const header = blobs.subarray(at, headerEnd).toString("utf8").split(" ");
+      if (header[0] !== sha || header[1] !== "blob") throw new Refusal(`git cat-file: unexpected answer for ${path}`);
+      const size = Number(header[2]);
+      const content = blobs.subarray(headerEnd + 1, headerEnd + 1 + size);
+      at = headerEnd + 1 + size + 1;
+      const target = join(tree, path);
+      mkdirSync(dirname(target), { recursive: true });
+      if (mode === "120000") symlinkSync(content.toString("utf8"), target);
+      else writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644 });
+    }
     // Ignored directories the configuration names (node_modules): what is
     // installed is not in the commit, and the checks need it.
     const ignored = git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]).split("\0");
@@ -328,7 +362,9 @@ function makeRun({ git, root, common }, config, commit) {
   /**
    * A path of the copy, for this process to read or remove: links followed,
    * it must still be in the copy. A check can leave a link there that leads
-   * outside, and this process is not in the sandbox.
+   * outside, or put a link in place of the copy itself, and this process is
+   * not in the sandbox. The copy is `tree` as it was made, a real path: it
+   * is not resolved again, so a link in its place is outside it.
    */
   const inCopy = (path) => {
     const wanted = join(tree, path);
@@ -343,7 +379,7 @@ function makeRun({ git, root, common }, config, commit) {
         real = wanted;
       }
     }
-    if (!inside(real, realpathSync(tree))) throw new Refusal(`${path} leads outside the copy of the tree (${real})`);
+    if (!inside(real, tree)) throw new Refusal(`${path} leads outside the copy of the tree (${real})`);
     return real;
   };
 
@@ -454,21 +490,29 @@ function runPrePush() {
   });
 }
 
+const SHIM_MARK = "# Written by `pnpm gate:install`.";
+
 /**
  * The pre-push hook, as text. It lives in the git directory, where no
  * commit and no sandboxed operation reaches, and it runs the gate of `ref`
  * taken out of git: a commit cannot bring the gate that reads its verdict.
+ * node and git are named by their paths, and PATH is set: a push started
+ * from a package script has the installed packages first on its PATH.
  */
-const shim = (ref) =>
+const shim = (ref, nodePath, gitPath) =>
   [
     "#!/bin/sh",
-    "# The delivery gate (scripts/gate): refuses a push of a commit whose tree has",
+    "# The delivery gate (scripts/gate): refuses a push whose tip has a tree with",
     "# no passed verdict. The gate that reads the verdict is the one of the",
     "# revision below, as git has it, never a file of a checkout: where that",
     "# revision has no gate, the push is refused.",
-    "# Written by `pnpm gate:install`.",
+    SHIM_MARK,
     `ref='${ref}'`,
-    'if ! git cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
+    `node='${nodePath}'`,
+    `git='${gitPath}'`,
+    'PATH="$(dirname "$git"):/usr/bin:/bin"',
+    "export PATH",
+    'if ! "$git" cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
     '  echo "[gate] push refused: $ref has no delivery gate in this repository (not fetched, pruned, or another remote). Fetch it, or install the hook again (pnpm gate:install)." >&2',
     "  exit 1",
     "fi",
@@ -476,13 +520,19 @@ const shim = (ref) =>
     'dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-hook.XXXXXX") || exit 1',
     "trap 'rm -rf \"$dir\"' EXIT",
     // The same bytes `run` takes: each blob as git stores it, no conversion of line ends.
-    `for f in $(git ls-tree -r --name-only "$ref" -- ${GATE_PATHS.join(" ")}); do`,
-    '  mkdir -p "$dir/$(dirname "$f")" && git show "$ref:$f" > "$dir/$f" || exit 1',
+    `for f in $("$git" ls-tree -r --name-only "$ref" -- ${GATE_PATHS.join(" ")}); do`,
+    '  mkdir -p "$dir/$(dirname "$f")" && "$git" show "$ref:$f" > "$dir/$f" || exit 1',
     "done",
     '[ -f "$dir/scripts/gate/gate.mjs" ] || exit 1',
-    'node "$dir/scripts/gate/gate.mjs" pre-push "$@"',
+    '"$node" "$dir/scripts/gate/gate.mjs" pre-push "$@"',
     "",
   ].join("\n");
+
+/** A path the hook can hold between single quotes. */
+function quotable(path, what) {
+  if (path.includes("'")) throw new Refusal(`the path of ${what} (${path}) cannot be written in the pre-push hook`);
+  return path;
+}
 
 /**
  * The revision the hook takes the gate from: the base of the configuration,
@@ -503,7 +553,11 @@ function hookRef(git, config) {
   return full;
 }
 
-/** null when git will run the gate's pre-push hook in this repository, else why not. */
+/**
+ * null when git will run the gate's pre-push hook in this repository, else
+ * why not. The hook is the gate's when it is the text `shim` writes for this
+ * revision, with a node and a git that are still there.
+ */
 function hookProblem({ git, common }, ref) {
   let hooksPath = "";
   try {
@@ -519,7 +573,11 @@ function hookProblem({ git, common }, ref) {
   } catch {
     return "no pre-push hook is installed";
   }
-  if (content !== shim(ref)) return "another pre-push hook is installed";
+  const [before, between, after] = shim(ref, "\0", "\0").split("\0");
+  const named =
+    content.startsWith(before) && content.endsWith(after) ? content.slice(before.length, content.length - after.length).split(between) : [];
+  if (named.length !== 2) return content.includes(SHIM_MARK) ? "the pre-push hook is out of date" : "another pre-push hook is installed";
+  if (!named.every((program) => kindOf(program) === "file")) return "the pre-push hook names a node or a git that is gone";
   // git skips a hook it cannot execute, and says so only in a hint.
   if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return "the pre-push hook is not executable";
   return null;
@@ -536,15 +594,18 @@ function install() {
     throw new Refusal(`${ref} has no gate yet: install the hook once the gate is on it`);
   }
   const path = join(repo.common, "hooks", "pre-push");
+  const text = shim(ref, quotable(realpathSync(process.execPath), "node"), quotable(repo.git.path, "git"));
   mkdirSync(dirname(path), { recursive: true });
   try {
     // Created only if no file is there: no moment between a look and the write.
-    writeFileSync(path, shim(ref), { flag: "wx", mode: 0o755 });
+    writeFileSync(path, text, { flag: "wx", mode: 0o755 });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    if (readFileSync(path, "utf8") !== shim(ref)) {
+    // One the gate wrote is written again (another revision, a node that moved); any other is left.
+    if (!readFileSync(path, "utf8").includes(SHIM_MARK)) {
       throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);
     }
+    writeFileSync(path, text, { mode: 0o755 });
     chmodSync(path, 0o755);
   }
   const problem = hookProblem(repo, ref);

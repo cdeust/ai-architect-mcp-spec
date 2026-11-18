@@ -57,9 +57,9 @@
     "profile": "loopback"
   },
   "guard": {
-    "git": "(?:^|[|;&\\n(]|['\"])\\s*(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?git\\b",
+    "start": "^(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?",
     "push": [
-      "${git}[^|;&\\n\"']*\\bpush\\b"
+      "${start}git\\b.*\\bpush\\b"
     ],
     "hosted": [
       "GITHUB_ACTIONS",
@@ -67,39 +67,35 @@
     ],
     "refuse": [
       {
-        "pattern": "${git}[^|;&\\n\"']*\\bpush\\b[^|;&\\n\"']*\\s--no-veri[fy]*\\b",
+        "pattern": "${start}git\\b.*\\bpush\\b.*\\s--no-veri[fy]*\\b",
         "why": "the command turns off the pre-push hook of the delivery gate (--no-verify)."
       },
       {
-        "pattern": "\\s-c\\s*core\\.hookspath\\s*=|\\bconfig\\b[^|;&\\n]*\\bcore\\.hookspath\\s+[^\\s|;&]",
+        "pattern": "${start}git\\b.*(?:\\s-c\\s*core\\.hookspath\\s*=|\\bconfig\\b.*\\bcore\\.hookspath\\s+\\S)",
         "why": "the command moves git's hooks away from the pre-push hook of the delivery gate (core.hooksPath)."
       },
       {
-        "pattern": "${git}[^|;&\\n\"']*\\b(?:send-pack|http-push)\\b",
+        "pattern": "${start}git\\b.*\\b(?:send-pack|http-push)\\b",
         "why": "the command sends commits without git's pre-push hook."
       },
       {
-        "pattern": "${git}[^|;&\\n\"']*\\bpush\\b[^|;&\\n\"']*(?:\\s--force(?:-with-lease|-if-includes)?\\b|\\s-[a-eg-z]*f[a-z]*(?=\\s|$)|\\s\\+[\\w./-]+(?=:|\\s|$)|\\s--mirror\\b)",
+        "pattern": "${start}git\\b.*\\bpush\\b.*(?:\\s--force(?:-with-lease|-if-includes)?\\b|\\s-[a-eg-z]*f[a-z]*(?=\\s|$)|\\s\\+[\\w./-]+(?=:|\\s|$)|\\s--mirror\\b)",
         "why": "a forced push is never used in this repository (docs/agent-guidance.md, CI contract, rule 3)."
       },
       {
-        "pattern": "\\bgh\\s+pr\\s+merge\\b",
+        "pattern": "${start}gh\\s+pr\\s+merge\\b",
         "why": "no agent merges by hand in this repository: the review verdict decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
       },
       {
-        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=[^|;&\\n]*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",
+        "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=.*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",
         "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
       },
       {
-        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?![^|;&\\n]*\\s(?:-X\\s*|--method[\\s=]+)GET\\b)(?=[^|;&\\n]*\\s(?:-f|-F|--field|--raw-field|--input))",
+        "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?!.*\\s(?:-X\\s*|--method[\\s=]+)GET\\b)(?=.*\\s(?:-f|-F|--field|--raw-field|--input))",
         "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
       },
       {
-        "pattern": "\\bgh\\s+api\\s+graphql\\b[^|;&\\n]*(?:createCommitOnBranch|createRef|updateRef|mergePullRequest|mergeBranch)",
-        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
-      },
-      {
-        "pattern": "\\bcurl\\b[^|;&\\n]*api\\.github\\.com",
+        "pattern": "${start}curl\\b.*\\s(?:https?://)?api\\.github\\.com(?:[/:\\s]|$)",
         "why": "the command reaches the GitHub API outside the tools the delivery gate guards."
       }
     ],

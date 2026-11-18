@@ -99,9 +99,10 @@ and skipped counts, read from the gate's output.
 
 A session on a hosted runner or in a cloud session has no hook and no
 verdict, and cannot be asked for them: its push is let through, and the
-Pipeline judges it. The refusals of the guard hold everywhere: no forced
-push, no `--no-verify`, no merge by hand, no write to the repository through
-the API. An agent whose machine cannot run the sandbox does not go around
+Pipeline judges it. The refusals of the guard apply there too, in the ways
+it knows (`CONTRIBUTING.md` lists what it does not read): no forced push, no
+`--no-verify`, no merge by hand, no write to the repository through the
+API. An agent whose machine cannot run the sandbox does not go around
 the gate: it holds under rule 3 of the next section (an access it does not
 have), naming the sandbox.
 

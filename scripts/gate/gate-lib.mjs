@@ -67,10 +67,10 @@ export function validateConfig(raw) {
   if (!isTextList(raw.carry)) fail("carry must be a list of directory names");
   const guard = raw.guard;
   if (guard === null || typeof guard !== "object") fail("guard must be an object");
-  expression(guard.git, "guard.git");
-  // `${git}` in an expression of the guard stands for `guard.git`: git as a
-  // command, not as a word of a message.
-  const written = (source, where) => expression(fill(source, { git: guard.git }), where);
+  expression(guard.start, "guard.start");
+  // `${start}` in an expression of the guard stands for `guard.start`: where
+  // a command starts, after the assignments and the wrappers before it.
+  const written = (source, where) => expression(fill(source, { start: guard.start }), where);
   if (!Array.isArray(guard.push)) fail("guard.push must be a list");
   guard.push.forEach((source, index) => written(source, `guard.push[${index}]`));
   if (!Array.isArray(guard.refuse)) fail("guard.refuse must be a list");
@@ -327,7 +327,7 @@ export function verdictRefusal(verdict, tree, gateHash) {
 /**
  * precondition:  `input` is what git writes to a pre-push hook: one line per
  *                ref, `<local ref> <local sha> <remote ref> <remote sha>`.
- * postcondition: the commits the push sends, as { ref, sha }. A deletion
+ * postcondition: the tip of each ref the push sends, as { ref, sha }. A deletion
  *                (local sha all zeros) sends nothing. A line that is not in
  *                that form is a Refusal: nothing is let through unread.
  */
@@ -344,13 +344,14 @@ export function pushedCommits(input) {
 }
 
 /**
- * The pre-push hook of git: every commit a push sends has a tree with a
- * passed verdict of this gate. Git names what is pushed, whatever wrote the
- * command: an alias, a script, a variable, another tool.
+ * The pre-push hook of git: the tip of every ref a push sends has a tree
+ * with a passed verdict of this gate. Git names what is pushed, whatever
+ * wrote the command: an alias, a script, a variable, another tool. The tip
+ * is what the ref will be; a commit below it is not judged on its own.
  *
  * ports: treeOf(sha), readVerdict(tree), gateHash, log(line).
- * postcondition: 0 when every pushed commit holds; 1, with one line per
- *                commit that does not, otherwise.
+ * postcondition: 0 when every pushed tip holds; 1, with one line per tip
+ *                that does not, otherwise.
  */
 export function prePush(input, ports) {
   const refusals = pushedCommits(input).flatMap(({ ref, sha }) => {
@@ -364,6 +365,75 @@ export function prePush(input, ports) {
 
 // ─── The guard of the session (PreToolUse hook) ─────────────────────────────
 
+/** What stands for a quoted string in a command the guard reads. */
+const QUOTED = '""';
+
+/**
+ * precondition:  `text` is what a tool hands to a shell.
+ * postcondition: the commands of `text`, one string each, in order, as the
+ *                guard reads them: split where the shell starts a new command
+ *                (`;`, `&`, `|`, a line end, a parenthesis, a backquote), with
+ *                every quoted string replaced by `""` and every here-document
+ *                left out. So the guard reads commands, never the text they
+ *                carry: the body of a comment, a commit message or a script
+ *                that names a refused command is not that command. A command
+ *                written inside a quoted string (`sh -c '…'`) is not read
+ *                either.
+ */
+export function commandsOf(text) {
+  const out = [];
+  const pending = []; // the end words of the here-documents opened on the current line
+  let current = "";
+  const flush = () => {
+    const command = current.trim().replace(/\s+/g, " ");
+    if (command !== "") out.push(command);
+    current = "";
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      // An escaped character is a character of a word; an escaped line end joins two lines.
+      if (text[i + 1] !== "\n") current += "_";
+      i += 2;
+    } else if (ch === "'") {
+      const end = text.indexOf("'", i + 1);
+      current += QUOTED;
+      i = end === -1 ? text.length : end + 1;
+    } else if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      current += QUOTED;
+      i = j + 1;
+    } else if (ch === "<" && /^<<-?\s*(['"]?)[\w.-]+\1/.test(text.slice(i))) {
+      const opened = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(text.slice(i));
+      pending.push(opened[2]);
+      i += opened[0].length;
+    } else if (ch === "\n") {
+      flush();
+      i += 1;
+      // The bodies of the here-documents the line opened: text, not commands.
+      while (pending.length > 0) {
+        const word = pending.shift();
+        for (;;) {
+          const end = text.indexOf("\n", i);
+          const line = text.slice(i, end === -1 ? text.length : end);
+          i = end === -1 ? text.length : end + 1;
+          if (line.trim() === word || end === -1) break;
+        }
+      }
+    } else if (";&|()`".includes(ch)) {
+      flush();
+      i += 1;
+    } else {
+      current += ch;
+      i += 1;
+    }
+  }
+  flush();
+  return out;
+}
+
 /**
  * precondition:  `call` is the JSON a PreToolUse hook receives; `guard` is
  *                the `guard` object of delivery-gate.json.
@@ -375,8 +445,9 @@ export function prePush(input, ports) {
  *                    it through only when the pre-push hook is in place;
  *                  { kind: "allow" }  anything else.
  *                The command is read from any tool that carries one, not
- *                from one tool by its name. The verdict is not judged here:
- *                git does it at the push, on the commits really sent.
+ *                from one tool by its name, and as commands (commandsOf),
+ *                not as text. The verdict is not judged here: git does it at
+ *                the push, on the tips really sent.
  */
 export function guardDecision(call, guard) {
   if (guard.refusedTools.includes(call?.tool_name)) {
@@ -387,8 +458,12 @@ export function guardDecision(call, guard) {
   }
   const command = call?.tool_input?.command;
   if (typeof command !== "string") return { kind: "allow" };
-  // Whatever the case of the command; `${git}` is `guard.git`.
-  const matches = (source) => new RegExp(fill(source, { git: guard.git }), "i").test(command);
+  // Each command of the text on its own, whatever its case; `${start}` is `guard.start`.
+  const commands = commandsOf(command);
+  const matches = (source) => {
+    const expressionOf = new RegExp(fill(source, { start: guard.start }), "i");
+    return commands.some((one) => expressionOf.test(one));
+  };
   const rule = guard.refuse.find(({ pattern }) => matches(pattern));
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
   if (guard.push.some(matches)) return { kind: "push" };

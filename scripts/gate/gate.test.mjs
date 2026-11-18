@@ -18,6 +18,7 @@ import {
   Refusal,
   blanketDisables,
   canaryPlan,
+  commandsOf,
   fill,
   guardDecision,
   guardHook,
@@ -86,8 +87,8 @@ describe("validateConfig", () => {
       [withValue("carry", ["node_modules", ""]), "carry must be a list of directory names"],
       [without("guard"), "guard must be an object"],
       [withValue("guard", null), "guard must be an object"],
-      [without("guard.git"), "guard.git must be a regular expression"],
-      [withValue("guard.git", "("), "guard.git is not a regular expression"],
+      [without("guard.start"), "guard.start must be a regular expression"],
+      [withValue("guard.start", "("), "guard.start is not a regular expression"],
       [withValue("guard.push", ["${nope}"]), "variable ${nope} is not defined"],
       [without("guard.push"), "guard.push must be a list"],
       [withValue("guard.push", [7]), "guard.push[0] must be a regular expression"],
@@ -489,13 +490,61 @@ describe("prePush", () => {
 
 // ─── The guard of the session ───────────────────────────────────────────────
 
+describe("commandsOf", () => {
+  it("splits a text where the shell starts a new command, and squeezes the spaces", () => {
+    expect(commandsOf("git  status ; git\tlog && git push | cat & echo done\nls")).toEqual([
+      "git status",
+      "git log",
+      "git push",
+      "cat",
+      "echo done",
+      "ls",
+    ]);
+    expect(commandsOf("(cd x; git push)")).toEqual(["cd x", "git push"]);
+    expect(commandsOf("echo $(git push -f) `git status`")).toEqual(["echo $", "git push -f", "git status"]);
+    expect(commandsOf("")).toEqual([]);
+    expect(commandsOf(" ;; \n ")).toEqual([]);
+  });
+
+  it("puts two quotes in place of a quoted string, whatever it holds", () => {
+    expect(commandsOf(`gh pr comment 3 --body "no gh pr merge by hand; git push --force\nVerdict: approve"`)).toEqual(['gh pr comment 3 --body ""']);
+    expect(commandsOf("git commit -m 'a; b | c && git push' && git push")).toEqual(['git commit -m ""', "git push"]);
+    // An escaped quote does not close a double-quoted string; nothing is escaped between single quotes.
+    expect(commandsOf('echo "a \\" ; git push" ; ls')).toEqual(['echo ""', "ls"]);
+    expect(commandsOf("echo 'a\\' ; ls")).toEqual(['echo ""', "ls"]);
+    // A string that is not closed runs to the end.
+    expect(commandsOf('echo "open ; git push')).toEqual(['echo ""']);
+    expect(commandsOf("echo 'open ; git push")).toEqual(['echo ""']);
+    expect(commandsOf('a"b"c d')).toEqual(['a""c d']);
+  });
+
+  it("reads an escaped character as a character of a word, and an escaped line end as none", () => {
+    expect(commandsOf("echo a\\;b ; ls")).toEqual(["echo a_b", "ls"]);
+    expect(commandsOf('echo \\"x ; ls')).toEqual(["echo _x", "ls"]);
+    expect(commandsOf("git \\\npush origin x")).toEqual(["git push origin x"]);
+    expect(commandsOf("echo a\\")).toEqual(["echo a_"]);
+  });
+
+  it("leaves out the body of a here-document, and reads what follows it", () => {
+    expect(commandsOf("cat <<EOF > f\ngit push --force\ngh pr merge 3\nEOF\ngit status")).toEqual(["cat > f", "git status"]);
+    expect(commandsOf("cat <<-'END' | grep x\n  git push --force\n\tEND\nls")).toEqual(["cat", "grep x", "ls"]);
+    expect(commandsOf('cat << "E.O-F"\nbody\nE.O-F\nls')).toEqual(["cat", "ls"]);
+    // Two on one line, in order.
+    expect(commandsOf("cat <<A <<B\na body\nA\nb body\nB\nls")).toEqual(["cat", "ls"]);
+    // One that is not closed runs to the end; `<` alone and `<<<` are not one.
+    expect(commandsOf("cat <<EOF\ngit push --force")).toEqual(["cat"]);
+    expect(commandsOf("cat < file ; ls")).toEqual(["cat < file", "ls"]);
+    expect(commandsOf("a << 1x\nbody\n1x\nls")).toEqual(["a", "ls"]);
+  });
+});
+
 describe("guardDecision", () => {
   const guard = CONFIG.guard;
   const bash = (command, tool_name = "Bash") => ({ tool_name, tool_input: { command } });
   const decide = (command) => guardDecision(bash(command), guard);
   const why = (index) => guard.refuse[index].why;
 
-  it("sees a push in the ways a session writes it, from any tool that carries a command", () => {
+  it("sees a push where a command starts, from any tool that carries a command", () => {
     for (const command of [
       "git push",
       "git push -u origin fix/x",
@@ -507,15 +556,14 @@ describe("guardDecision", () => {
       "git -c alias.p=push p",
       "cd x && git push",
       "git commit -m wip && git push",
+      'git commit -m "a message" && git push',
       "git stash push -m wip",
-      // A message that opens on the command is read as one: the price of reading `sh -c 'git push'`.
-      'git commit -m "git push is refused without a verdict"',
       "command git push",
       "env X=1 git push",
       "GIT_TRACE=1 git push",
       "time git push",
       "(cd x; git push)",
-      "sh -c 'git push'",
+      "echo ready\ngit push",
       "GIT PUSH",
       "git\tpush",
       "git subtree push --prefix=x origin y",
@@ -530,6 +578,7 @@ describe("guardDecision", () => {
       ["git push --no-verify", 0],
       ["git push origin x --no-verify", 0],
       ["git push --no-veri", 0],
+      ["cd x && git push --no-verify", 0],
       ["git -c core.hooksPath=/dev/null push", 1],
       ["git -c core.hookspath=/dev/null push", 1],
       ["git config core.hooksPath /tmp/h", 1],
@@ -545,6 +594,7 @@ describe("guardDecision", () => {
       ["git push origin +main", 3],
       ["git push --mirror", 3],
       ["gh pr merge 3 --squash", 4],
+      ["GH_TOKEN=x gh pr merge 3", 4],
       ["gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc", 5],
       ["gh api -XPUT repos/o/r/contents/README.md -fcontent=x", 5],
       ["gh api -X PUT repos/o/r/pulls/3/merge", 5],
@@ -552,18 +602,36 @@ describe("guardDecision", () => {
       ["gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", 6],
       ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 6],
       ["gh api repos/o/r/merges --field base=main --field head=x", 6],
-      ["gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { commit { oid } } }'", 7],
-      ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 8],
+      ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 7],
     ];
     for (const [command, rule] of cases) {
       expect(decide(command), command).toEqual({ kind: "refuse", reason: why(rule) });
     }
+    expect(guard.refuse).toHaveLength(8);
     expect(why(0)).toContain("--no-verify");
     expect(why(3)).toContain("forced push");
     expect(why(4)).toContain("merges by hand");
   });
 
-  it("does not refuse ordinary work that only looks like one of those", () => {
+  it("does not read the text a command carries: a comment, a message or a script that names a refused command", () => {
+    const nothing = [
+      // What a review writes in its verdict comment.
+      'gh pr comment 3 --body "No gh pr merge by hand, no git push --force, no curl https://api.github.com/x.\nVerdict: approve"',
+      "gh pr comment 3 --body-file - <<EOF\ngh pr merge 3\ngit push --no-verify\nEOF",
+      'gh pr create --title "fix: pre-push hook" -F body.md',
+      'git commit -m "pre-push hook: chmod +x"',
+      'git commit -m "document git push --force"',
+      'git commit -m "git push is refused without a verdict"',
+      'git commit -m "the push of the gate"',
+      "git commit --no-verify -m wip",
+      "echo use git push to deliver",
+      "grep -rn 'gh pr merge' docs",
+      "rg \"git push --no-verify\" scripts",
+    ];
+    for (const command of nothing) expect(decide(command), command).toEqual({ kind: "allow" });
+  });
+
+  it("does not refuse ordinary work that only looks like a refused command", () => {
     // Each of these is a push, or nothing: never a refusal.
     const pushes = [
       "git push -u origin feature/force-retry",
@@ -575,20 +643,14 @@ describe("guardDecision", () => {
     ];
     for (const command of pushes) expect(decide(command), command).toEqual({ kind: "push" });
     const nothing = [
-      'git commit -m "pre-push hook: chmod +x"',
-      'git commit -m "document git push --force"',
-      'git commit -m "the push of the gate"',
-      "echo use git push to deliver",
-      "git commit --no-verify -m wip",
       "git config --get core.hooksPath",
       "git config --unset core.hooksPath",
       "git config unset core.hooksPath",
       "git config --get core.hooksPath && echo set",
       "rm -f x",
       "grep -f patterns file",
-      'gh pr create --title "fix: pre-push hook" -F body.md',
       "gh pr view 3",
-      "gh pr merge --help >/dev/null || true; gh pr view 3".replace("gh pr merge --help >/dev/null || true; ", ""),
+      "gh pr list --search merge",
       // Reading through the API, and writing what is not a delivery (a comment).
       "gh api repos/o/r/pulls/3",
       "gh api repos/o/r/pulls",
@@ -597,7 +659,8 @@ describe("guardDecision", () => {
       "gh api repos/o/r/contents/README.md",
       "gh api repos/o/r/issues/3/comments -f body=done",
       "gh api repos/o/r/pulls/3/comments -f body=done",
-      "gh api graphql -f query='query { viewer { login } }'",
+      "curl https://example.com/api.github.com.html",
+      "curl -s https://registry.npmjs.org/x",
       "git status",
       "git log --oneline",
       "git fetch origin",
@@ -608,9 +671,10 @@ describe("guardDecision", () => {
   });
 
   it("sees a push when any one of several expressions matches, whatever the case", () => {
-    const two = { git: "make", push: ["${git} deliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
+    const two = { start: "^", push: ["${start}make deliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
     expect(guardDecision(bash("make SHIP"), two)).toEqual({ kind: "push" });
-    expect(guardDecision(bash("make deliver"), two)).toEqual({ kind: "push" });
+    expect(guardDecision(bash("cd x && make deliver"), two)).toEqual({ kind: "push" });
+    expect(guardDecision(bash("echo make deliver"), two)).toEqual({ kind: "allow" });
     expect(guardDecision(bash("make build"), two)).toEqual({ kind: "allow" });
   });
 
@@ -994,24 +1058,42 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     expect(hook("git status").status).toBe(0);
   });
 
-  it("installs the pre-push hook, once, and does not overwrite another one", () => {
+  it("installs the pre-push hook, with node and git by their paths, and does not overwrite another one", () => {
     expect(gate(main, "install").status).toBe(0);
     const path = join(main, ".git/hooks/pre-push");
     const written = readFileSync(path, "utf8");
     expect(written).toContain("ref='refs/remotes/origin/main'");
-    expect(written).toContain('node "$dir/scripts/gate/gate.mjs" pre-push "$@"');
+    expect(written).toContain(`node='${realpathSync(process.execPath)}'`);
+    expect(written).toMatch(/\ngit='\/[^'\n]+'\n/);
+    // No program is taken from the PATH of whoever pushes.
+    expect(written).toContain('PATH="$(dirname "$git"):/usr/bin:/bin"');
+    expect(written).toContain('"$node" "$dir/scripts/gate/gate.mjs" pre-push "$@"');
     // It runs no file of a checkout.
     expect(written).not.toContain("git-common-dir");
     expect(gate(main, "install").status).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe(written);
     expect(hook("git push origin trunk").status).toBe(0);
 
-    const shim = readFileSync(path, "utf8");
+    // A hook the gate did not write is left, and is not taken for the gate's.
     writeFileSync(path, "#!/bin/sh\nexit 0\n");
     const refused = gate(main, "install");
     expect(refused.status).toBe(2);
     expect(refused.stderr).toContain("is another hook");
     expect(hook("git push").stderr).toContain("another pre-push hook is installed");
-    writeFileSync(path, shim);
+
+    // One the gate wrote for another revision is out of date, and is written again.
+    writeFileSync(path, written.replace("refs/remotes/origin/main", "refs/remotes/origin/old"));
+    expect(hook("git push").stderr).toContain("the pre-push hook is out of date");
+    expect(gate(main, "install").status).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe(written);
+
+    // One that names a node that is gone is not in place.
+    writeFileSync(path, written.replace(`node='${realpathSync(process.execPath)}'`, "node='/nowhere/node'"));
+    const gone = hook("git push");
+    expect(gone.status).toBe(2);
+    expect(gone.stderr).toContain("the pre-push hook names a node or a git that is gone");
+    expect(gate(main, "install").status).toBe(0);
+    expect(hook("git push").status).toBe(0);
   });
 
   it("installs the hook only on a branch of a remote that has the gate: it would otherwise refuse every push, or trust the commit", () => {
@@ -1326,6 +1408,35 @@ process.exit(out.status ?? 1);
       expect(existsSync(join(repo, "..", "planted.txt"))).toBe(false);
     });
 
+    it("copies each file as git stores it: no filter of the machine runs, modes and links are kept", () => {
+      // A smudge filter the repository's configuration names, and a commit that asks for it.
+      const ran = join(repo, "..", "filter-ran.txt");
+      git(repo, "config", "filter.planted.smudge", `sh -c 'echo ran > "${ran}"; cat'`);
+      setChecks([
+        {
+          name: "reads",
+          profile: "offline",
+          command: node(
+            `const fs=require("fs");const ok=fs.readFileSync("filtered.txt","utf8")==="as stored\\n"&&(fs.statSync("run.sh").mode&0o111)!==0&&(fs.statSync("plain.txt").mode&0o111)===0&&fs.lstatSync("link").isSymbolicLink()&&fs.readlinkSync("link")==="plain.txt"&&fs.readFileSync("dir/deep/file.bin").equals(Buffer.from([0,255,10,13,10]));process.exit(ok?0:1)`,
+          ),
+        },
+      ]);
+      writeFileSync(join(work, ".gitattributes"), "filtered.txt filter=planted\n");
+      writeFileSync(join(work, "filtered.txt"), "as stored\n");
+      writeFileSync(join(work, "plain.txt"), "plain");
+      writeFileSync(join(work, "run.sh"), "#!/bin/sh\n");
+      chmodSync(join(work, "run.sh"), 0o755);
+      symlinkSync("plain.txt", join(work, "link"));
+      mkdirSync(join(work, "dir/deep"), { recursive: true });
+      writeFileSync(join(work, "dir/deep/file.bin"), Buffer.from([0, 255, 10, 13, 10]));
+      git(work, "add", ".");
+      git(work, "commit", "-q", "-m", "files of every kind");
+      const out = runGateIn();
+      expect(out.status, out.stderr).toBe(0);
+      expect(existsSync(ran)).toBe(false);
+      git(repo, "config", "--unset", "filter.planted.smudge");
+    });
+
     it("mutates the changed production files, and says which ones the report does not name", () => {
       setGate({
         mutation: {
@@ -1358,6 +1469,31 @@ process.exit(out.status ?? 1);
       expect(out.status).toBe(2);
       expect(out.stderr).toContain("reports/mutation/mutation.json leads outside the copy of the tree");
       expect(readFileSync(join(outside, "mutation/mutation.json"), "utf8")).toBe("kept");
+      expect(verdictOf()).toBeNull();
+    });
+
+    it("does not read through a link a check puts in place of the copy itself", () => {
+      const elsewhere = join(repo, "..", "elsewhere");
+      mkdirSync(join(elsewhere, "src"), { recursive: true });
+      mkdirSync(join(elsewhere, "reports/mutation"), { recursive: true });
+      writeFileSync(join(elsewhere, "src/c.js"), "// Stryker disable all\n");
+      writeFileSync(join(elsewhere, "reports/mutation/mutation.json"), "kept");
+      setGate({
+        // The check moves the copy aside and leaves a link to another directory under its name.
+        checks: [
+          {
+            name: "swaps",
+            profile: "offline",
+            command: node(`const fs=require("fs");const here=process.cwd();fs.renameSync(here,here+"-aside");fs.symlinkSync(process.argv[1],here)`, elsewhere),
+          },
+        ],
+        mutation: { production: "^src/.*\\.js$", command: node("0", "--"), report: "reports/mutation/mutation.json", profile: "loopback" },
+      });
+      commitInWork("src/c.js", "export const c = 1;\n");
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain("src/c.js leads outside the copy of the tree");
+      expect(readFileSync(join(elsewhere, "reports/mutation/mutation.json"), "utf8")).toBe("kept");
       expect(verdictOf()).toBeNull();
     });
 

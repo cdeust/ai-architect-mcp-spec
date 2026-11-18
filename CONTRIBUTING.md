@@ -120,8 +120,9 @@ that reason does not pass, and a file that turns mutation off for more than
 one line fails the gate.
 
 The gate judges the committed tree: it refuses work that is not committed.
-It checks that tree out into a directory of its own, beside the verdicts in
-the git directory, with the installed dependencies of the worktree
+It writes that tree, each file as git stores it (no checkout, so no filter
+of the machine runs on it), into a directory of its own, beside the verdicts
+in the git directory, with the installed dependencies of the worktree
 (`carry` in `delivery-gate.json`), runs everything there, records a verdict
 for the tree, and removes the directory. The worktree is never written: what
 a check leaves behind is in the copy, so the verdict is for the tree the
@@ -146,7 +147,7 @@ Three layers, and what each one holds against:
   it refuses to run when one succeeds, or when the canary does not say that
   every attempt was refused. What this process reads back from the copy (a
   source, the mutation report) is refused when a link leads it outside the
-  copy. There is no unsandboxed fallback. The sandbox
+  copy, a link put in place of the copy itself included. There is no unsandboxed fallback. The sandbox
   runtime and the operation get a PATH without any entry of the judged tree
   or of the run, and without relative entries: the runtime starts programs
   by name before the sandbox is up. A
@@ -155,8 +156,11 @@ Three layers, and what each one holds against:
   command for a mark of its success as well.
 - **The pre-push hook of git, against a push that skipped the gate.**
   `pnpm gate:install` puts it in the git directory, for every worktree. Git
-  tells it the commits a push sends, whatever wrote the command (an alias, a
-  script, another tool), and it refuses one whose tree has no passed verdict.
+  tells it the tip of each ref a push sends, whatever wrote the command (an
+  alias, a script, another tool), and it refuses a tip whose tree has no
+  passed verdict. The tip is what the ref becomes; a commit below it is not
+  judged on its own. The hook names node and git by their paths and sets its
+  own PATH.
   The gate that judges, and the gate that reads the verdict, is the one of
   the base revision (`base` in `delivery-gate.json`: `origin/main`) as git
   has it, not a file of a checkout. `pnpm gate` takes that gate out of git
@@ -218,10 +222,13 @@ What the gate does not hold against, and what does:
 - The `ci-contract` check needs PyYAML where the Python of PATH finds it
   without the user's home (a system or Homebrew install): a user-site or
   virtual-environment install under the home is not readable in the sandbox.
-- The guard reads git where a command starts (after a separator, a quote,
-  `env`, `command` and the like). A commit message that opens on `git push`
-  is read as a push; a push behind a wrapper the expression does not know is
-  not seen by the guard, and is still judged by git's hook.
+- The guard reads the commands of what a tool hands to a shell, not the
+  text they carry: a quoted string and a here-document are not read, so a
+  comment, a commit message or a script that names a refused command is not
+  refused, and neither is a command written inside a quoted string
+  (`sh -c '…'`, a quoted refspec, a quoted payload for the API). Its rules
+  are a list of known ways, not a proof; a push it does not see is still
+  judged by git's hook.
 
 What the gate runs, what counts as production code, what an operation may
 reach and what the guard refuses are in `delivery-gate.json` and
