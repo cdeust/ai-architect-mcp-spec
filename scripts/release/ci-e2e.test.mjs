@@ -71,7 +71,15 @@ test.skipIf(!posix)("E2E builds once and tests manifest, portable runtime and st
   expect(calls).toEqual(REQUIRED);
 });
 
-test.skipIf(!posix)("each failed E2E prerequisite or acceptance check stops all later commands", () => {
+// Above vitest's 5000ms default: the test runs the E2E command once per
+// required step, each run a bash and its stand-ins. Under the delivery gate
+// (in its sandbox, with coverage) it took 3425ms, 3596ms, then more than
+// 5000ms on a loaded machine: a timeout, not a failure of the command. 30s
+// follows frozen-baseline-provenance.test.mjs.
+// source: three runs of `pnpm gate` on 2026-11-18 (the third timed out).
+const EVERY_FAILURE_TIMEOUT_MS = 30_000;
+
+test.skipIf(!posix)("each failed E2E prerequisite or acceptance check stops all later commands", { timeout: EVERY_FAILURE_TIMEOUT_MS }, () => {
   const files = fixture();
   for (const [index, failure] of REQUIRED.entries()) {
     const { result, calls } = execute(files, failure);

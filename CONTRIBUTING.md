@@ -225,8 +225,8 @@ What the gate does not hold against, and what does:
 - The guard reads the commands of what a tool hands to a shell, not the
   text they carry: a quoted string and a here-document are not read, so a
   comment, a commit message or a script that names a refused command is not
-  refused. What the shell runs inside a string (a command substitution) is
-  read. What a program is handed as a string is not (`sh -c '…'`), nor a
+  refused. What the shell runs inside a string (a command substitution,
+  with the parentheses it holds) is read. What a program is handed as a string is not (`sh -c '…'`), nor a
   quoted word of a command (a quoted refspec, a quoted payload for the API),
   nor a push through an alias. Its rules are a list of known ways, not a
   proof; a push it does not see is still judged by git's hook.

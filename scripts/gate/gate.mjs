@@ -278,8 +278,13 @@ function makeRun({ git, root, common }, config, commit) {
       writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644, flag: "wx" });
     }
     // The links last: no file is ever written through a link of the commit.
+    // Nor a link through another link: on a disk that does not tell `A` from
+    // `a`, a link `A` and a link `a/x` would put `x` where `A` leads.
     for (const [target, to] of links) {
       mkdirSync(dirname(target), { recursive: true });
+      if (!inside(realpathSync(dirname(target)), tree)) {
+        throw new Refusal(`${target.slice(tree.length + 1)} would be written outside the copy of the tree, through a link of the commit`);
+      }
       symlinkSync(to, target);
     }
     // Ignored directories the configuration names (node_modules): what is
