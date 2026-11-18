@@ -1,83 +1,155 @@
 /**
- * The decisions of the delivery gate, as pure functions (no process, no
- * file): which production lines a diff changed, which mutants of a Stryker
- * report touch them undetected, whether a tool call is a delivery, and what
- * a sandbox profile becomes for one operation. `gate.mjs` does the I/O.
+ * The decisions of the delivery gate. No process, no file, no clock here:
+ * what touches the machine comes in through `ports`, so every decision is
+ * run in a test with a double and is inside the gate's own mutation
+ * perimeter. `gate.mjs` holds the adapters and nothing else.
  *
- * What the gate runs and what counts as production or as a delivery is in
- * `delivery-gate.json`; nothing here names a command or a path of this
- * repository.
+ * What the gate runs, what counts as production code, what a sandboxed
+ * operation may reach and what the guard refuses are in descriptive files
+ * (`delivery-gate.json`, `profiles/*.json`): nothing here names a command or
+ * a path of this repository.
+ *
+ * Threat model (CONTRIBUTING.md, "The delivery gate"):
+ *   - what a check executes (dependencies, build scripts, tests) is not
+ *     trusted: it runs in a sandbox that cannot write the gate, its tools,
+ *     the settings or the verdicts, nor read the user's files;
+ *   - a session that forgets the gate is stopped at the push, by git itself;
+ *   - a session that forges a verdict on purpose is not stopped here: the
+ *     hosted pipeline is what holds against it.
  */
+
+/** A refusal to run or to judge: configuration, repository state, sandbox. */
+export class Refusal extends Error {}
+
+// ─── Configuration ──────────────────────────────────────────────────────────
+
+const isText = (value) => typeof value === "string" && value !== "";
+const isTextList = (value) => Array.isArray(value) && value.every(isText);
+const isArgv = (value) => isTextList(value) && value.length > 0;
+
+function expression(source, where) {
+  if (!isText(source)) throw new Refusal(`delivery-gate.json: ${where} must be a regular expression`);
+  try {
+    return new RegExp(source);
+  } catch (error) {
+    throw new Refusal(`delivery-gate.json: ${where} is not a regular expression (${error.message})`);
+  }
+}
 
 /**
- * precondition:  `diff` is the output of `git diff -U0 --src-prefix=a/
- *                --dst-prefix=b/`.
- * postcondition: for each file the diff leaves in place, the ranges of lines
- *                it adds or changes, as [first, last] in the new file, in
- *                the order of the diff. A hunk that only deletes adds no
- *                range: no line of it is left to mutate, so a deleted file
- *                is absent.
+ * precondition:  `raw` is delivery-gate.json, parsed.
+ * postcondition: `raw`, when every key the gate reads is there with its
+ *                type; else a Refusal that names the first faulty key. The
+ *                gate validates before it runs anything: a malformed file
+ *                never becomes a check that did not run or a guard that let
+ *                a call through.
  */
-const NEW_FILE = "+++ b/";
+export function validateConfig(raw) {
+  const fail = (what) => {
+    throw new Refusal(`delivery-gate.json: ${what}`);
+  };
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail("must be an object");
+  if (!isText(raw.base)) fail("base must be a git revision");
+  if (!Array.isArray(raw.checks)) fail("checks must be a list");
+  raw.checks.forEach((check, index) => {
+    if (!isText(check?.name)) fail(`checks[${index}].name must be a name`);
+    if (!isText(check.profile)) fail(`checks[${index}].profile must name a profile`);
+    if (!isArgv(check.command)) fail(`checks[${index}].command must be a list of arguments`);
+  });
+  const mutation = raw.mutation;
+  if (mutation === null || typeof mutation !== "object") fail("mutation must be an object");
+  expression(mutation.production, "mutation.production");
+  if (!isArgv(mutation.command)) fail("mutation.command must be a list of arguments");
+  if (!isText(mutation.report)) fail("mutation.report must be a path");
+  if (!isText(mutation.profile)) fail("mutation.profile must name a profile");
+  const guard = raw.guard;
+  if (guard === null || typeof guard !== "object") fail("guard must be an object");
+  for (const key of ["push", "bypass"]) {
+    if (!Array.isArray(guard[key])) fail(`guard.${key} must be a list`);
+    guard[key].forEach((source, index) => expression(source, `guard.${key}[${index}]`));
+  }
+  if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
+  return raw;
+}
 
-export function changedLines(diff) {
-  const ranges = new Map();
-  let file = null;
+// ─── The lines a change touches ─────────────────────────────────────────────
+
+/**
+ * precondition:  `diff` is `git diff -U0` of ONE file. Which file is known
+ *                to the caller, from a list git gave with its names intact:
+ *                no file header is read here, so a quoted name, a name with
+ *                a space or a line of content that looks like a header
+ *                cannot move a hunk to another file.
+ * postcondition: the ranges of lines the diff adds or changes, as
+ *                [first, last] in the new file, in order. A hunk that only
+ *                deletes adds no range: no line of it is left to mutate.
+ */
+export function hunkRanges(diff) {
+  const ranges = [];
   for (const line of diff.split("\n")) {
-    if (line.startsWith(NEW_FILE)) {
-      file = line.slice(NEW_FILE.length);
-      continue;
-    }
+    // A line of content starts with "+", "-", " " or "\": never with "@".
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (!hunk) continue;
     const first = Number(hunk[1]);
     const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
-    if (count === 0) continue;
-    if (!ranges.has(file)) ranges.set(file, []);
-    ranges.get(file).push([first, first + count - 1]);
+    if (count > 0) ranges.push([first, first + count - 1]);
   }
   return ranges;
 }
 
-/**
- * precondition:  `ranges` comes from changedLines; `production` is the
- *                source of a regular expression over repository paths.
- * postcondition: the entries of `ranges` whose file is production code, in
- *                the same order. Empty when the diff changes no production
- *                line.
- */
-export function productionChanges(ranges, production) {
+/** The names among `names` that are production code. */
+export function productionFiles(names, production) {
   const isProduction = new RegExp(production);
-  return new Map([...ranges].filter(([file]) => isProduction.test(file)));
+  return names.filter((name) => isProduction.test(name));
 }
 
-/** A mutant the tests did not detect, or that Stryker did not finish. */
-const UNDETECTED = new Set(["Survived", "NoCoverage", "Pending"]);
+/**
+ * The names the gate will not hand to the mutation tool: it reads its file
+ * arguments as patterns, split on commas, so `[id].ts` or `a,b.ts` would be
+ * mutated as something else, or as nothing, without an error.
+ */
+export function unsafeNames(names) {
+  return names.filter((name) => !/^[\w@./-]+$/.test(name));
+}
+
+// ─── The mutants of a change ────────────────────────────────────────────────
 
 /**
- * precondition:  `report` is a mutation-testing-report-schema document
- *                (Stryker's json reporter), with file paths relative to the
- *                repository; `changes` comes from productionChanges.
- * postcondition: the mutants that touch a changed line and that no test
- *                detects, as { file, line, mutator, status, replacement },
- *                in report order; `judged` counts every mutant that touches
- *                a changed line, whatever its status. A mutant touches a
- *                line when its span, first to last line, overlaps a changed
- *                range: an expression written on several lines is judged
- *                when any of its lines changed. Mutants marked equivalent in
- *                the source have the status Ignored and are not undetected.
+ * The statuses that say a test saw the mutant. RuntimeError and CompileError
+ * are among them: the mutated code did not load or did not compile, which no
+ * run of the suite survives. Every other status, one a later version of the
+ * tool adds included, is undetected.
+ */
+const DETECTED = new Set(["Killed", "Timeout", "RuntimeError", "CompileError"]);
+const EQUIVALENT = /^equivalent: \S/;
+
+/**
+ * precondition:  `report` is a mutation-testing-report-schema document, its
+ *                file paths relative to the repository; `changes` maps each
+ *                changed production file to its hunkRanges.
+ * postcondition: `judged` counts the mutants that touch a changed line;
+ *                `undetected` lists those no test saw, as { file, line,
+ *                mutator, status, replacement }, in report order. A mutant
+ *                touches a line when its span overlaps a changed range, so
+ *                an expression written on several lines is judged when any
+ *                of its lines changed. A mutant the source marks is passed
+ *                only when its reason starts with "equivalent: ": a blanket
+ *                disable, or one without a reason, is undetected.
  */
 export function judgeMutants(report, changes) {
   const undetected = [];
   let judged = 0;
   for (const [file, { mutants }] of Object.entries(report.files)) {
-    const fileRanges = changes.get(file);
-    if (!fileRanges) continue;
+    const ranges = changes.get(file);
+    if (!ranges) continue;
     for (const mutant of mutants) {
       const { start, end } = mutant.location;
-      if (!fileRanges.some(([first, last]) => start.line <= last && end.line >= first)) continue;
+      if (!ranges.some(([first, last]) => start.line <= last && end.line >= first)) continue;
       judged += 1;
-      if (UNDETECTED.has(mutant.status)) {
+      const passed =
+        DETECTED.has(mutant.status) ||
+        (mutant.status === "Ignored" && EQUIVALENT.test(mutant.statusReason));
+      if (!passed) {
         undetected.push({
           file,
           line: start.line,
@@ -91,50 +163,305 @@ export function judgeMutants(report, changes) {
   return { judged, undetected };
 }
 
+// ─── Sandbox profiles ───────────────────────────────────────────────────────
+
 /**
- * precondition:  `call` is the JSON a PreToolUse hook receives; `delivers`
- *                is the `delivers` object of delivery-gate.json.
- * postcondition: true iff the call sends work out of the machine: a tool
- *                listed in `delivers.tools`, or a Bash command one of the
- *                `delivers.commands` expressions matches.
+ * precondition:  `value` is JSON; `vars` gives each `${name}` a string, or a
+ *                list of strings.
+ * postcondition: `value` with every `${name}` of every string replaced. An
+ *                element of a list that is exactly `${name}` of a list
+ *                variable becomes the elements of that list. Throws a Refusal
+ *                on a name `vars` does not define, and on a list variable
+ *                used inside a longer string: a path left with its
+ *                placeholder would name nothing, and so protect nothing.
  */
-export function isDelivery(call, delivers) {
-  if (delivers.tools.includes(call?.tool_name)) return true;
-  if (call?.tool_name !== "Bash") return false;
-  const command = call.tool_input?.command;
-  if (typeof command !== "string") return false;
-  return delivers.commands.some((source) => new RegExp(source).test(command));
+export function fill(value, vars) {
+  const lookup = (name) => {
+    if (!Object.hasOwn(vars, name)) throw new Refusal(`variable \${${name}} is not defined`);
+    return vars[name];
+  };
+  if (typeof value === "string") {
+    return value.replace(/\$\{(\w+)\}/g, (_, name) => {
+      const found = lookup(name);
+      if (Array.isArray(found)) throw new Refusal(`variable \${${name}} is a list: it stands alone in a list`);
+      return found;
+    });
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((element) => {
+      const whole = /^\$\{(\w+)\}$/.exec(element);
+      if (whole && Array.isArray(lookup(whole[1]))) return lookup(whole[1]);
+      return [fill(element, vars)];
+    });
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, fill(inner, vars)]));
+  }
+  return value;
 }
 
 /**
- * precondition:  `profile` is a profile file of scripts/gate/profiles, as
- *                parsed JSON; `vars` gives a value to each `${name}` it uses.
  * postcondition: { srt, env }: the settings handed to the sandbox runtime and
- *                the whole environment of the operation, with every `${name}`
- *                of every string replaced. The environment holds the
- *                variables of `env.pass` that `hostEnv` defines, then those
- *                of `env.set`; nothing else of the host crosses. Throws on a
- *                `${name}` that `vars` does not define: a path left with its
- *                placeholder would name nothing, and so protect nothing.
+ *                the whole environment of the operation. The environment
+ *                holds the variables of `env.pass` that `hostEnv` defines,
+ *                then those of `env.set`; nothing else of the host crosses.
  */
 export function resolveProfile(profile, vars, hostEnv) {
-  const fill = (value) => {
-    if (typeof value === "string") {
-      return value.replace(/\$\{(\w+)\}/g, (_, name) => {
-        if (!Object.hasOwn(vars, name)) throw new Error(`profile variable \${${name}} is not defined`);
-        return vars[name];
-      });
-    }
-    if (Array.isArray(value)) return value.map(fill);
-    if (value !== null && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, fill(inner)]));
-    }
-    return value;
-  };
   const env = {};
   for (const name of profile.env.pass) {
     if (hostEnv[name] !== undefined) env[name] = hostEnv[name];
   }
-  Object.assign(env, fill(profile.env.set));
-  return { srt: fill(profile.srt), env };
+  Object.assign(env, fill(profile.env.set, vars));
+  return { srt: fill(profile.srt, vars), env };
+}
+
+/**
+ * precondition:  `srt` is the resolved settings of a profile; `kindOf(path)`
+ *                is "dir", "file" or null for a path that is not there;
+ *                `outside` is a directory no profile lets an operation
+ *                write; `hostPort` is a port of the host with a listener.
+ * postcondition: the attempts the canary makes inside the sandbox, one per
+ *                promise of the profile that can be put to the test, as its
+ *                arguments, with what they prove. Every write the profile
+ *                denies, on a path that exists; a write outside; every read
+ *                it denies, on a path that exists; and the host's port, when
+ *                the profile does not grant the loopback. `created` lists the
+ *                files a sandbox that does not hold would leave behind.
+ */
+export function canaryPlan(srt, { kindOf, outside, hostPort }) {
+  const args = ["--write", `${outside}/gate-canary`];
+  const created = [`${outside}/gate-canary`];
+  let writes = 1;
+  let reads = 0;
+  for (const path of srt.filesystem.denyWrite) {
+    const kind = kindOf(path);
+    if (kind === null) continue;
+    // In a directory, a new file; on a file, an append of nothing.
+    const target = kind === "dir" ? `${path}/gate-canary` : path;
+    args.push(kind === "dir" ? "--write" : "--append", target);
+    if (kind === "dir") created.push(target);
+    writes += 1;
+  }
+  for (const path of srt.filesystem.denyRead) {
+    const kind = kindOf(path);
+    if (kind === null) continue;
+    args.push(kind === "dir" ? "--list" : "--read", path);
+    reads += 1;
+  }
+  const port = srt.network.allowLocalBinding !== true;
+  if (port) args.push("--connect", String(hostPort));
+  return { args, created, proves: { writes, reads, port } };
+}
+
+// ─── Verdicts ───────────────────────────────────────────────────────────────
+
+/**
+ * postcondition: null when `verdict` is a passed verdict of this gate for
+ *                this tree; else the reason it is not, in words. A verdict
+ *                written by another gate (other code, other configuration,
+ *                other profiles) is not one: a change cannot be judged by
+ *                the gate it brings.
+ */
+export function verdictRefusal(verdict, tree, gateHash) {
+  if (verdict === null) return "it has no verdict of the delivery gate";
+  if (verdict.passed !== true || verdict.tree !== tree) return "its verdict is not a passed verdict for this tree";
+  if (verdict.gate !== gateHash) return "its verdict was written by another gate than the one of the main checkout";
+  return null;
+}
+
+/**
+ * precondition:  `input` is what git writes to a pre-push hook: one line per
+ *                ref, `<local ref> <local sha> <remote ref> <remote sha>`.
+ * postcondition: the commits the push sends, as { ref, sha }. A deletion
+ *                (local sha all zeros) sends nothing. A line that is not in
+ *                that form is a Refusal: nothing is let through unread.
+ */
+export function pushedCommits(input) {
+  const out = [];
+  for (const line of input.split("\n")) {
+    if (line.trim() === "") continue;
+    const parts = /^(\S+) ([0-9a-f]{40,64}) \S+ [0-9a-f]{40,64}$/.exec(line.trim());
+    if (!parts) throw new Refusal(`unreadable line from git: ${line}`);
+    if (/^0+$/.test(parts[2])) continue;
+    out.push({ ref: parts[1], sha: parts[2] });
+  }
+  return out;
+}
+
+/**
+ * The pre-push hook of git: every commit a push sends has a tree with a
+ * passed verdict of this gate. Git names what is pushed, whatever wrote the
+ * command: an alias, a script, a variable, another tool.
+ *
+ * ports: treeOf(sha), readVerdict(tree), gateHash, log(line).
+ * postcondition: 0 when every pushed commit holds; 1, with one line per
+ *                commit that does not, otherwise.
+ */
+export function prePush(input, ports) {
+  const refusals = pushedCommits(input).flatMap(({ ref, sha }) => {
+    const tree = ports.treeOf(sha);
+    const reason = verdictRefusal(ports.readVerdict(tree), tree, ports.gateHash);
+    return reason === null ? [] : [`[gate] push refused: ${ref} (tree ${tree}): ${reason}. Commit the work and run the gate (pnpm gate).`];
+  });
+  refusals.forEach(ports.log);
+  return refusals.length === 0 ? 0 : 1;
+}
+
+// ─── The guard of the session (PreToolUse hook) ─────────────────────────────
+
+/**
+ * precondition:  `call` is the JSON a PreToolUse hook receives; `guard` is
+ *                the `guard` object of delivery-gate.json.
+ * postcondition: what the guard does with the call:
+ *                  { kind: "refuse", reason }  a tool that sends content the
+ *                    gate cannot judge, or a command that goes around the
+ *                    pre-push hook;
+ *                  { kind: "push" }  a command that pushes: the caller lets
+ *                    it through only when the pre-push hook is in place;
+ *                  { kind: "allow" }  anything else.
+ *                The command is read from any tool that carries one, not
+ *                from one tool by its name. The verdict is not judged here:
+ *                git does it at the push, on the commits really sent.
+ */
+export function guardDecision(call, guard) {
+  if (guard.refusedTools.includes(call?.tool_name)) {
+    return {
+      kind: "refuse",
+      reason: `${call.tool_name} sends content the delivery gate cannot judge. Commit, run the gate, and push with git.`,
+    };
+  }
+  const command = call?.tool_input?.command;
+  if (typeof command !== "string") return { kind: "allow" };
+  const bypass = guard.bypass.find((source) => new RegExp(source).test(command));
+  if (bypass !== undefined) {
+    return {
+      kind: "refuse",
+      reason: `the command goes around the pre-push hook of the delivery gate (it matches ${bypass}).`,
+    };
+  }
+  if (guard.push.some((source) => new RegExp(source).test(command))) return { kind: "push" };
+  return { kind: "allow" };
+}
+
+/**
+ * ports: hookProblem() — null when the pre-push hook of the gate is the one
+ *        git will run, else why not; log(line).
+ * postcondition: 0 to let the call through, 2 to block it (the exit code a
+ *                PreToolUse hook blocks on).
+ */
+export function guardHook(call, guard, ports) {
+  const decision = guardDecision(call, guard);
+  if (decision.kind === "allow") return 0;
+  if (decision.kind === "refuse") {
+    ports.log(`Refused: ${decision.reason}`);
+    return 2;
+  }
+  const problem = ports.hookProblem();
+  if (problem === null) return 0;
+  ports.log(`Push refused: the pre-push hook of the delivery gate is not in place (${problem}). Run \`pnpm gate:install\`.`);
+  return 2;
+}
+
+// ─── The run ────────────────────────────────────────────────────────────────
+
+/**
+ * The gate: the checks, then mutation testing of the production lines the
+ * change touches, each operation in its sandbox; a verdict for the tree when
+ * it was committed before the first check and is the same after the last.
+ *
+ * ports:
+ *   log(line)
+ *   headTree()                    the hash of the tree of HEAD
+ *   status()                      `git status --porcelain`, "" when clean
+ *   changedFiles(base)            the files the change adds or modifies
+ *   fileDiff(base, file)          `git diff -U0` of one file
+ *   proveIsolation(profile)       resolves to what the canary proved; rejects
+ *                                 with a Refusal when the sandbox does not hold
+ *   sandboxed(argv, profile)      the exit status of the command (null: none)
+ *   removeReport(path), readReport(path)   the report, or null when absent
+ *   recordVerdict(tree, verdict)
+ *   gateHash, now(), vars         `vars` fills `${name}` in a command
+ *
+ * postcondition: 0 passed (recorded, or not when the work was not committed),
+ *                1 a check failed, a mutant is undetected, the report is
+ *                missing or the tree changed under the checks. A Refusal
+ *                (exit 2) leaves before anything ran or was recorded.
+ */
+export async function runGate(config, ports) {
+  const { log } = ports;
+  const treeAtStart = ports.headTree();
+  const committed = ports.status() === "";
+
+  const profiles = [...new Set([...config.checks.map((check) => check.profile), config.mutation.profile])];
+  for (const profile of profiles) {
+    log(`[gate] sandbox ${profile}: ${await ports.proveIsolation(profile)}`);
+  }
+
+  for (const check of config.checks) {
+    log(`[gate] ${check.name}: ${check.command.join(" ")}  (sandbox: ${check.profile})`);
+    if (ports.sandboxed(fill(check.command, ports.vars), check.profile) !== 0) {
+      log(`[gate] FAILED: ${check.name}`);
+      return 1;
+    }
+  }
+
+  const files = productionFiles(ports.changedFiles(config.base), config.mutation.production);
+  const unsafe = unsafeNames(files);
+  if (unsafe.length > 0) {
+    throw new Refusal(`the mutation tool cannot be given these file names: ${unsafe.join(", ")}`);
+  }
+  let judged = 0;
+  if (files.length === 0) {
+    log("[gate] mutation: the change touches no production line");
+  } else {
+    // The tool mutates the changed files whole; the verdict is on the mutants
+    // that touch a changed line. A line filter given to the tool would drop
+    // the mutants of an expression that starts above the changed line.
+    ports.removeReport(config.mutation.report);
+    const command = [...fill(config.mutation.command, ports.vars), "--mutate", files.join(",")];
+    log(`[gate] mutation: ${command.join(" ")}  (sandbox: ${config.mutation.profile})`);
+    const status = ports.sandboxed(command, config.mutation.profile);
+    const report = ports.readReport(config.mutation.report);
+    if (status !== 0 || report === null) {
+      log("[gate] FAILED: mutation testing did not run to its report");
+      return 1;
+    }
+    const changes = new Map(files.map((file) => [file, hunkRanges(ports.fileDiff(config.base, file))]));
+    const verdict = judgeMutants(report, changes);
+    judged = verdict.judged;
+    for (const mutant of verdict.undetected) {
+      log(`[gate] ${mutant.status}: ${mutant.file}:${mutant.line} ${mutant.mutator} -> ${mutant.replacement.split("\n")[0].slice(0, 80)}`);
+    }
+    if (verdict.undetected.length > 0) {
+      log(
+        `[gate] FAILED: mutation, ${verdict.undetected.length} of ${judged} mutant(s) on the changed lines undetected. ` +
+          "Each needs a test that kills it, or, when no test can tell it from the original, " +
+          "`// Stryker disable next-line <Mutator>: equivalent: <why>` on the line above.",
+      );
+      return 1;
+    }
+    log(`[gate] mutation: ${judged} mutant(s) on the changed lines, all detected`);
+  }
+
+  if (!committed) {
+    log("[gate] passed, not recorded: the work was not committed when the gate started. Commit it and run the gate again.");
+    return 0;
+  }
+  const statusAtEnd = ports.status();
+  if (statusAtEnd !== "" || ports.headTree() !== treeAtStart) {
+    log("[gate] FAILED: the tree is not the one the gate started on. A check wrote tracked files, or a commit was made meanwhile:");
+    for (const line of statusAtEnd.split("\n").filter((entry) => entry !== "")) log(`[gate]   ${line}`);
+    return 1;
+  }
+  ports.recordVerdict(treeAtStart, {
+    tree: treeAtStart,
+    passed: true,
+    gate: ports.gateHash,
+    at: ports.now(),
+    checks: config.checks.map((check) => check.name),
+    mutated_files: files,
+    mutants_judged: judged,
+  });
+  log(`[gate] passed, recorded for tree ${treeAtStart}`);
+  return 0;
 }

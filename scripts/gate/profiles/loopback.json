@@ -1,32 +1,51 @@
 {
-  "description": "The contract of an operation of the delivery gate that runs the test suite (unit, mutation testing), whose tests start servers on a port of the loopback and call them: the offline contract, plus the loopback. On macOS that is every local port, so a service of the host that listens on localhost is reachable; on Linux the loopback is the sandbox's own. Nothing outside the machine is reachable. It reads the worktree and the tools of the machine, writes its outputs in the worktree and in a temporary directory of its own, and talks to no one. It cannot read the credentials of the user, and cannot write what judges it: the settings of Claude Code, the gate, its configuration, or the git directory where verdicts are kept. Variables: ${home} (the user's home), ${worktree}, ${tmp} (created for this operation, removed after it).",
+  "description": "The contract of an operation of the delivery gate that runs the test suite (unit, mutation testing), whose tests start servers on a port of the loopback and call them: the loopback, and nothing outside the machine. On macOS the loopback is every local port, so a service of the host that listens on localhost is reachable; on Linux it is the sandbox's own. It reads the worktree, the git directory of the repository, the gate's checkout, its own temporary directory and the tools PATH names, and nothing else of the user's home. It writes the worktree and its temporary directory, except what judges it or what the gate runs outside the sandbox: the settings of Claude Code, the git directory, the gate and its configuration, and the installed tools (node_modules/.bin, the package store, the sandbox runtime, the mutation tool). Variables: ${home}, ${worktree}, ${repository} (the git directory all worktrees share), ${launcher} (the checkout of the gate that judges), ${tmp} (created for this operation, removed after it), ${toolchain} (the directories of PATH inside the home).",
   "srt": {
-    "network": { "allowedDomains": [], "deniedDomains": [], "allowLocalBinding": true },
+    "network": {
+      "allowedDomains": [],
+      "deniedDomains": [],
+      "allowLocalBinding": true
+    },
     "filesystem": {
       "denyRead": [
-        "${home}/.ssh",
-        "${home}/.aws",
-        "${home}/.gnupg",
-        "${home}/.config/gh",
-        "${home}/.npmrc",
-        "${home}/.netrc",
-        "${home}/.claude",
-        "${home}/.claude.json",
-        "${home}/Library/Keychains"
+        "${home}"
       ],
-      "allowRead": [],
-      "allowWrite": ["${worktree}", "${tmp}"],
+      "allowRead": [
+        "${worktree}",
+        "${repository}",
+        "${launcher}",
+        "${tmp}",
+        "${toolchain}"
+      ],
+      "allowWrite": [
+        "${worktree}",
+        "${tmp}"
+      ],
       "denyWrite": [
         "${worktree}/.claude",
         "${worktree}/.git",
         "${worktree}/delivery-gate.json",
         "${worktree}/stryker.config.json",
-        "${worktree}/scripts/gate"
+        "${worktree}/scripts/gate",
+        "${worktree}/node_modules/.bin",
+        "${worktree}/node_modules/.pnpm",
+        "${worktree}/node_modules/@anthropic-ai",
+        "${worktree}/node_modules/@stryker-mutator"
       ]
     }
   },
   "env": {
-    "pass": ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM"],
-    "set": { "HOME": "${tmp}/home", "TMPDIR": "${tmp}", "CI": "1" }
+    "pass": [
+      "PATH",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "TERM"
+    ],
+    "set": {
+      "HOME": "${tmp}/home",
+      "TMPDIR": "${tmp}",
+      "CI": "1"
+    }
   }
 }

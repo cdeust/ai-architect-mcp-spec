@@ -97,39 +97,6 @@ sent back rather than merged with a follow-up promise.
 - **Mutation survival check.** When adding a test, ask: "what mutation would
   this test fail to catch?" If the answer is "any non-trivial one," the test
   is too weak. The delivery gate asks the same question with Stryker, below.
-
-### The delivery gate
-
-`pnpm gate` runs before a change is pushed: the checks listed in
-`delivery-gate.json` (build, unit, perf), then mutation testing of the
-production files the diff changed (`stryker.config.json`). Every mutant that
-touches a changed line must be detected by a test. One that no test can tell
-from the original is marked on the line above, with its reason:
-`// Stryker disable next-line <Mutator>: equivalent: <why>`.
-
-There are two layers. The hook is the check against a bypass: no delivery
-without a verdict. The sandbox is the defence against what runs: each
-operation of the gate is started in a sandbox of its own
-(`@anthropic-ai/sandbox-runtime`) with the profile `delivery-gate.json` names
-for it, in `scripts/gate/profiles/`. A profile is the contract of the
-operation: `offline` (build, perf) has no network; `loopback` (unit, mutation
-testing) adds the loopback the tests' servers need. Both write only the
-worktree and a temporary directory, cannot read the user's credentials, and
-cannot write `.claude/`, the gate, its configuration or the git directory.
-Before it runs anything, the gate proves the sandbox holds with a canary under
-each profile, and refuses to run when it does not: there is no unsandboxed
-fallback. The sandbox runtime needs Node 22.12 or later, and macOS or Linux.
-
-The gate records its verdict for the committed tree, under the git directory.
-In Claude Code, the `PreToolUse` hook of `.claude/settings.json` refuses a
-`git push`, a `gh pr create` or a GitHub write for a tree without a passed
-verdict; `.claude/skills/deliver/SKILL.md` is the procedure. What the gate
-runs, what counts as production code and what counts as a delivery are in
-`delivery-gate.json`: change that file, not `scripts/gate/`.
-
-Limits: the hook judges the tree of the directory the command runs in, so a
-push aimed at another directory (`git -C <dir> push`) is judged on the wrong
-tree; and the hosted Pipeline does not run the gate yet.
 - **Coverage by package:**
   - `core` / `validation` / `meta-prompting`: contract tests for every public
     surface.
@@ -139,6 +106,67 @@ tree; and the hosted Pipeline does not run the gate yet.
   - `ecosystem-adapters`: unconditional schema-contract pin against the
     live `ai-architect-mcp-codebase` wire shapes (see
     `docs/INTEGRATION-TESTING.md`).
+
+### The delivery gate
+
+`pnpm gate` judges a change before it is pushed. It runs the checks listed
+in `delivery-gate.json` (build, unit, perf), then mutation testing of the
+production files the change touches (`stryker.config.json`). Every mutant
+that touches a changed line must be detected by a test. One that no test can
+tell from the original is marked on the line above, with its reason:
+`// Stryker disable next-line <Mutator>: equivalent: <why>`. A mark without
+that reason does not pass.
+
+A verdict is recorded for the committed tree, under the git directory, when
+the work was committed before the first check and the tree is the same after
+the last. A check that rewrites tracked files (a build whose output is
+committed, such as `packages/mcp-server/dist`) fails the gate: commit the
+rebuilt files first.
+
+Three layers, and what each one holds against:
+
+- **The sandbox, against what a check executes** (dependencies, build
+  scripts, tests). Each operation is started in its own sandbox
+  (`@anthropic-ai/sandbox-runtime`) with the profile `delivery-gate.json`
+  names for it, in `scripts/gate/profiles/`. A profile is the contract of
+  the operation: `offline` (build, perf) has no network; `loopback` (unit,
+  mutation testing) adds the loopback the tests' servers need, which on macOS
+  is every local port. Both read the worktree, the tools and nothing else of
+  the user's home, and write the worktree except what judges them or what
+  the gate runs outside the sandbox: `.claude/`, the gate, its
+  configuration, the git directory, the installed tools. Before it runs
+  anything, the gate tries each of these under each profile with a canary and
+  refuses to run when one succeeds: there is no unsandboxed fallback.
+- **The pre-push hook of git, against a push that skipped the gate.**
+  `pnpm gate:install` puts it in the git directory, for every worktree. Git
+  tells it the commits a push sends, whatever wrote the command (an alias, a
+  script, another tool), and it refuses one whose tree has no passed verdict.
+  It runs the gate of the main checkout and accepts the verdicts of that
+  gate only (a verdict names the hash of the gate's code, configuration and
+  profiles): a change that rewrites the gate is judged by the gate it
+  replaces, run from the main checkout
+  (`node <main>/scripts/gate/gate.mjs run` in the worktree).
+- **The guard of the session, against going around the hook.** The
+  `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
+  while the pre-push hook is not the one git will run, a command that
+  disables it (`--no-verify`, `core.hooksPath`), a write to the repository
+  through the API, and the GitHub tools that send content from their input.
+  `.claude/settings.json` is the one permission file of the repository.
+
+What the gate does not hold against: a session that writes a verdict file by
+hand, or edits the base revision, on purpose. Nothing on the machine of the
+session can: the session can write what the gate writes. The hosted Pipeline
+is what holds there, and it does not run the mutation testing yet. The
+results themselves come from the tree that is judged: a test suite that
+lies passes.
+
+What the gate runs, what counts as production code, what an operation may
+reach and what the guard refuses are in `delivery-gate.json` and
+`scripts/gate/profiles/`: change those files, not `scripts/gate/*.mjs`. The
+decisions are in `gate-lib.mjs`, tested with doubles and inside the gate's
+own mutation perimeter; `gate.mjs` holds the adapters and is tested as a
+program, with a real repository and a real push. The sandbox runtime needs
+Node 22.12 or later, and macOS or Linux.
 
 ---
 

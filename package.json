@@ -16,6 +16,7 @@
     "check:docs": "node scripts/check-doc-claims.mjs",
     "test:watch": "vitest",
     "gate": "node scripts/gate/gate.mjs run",
+    "gate:install": "node scripts/gate/gate.mjs install",
     "test:external-judge": "node --test scripts/external-judge/__tests__/*.test.mjs",
     "lint": "pnpm -r --workspace-concurrency=1 run lint",
     "clean": "pnpm -r clean && node scripts/clean.mjs mcp-server/index.js",

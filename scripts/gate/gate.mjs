@@ -1,221 +1,344 @@
 #!/usr/bin/env node
 /**
- * The delivery gate: nothing leaves the machine before its tests and the
- * mutation testing of the lines it changed have passed.
+ * The delivery gate, as a program: the adapters of gate-lib.mjs (git, the
+ * sandbox runtime, files) and the commands that use them. The decisions are
+ * in gate-lib.mjs; nothing is decided here.
  *
- *   node scripts/gate/gate.mjs run    run the checks of delivery-gate.json,
- *                                     then Stryker on the production lines
- *                                     the diff with `base` changed, each in
- *                                     a sandbox of its own (profiles/); record
- *                                     the verdict for the committed tree.
- *   node scripts/gate/gate.mjs hook   PreToolUse hook (.claude/settings.json):
- *                                     refuse a delivery whose tree has no
- *                                     passed verdict. Exit 2 blocks the call.
+ *   gate.mjs run        judge the work in the current directory (pnpm gate)
+ *   gate.mjs pre-push   the pre-push hook of git: refuse a push of a commit
+ *                       whose tree has no passed verdict of this gate
+ *   gate.mjs hook       the PreToolUse hook of Claude Code: refuse what goes
+ *                       around the pre-push hook (exit 2 blocks the call)
+ *   gate.mjs install    put the pre-push hook in the git directory
+ *   gate.mjs hash       print the hash of this gate (code, configuration,
+ *                       profiles)
  *
- * A verdict is kept under the git directory, by the hash of the tree it was
- * computed on, so it holds for exactly the files that were tested: a later
- * edit gives another tree, which has no verdict. It is recorded only when
- * nothing is uncommitted, since the tree is then what the checks ran on.
+ * The gate that judges is this file's own checkout (the launcher), not the
+ * tree it judges: its configuration, its profiles, its canary and its
+ * sandbox runtime are read from beside this file. The pre-push hook runs the
+ * gate of the main checkout and accepts the verdicts of that gate only, so
+ * a change that rewrites the gate is judged by the gate it replaces.
  *
- * Two layers. The hook is the check against a bypass: no delivery without
- * a verdict. The sandbox is the defence against what runs: an operation has
- * the access its profile gives it and no other, and it cannot write the
- * settings, the gate or the verdicts. The verdict is written by this
- * process, outside the sandbox.
- *
- * Exit codes of `run`: 0 passed, 1 a check or a mutant failed, 2 refused
- * (configuration, repository state, or a sandbox that does not hold).
+ * Exit codes: 0 passed or let through; 1 failed or refused by git's hook;
+ * 2 refused (configuration, repository state, a sandbox that does not hold,
+ * or a call the PreToolUse hook blocks).
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { changedLines, productionChanges, judgeMutants, isDelivery, resolveProfile } from "./gate-lib.mjs";
+import { delimiter, dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Refusal, canaryPlan, guardHook, prePush, resolveProfile, runGate, validateConfig } from "./gate-lib.mjs";
 
-function git(args, cwd) {
-  const out = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-  if (out.status !== 0) throw new Error(`git ${args.join(" ")}: ${out.stderr.trim()}`);
-  return out.stdout;
+const HERE = dirname(fileURLToPath(import.meta.url));
+/** The checkout this gate belongs to: its files judge, they are not judged. */
+const LAUNCHER = resolve(HERE, "..", "..");
+const GATE_FILES = ["delivery-gate.json", "stryker.config.json", "scripts/gate/gate.mjs", "scripts/gate/gate-lib.mjs", "scripts/gate/canary.mjs"];
+const PROFILES = join(HERE, "profiles");
+
+const inside = (path, root) => path === root || path.startsWith(root + sep);
+
+/**
+ * git, by its absolute path, found on PATH outside the tree that is judged:
+ * a check may write `node_modules/.bin`, which package managers put first on
+ * PATH, and what it leaves there must never be run outside the sandbox.
+ */
+function findGit(judgedRoots) {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (dir === "" || judgedRoots.some((root) => inside(resolve(dir), root))) continue;
+    for (const name of process.platform === "win32" ? ["git.exe"] : ["git"]) {
+      const candidate = join(dir, name);
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+    }
+  }
+  throw new Refusal("git is not on PATH outside the tree that is judged");
 }
 
-function verdictPath(cwd) {
-  const tree = git(["rev-parse", "HEAD^{tree}"], cwd).trim();
-  const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd).trim();
-  return { tree, path: join(common, "delivery-gate", `${tree}.json`) };
+function makeGit(gitPath, cwd) {
+  return (...args) => {
+    const out = spawnSync(gitPath, args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    if (out.status !== 0) throw new Refusal(`git ${args.join(" ")}: ${(out.stderr ?? "").trim() || out.error?.message}`);
+    return out.stdout;
+  };
 }
 
-function loadConfig(root) {
-  return JSON.parse(readFileSync(join(root, "delivery-gate.json"), "utf8"));
+/** The repository the current directory is in, read without trusting its tree. */
+function repository(cwd) {
+  // The roots are not known before git answers: the first call excludes the
+  // current directory and the launcher, which is enough to find them.
+  const git = makeGit(findGit([resolve(cwd), LAUNCHER]), cwd);
+  const root = realpathSync(git("rev-parse", "--show-toplevel").trim());
+  const common = realpathSync(git("rev-parse", "--path-format=absolute", "--git-common-dir").trim());
+  return { git, root, common };
 }
+
+function loadConfig() {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(join(LAUNCHER, "delivery-gate.json"), "utf8"));
+  } catch (error) {
+    throw new Refusal(`delivery-gate.json cannot be read (${error.message})`);
+  }
+  return validateConfig(raw);
+}
+
+/** One hash for everything that judges: a verdict names the gate that wrote it. */
+function gateHash() {
+  const hash = createHash("sha256");
+  const profiles = readdirSync(PROFILES).filter((name) => name.endsWith(".json")).sort();
+  for (const file of [...GATE_FILES, ...profiles.map((name) => `scripts/gate/profiles/${name}`)]) {
+    hash.update(file).update("\0").update(readFileSync(join(LAUNCHER, file))).update("\0");
+  }
+  return hash.digest("hex");
+}
+
+const verdictPath = (common, tree) => join(common, "delivery-gate", `${tree}.json`);
+
+function readVerdict(common, tree) {
+  try {
+    return JSON.parse(readFileSync(verdictPath(common, tree), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// ─── The sandbox ────────────────────────────────────────────────────────────
+
+/** The sandbox runtime of the launcher, as the file node runs. */
+function sandboxRuntime() {
+  const pkgDir = join(LAUNCHER, "node_modules", "@anthropic-ai", "sandbox-runtime");
+  let bin;
+  try {
+    bin = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).bin.srt;
+  } catch {
+    throw new Refusal("the sandbox runtime is not installed in the gate's checkout (pnpm install)");
+  }
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 12)) {
+    throw new Refusal(`the sandbox runtime needs Node 22.12 or later (this is ${process.versions.node})`);
+  }
+  return realpathSync(join(pkgDir, bin));
+}
+
+const kindOf = (path) => {
+  try {
+    return statSync(path).isDirectory() ? "dir" : "file";
+  } catch {
+    return null;
+  }
+};
 
 /**
  * One sandbox per operation: a temporary directory of its own, the profile
  * resolved for it, the sandbox runtime around the command. The operation
  * gets the environment of the profile and nothing else of the host.
- * Returns the exit status of the command (null when it could not start).
  */
-function sandboxed(command, profileName, root, { quiet = false } = {}) {
-  const srt = join(root, "node_modules", ".bin", "srt");
-  if (!existsSync(srt)) throw new Error("the sandbox runtime is not installed (pnpm install)");
-  const profile = JSON.parse(readFileSync(join(root, "scripts", "gate", "profiles", `${profileName}.json`), "utf8"));
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "gate-sb-")));
-  try {
-    const tmp = join(dir, "tmp");
-    mkdirSync(join(tmp, "home"), { recursive: true });
-    const { srt: settings, env } = resolveProfile(profile, { home: homedir(), worktree: root, tmp }, process.env);
-    const settingsPath = join(dir, "srt.json");
-    writeFileSync(settingsPath, JSON.stringify(settings));
-    if (!quiet) console.error(`\n[gate] ${command}  (sandbox: ${profileName})`);
-    const out = spawnSync(srt, ["--settings", settingsPath, "-c", command], {
-      cwd: root,
-      env,
-      stdio: quiet ? ["ignore", "pipe", "pipe"] : "inherit",
-      encoding: "utf8",
-    });
-    return { status: out.status, stdout: out.stdout ?? "" };
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+function makeSandbox({ root, common }) {
+  const runtime = sandboxRuntime();
+  const loadProfile = (name) => {
+    try {
+      return JSON.parse(readFileSync(join(PROFILES, `${name}.json`), "utf8"));
+    } catch (error) {
+      throw new Refusal(`profile ${name} cannot be read (${error.message})`);
+    }
+  };
+  // What an operation may read of the user's home: the tools PATH names there.
+  const home = realpathSync(homedir());
+  const toolchain = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((dir) => dir !== "" && existsSync(dir))
+    .map((dir) => realpathSync(dir))
+    .filter((dir) => inside(dir, home) && !inside(dir, root));
+
+  const within = (profileName, use) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "gate-sb-")));
+    try {
+      const tmp = join(dir, "tmp");
+      mkdirSync(join(tmp, "home"), { recursive: true });
+      const vars = { home, worktree: root, repository: common, launcher: LAUNCHER, tmp, toolchain };
+      const resolved = resolveProfile(loadProfile(profileName), vars, process.env);
+      const settings = join(dir, "srt.json");
+      writeFileSync(settings, JSON.stringify(resolved.srt));
+      const start = (argv, stdio) =>
+        spawnSync(process.execPath, [runtime, "--settings", settings, "--", ...argv], {
+          cwd: root,
+          env: resolved.env,
+          stdio,
+          encoding: "utf8",
+        });
+      return use(resolved, start);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  const sandboxed = (argv, profileName) => within(profileName, (_, start) => start(argv, "inherit").status);
+
+  /**
+   * The proof that the sandbox holds, before anything is run in it: under
+   * the profile, the canary tries each thing the profile denies. One success
+   * and the gate refuses to run: there is no unsandboxed fallback.
+   */
+  const proveIsolation = async (profileName) => {
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "gate-canary-")));
+    const server = createServer((socket) => socket.destroy());
+    await new Promise((done) => server.listen(0, "127.0.0.1", done));
+    let plan = { created: [] };
+    try {
+      return within(profileName, (resolved, start) => {
+        plan = canaryPlan(resolved.srt, { kindOf, outside, hostPort: server.address().port });
+        const out = start([process.execPath, join(HERE, "canary.mjs"), ...plan.args], ["ignore", "pipe", "pipe"]);
+        if (out.status !== 0) {
+          throw new Refusal(
+            `the sandbox does not hold under profile ${profileName}: ${(out.stdout ?? "").trim() || (out.stderr ?? "").trim() || "the canary could not run"}`,
+          );
+        }
+        const { writes, reads, port } = plan.proves;
+        return `${writes} write(s) and ${reads} read(s) the profile denies were refused${port ? ", and the host's port was out of reach" : ""}`;
+      });
+    } finally {
+      server.close();
+      for (const file of plan.created) rmSync(file, { force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  };
+
+  return { sandboxed, proveIsolation };
 }
 
-/**
- * The proof that the sandbox holds, before anything is run in it: under the
- * profile, the canary tries to write outside its directories and inside the
- * protected ones, to read a file of the user's home that the profile denies,
- * and, unless the profile grants the loopback, to reach a port of the host. One success and the gate refuses to run:
- * there is no unsandboxed fallback.
- */
-async function proveIsolation(profileName, root) {
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), "gate-canary-")));
-  const inside = join(root, ".claude", "gate-canary");
-  const secretDir = join(homedir(), ".ssh");
-  const server = createServer((socket) => socket.destroy());
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const args = ["--write", join(outside, "x"), "--write", inside];
-    // A profile that grants the loopback grants this port with it: only a
-    // profile without it promises that the host's ports are out of reach.
-    const profile = JSON.parse(readFileSync(join(root, "scripts", "gate", "profiles", `${profileName}.json`), "utf8"));
-    if (profile.srt.network.allowLocalBinding !== true) args.push("--connect", String(server.address().port));
-    // A file the profile denies, when the user has one: reading a directory
-    // entry proves nothing about the files in it.
-    const secret = existsSync(secretDir) ? readdirSync(secretDir).map((n) => join(secretDir, n)).find((p) => statSync(p).isFile()) : undefined;
-    if (secret) args.push("--read", secret);
-    const out = sandboxed(`node scripts/gate/canary.mjs ${args.map((a) => `'${a}'`).join(" ")}`, profileName, root, { quiet: true });
-    if (out.status !== 0) {
-      throw new Error(`the sandbox does not hold under profile ${profileName}: ${out.stdout.trim() || "the canary could not run"}`);
-    }
-  } finally {
-    server.close();
-    rmSync(outside, { recursive: true, force: true });
-    rmSync(inside, { force: true });
-  }
-}
+// ─── The commands ───────────────────────────────────────────────────────────
+
+const log = (line) => console.error(line);
 
 async function run() {
-  const root = git(["rev-parse", "--show-toplevel"], process.cwd()).trim();
-  const config = loadConfig(root);
+  const config = loadConfig();
+  const repo = repository(process.cwd());
+  const { git, root, common } = repo;
+  const { sandboxed, proveIsolation } = makeSandbox(repo);
+  // The change: against the point where the work left `base`, uncommitted
+  // changes included. Names come NUL-separated, so git quotes none of them.
+  const diff = (...args) => git("diff", "--no-color", "--no-ext-diff", "--merge-base", config.base, ...args);
+  return runGate(config, {
+    log,
+    headTree: () => git("rev-parse", "HEAD^{tree}").trim(),
+    status: () => git("status", "--porcelain").trim(),
+    changedFiles: () => diff("--name-only", "--diff-filter=d", "-z").split("\0").filter((name) => name !== ""),
+    fileDiff: (_, file) => diff("-U0", "--", file),
+    proveIsolation,
+    sandboxed,
+    removeReport: (path) => rmSync(join(root, path), { force: true }),
+    readReport: (path) => {
+      try {
+        return JSON.parse(readFileSync(join(root, path), "utf8"));
+      } catch {
+        return null;
+      }
+    },
+    recordVerdict: (tree, verdict) => {
+      mkdirSync(join(common, "delivery-gate"), { recursive: true });
+      writeFileSync(verdictPath(common, tree), JSON.stringify(verdict, null, 2));
+    },
+    gateHash: gateHash(),
+    now: () => new Date().toISOString(),
+    vars: { launcher: LAUNCHER },
+  });
+}
 
-  const profiles = new Set([...config.checks.map((c) => c.profile), config.mutation.profile]);
-  for (const profile of profiles) await proveIsolation(profile, root);
-  console.error(`[gate] sandbox: isolation proved for profile(s) ${[...profiles].join(", ")}`);
+function runPrePush() {
+  const { git, common } = repository(process.cwd());
+  return prePush(readFileSync(0, "utf8"), {
+    treeOf: (sha) => git("rev-parse", `${sha}^{tree}`).trim(),
+    readVerdict: (tree) => readVerdict(common, tree),
+    gateHash: gateHash(),
+    log,
+  });
+}
 
-  for (const check of config.checks) {
-    if (sandboxed(check.command, check.profile, root).status !== 0) {
-      console.error(`[gate] FAILED: ${check.name}`);
-      return 1;
-    }
+const SHIM = [
+  "#!/bin/sh",
+  "# The delivery gate (scripts/gate): refuses a push of a commit whose tree has",
+  "# no passed verdict. It runs the gate of the main checkout, whatever the",
+  "# worktree the push is made from. Written by `pnpm gate:install`.",
+  'exec node "$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/gate/gate.mjs" pre-push "$@"',
+  "",
+].join("\n");
+
+/** null when git will run the gate's pre-push hook in this repository, else why not. */
+function hookProblem({ git, common }) {
+  let hooksPath = "";
+  try {
+    hooksPath = git("config", "--get", "core.hooksPath").trim();
+  } catch {
+    // not set: git reads the hooks of the git directory
   }
-
-  // The lines this work changes: the diff with the point where it left
-  // `base`, uncommitted changes included.
-  const diff = git(["diff", "-U0", "--src-prefix=a/", "--dst-prefix=b/", "--merge-base", config.base], root);
-  const changes = productionChanges(changedLines(diff), config.mutation.production);
-  let judged = 0;
-  if (changes.size === 0) {
-    console.error("[gate] mutation: the diff changes no production line");
-  } else {
-    // Stryker mutates the changed files whole; the verdict is on the mutants
-    // that touch a changed line. A line filter given to Stryker would drop
-    // the mutants of an expression that starts above the changed line.
-    const reportPath = join(root, config.mutation.report);
-    rmSync(reportPath, { force: true });
-    const mutation = sandboxed(`${config.mutation.command} --mutate ${[...changes.keys()].join(",")}`, config.mutation.profile, root);
-    if (mutation.status !== 0 || !existsSync(reportPath)) {
-      console.error("[gate] FAILED: mutation testing did not run to its report");
-      return 1;
-    }
-    const verdict = judgeMutants(JSON.parse(readFileSync(reportPath, "utf8")), changes);
-    judged = verdict.judged;
-    for (const m of verdict.undetected) {
-      console.error(`[gate] ${m.status}: ${m.file}:${m.line} ${m.mutator} -> ${m.replacement.split("\n")[0].slice(0, 80)}`);
-    }
-    if (verdict.undetected.length > 0) {
-      console.error(
-        `[gate] FAILED: mutation, ${verdict.undetected.length} of ${judged} mutant(s) on the changed lines undetected. ` +
-          "Each needs a test that kills it, or, when no test can tell it from the original, " +
-          "`// Stryker disable next-line <Mutator>: equivalent: <why>`.",
-      );
-      return 1;
-    }
-    console.error(`[gate] mutation: ${judged} mutant(s) on the changed lines, all detected`);
+  if (hooksPath !== "") return `core.hooksPath is set to ${hooksPath}`;
+  try {
+    return readFileSync(join(common, "hooks", "pre-push"), "utf8") === SHIM ? null : "another pre-push hook is installed";
+  } catch {
+    return "no pre-push hook is installed";
   }
+}
 
-  if (git(["status", "--porcelain"], root).trim() !== "") {
-    console.error("[gate] passed, not recorded: commit the work and run the gate again to record the verdict.");
-    return 0;
+function install() {
+  const repo = repository(process.cwd());
+  const path = join(repo.common, "hooks", "pre-push");
+  if (existsSync(path) && readFileSync(path, "utf8") !== SHIM) {
+    throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);
   }
-  const { tree, path } = verdictPath(root);
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(
-    path,
-    JSON.stringify({ tree, passed: true, at: new Date().toISOString(), checks: config.checks.map((c) => c.name), mutated_files: [...changes.keys()], mutants_judged: judged }, null, 2),
-  );
-  console.error(`[gate] passed, recorded for tree ${tree}`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, SHIM);
+  chmodSync(path, 0o755);
+  const problem = hookProblem(repo);
+  if (problem !== null) throw new Refusal(`the pre-push hook is written, but git will not run it: ${problem}`);
+  log(`[gate] pre-push hook installed: ${path}`);
   return 0;
 }
 
-function hook() {
+/** The PreToolUse hook. Once the call is read, any failure blocks it. */
+function runHook() {
   let call;
   try {
     call = JSON.parse(readFileSync(0, "utf8"));
   } catch {
     return 0; // not a hook payload: nothing to judge
   }
-  const cwd = call.cwd ?? process.cwd();
-  let config;
+  let repo;
   try {
-    config = loadConfig(git(["rev-parse", "--show-toplevel"], cwd).trim());
+    repo = repository(call.cwd ?? process.cwd());
   } catch {
-    return 0; // not this repository, or no gate configured there
+    return 0; // not in a git repository: nothing of this project can leave from here
   }
-  if (!isDelivery(call, config.delivers)) return 0;
-  try {
-    const { tree, path } = verdictPath(cwd);
-    if (existsSync(path) && JSON.parse(readFileSync(path, "utf8")).passed === true) return 0;
-    console.error(
-      `Delivery refused: the tree ${tree} has no passed verdict of the delivery gate. ` +
-        "Commit the work, run `pnpm gate` (tests, then mutation testing of the changed lines), and deliver again. " +
-        "See .claude/skills/deliver/SKILL.md.",
-    );
-  } catch (error) {
-    console.error(`Delivery refused: the delivery gate could not read the repository (${error.message}).`);
-  }
-  return 2;
+  // Another repository than the one of this gate: not this gate's to guard.
+  if (repo.common !== repository(LAUNCHER).common) return 0;
+  return guardHook(call, loadConfig().guard, { hookProblem: () => hookProblem(repo), log });
 }
 
+const COMMANDS = { run, "pre-push": runPrePush, hook: runHook, install, hash: () => (console.log(gateHash()), 0) };
+// What a failure of the command itself exits with: a hook blocks on it.
+const ON_ERROR = { run: 2, "pre-push": 1, hook: 2, install: 2, hash: 2 };
+
 const mode = process.argv[2];
-if (mode === "run") {
-  try {
-    process.exitCode = await run();
-  } catch (error) {
-    console.error(`[gate] refused: ${error.message}`);
-    process.exitCode = 2;
-  }
-}
-else if (mode === "hook") process.exitCode = hook();
-else {
-  console.error("usage: gate.mjs run | hook");
+if (!Object.hasOwn(COMMANDS, mode)) {
+  log("usage: gate.mjs run | pre-push | hook | install | hash");
   process.exitCode = 2;
+} else {
+  try {
+    process.exitCode = await COMMANDS[mode]();
+  } catch (error) {
+    log(`[gate] refused: ${error.message}`);
+    process.exitCode = ON_ERROR[mode];
+  }
 }
