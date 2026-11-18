@@ -68,10 +68,7 @@ export function validateConfig(raw) {
   expression(guard.git, "guard.git");
   // `${git}` in an expression of the guard stands for `guard.git`: git as a
   // command, not as a word of a message.
-  const written = (source, where) => {
-    if (!isText(source)) fail(`${where} must be a regular expression`);
-    expression(fill(source, { git: guard.git }), where);
-  };
+  const written = (source, where) => expression(fill(source, { git: guard.git }), where);
   if (!Array.isArray(guard.push)) fail("guard.push must be a list");
   guard.push.forEach((source, index) => written(source, `guard.push[${index}]`));
   if (!Array.isArray(guard.refuse)) fail("guard.refuse must be a list");
@@ -196,7 +193,9 @@ export function judgeMutants(report, changes) {
  *                absolute; `inside(dir)` whether it lies in a tree that is
  *                judged or that an operation writes.
  * postcondition: PATH for the sandbox runtime and for the operation: the
- *                absolute entries that are in none of those trees, in order.
+ *                absolute entries that are in none of those trees, in order
+ *                (an empty entry, which stands for the current directory, is
+ *                not absolute).
  *                The runtime starts programs by name before the sandbox is
  *                up; an entry a check can write, or a relative one read from
  *                the copy, would hand it a program of the judged tree to run
@@ -205,7 +204,7 @@ export function judgeMutants(report, changes) {
 export function safePath(path, separator, { isAbsolute, inside }) {
   return path
     .split(separator)
-    .filter((dir) => dir !== "" && isAbsolute(dir) && !inside(dir))
+    .filter((dir) => isAbsolute(dir) && !inside(dir))
     .join(separator);
 }
 
