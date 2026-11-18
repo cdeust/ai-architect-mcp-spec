@@ -12,8 +12,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  PRD_CONTEXT_CONFIGS,
-  PRDContextSchema,
   CAPABILITIES,
   STRATEGY_TIERS,
   SectionTypeSchema,
@@ -25,6 +23,7 @@ import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { REPORT_PAGING_DESCRIPTION, reportPageResult } from "./page-validation-report.js";
 import { registerFeedbackTools } from "./feedback-tools.js";
+import { registerContextTools } from "./context-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
 import {
@@ -198,23 +197,9 @@ const toolCheckHealth = server.tool(
   },
 );
 
-// ─── Tool 4: get_prd_context_info ────────────────────────────────────────────
+// ─── Tool 4: get_prd_context_info (context-tools.ts) ─────────────────────────
 
-const toolGetPrdContextInfo = server.tool(
-  "get_prd_context_info",
-  "Get configuration for a specific PRD context type",
-  {
-    // The kinds of PRD, from the one list start_pipeline reads too.
-    context: PRDContextSchema.describe("The PRD context type"),
-  },
-  { readOnlyHint: true },
-  async ({ context }) => {
-    const config = PRD_CONTEXT_CONFIGS[context];
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(config, null, 2) }],
-    };
-  },
-);
+const contextHandles = registerContextTools(server);
 
 // ─── Tool 5: list_available_strategies ───────────────────────────────────────
 
@@ -414,7 +399,7 @@ const ALL_TOOL_HANDLES: Record<string, RegisteredTool> = {
   get_config: toolGetConfig,
   read_skill_config: toolReadSkillConfig,
   check_health: toolCheckHealth,
-  get_prd_context_info: toolGetPrdContextInfo,
+  ...contextHandles,
   list_available_strategies: toolListStrategies,
   validate_prd_section: toolValidateSection,
   validate_prd_document: toolValidateDocument,
