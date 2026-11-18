@@ -30,7 +30,7 @@ import { quoted } from "./contradictory-requirement-rules.js";
 // criterion, a name that opens a sentence is not checked: its capital may be
 // the sentence's ("External links open in a new tab"). Determiners and
 // number words are not names, nor are the RFC 2119 keywords written in
-// capitals. A finding quotes at most 24
+// capitals or opening a sentence. A finding quotes at most 24
 // characters of the control, as contradictory_requirements does.
 //
 // The finding is blocking but not critical: what is a name is a heuristic (a
@@ -173,10 +173,19 @@ const REQUIREMENT_KEYWORDS: ReadonlySet<string> = new Set([
   "facultatives",
 ]);
 
-/** Whether a name, as written, is not a name: a determiner, a number word, or a keyword in capitals. */
-function isNotAName(name: string, key: string): boolean {
+/**
+ * Whether a name, as written, is not a name: a determiner, a number word, a
+ * keyword in capitals, or a keyword that opens a sentence. A keyword's
+ * capital at a sentence start is the sentence's, so "- FR-001: Should link
+ * to the docs." states a requirement and names no "Should" link; read as a
+ * name, it gave the document a defined name, and every named control of its
+ * criteria was then reported (review 1 of #348, note 2). Inside a sentence a
+ * keyword in title case is still a name ("the Recommended tab").
+ */
+function isNotAName(name: string, key: string, atSentenceStart: boolean): boolean {
   if (NOT_A_NAME.has(key)) return true;
-  return REQUIREMENT_KEYWORDS.has(key) && name === name.toUpperCase();
+  if (!REQUIREMENT_KEYWORDS.has(key)) return false;
+  return atSentenceStart || name === name.toUpperCase();
 }
 
 /** A noun as written lowercase or capitalized ("button", "Button"), as one alternation. */
@@ -307,8 +316,8 @@ export function namedControlsIn(text: string): NamedControl[] {
     for (const match of read.matchAll(pattern)) {
       const name = match[1]!;
       const key = name.toLowerCase();
-      if (isNotAName(name, key)) continue;
       const first = pattern === EN_CONTROL && opensSentence(read, match.index);
+      if (isNotAName(name, key, first)) continue;
       out.push({ at: match.index, control: { key, written: match[0], opensSentence: first } });
     }
   }

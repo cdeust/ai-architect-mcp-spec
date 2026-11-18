@@ -149,6 +149,24 @@ describe("consistent_control_names (#118)", () => {
     );
   });
 
+  it("reads every English keyword in capitals as no name", () => {
+    // Review 1 of #348, note 3: only MUST had a test.
+    for (const keyword of ["MUST", "SHALL", "SHOULD", "MAY", "REQUIRED", "RECOMMENDED", "OPTIONAL"]) {
+      expect(namedControlsIn(`The toolbar shows the ${keyword} button.`), keyword).toEqual([]);
+    }
+  });
+
+  it("reads a keyword in title case that opens a sentence as no name", () => {
+    // Review 1 of #348, note 2: "Should link" was read as a control named
+    // "should", so a document whose requirements name no control had a
+    // defined name and its criterion's "Help button" was reported.
+    expect(namedControlsIn("Should link to the docs.")).toEqual([]);
+    expect(namedControlsIn("The page loads. May link to the docs.")).toEqual([]);
+    expect(messageOf("- FR-001: Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    // A keyword in title case inside a sentence is still a name.
+    expect(namedControlsIn("Then the Recommended tab opens.").map((c) => c.key)).toEqual(["recommended"]);
+  });
+
   it("reads a decomposed accent as part of its name", () => {
     // Review 1 of #347, note 3: NAME stopped at U+0301, so the NFD keyword
     // "RECOMMANDE\u0301" gave the key "recommande" and was read as a control.
