@@ -1,6 +1,7 @@
 import type { PipelineState } from "./core-state.js";
 import { PipelineStateSchema } from "./core-state.js";
 import { MAX_PIPELINE_ERRORS } from "./bounded-io.js";
+import type { PRDContext } from "@prd-gen/core";
 
 export function newPipelineState(input: {
   run_id: string;
@@ -15,12 +16,21 @@ export function newPipelineState(input: {
    * source: missing-Cortex bug found 2026-04-26.
    */
   skip_preflight?: boolean;
+  /**
+   * The PRD context the host declares at start, sized from the verification
+   * the request needs (#119); the host may ask its advisor model. When set,
+   * context_detection keeps it and reads no trigger word; when absent, the
+   * context is detected from the description or asked, as before. Its
+   * clarification range and sections are the calibrated ones of
+   * PRD_CONTEXT_CONFIGS: the host picks a size, it sets no number.
+   */
+  prd_context?: PRDContext | null;
 }): PipelineState {
   const now = new Date().toISOString();
   return PipelineStateSchema.parse({
     run_id: input.run_id,
     current_step: "banner",
-    prd_context: null,
+    prd_context: input.prd_context ?? null,
     feature_description: input.feature_description,
     codebase_path: input.codebase_path ?? null,
     codebase_graph_path: null,

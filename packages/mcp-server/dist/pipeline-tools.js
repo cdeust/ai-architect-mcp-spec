@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { newPipelineState, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
-import { SectionTypeSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
+import { SectionTypeSchema, PRDContextSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
 import { getEvidenceRepo } from "./evidence-db-path.js";
@@ -188,7 +188,10 @@ export function registerPipelineTools(server) {
             .boolean()
             .optional()
             .describe("If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall."),
-    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight }) => {
+        prd_context: PRDContextSchema
+            .optional()
+            .describe("Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds). Sets the clarification rounds and sections from the calibrated values get_prd_context_info returns for that context. Omit it to detect the context from feature_description or ask the user."),
+    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
         // structured, retryable error rather than hang or grow unbounded — the
@@ -222,6 +225,7 @@ export function registerPipelineTools(server) {
             feature_description,
             codebase_path: codebase_path ?? null,
             skip_preflight: skip_preflight ?? false,
+            prd_context: prd_context ?? null,
         });
         // B1 — Wire retry_policy from composition root (Curie A7).
         // The reducer (section-generation.ts) reads state.retry_policy and never
