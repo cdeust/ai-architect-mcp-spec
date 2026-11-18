@@ -85,8 +85,11 @@ class VerdictOfRunTests(unittest.TestCase):
         self.assertIsNone(verdict.verdict_of_run([quoted], RUN))
 
     def test_the_last_verdict_of_the_run_is_reported(self):
+        # Same updated_at: the resolver's max() over (updated_at, verdict)
+        # picks block whatever the list order (note 1 of review 1 of #362).
         rows = [comment("Verdict: block"), comment("Verdict: approve")]
-        self.assertEqual(verdict.verdict_of_run(rows, RUN), "approve")
+        self.assertEqual(verdict.verdict_of_run(rows, RUN), "block")
+        self.assertEqual(verdict.verdict_of_run(rows[::-1], RUN), "block")
         one = [comment("Verdict: approve\nVerdict: block")]
         edited = [
             comment("Verdict: block", updated="2026-11-18T17:00:00Z"),
@@ -166,8 +169,12 @@ class ResolverParityTests(unittest.TestCase):
         try:
             ns["_review_approves"](360, HEAD, REPO, Api())
         except ns["PostMergeError"] as error:
-            return "has not posted a verdict" not in str(error)
-        return True
+            if "has not posted a verdict" in str(error):
+                return None
+            if "verdict is block" in str(error):
+                return "block"
+            raise
+        return "approve"
 
     def test_every_case_agrees_with_the_resolver(self):
         cases = {
@@ -206,11 +213,24 @@ class ResolverParityTests(unittest.TestCase):
                 comment("Verdict: block", updated="2026-11-18T17:00:00Z"),
                 comment("Verdict: approve", updated="2026-11-18T16:00:00Z"),
             ],
+            "edited later": [
+                comment("Verdict: block", updated="2026-11-18T16:00:00Z"),
+                comment("Verdict: approve", updated="2026-11-18T17:00:00Z"),
+            ],
+            "same instant, block first": [
+                comment("Verdict: block"),
+                comment("Verdict: approve"),
+            ],
+            "same instant, approve first": [
+                comment("Verdict: approve"),
+                comment("Verdict: block"),
+            ],
         }
         for name, rows in cases.items():
             with self.subTest(name):
+                # The verdict itself agrees, not only whether one was found.
                 self.assertEqual(
-                    verdict.verdict_of_run(rows, RUN) is not None,
+                    verdict.verdict_of_run(rows, RUN),
                     self.resolver_reads_a_verdict(rows),
                 )
 
@@ -285,10 +305,13 @@ class GhApiTests(unittest.TestCase):
                     unittest.mock.patch.dict(os.environ, env),
                     unittest.mock.patch.object(
                         verdict.subprocess, "run", side_effect=error
-                    ),
+                    ) as run,
+                    unittest.mock.patch.object(verdict.time, "sleep") as sleep,
                     self.assertRaises(type(error)),
                 ):
                     verdict.main()
+                self.assertEqual(run.call_count, verdict.READ_ATTEMPTS)
+                self.assertEqual(sleep.call_count, verdict.READ_ATTEMPTS - 1)
 
     @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
     def test_the_jq_filter_keeps_login_type_and_body(self):
@@ -311,6 +334,59 @@ class GhApiTests(unittest.TestCase):
         )
 
 
+class ReadVerdictTests(unittest.TestCase):
+    """A verdict listed late or a failed call does not fail the run (note 2 of #362)."""
+
+    def run_reads(self, replies):
+        calls, sleeps = [], []
+
+        def read():
+            calls.append(1)
+            reply = replies[len(calls) - 1]
+            if isinstance(reply, BaseException):
+                raise reply
+            return reply
+
+        with redirect_stdout(StringIO()):
+            found = verdict.read_verdict(read, RUN, sleeps.append)
+        return found, len(calls), sleeps
+
+    def test_a_verdict_on_the_first_read_is_read_once(self):
+        found, calls, sleeps = self.run_reads([[review()]])
+        self.assertEqual((found, calls, sleeps), ("approve", 1, []))
+
+    def test_a_verdict_listed_late_is_found_on_a_later_read(self):
+        late = [[comment(PROGRESS_ONLY, link=False)], [], [review()]]
+        found, calls, sleeps = self.run_reads(late)
+        self.assertEqual(found, "approve")
+        self.assertEqual(calls, verdict.READ_ATTEMPTS)
+        self.assertEqual(sleeps, [verdict.READ_RETRY_SECONDS] * 2)
+
+    def test_a_failed_or_slow_call_is_read_again(self):
+        for error in (
+            subprocess.CalledProcessError(1, "gh"),
+            subprocess.TimeoutExpired("gh", 60),
+        ):
+            with self.subTest(type(error).__name__):
+                found, calls, _ = self.run_reads([error, [review()]])
+                self.assertEqual((found, calls), ("approve", 2))
+
+    def test_no_verdict_after_every_read_is_none(self):
+        found, calls, sleeps = self.run_reads([[], [], []])
+        self.assertIsNone(found)
+        self.assertEqual(calls, verdict.READ_ATTEMPTS)
+        self.assertEqual(len(sleeps), verdict.READ_ATTEMPTS - 1)
+
+    def test_the_last_failure_is_raised(self):
+        error = subprocess.CalledProcessError(1, "gh")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_reads([[], [], error])
+
+    def test_a_protocol_error_is_not_read_again(self):
+        with self.assertRaises(verdict.VerdictError):
+            self.run_reads([verdict.VerdictError("protocol"), [review()]])
+
+
 class CliTests(unittest.TestCase):
     def invoke(self, rows):
         env = {"GH_REPO": REPO, "PR": "360", "RUN_ID": str(RUN)}
@@ -319,6 +395,7 @@ class CliTests(unittest.TestCase):
         with (
             unittest.mock.patch.dict(os.environ, env),
             unittest.mock.patch.object(verdict, "gh_api", gh),
+            unittest.mock.patch.object(verdict.time, "sleep"),
             redirect_stdout(stdout),
         ):
             code = verdict.main()
@@ -333,7 +410,9 @@ class CliTests(unittest.TestCase):
         progress = comment(PROGRESS_ONLY, link=False)
         code, text = self.invoke([progress])
         self.assertEqual(code, 1)
-        self.assertTrue(text.startswith("::error title=Claude review posted no verdict::"))
+        last = text.strip().splitlines()[-1]
+        self.assertTrue(last.startswith("::error title=Claude review posted no verdict::"))
+        self.assertEqual(text.count("reading again"), verdict.READ_ATTEMPTS - 1)
         self.assertIn(str(RUN), text)
 
 

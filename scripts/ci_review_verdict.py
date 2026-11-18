@@ -19,6 +19,13 @@ ci_review_budget.py (successful runs only) does not count it, and the next
 push is admitted as the same round. Any API or protocol error also exits
 non-zero.
 
+A verdict the API does not list yet, or a `gh api` call that fails or times
+out, would fail a run that did post its verdict, and the resolver would then
+hold the merge until the next push (note 2 of review 1 of #362). So the
+comments are read up to READ_ATTEMPTS times, READ_RETRY_SECONDS apart, while
+no verdict is found or the call fails; the last failure is raised. A protocol
+error is not retried: a reply of the wrong shape is not a transient state.
+
 Lines are split on "\n" only: `gh --jq` writes one compact JSON object per
 line and escapes "\n", but leaves characters such as U+0085 or U+2028 raw,
 which str.splitlines() would treat as line breaks inside a comment body.
@@ -33,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -47,6 +55,13 @@ VERDICT = re.compile(r"^Verdict: (approve|block)\s*$", re.M)
 PER_PAGE = 100
 # source: operational bound on one `gh api` call, far above its usual second.
 GH_TIMEOUT_SECONDS = 60
+# source: operational bound. The review posts its verdict before its step ends,
+# so a comment missing from the list is a listing delay of seconds; three reads
+# 10 s apart cover it and add at most 20 s to a run that posted nothing.
+READ_ATTEMPTS = 3
+READ_RETRY_SECONDS = 10
+# The `gh api` failures worth another read: an error status or a timeout.
+TRANSIENT = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
 
 
 class VerdictError(ValueError):
@@ -82,11 +97,13 @@ def comments(gh: Gh, repo: str, pr: int) -> list[Record]:
 def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
     """The verdict the resolver would read for this run, or None.
 
-    Of the reviewer comments that link this run, the one updated last wins, and
-    within it the last verdict line, as in the resolver.
+    Of the reviewer comments that link this run, the last verdict line of each
+    is paired with its `updated_at`, and the greatest pair wins: the resolver's
+    `max(verdicts)`, so of two comments updated at the same instant `block`
+    wins over `approve` there and here (note 1 of review 1 of #362).
     """
     link = re.compile(re.escape(f"/actions/runs/{run_id}") + r"(?!\d)")
-    found: tuple[str, str] | None = None
+    found: list[tuple[str, str]] = []
     for row in rows:
         body = row.get("body") or ""
         if row.get("login") != REVIEWER or row.get("type") != "Bot":
@@ -95,21 +112,40 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
             continue
         verdicts = VERDICT.findall(body)
         if verdicts:
-            candidate = (row.get("updated_at") or "", verdicts[-1])
-            if found is None or candidate[0] >= found[0]:
-                found = candidate
-    return found[1] if found else None
+            found.append((row.get("updated_at") or "", verdicts[-1]))
+    return max(found)[1] if found else None
+
+
+def read_verdict(
+    read: Callable[[], list[Record]], run_id: int, sleep: Callable[[float], None]
+) -> str | None:
+    """The verdict of this run, read again while it is missing or the call fails.
+
+    The last read is outside the loop, so its failure is raised as it is.
+    """
+    for attempt in range(1, READ_ATTEMPTS):
+        try:
+            found = verdict_of_run(read(), run_id)
+        except TRANSIENT as error:
+            found, why = None, f"gh api failed: {type(error).__name__}"
+        else:
+            why = "no verdict listed"
+        if found is not None:
+            return found
+        print(f"Run {run_id}, read {attempt} of {READ_ATTEMPTS}: {why}; reading again.")
+        sleep(READ_RETRY_SECONDS)
+    return verdict_of_run(read(), run_id)
 
 
 def main() -> int:
     env = os.environ
     repo, pr, run_id = env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"])
-    verdict = verdict_of_run(comments(gh_api, repo, pr), run_id)
+    verdict = read_verdict(lambda: comments(gh_api, repo, pr), run_id, time.sleep)
     if verdict is None:
         print(
             "::error title=Claude review posted no verdict::No comment of "
             f"{REVIEWER} links run {run_id} with a 'Verdict: approve' or "
-            "'Verdict: block' line. A run without a verdict fails so that the "
+            f"'Verdict: block' line after {READ_ATTEMPTS} reads. A run without a verdict fails so that the "
             "review budget does not count it (#361)."
         )
         return 1
