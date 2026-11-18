@@ -57,7 +57,10 @@ PER_PAGE = 100
 GH_TIMEOUT_SECONDS = 60
 # source: operational bound. The review posts its verdict before its step ends,
 # so a comment missing from the list is a listing delay of seconds; three reads
-# 10 s apart cover it and add at most 20 s to a run that posted nothing.
+# 10 s apart cover it. A run that posted nothing pays the two sleeps and two
+# more reads, each bounded by GH_TIMEOUT_SECONDS: at most 2 x (10 + 60) = 140 s
+# more than one read, and at most 3 x 60 + 2 x 10 = 200 s for the whole step
+# (note 1 of review 1 of #363).
 READ_ATTEMPTS = 3
 READ_RETRY_SECONDS = 10
 # The `gh api` failures worth another read: an error status or a timeout.
@@ -118,34 +121,46 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
 
 def read_verdict(
     read: Callable[[], list[Record]], run_id: int, sleep: Callable[[float], None]
-) -> str | None:
+) -> tuple[str | None, int]:
     """The verdict of this run, read again while it is missing or the call fails.
 
+    Returns the verdict (None when no read found one) and how many reads failed,
+    so that a run whose reads failed before a last read that lists nothing is
+    not reported as a review that posted nothing (note 2 of review 1 of #363).
     The last read is outside the loop, so its failure is raised as it is.
     """
+    failed = 0
     for attempt in range(1, READ_ATTEMPTS):
         try:
             found = verdict_of_run(read(), run_id)
         except TRANSIENT as error:
+            failed += 1
             found, why = None, f"gh api failed: {type(error).__name__}"
         else:
             why = "no verdict listed"
         if found is not None:
-            return found
+            return found, failed
         print(f"Run {run_id}, read {attempt} of {READ_ATTEMPTS}: {why}; reading again.")
         sleep(READ_RETRY_SECONDS)
-    return verdict_of_run(read(), run_id)
+    return verdict_of_run(read(), run_id), failed
 
 
 def main() -> int:
     env = os.environ
     repo, pr, run_id = env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"])
-    verdict = read_verdict(lambda: comments(gh_api, repo, pr), run_id, time.sleep)
+    verdict, failed = read_verdict(
+        lambda: comments(gh_api, repo, pr), run_id, time.sleep
+    )
     if verdict is None:
+        title = "Claude review posted no verdict"
+        if failed:
+            title = "Claude review verdict could not be read"
         print(
-            "::error title=Claude review posted no verdict::No comment of "
+            f"::error title={title}::No comment of "
             f"{REVIEWER} links run {run_id} with a 'Verdict: approve' or "
-            f"'Verdict: block' line after {READ_ATTEMPTS} reads. A run without a verdict fails so that the "
+            f"'Verdict: block' line after {READ_ATTEMPTS} reads"
+            + (f", {failed} of which failed (gh api)" if failed else "")
+            + ". A run without a verdict fails so that the "
             "review budget does not count it (#361)."
         )
         return 1

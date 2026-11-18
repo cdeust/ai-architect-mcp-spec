@@ -318,7 +318,18 @@ class GhApiTests(unittest.TestCase):
         calls = []
         verdict.comments(lambda a: calls.append(a) or "", REPO, 360)
         expr = calls[0][calls[0].index("--jq") + 1]
-        raw = [{"user": {"login": "claude[bot]", "type": "Bot"}, "body": "b", "id": 1}]
+        # Distinct created_at and updated_at: the tie-break of verdict_of_run
+        # ranks comments by updated_at, so the filter must take that field
+        # (note 3 of review 1 of #363).
+        raw = [
+            {
+                "user": {"login": "claude[bot]", "type": "Bot"},
+                "body": "b",
+                "id": 1,
+                "created_at": "2026-11-18T16:00:00Z",
+                "updated_at": "2026-11-18T16:50:55Z",
+            }
+        ]
         done = subprocess.run(
             ["jq", "-c", expr],
             input=json.dumps(raw),
@@ -330,7 +341,12 @@ class GhApiTests(unittest.TestCase):
         row = json.loads(done.stdout)
         self.assertEqual(
             row,
-            {"login": "claude[bot]", "type": "Bot", "body": "b", "updated_at": None},
+            {
+                "login": "claude[bot]",
+                "type": "Bot",
+                "body": "b",
+                "updated_at": "2026-11-18T16:50:55Z",
+            },
         )
 
 
@@ -348,7 +364,8 @@ class ReadVerdictTests(unittest.TestCase):
             return reply
 
         with redirect_stdout(StringIO()):
-            found = verdict.read_verdict(read, RUN, sleeps.append)
+            found, failed = verdict.read_verdict(read, RUN, sleeps.append)
+        self.failed = failed
         return found, len(calls), sleeps
 
     def test_a_verdict_on_the_first_read_is_read_once(self):
@@ -369,13 +386,20 @@ class ReadVerdictTests(unittest.TestCase):
         ):
             with self.subTest(type(error).__name__):
                 found, calls, _ = self.run_reads([error, [review()]])
-                self.assertEqual((found, calls), ("approve", 2))
+                self.assertEqual((found, calls, self.failed), ("approve", 2, 1))
 
     def test_no_verdict_after_every_read_is_none(self):
         found, calls, sleeps = self.run_reads([[], [], []])
         self.assertIsNone(found)
         self.assertEqual(calls, verdict.READ_ATTEMPTS)
         self.assertEqual(len(sleeps), verdict.READ_ATTEMPTS - 1)
+        self.assertEqual(self.failed, 0)
+
+    def test_failed_reads_before_an_empty_last_read_are_counted(self):
+        # Note 2 of review 1 of #363: reads 1 and 2 fail, read 3 lists nothing.
+        error = subprocess.CalledProcessError(1, "gh")
+        found, calls, _ = self.run_reads([error, error, []])
+        self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 2))
 
     def test_the_last_failure_is_raised(self):
         error = subprocess.CalledProcessError(1, "gh")
@@ -388,9 +412,15 @@ class ReadVerdictTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def invoke(self, rows):
+    def invoke(self, rows, failures=0):
         env = {"GH_REPO": REPO, "PR": "360", "RUN_ID": str(RUN)}
-        gh = lambda args: "\n".join(json.dumps(r) for r in rows)  # noqa: E731
+        left = [failures]
+
+        def gh(args):
+            if left[0]:
+                left[0] -= 1
+                raise subprocess.CalledProcessError(1, "gh")
+            return "\n".join(json.dumps(r) for r in rows)
         stdout = StringIO()
         with (
             unittest.mock.patch.dict(os.environ, env),
@@ -414,6 +444,17 @@ class CliTests(unittest.TestCase):
         self.assertTrue(last.startswith("::error title=Claude review posted no verdict::"))
         self.assertEqual(text.count("reading again"), verdict.READ_ATTEMPTS - 1)
         self.assertIn(str(RUN), text)
+        self.assertNotIn("failed (gh api)", last)
+
+    def test_failed_reads_then_nothing_are_named_in_the_annotation(self):
+        progress = comment(PROGRESS_ONLY, link=False)
+        code, text = self.invoke([progress], failures=verdict.READ_ATTEMPTS - 1)
+        self.assertEqual(code, 1)
+        last = text.strip().splitlines()[-1]
+        self.assertTrue(
+            last.startswith("::error title=Claude review verdict could not be read::")
+        )
+        self.assertIn(f"{verdict.READ_ATTEMPTS - 1} of which failed (gh api)", last)
 
 
 if __name__ == "__main__":
