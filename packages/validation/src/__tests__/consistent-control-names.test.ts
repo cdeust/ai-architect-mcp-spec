@@ -167,6 +167,40 @@ describe("consistent_control_names (#118)", () => {
     expect(namedControlsIn("Then the Recommended tab opens.").map((c) => c.key)).toEqual(["recommended"]);
   });
 
+  it("reads a keyword adjective that opens a requirement as the name of its control", () => {
+    // Review 1 of #349, note 1: since #349 a keyword opening a sentence was
+    // no name, so "Recommended tab lists the picks." defined no tab and a
+    // criterion naming the Recommended tab was reported.
+    const requirements = `${COPY_FR}\n- FR-002: Recommended tab lists the picks.`;
+    expect(messageOf(requirements, "- AC-001: The reader opens the Recommended tab.")).toBeUndefined();
+    expect(
+      messageOf(`${COPY_FR}\n- FR-002: "Recommended" tab lists the picks.`, "- AC-001: The reader opens the Recommended tab."),
+    ).toBeUndefined();
+    for (const adjective of ["Required", "Recommended", "Optional", "Obligatoire", "Recommandé", "Optionnel", "Facultatif"]) {
+      expect(namedControlsIn(`${adjective} tab lists the picks.`).map((c) => c.key), adjective).toEqual([
+        adjective.toLowerCase(),
+      ]);
+    }
+    // A keyword verb that opens a sentence is still no name, nor is an
+    // adjective in capitals.
+    for (const verb of ["Must", "Shall", "Should", "May", "Doit", "Peut"]) {
+      expect(namedControlsIn(`${verb} link to the docs.`), verb).toEqual([]);
+    }
+    expect(namedControlsIn("RECOMMENDED tab lists the picks.")).toEqual([]);
+  });
+
+  it("reads a keyword verb after a bold identifier as opening its sentence", () => {
+    // Review 1 of #349, note 2: the text of "**FR-001:** Should link…" is
+    // ":** Should link…", whose "**" hid the colon, so "should" was a name.
+    expect(messageOf("**FR-001:** Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    expect(messageOf("- **FR-001:** Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    expect(messageOf("- __FR-001:__ Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    // Inside a sentence an emphasis mark opens no sentence.
+    expect(messageOf(COPY_FR, "- AC-001: The page shows the **Clone button**.")).toBe(
+      '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
+    );
+  });
+
   it("reads a decomposed accent as part of its name", () => {
     // Review 1 of #347, note 3: NAME stopped at U+0301, so the NFD keyword
     // "RECOMMANDE\u0301" gave the key "recommande" and was read as a control.

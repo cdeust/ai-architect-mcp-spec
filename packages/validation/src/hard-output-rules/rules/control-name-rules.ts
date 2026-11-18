@@ -30,7 +30,7 @@ import { quoted } from "./contradictory-requirement-rules.js";
 // criterion, a name that opens a sentence is not checked: its capital may be
 // the sentence's ("External links open in a new tab"). Determiners and
 // number words are not names, nor are the RFC 2119 keywords written in
-// capitals or opening a sentence. A finding quotes at most 24
+// capitals, nor a keyword verb opening a sentence. A finding quotes at most 24
 // characters of the control, as contradictory_requirements does.
 //
 // The finding is blocking but not critical: what is a name is a heuristic (a
@@ -174,18 +174,46 @@ const REQUIREMENT_KEYWORDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The keywords of REQUIREMENT_KEYWORDS that are verbs: the modal verbs of
+ * RFC 2119 and their French forms. The others are adjectives ("required",
+ * "recommended", "optional", "obligatoire", "recommandé"…).
+ */
+const KEYWORD_VERBS: ReadonlySet<string> = new Set([
+  "must",
+  "shall",
+  "should",
+  "may",
+  "doit",
+  "doivent",
+  "devrait",
+  "devraient",
+  "devra",
+  "devront",
+  "peut",
+  "peuvent",
+  "pourra",
+  "pourront",
+  "ne",
+]);
+
+/**
  * Whether a name, as written, is not a name: a determiner, a number word, a
- * keyword in capitals, or a keyword that opens a sentence. A keyword's
- * capital at a sentence start is the sentence's, so "- FR-001: Should link
- * to the docs." states a requirement and names no "Should" link; read as a
- * name, it gave the document a defined name, and every named control of its
- * criteria was then reported (review 1 of #348, note 2). Inside a sentence a
- * keyword in title case is still a name ("the Recommended tab").
+ * keyword in capitals, or a keyword verb that opens a sentence. A verb's
+ * capital at a sentence start is the sentence's, and the word after it is a
+ * verb too, so "- FR-001: Should link to the docs." states a requirement and
+ * names no "Should" link; read as a name, it gave the document a defined
+ * name, and every control its criteria named inside a sentence was then
+ * reported (review 1 of #348, note 2). A keyword adjective that opens a
+ * sentence still names the control after it: "- FR-002: Recommended tab
+ * lists the picks." defines the Recommended tab, which #349 had stopped
+ * reading, so a criterion naming that tab was reported (review 1 of #349,
+ * note 1). Inside a sentence a keyword in title case is a name ("the
+ * Recommended tab").
  */
 function isNotAName(name: string, key: string, atSentenceStart: boolean): boolean {
   if (NOT_A_NAME.has(key)) return true;
   if (!REQUIREMENT_KEYWORDS.has(key)) return false;
-  return atSentenceStart || name === name.toUpperCase();
+  return name === name.toUpperCase() || (atSentenceStart && KEYWORD_VERBS.has(key));
 }
 
 /** A noun as written lowercase or capitalized ("button", "Button"), as one alternation. */
@@ -301,10 +329,16 @@ interface NamedControl {
  */
 const SENTENCE_BOUNDARY = new Set([".", "!", "?", ":", ";", "|", "\n"]);
 
-/** Whether the text before `at`, spaces, tabs and opening quotes left out, is empty or ends a sentence. */
+/**
+ * Whether the text before `at`, spaces, tabs, opening quotes and emphasis
+ * marks left out, is empty or ends a sentence. Emphasis marks are left out
+ * because a bold identifier closes its emphasis after the colon:
+ * "**FR-001:** Should link…" gives the text ":** Should link…", whose "**"
+ * hid the colon (review 1 of #349, note 2).
+ */
 function opensSentence(text: string, at: number): boolean {
   let k = at - 1;
-  while (k >= 0 && " \t\"“‘'«".includes(text[k]!)) k--;
+  while (k >= 0 && " \t\"“‘'«*_".includes(text[k]!)) k--;
   return k < 0 || SENTENCE_BOUNDARY.has(text[k]!);
 }
 
