@@ -8,6 +8,18 @@ export {
 } from "./domain/prd-context.js";
 
 export {
+  RequestSizeSchema,
+  REQUEST_SIZE_DEFAULT,
+  REQUEST_SIZE_CONFIGS,
+  effectiveRequestSize,
+  requestSizePlan,
+  clarificationRangeFor,
+  type RequestSize,
+  type RequestSizeConfig,
+  type RequestSizePlan,
+} from "./domain/request-size.js";
+
+export {
   SectionTypeSchema,
   SECTION_DISPLAY_NAMES,
   SECTION_ORDER,

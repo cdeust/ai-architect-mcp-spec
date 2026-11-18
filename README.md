@@ -79,9 +79,14 @@ Verification is not a one-shot pass/fail report. Every claim resolution can flus
 ## What an agent can ask it
 
 ```
-start_pipeline(feature_description, codebase_path?, prd_context?)
+start_pipeline(feature_description, codebase_path?, prd_context?, request_size?)
   → returns the first NextAction; the host executes it and feeds the result
     back via submit_action_result. Eleven steps later: 9 PRD files written.
+    The host declares what it knows and the server does not: prd_context,
+    the kind of PRD (omitted, it is read from the words of the description
+    or asked), and request_size ("tiny" is the fast path for a small change:
+    4 sections, 4 to 5 clarification rounds, whatever the kind but an
+    incident). The server never reads a size from the description.
 
 submit_action_result(run_id, result)
   → drives the reducer one more step. The host sees only SUBSTANTIVE actions
@@ -384,10 +389,10 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 |---|------|------------------|
 | **1** | `banner` | Welcome banner with run ID + feature description + capability summary |
 | **2** | `preflight` | Probes Cortex, ai-architect-mcp-codebase when `codebase_path` is set, then zetetic-team-subagents by starting one subagent, before the pipeline depends on them; skippable via `skip_preflight` (see [Requirements](#requirements)) |
-| **3** | `context_detection` | Detects PRD type from trigger words; asks user when ambiguous |
+| **3** | `context_detection` | Keeps the PRD type the host declared at `start_pipeline`; else detects it from trigger words, and asks the user when none names one |
 | **4** | `input_analysis` | Calls `index_codebase` (ai-architect-mcp-codebase) when a path is provided; sets `codebase_graph_path` |
 | **5** | `feasibility_gate` | Detects epic-scope inputs (≥2 EPIC_SIGNALS); asks user to focus |
-| **6** | `clarification` | Compose-then-answer rounds (4–10 depending on tier); short-circuits on "proceed" |
+| **6** | `clarification` | Compose-then-answer rounds (a minimum of 4 to 10 and a maximum of 5 to 12, by kind of PRD and request size); short-circuits on "proceed" once the minimum is reached |
 | **7** | `budget` | Checks that clarification ended cleanly, then moves to section generation. It allocates nothing: the name is kept for hosts and stored runs |
 | **8** | `section_generation` | One section at a time: Cortex recall → engineer draft → validate → (retry up to 3) |
 | **9** | `jira_generation` | Synthesises JIRA tickets from requirements + user_stories + acceptance_criteria |
@@ -412,10 +417,10 @@ The files a run writes depend on its PRD context: a companion file is written on
 | `mvp` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
 | `release` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
 | `cicd` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
-| `tiny` | `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `07-jira-tickets.md`, `10-verification-report.md` |
 
 - `00-run-notes.md` is in every row because no context schedules the `source_code` and `test_code` sections, so `08-source-code.md` and `09-test-code.md` are always skipped.
-- `stage-5.affected_symbols.json` is written when the `technical_specification` section passed with content, never from a failed draft; `proposal` and `tiny` do not schedule it.
+- `stage-5.affected_symbols.json` is written when the `technical_specification` section passed with content, never from a failed draft; `proposal` does not schedule it.
+- A run declared `request_size: "tiny"` writes `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `07-jira-tickets.md` and `10-verification-report.md`, whatever its context: its sections are the four of the fast path. An incident is the exception: it writes the files of its row.
 - `10-verification-report.md` is written by `implementation_gate`, after `self_check`, not by `file_export`.
 - `packages/orchestration/src/__tests__/readme-export-files.test.ts` fails when this table and the exporter disagree.
 

@@ -21,6 +21,7 @@
 
 import type { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { PRDContextSchema } from "@prd-gen/core";
 
 /** Resolves a tool's registered description, or undefined if unknown. */
 export type ToolSummarySource = (toolName: string) => string | undefined;
@@ -30,22 +31,18 @@ interface Step {
   readonly guidance: string;
 }
 
-const PRD_CONTEXTS = [
-  "proposal",
-  "feature",
-  "bug",
-  "incident",
-  "poc",
-  "mvp",
-  "release",
-  "cicd",
-  "tiny",
-] as const;
-
 // ─── Prompt catalog (ordering only; summaries come from the tool schemas) ───
 
-const RUN_PIPELINE_STEPS: readonly Step[] = [
-  { tool: "start_pipeline", guidance: "Initialize the run; it returns the first NextAction to execute." },
+/**
+ * The steps of a run for a PRD of kind `context`: the first step carries the
+ * kind into start_pipeline, so that the context the caller chose is the one
+ * the run has and the server does not guess it from the words of the request.
+ */
+const runPipelineSteps = (context: string): readonly Step[] => [
+  {
+    tool: "start_pipeline",
+    guidance: `Initialize the run with prd_context: "${context}" (add request_size: "tiny" for a small, self-contained change); it returns the first NextAction to execute.`,
+  },
   { tool: "get_pipeline_state", guidance: "Read the current state by run_id whenever you need to re-orient." },
   { tool: "submit_action_result", guidance: "Feed each executed action's result back; repeat until the action is `done`." },
   { tool: "plan_document_verification", guidance: "Once sections exist, emit the JudgeRequest[] across the whole document; follow __page.next_offset (request_offset) to the last page." },
@@ -62,7 +59,8 @@ const VERIFY_DOCUMENT_STEPS: readonly Step[] = [
 
 /** Prompt name → the tools its workflow drives (for profile availability). */
 export const PROMPT_STEP_TOOLS: Readonly<Record<string, readonly string[]>> = {
-  run_prd_pipeline: RUN_PIPELINE_STEPS.map((s) => s.tool),
+  // The tools of a run are the same for every kind of PRD.
+  run_prd_pipeline: runPipelineSteps(PRDContextSchema.options[0]).map((s) => s.tool),
   verify_prd_document: VERIFY_DOCUMENT_STEPS.map((s) => s.tool),
 };
 
@@ -120,7 +118,7 @@ export function registerPrompts(
       title: "Run the PRD generation pipeline",
       description: "Drive the staged PRD generation + verification pipeline in the correct order.",
       argsSchema: {
-        context: z.enum(PRD_CONTEXTS).describe("Context — the PRD context type (proposal, feature, bug, …)."),
+        context: PRDContextSchema.describe("Context — the PRD context type (proposal, feature, bug, …)."),
         request: z.string().describe("Request — what the PRD should cover (the feature/incident/proposal to spec)."),
       },
     },
@@ -128,7 +126,7 @@ export function registerPrompts(
       textResult(
         renderBody(
           `Generate a "${context}" PRD for: ${request}`,
-          RUN_PIPELINE_STEPS,
+          runPipelineSteps(context),
           "Never submit out of order — the reducer " +
             "advances one NextAction at a time and a skipped stage silently mis-states the run.",
           summaryOf,

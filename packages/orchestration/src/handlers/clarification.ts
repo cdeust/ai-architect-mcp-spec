@@ -2,8 +2,8 @@ import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
 import {
-  PRD_CONTEXT_CONFIGS,
   CAPABILITIES,
+  clarificationRangeFor,
   extractJsonObject,
 } from "@prd-gen/core";
 import {
@@ -80,6 +80,7 @@ function composeAction(state: PipelineState, round: number): HandlerAction {
   const prompt = buildClarificationPrompt({
     feature_description: state.feature_description,
     prd_context: state.prd_context!,
+    request_size: state.request_size,
     round,
     prior_qa: state.clarifications.map((c) => ({
       question: c.question,
@@ -129,13 +130,10 @@ interface RoundBounds {
 }
 
 function computeBounds(state: PipelineState): RoundBounds {
-  const config = PRD_CONTEXT_CONFIGS[state.prd_context!];
-  const max = Math.min(
-    config.clarificationRange[1],
-    CAPABILITIES.maxClarificationRounds,
-  );
+  const range = clarificationRangeFor(state.prd_context!, state.request_size);
+  const max = Math.min(range[1], CAPABILITIES.maxClarificationRounds);
   // Clamp min so we never require more questions than the cap allows.
-  const min = Math.min(config.clarificationRange[0], max);
+  const min = Math.min(range[0], max);
   return { min, max };
 }
 
@@ -203,7 +201,7 @@ function recordAnswerAndDispatch(
       kind: "ask_user",
       question_id: QUESTION_ID_CONTINUE,
       header: `Asked ${completed} questions. Proceed?`,
-      description: `Min for ${state.prd_context}: ${bounds.min}. Max: ${bounds.max}. 'proceed' to generate the PRD, 'continue' for more questions.`,
+      description: `Min for this run: ${bounds.min}. Max: ${bounds.max}. 'proceed' to generate the PRD, 'continue' for more questions.`,
       options: [
         { label: "proceed", description: "Generate the PRD now" },
         { label: "continue", description: "Ask another question" },

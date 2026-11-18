@@ -62,6 +62,8 @@ export {
 // Section plan
 export {
   SECTIONS_BY_CONTEXT,
+  plannedSections,
+  runRequestSize,
   SECTION_RECALL_TEMPLATES,
 } from "./section-plan.js";
 

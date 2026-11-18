@@ -43,11 +43,10 @@ Call:
 start_pipeline({
   feature_description: "<parsed description>",
   codebase_path: "<parsed path, or omit>",
-  prd_context: "<declared size, or omit>"
+  prd_context: "<the kind of PRD you declare, see SKILL.md step 1, or omit>",
+  request_size: "<\"tiny\" for a small, self-contained change, or omit>"
 })
 ```
-
-`prd_context` sizes the run (`tiny` for a one-line change; an incident is never `tiny`). Omit it and the server detects the context from the description or asks the user.
 
 Capture `run_id` from the response. Reuse it on every subsequent `submit_action_result`.
 

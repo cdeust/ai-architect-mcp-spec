@@ -14,9 +14,9 @@
  * call submit_action_result with the result, repeat until `done`.
  */
 import { z } from "zod";
-import { newPipelineState, step, ActionResultSchema, } from "@prd-gen/orchestration";
+import { newPipelineState, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
-import { SectionTypeSchema, PRDContextSchema, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
+import { SectionTypeSchema, PRDContextSchema, RequestSizeSchema, REQUEST_SIZE_CONFIGS, REQUEST_SIZE_DEFAULT, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
 import { getEvidenceRepo } from "./evidence-db-path.js";
@@ -171,8 +171,31 @@ function envelope(state, action, messages = []) {
             })),
             clarification_rounds: state.clarifications.length,
             errors: state.errors.length,
+            // The kind and the size the run is held to: what its rounds and sections follow.
+            prd_context: state.prd_context,
+            request_size: runRequestSize(state),
         },
     };
+}
+/**
+ * postcondition: one sentence per size that changes a run, built from
+ *                REQUEST_SIZE_CONFIGS so that the description a host reads
+ *                cannot give other numbers than the ones the run uses.
+ */
+function describeRequestSizes() {
+    const sentences = RequestSizeSchema.options.flatMap((size) => {
+        const { displayName, plan } = REQUEST_SIZE_CONFIGS[size];
+        if (plan === null)
+            return [];
+        const { sections, clarificationRange, notFor } = plan;
+        // Stryker disable next-line StringLiteral: equivalent: one kind is exempt today, so the separator joins nothing
+        const exempt = notFor.join(", ");
+        return [
+            `'${size}' (${displayName}) is the fast path for a small, self-contained change: ${sections.length} sections (${sections.join(", ")}) and ${clarificationRange[0]} to ${clarificationRange[1]} clarification rounds, in place of those of the kind. It is not for: ${exempt}, which keeps the rounds and sections of its kind.`,
+        ];
+    });
+    // Stryker disable next-line StringLiteral: equivalent: one size has a plan today, so the separator joins nothing
+    return sentences.join(" ");
 }
 export function registerPipelineTools(server) {
     // ─── start_pipeline ─────────────────────────────────────────────────────
@@ -190,8 +213,11 @@ export function registerPipelineTools(server) {
             .describe("If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall."),
         prd_context: PRDContextSchema
             .optional()
-            .describe("Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds); an incident is never 'tiny', whatever the size of the change that caused it. Sets the clarification rounds and sections from the calibrated configuration of that context (get_prd_context_info returns its clarification range and expected section count). Omit it to detect the context from feature_description or ask the user."),
-    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context }) => {
+            .describe("The kind of PRD the request calls for, declared by the host, which has the whole conversation where the server has only feature_description. Omit it and the server reads the kind from the words of feature_description, or asks the user. get_prd_context_info gives the clarification range and the section count of a kind."),
+        request_size: RequestSizeSchema
+            .optional()
+            .describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Omit it for a request of ordinary size.`),
+    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
         // structured, retryable error rather than hang or grow unbounded — the
@@ -226,6 +252,7 @@ export function registerPipelineTools(server) {
             codebase_path: codebase_path ?? null,
             skip_preflight: skip_preflight ?? false,
             prd_context: prd_context ?? null,
+            request_size: request_size ?? REQUEST_SIZE_DEFAULT,
         });
         // B1 — Wire retry_policy from composition root (Curie A7).
         // The reducer (section-generation.ts) reads state.retry_policy and never

@@ -23,6 +23,8 @@ envelope shapes are identical.
 host: start_pipeline({
   feature_description: "build OAuth login for the admin console",
   codebase_path: "/Users/me/projects/admin-console"
+  // optional: prd_context (the kind of PRD; here the server reads "feature"
+  // from the word "build") and request_size ("tiny" for a small change)
 })
 
   → envelope {

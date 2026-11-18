@@ -10,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 
-import { registerPrompts } from "../mcp-prompts.js";
+import { PROMPT_NAMES, PROMPT_STEP_TOOLS, registerPrompts } from "../mcp-prompts.js";
 import { isAllowed } from "../tool-profiles.js";
 
 // Tools the prompts reference, with descriptions that are the source of truth
@@ -81,9 +81,22 @@ describe("prompts/list + prompts/get", () => {
     expect(text).toContain("feature");
     expect(text).toContain("add SSO login");
     expect(text).toContain("`start_pipeline`");
+    // The context the caller chose is the one the run is started with (#119).
+    expect(text).toContain('prd_context: "feature"');
     // The summary is the first sentence of the tool's own description.
     expect(text).toContain("Initialize a pipeline run.");
     await client.close();
+  });
+
+  it("names the tools each prompt drives, in order", () => {
+    expect(PROMPT_STEP_TOOLS.run_prd_pipeline).toEqual([
+      "start_pipeline",
+      "get_pipeline_state",
+      "submit_action_result",
+      "plan_document_verification",
+      "conclude_verification",
+    ]);
+    expect(PROMPT_NAMES).toEqual(["run_prd_pipeline", "verify_prd_document"]);
   });
 
   it("rejects an unknown prompt (criterion 8)", async () => {

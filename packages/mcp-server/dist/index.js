@@ -6,12 +6,13 @@ import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PRD_CONTEXT_CONFIGS, CAPABILITIES, STRATEGY_TIERS, SectionTypeSchema, } from "@prd-gen/core";
+import { CAPABILITIES, STRATEGY_TIERS, SectionTypeSchema, } from "@prd-gen/core";
 import { getEvidenceRepo } from "./evidence-db-path.js";
 import { validateSection, validateDocument } from "@prd-gen/validation";
 import { KnownSymbolsSchema, withSymbolCheck } from "./symbol-check.js";
 import { REPORT_PAGING_DESCRIPTION, reportPageResult } from "./page-validation-report.js";
 import { registerFeedbackTools } from "./feedback-tools.js";
+import { registerContextTools } from "./context-tools.js";
 import { registerPipelineTools } from "./pipeline-tools.js";
 import { registerPrompts, PROMPT_STEP_TOOLS } from "./mcp-prompts.js";
 import { resolveProfile, instructions as profileInstructions, isAllowed, } from "./tool-profiles.js";
@@ -128,27 +129,8 @@ const toolCheckHealth = server.tool("check_health", "Check system health — ver
         ],
     };
 });
-// ─── Tool 4: get_prd_context_info ────────────────────────────────────────────
-const toolGetPrdContextInfo = server.tool("get_prd_context_info", "Get configuration for a specific PRD context type", {
-    context: z
-        .enum([
-        "proposal",
-        "feature",
-        "bug",
-        "incident",
-        "poc",
-        "mvp",
-        "release",
-        "cicd",
-        "tiny",
-    ])
-        .describe("The PRD context type"),
-}, { readOnlyHint: true }, async ({ context }) => {
-    const config = PRD_CONTEXT_CONFIGS[context];
-    return {
-        content: [{ type: "text", text: JSON.stringify(config, null, 2) }],
-    };
-});
+// ─── Tool 4: get_prd_context_info (context-tools.ts) ─────────────────────────
+const toolGetPrdContextInfo = registerContextTools(server).get_prd_context_info;
 // ─── Tool 5: list_available_strategies ───────────────────────────────────────
 const toolListStrategies = server.tool("list_available_strategies", "List thinking strategies available to the pipeline.", {}, { readOnlyHint: true }, async () => {
     return {

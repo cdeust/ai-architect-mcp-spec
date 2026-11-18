@@ -153,6 +153,50 @@ describe("end-to-end smoke run", () => {
     expect(result.messages.length).toBeGreaterThan(0);
   });
 
+  it("a feature run declared tiny reaches done with the four sections of the fast path, and costs the host less (#119)", () => {
+    const run = (request_size: "standard" | "tiny") =>
+      runSmoke(
+        newPipelineState({
+          run_id: `smoke_size_${request_size}`,
+          feature_description: "build a simple feature for OAuth login",
+          request_size,
+        }),
+      );
+    const tiny = run("tiny");
+    const standard = run("standard");
+
+    expect(tiny.finalAction.kind).toBe("done");
+    expect(tiny.finalState.current_step).toBe("complete");
+    expect(tiny.finalState.prd_context).toBe("feature");
+    expect(tiny.finalState.sections.map((s) => s.section_type)).toEqual([
+      "overview",
+      "requirements",
+      "acceptance_criteria",
+      "testing",
+      "jira_tickets",
+    ]);
+    expect(standard.finalState.sections).toHaveLength(12);
+
+    // What the host is asked to do: fewer subagent batches, fewer steps.
+    const spawns = (result: SmokeRunResult) =>
+      result.transitions.filter((t) => t.action_kind === "spawn_subagents").length;
+    expect(spawns(tiny)).toBeLessThan(spawns(standard));
+    expect(tiny.iterations).toBeLessThan(standard.iterations);
+
+    // The run says its size where a reader looks for it.
+    const completion = (result: SmokeRunResult) =>
+      result.transitions.length > 0 && result.finalAction.kind === "done" ? result.finalAction.summary : "";
+    // The JIRA tickets are stored beside the four sections and are not counted with them.
+    expect(completion(tiny)).toContain("\nRequest size: tiny.\nSections: 4/4 passed, 0 failed.\n");
+    // One fact per line, no empty line and none at the end.
+    expect(completion(tiny)).not.toMatch(/\n\n|\n$/);
+    expect(completion(standard)).toContain("\nRequest size: standard.\nSections: ");
+
+    // Its score is not filed in the history of features: other sections.
+    expect(tiny.finalState.quality_scores).toEqual([]);
+    expect(standard.finalState.quality_scores).toHaveLength(1);
+  });
+
   it("trial tier feature PRD with codebase reaches done", () => {
     const seed = newPipelineState({
       run_id: "smoke_trial_with_codebase",

@@ -94,7 +94,9 @@ describe("finalize — remember (nominal)", () => {
     const issued = issuedRemember();
     const cid =
       issued.action.kind === "call_cortex_tool" ? issued.action.correlation_id : "";
-    const pendingSummary = issued.state.pending_completion?.summary;
+    const pendingSummary = issued.state.pending_completion?.summary ?? "";
+    // What a version that did not know the size kept: no line for it.
+    expect(pendingSummary).not.toContain("Request size");
 
     const out = step({
       state: issued.state,
@@ -111,7 +113,15 @@ describe("finalize — remember (nominal)", () => {
     expect(out.state.current_step).toBe("complete");
     expect(out.action.kind).toBe("done");
     if (out.action.kind === "done") {
-      expect(out.action.summary).toBe(pendingSummary);
+      // The summary of the self-check, with the size of the run on its
+      // second line: written when the run finishes, from its state, so a
+      // run checkpointed before the size existed says it too.
+      const [headline, ...rest] = pendingSummary.split("\n");
+      expect(out.action.summary).toBe([headline, "Request size: standard.", ...rest].join("\n"));
+    }
+    // The fact kept in Cortex carries the same summary.
+    if (issued.action.kind === "call_cortex_tool") {
+      expect(String(issued.action.arguments.content)).toContain("\nRequest size: standard.\nSections: ");
     }
   });
 

@@ -1,9 +1,9 @@
 {
   "version": "2.0.0",
   "name": "AI Architect PRD Generator",
-  "description": "Enterprise PRD generation with structured rules, deterministic MCP validation, 9 context-aware PRD types, 16 thinking strategies, research-based prioritization, and production-ready technical specifications",
+  "description": "Enterprise PRD generation with structured rules, deterministic MCP validation, 8 context-aware PRD types, 16 thinking strategies, research-based prioritization, and production-ready technical specifications",
   "prd_contexts": {
-    "available": ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd", "tiny"],
+    "available": ["proposal", "feature", "bug", "incident", "poc", "mvp", "release", "cicd"],
     "configurations": {
       "proposal": {
         "clarification_range": [5, 6],
@@ -52,12 +52,6 @@
         "sections": 9,
         "rag_hops": 3,
         "focus": "pipeline_automation"
-      },
-      "tiny": {
-        "clarification_range": [4, 5],
-        "sections": 4,
-        "rag_hops": 1,
-        "focus": "fast_path"
       }
     }
   },
@@ -179,7 +173,7 @@
   },
   "orchestration": {
     "enabled": true,
-    "clarification_contexts": ["mvp", "feature", "poc", "bug", "incident", "release", "cicd", "proposal", "tiny"],
+    "clarification_contexts": ["mvp", "feature", "poc", "bug", "incident", "release", "cicd", "proposal"],
     "features": {
       "adaptive_questioning": true,
       "section_by_section_generation": true,

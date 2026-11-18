@@ -95,6 +95,15 @@ describe("done.outcome through the step graph", () => {
     );
   });
 
+  it("counts the sections of the PRD, passed and failed apart, and not the JIRA tickets stored beside them", () => {
+    const passed = (section_type: SectionStatus["section_type"]): SectionStatus => ({ ...failedSection(), section_type, status: "passed" });
+    const out = runToDone([passed("overview"), failedSection(), passed("testing"), passed("jira_tickets")]);
+    expect(out.action.kind).toBe("done");
+    if (out.action.kind !== "done") return;
+    expect(out.action.summary).toContain("\nSections: 2/3 passed, 1 failed.\n");
+    expect(out.action.outcome?.reasons).toContain("1 section(s) failed validation");
+  });
+
   it("a run with nothing failed ends on done marked passed, summary unchanged", () => {
     const out = runToDone([]);
     expect(out.action.kind).toBe("done");

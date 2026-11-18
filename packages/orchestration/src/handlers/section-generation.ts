@@ -41,7 +41,7 @@ import {
   type CodebaseGrounding,
 } from "@prd-gen/meta-prompting";
 import { selectStrategy, type StrategyAssignment } from "@prd-gen/strategy";
-import { SECTIONS_BY_CONTEXT, SECTION_RECALL_TEMPLATES } from "../section-plan.js";
+import { plannedSections, SECTION_RECALL_TEMPLATES } from "../section-plan.js";
 import {
   replaceSection,
   failSection,
@@ -75,10 +75,10 @@ function correlationFor(prefix: string, sectionType: string): string {
 
 function ensureSectionsInitialized(state: PipelineState): PipelineState {
   if (state.sections.length > 0 || !state.prd_context) return state;
-  const planned = SECTIONS_BY_CONTEXT[state.prd_context];
+  const planned = plannedSections(state.prd_context, state.request_size);
   // Enforce the maxSections cap: 11 (the limit baked into CAPABILITIES) is
   // larger than any single context plan, so this is effectively a no-op
-  // for normal use, but stays here as a defense if SECTIONS_BY_CONTEXT
+  // for normal use, but stays here as a defense if a section plan
   // ever grows. source: CAPABILITIES (core/src/domain/capabilities.ts).
   const cap = CAPABILITIES.maxSections;
   const allowed = planned.slice(0, cap);

@@ -193,11 +193,11 @@ describe("file_export handler", () => {
     expect(written).toContain("prd-output/test_exp/00-run-notes.md");
     expect(runNotesContent).toContain("# Run Notes");
     // data_model IS scheduled for "feature" context but has no content →
-    // "skipped" (not "not part of this run's PRD context profile").
+    // "skipped" (not "not scheduled for a run of this kind and size").
     expect(runNotesContent).toMatch(/Data Model.*not generated in this run/);
     // source_code is NEVER scheduled for any PRD context.
     expect(runNotesContent).toMatch(
-      /Source Code.*not part of this run's PRD context profile/,
+      /Source Code.*not scheduled for a run of this kind and size/,
     );
   });
 

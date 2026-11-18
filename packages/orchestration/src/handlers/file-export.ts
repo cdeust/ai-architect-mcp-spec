@@ -60,7 +60,7 @@
 
 import type { StepHandler } from "../runner.js";
 import { appendError, type PipelineState } from "../types/state.js";
-import { SECTIONS_BY_CONTEXT } from "../section-plan.js";
+import { plannedSections, runRequestSize } from "../section-plan.js";
 import { JIRA_SOURCE_TYPES } from "./jira-generation.js";
 import {
   SECTION_DISPLAY_NAMES,
@@ -84,7 +84,7 @@ export interface PrdFile {
  * Why a companion file's source section(s) produced no content.
  *   "not_in_context_profile" — none of the section types feeding this file
  *                               are scheduled for this run's PRD context
- *                               (SECTIONS_BY_CONTEXT[state.prd_context]).
+ *                               (plannedSections of its kind and size).
  *   "failed_validation"      — at least one of the section types was
  *                               attempted and its terminal status is
  *                               "failed" (MAX_ATTEMPTS exhausted).
@@ -99,7 +99,7 @@ type SkipReason = "not_in_context_profile" | "failed_validation" | "skipped";
 
 const SKIP_REASON_TEXT: Record<SkipReason, string> = {
   not_in_context_profile:
-    "not part of this run's PRD context profile — never scheduled for generation",
+    "not scheduled for a run of this kind and size — never generated",
   failed_validation:
     "section generation failed validation after the maximum number of attempts",
   skipped: "not generated in this run",
@@ -125,7 +125,7 @@ function reasonForSectionTypes(
   state: PipelineState,
   types: readonly SectionType[],
 ): SkipReason {
-  const planned = state.prd_context ? SECTIONS_BY_CONTEXT[state.prd_context] : null;
+  const planned = state.prd_context ? plannedSections(state.prd_context, state.request_size) : null;
   if (planned && !types.some((t) => planned.includes(t))) {
     return "not_in_context_profile";
   }
@@ -344,6 +344,7 @@ function corePrdFile(state: PipelineState, base: string): PrdFile {
         "",
         `Run ID: ${state.run_id}`,
         `Context: ${state.prd_context ?? "unknown"}`,
+        `Request size: ${runRequestSize(state)}`,
         "",
         joinSections(state, CORE_SECTION_TYPES),
       ].join("\n"),

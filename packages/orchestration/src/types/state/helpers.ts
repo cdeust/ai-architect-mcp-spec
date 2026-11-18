@@ -1,7 +1,7 @@
 import type { PipelineState } from "./core-state.js";
 import { PipelineStateSchema } from "./core-state.js";
 import { MAX_PIPELINE_ERRORS } from "./bounded-io.js";
-import type { PRDContext } from "@prd-gen/core";
+import { REQUEST_SIZE_DEFAULT, type PRDContext, type RequestSize } from "@prd-gen/core";
 
 export function newPipelineState(input: {
   run_id: string;
@@ -17,20 +17,25 @@ export function newPipelineState(input: {
    */
   skip_preflight?: boolean;
   /**
-   * The PRD context the host declares at start, sized from the verification
-   * the request needs (#119); the host may ask its advisor model. When set,
+   * The kind of PRD, when the host declares it (#119). When set,
    * context_detection keeps it and reads no trigger word; when absent, the
-   * context is detected from the description or asked, as before. Its
-   * clarification range and sections are the calibrated ones of
-   * PRD_CONTEXT_CONFIGS: the host picks a size, it sets no number.
+   * kind is read from the description or asked.
    */
   prd_context?: PRDContext | null;
+  /**
+   * The size of the request, when the host declares it (#119): `tiny` is the
+   * fast path. The server never reads a size from the description. The
+   * rounds and sections of a size are those of REQUEST_SIZE_CONFIGS: the
+   * host picks a size, it sets no number.
+   */
+  request_size?: RequestSize;
 }): PipelineState {
   const now = new Date().toISOString();
   return PipelineStateSchema.parse({
     run_id: input.run_id,
     current_step: "banner",
     prd_context: input.prd_context ?? null,
+    request_size: input.request_size ?? REQUEST_SIZE_DEFAULT,
     feature_description: input.feature_description,
     codebase_path: input.codebase_path ?? null,
     codebase_graph_path: null,

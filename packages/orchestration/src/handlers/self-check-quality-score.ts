@@ -4,6 +4,8 @@
  * `EvidenceRepository.recordQualityScore`; nothing called it before, so
  * `get_quality_history` could never return data (audit of 2026-10-10).
  */
+import { REQUEST_SIZE_DEFAULT } from "@prd-gen/core";
+import { runRequestSize } from "../section-plan.js";
 import type { validateDocument } from "@prd-gen/validation";
 import type { PipelineState, QualityScoreRecord } from "../types/state.js";
 
@@ -21,6 +23,10 @@ export function withDocumentScore(
   report: ReturnType<typeof validateDocument>,
 ): QualityScoreRecord[] {
   if (state.prd_context === null) return state.quality_scores;
+  // The history of a kind compares documents of that kind. A run held to
+  // the plan of a size has other sections: its score would not be one of
+  // that series, so it is not filed under the kind (#119).
+  if (runRequestSize(state) !== REQUEST_SIZE_DEFAULT) return state.quality_scores;
   return [
     ...state.quality_scores,
     {

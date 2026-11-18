@@ -6,7 +6,13 @@
  * focus of each context type. Tune by use, not by guess.
  */
 
-import type { PRDContext, SectionType } from "@prd-gen/core";
+import {
+  effectiveRequestSize,
+  requestSizePlan,
+  type PRDContext,
+  type RequestSize,
+  type SectionType,
+} from "@prd-gen/core";
 
 export const SECTIONS_BY_CONTEXT: Record<PRDContext, readonly SectionType[]> = {
   proposal: [
@@ -89,9 +95,39 @@ export const SECTIONS_BY_CONTEXT: Record<PRDContext, readonly SectionType[]> = {
     "deployment",
     "timeline",
   ],
-  // #119: "overview, functional requirements, acceptance criteria, tests".
-  tiny: ["overview", "requirements", "acceptance_criteria", "testing"],
 } as const;
+
+/**
+ * postcondition: the sections a run writes, in order: those of its effective
+ *                size when that size names them (the fast path of #119),
+ *                else those of its kind. The one place that answers "which
+ *                sections does this run have": generation and export both
+ *                read it.
+ */
+export function plannedSections(context: PRDContext, size: RequestSize): readonly SectionType[] {
+  return requestSizePlan(context, size)?.sections ?? SECTIONS_BY_CONTEXT[context];
+}
+
+/**
+ * postcondition: the size the run is held to, for what the run says of
+ *                itself (its summaries, its files): the declared size when
+ *                its plan applies to the kind of the run, `standard`
+ *                otherwise; the declared size while the kind is not known.
+ */
+export function runRequestSize(state: { prd_context: PRDContext | null; request_size: RequestSize }): RequestSize {
+  // Stryker disable next-line ConditionalExpression: equivalent: no plan of a size exempts an unknown kind, so both branches give the declared size
+  return state.prd_context === null ? state.request_size : effectiveRequestSize(state.prd_context, state.request_size);
+}
+
+/**
+ * postcondition: the sections of the PRD itself, in order. The JIRA tickets
+ *                are stored among the sections of a run but are generated
+ *                from the PRD, after it: they are no section of the plan, and
+ *                are neither validated nor counted with it.
+ */
+export function prdSections<S extends { section_type: SectionType }>(sections: readonly S[]): S[] {
+  return sections.filter((s) => s.section_type !== "jira_tickets");
+}
 
 /**
  * Section-specific Cortex recall query templates.

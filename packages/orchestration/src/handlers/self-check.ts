@@ -40,6 +40,7 @@ import {
   type JudgeVerdict,
 } from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
+import { prdSections } from "../section-plan.js";
 import {
   resolveVerifyBudget,
   reduceJudgeRequests,
@@ -75,13 +76,8 @@ const VERIFY_BATCH_ID = "self_check_verify";
  *                outcome "needs_attention".
  */
 function gatherSections(state: PipelineState) {
-  return state.sections
-    .filter(
-      (s) =>
-        s.content &&
-        s.status !== "failed" &&
-        s.section_type !== "jira_tickets",
-    )
+  return prdSections(state.sections)
+    .filter((s) => s.content && s.status !== "failed")
     .map((s) => ({ type: s.section_type, content: s.content! }));
 }
 
@@ -167,11 +163,11 @@ function finalize(
   const docReport = validateDocument(sections);
   const { report: verificationReport, observations } = concludeWithObservations(verdicts, judgedClaims);
 
-  const sectionsPassed = state.sections.filter((s) => s.status === "passed")
-    .length;
-  const sectionsFailed = state.sections.filter((s) => s.status === "failed")
-    .length;
-  const sectionsTotal = state.sections.length;
+  // The sections of the PRD: the JIRA tickets, stored beside them, are not counted.
+  const planned = prdSections(state.sections);
+  const sectionsPassed = planned.filter((s) => s.status === "passed").length;
+  const sectionsFailed = planned.filter((s) => s.status === "failed").length;
+  const sectionsTotal = planned.length;
   const docCritical = docReport.violations.filter((v) => v.isCritical).length;
   const docAdvisory = docReport.violations.filter(
     (v) => !isBlockingViolation(v),

@@ -17,7 +17,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { newPipelineState, SECTIONS_BY_CONTEXT, step } from "../index.js";
+import type { RequestSize } from "@prd-gen/core";
+import { newPipelineState, plannedSections, SECTIONS_BY_CONTEXT, step } from "../index.js";
 import type { PipelineState } from "../index.js";
 
 const README = readFileSync(
@@ -41,12 +42,12 @@ function passed(section_type: Section["section_type"]): Section {
 }
 
 /** Basenames written by file_export for a fully passed run of `context`. */
-function exportedFiles(context: Context): string[] {
+function exportedFiles(context: Context, request_size: RequestSize = "standard"): string[] {
   let state: PipelineState = {
-    ...newPipelineState({ run_id: `readme_export_${context}`, feature_description: "x" }),
+    ...newPipelineState({ run_id: `readme_export_${context}`, feature_description: "x", request_size }),
     current_step: "file_export",
     prd_context: context,
-    sections: [...SECTIONS_BY_CONTEXT[context].map(passed), passed("jira_tickets")],
+    sections: [...plannedSections(context, request_size).map(passed), passed("jira_tickets")],
   };
   const written: string[] = [];
   let out = step({ state });
@@ -85,4 +86,14 @@ describe("README exported-files table", () => {
       expect(table.get(context)).toEqual(exportedFiles(context));
     });
   }
+
+  it("lists the files a run declared tiny writes, whatever its context but an incident", () => {
+    const sentence = /A run declared `request_size: "tiny"` writes (.+?), whatever its context/.exec(README);
+    expect(sentence, "README says what a tiny run writes").not.toBeNull();
+    const files = [...sentence![1].matchAll(/`([^`]+)`/g)].map((m) => m[1]).sort();
+    for (const context of Object.keys(SECTIONS_BY_CONTEXT) as Context[]) {
+      const expected = context === "incident" ? table.get("incident") : files;
+      expect(exportedFiles(context, "tiny"), context).toEqual(expected);
+    }
+  });
 });
