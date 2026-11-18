@@ -260,6 +260,7 @@ function makeRun({ git, root, common }, config, commit) {
     // One git for all the blobs: "<sha> blob <size>\n<bytes>\n" for each, in order.
     const blobs = git.bytes(["cat-file", "--batch"], entries.map((entry) => entry[3]).join("\n") + "\n");
     let at = 0;
+    const links = [];
     for (const [, mode, , sha, path] of entries) {
       const headerEnd = blobs.indexOf(0x0a, at);
       const header = blobs.subarray(at, headerEnd).toString("utf8").split(" ");
@@ -268,9 +269,18 @@ function makeRun({ git, root, common }, config, commit) {
       const content = blobs.subarray(headerEnd + 1, headerEnd + 1 + size);
       at = headerEnd + 1 + size + 1;
       const target = join(tree, path);
+      if (mode === "120000") {
+        links.push([target, content.toString("utf8")]);
+        continue;
+      }
       mkdirSync(dirname(target), { recursive: true });
-      if (mode === "120000") symlinkSync(content.toString("utf8"), target);
-      else writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644 });
+      // `wx`: a path a file already took (two names that differ by case, on a disk that does not tell them apart) is refused.
+      writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644, flag: "wx" });
+    }
+    // The links last: no file is ever written through a link of the commit.
+    for (const [target, to] of links) {
+      mkdirSync(dirname(target), { recursive: true });
+      symlinkSync(to, target);
     }
     // Ignored directories the configuration names (node_modules): what is
     // installed is not in the commit, and the checks need it.

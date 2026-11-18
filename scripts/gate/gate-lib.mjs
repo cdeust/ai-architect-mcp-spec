@@ -68,9 +68,8 @@ export function validateConfig(raw) {
   const guard = raw.guard;
   if (guard === null || typeof guard !== "object") fail("guard must be an object");
   expression(guard.start, "guard.start");
-  // `${start}` in an expression of the guard stands for `guard.start`: where
-  // a command starts, after the assignments and the wrappers before it.
-  const written = (source, where) => expression(fill(source, { start: guard.start }), where);
+  const written = (source, where) => expression(fill(source, guardWords(guard)), where);
+  written(guard.git, "guard.git");
   if (!Array.isArray(guard.push)) fail("guard.push must be a list");
   guard.push.forEach((source, index) => written(source, `guard.push[${index}]`));
   if (!Array.isArray(guard.refuse)) fail("guard.refuse must be a list");
@@ -365,75 +364,132 @@ export function prePush(input, ports) {
 
 // ─── The guard of the session (PreToolUse hook) ─────────────────────────────
 
+/**
+ * The words an expression of the guard may use: `${start}`, where a command
+ * starts, after the assignments and the wrappers before it; `${git}`, git
+ * with its own options, up to its subcommand.
+ */
+function guardWords(guard) {
+  const start = guard.start;
+  return { start, git: fill(guard.git, { start }) };
+}
+
 /** What stands for a quoted string in a command the guard reads. */
 const QUOTED = '""';
 
 /**
  * precondition:  `text` is what a tool hands to a shell.
- * postcondition: the commands of `text`, one string each, in order, as the
- *                guard reads them: split where the shell starts a new command
- *                (`;`, `&`, `|`, a line end, a parenthesis, a backquote), with
- *                every quoted string replaced by `""` and every here-document
- *                left out. So the guard reads commands, never the text they
- *                carry: the body of a comment, a commit message or a script
- *                that names a refused command is not that command. A command
- *                written inside a quoted string (`sh -c '…'`) is not read
- *                either.
+ * postcondition: the commands of `text`, one string each, as the guard reads
+ *                them: split where the shell starts a new command (`;`, `&`,
+ *                `|`, a line end, a parenthesis), with every quoted string
+ *                replaced by `""` and every here-document left out. So the
+ *                guard reads commands, never the text they carry: the body of
+ *                a comment, a commit message or a script that names a refused
+ *                command is not that command. What the shell runs inside a
+ *                string is read as commands of its own: a command
+ *                substitution (`$(…)`, backquotes), and the here-documents it
+ *                opens, so `"$(cat <<'EOF' … EOF)"` is a `cat` and its text.
+ *                A command a program is handed as a string (`sh -c '…'`) is
+ *                not read. Text that is not closed runs to the end.
  */
 export function commandsOf(text) {
   // Each expression is tried at one place of the text (sticky), never searched for.
   const single = /'[^']*'?/y;
-  const double = /"(?:[^"\\]|\\[\s\S])*"?/y;
   const hereDocument = /<<-?\s*(['"]?)([\w.-]+)\1/y;
+  const arithmetic = /\$\(\([^)]*\)\)/y;
   const out = [];
   const pending = []; // the end words of the here-documents opened on the current line
-  let current = "";
   let i = 0;
   const here = (expression) => {
     expression.lastIndex = i;
     return expression.exec(text);
   };
-  const flush = () => {
-    const command = current.trim().replace(/\s+/g, " ");
-    if (command !== "") out.push(command);
-    current = "";
-  };
-  while (i < text.length) {
-    const ch = text[i];
-    const quoted = here(single) ?? here(double);
-    const opened = here(hereDocument);
-    if (ch === "\\") {
-      // An escaped character is a character of a word; an escaped line end joins two lines.
-      if (text[i + 1] !== "\n") current += "_";
-      i += 2;
-    } else if (quoted !== null) {
-      // A string that is not closed runs to the end of the text.
-      current += QUOTED;
-      i += quoted[0].length;
-    } else if (opened !== null) {
-      pending.push(opened[2]);
-      i += opened[0].length;
-    } else if (ch === "\n") {
-      flush();
-      i += 1;
-      // The bodies of the here-documents the line opened: text, not commands.
-      // One that is not closed runs to the end of the text.
-      while (pending.length > 0) {
-        const word = pending.shift();
-        const lines = text.slice(i).split("\n");
-        const closing = lines.findIndex((line) => line.trim() === word);
-        const taken = closing === -1 ? lines.length : closing + 1;
-        i += lines.slice(0, taken).join("\n").length + 1;
+  /** Past the bodies of the here-documents the line opened: text, not commands. */
+  const skipBodies = () => {
+    while (pending.length > 0) {
+      const word = pending.shift();
+      let closed = false;
+      while (!closed && i < text.length) {
+        const end = text.indexOf("\n", i);
+        const line = text.slice(i, end === -1 ? text.length : end);
+        i += line.length + 1;
+        closed = line.trim() === word;
       }
-    } else if (";&|()`".includes(ch)) {
-      flush();
-      i += 1;
-    } else {
-      current += ch;
-      i += 1;
     }
-  }
-  flush();
+  };
+  /** The commands up to `close` (or the end), which is consumed. */
+  const commands = (close) => {
+    let current = "";
+    const flush = () => {
+      const command = current.trim().replace(/\s+/g, " ");
+      if (command !== "") out.push(command);
+      current = "";
+    };
+    /** A double-quoted string: text, but for the commands the shell runs inside it. */
+    const doubleQuoted = () => {
+      i += 1;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === "\\") i += 2;
+        else if (text.startsWith("$(", i) && here(arithmetic) === null) {
+          i += 2;
+          commands(")");
+        } else if (text[i] === "`") {
+          i += 1;
+          commands("`");
+        } else if (text[i] === "\n") {
+          i += 1;
+          skipBodies();
+        } else i += 1;
+      }
+      i += 1;
+    };
+    while (i < text.length && text[i] !== close) {
+      const ch = text[i];
+      const quoted = here(single);
+      const opened = here(hereDocument);
+      const sum = here(arithmetic);
+      if (ch === "\\") {
+        // An escaped character is a character of a word; an escaped line end joins two lines.
+        if (text[i + 1] !== "\n") current += "_";
+        i += 2;
+      } else if (quoted !== null) {
+        current += QUOTED;
+        i += quoted[0].length;
+      } else if (ch === '"') {
+        current += QUOTED;
+        doubleQuoted();
+      } else if (sum !== null) {
+        // `$((1<<2))`: a number, with no here-document in it.
+        current += "0";
+        i += sum[0].length;
+      } else if (text.startsWith("<<<", i)) {
+        // A here-string: a word follows, not a body.
+        current += "<<<";
+        i += 3;
+      } else if (opened !== null) {
+        pending.push(opened[2]);
+        i += opened[0].length;
+      } else if (ch === "\n") {
+        flush();
+        i += 1;
+        skipBodies();
+      } else if (ch === "(" || ch === "`") {
+        // A subshell, a command substitution: commands of their own, up to what closes them.
+        flush();
+        i += 1;
+        commands(ch === "(" ? ")" : "`");
+      } else if (";&|)".includes(ch)) {
+        flush();
+        i += 1;
+      } else {
+        current += ch;
+        i += 1;
+      }
+    }
+    flush();
+    i += 1;
+  };
+  while (i < text.length) commands(undefined);
   return out;
 }
 
@@ -461,10 +517,11 @@ export function guardDecision(call, guard) {
   }
   const command = call?.tool_input?.command;
   if (typeof command !== "string") return { kind: "allow" };
-  // Each command of the text on its own, whatever its case; `${start}` is `guard.start`.
+  // Each command of the text on its own, whatever its case.
   const commands = commandsOf(command);
+  const words = guardWords(guard);
   const matches = (source) => {
-    const expressionOf = new RegExp(fill(source, { start: guard.start }), "i");
+    const expressionOf = new RegExp(fill(source, words), "i");
     return commands.some((one) => expressionOf.test(one));
   };
   const rule = guard.refuse.find(({ pattern }) => matches(pattern));

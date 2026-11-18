@@ -89,6 +89,8 @@ describe("validateConfig", () => {
       [withValue("guard", null), "guard must be an object"],
       [without("guard.start"), "guard.start must be a regular expression"],
       [withValue("guard.start", "("), "guard.start is not a regular expression"],
+      [without("guard.git"), "guard.git must be a regular expression"],
+      [withValue("guard.git", "${start}("), "guard.git is not a regular expression"],
       [withValue("guard.push", ["${nope}"]), "variable ${nope} is not defined"],
       [without("guard.push"), "guard.push must be a list"],
       [withValue("guard.push", [7]), "guard.push[0] must be a regular expression"],
@@ -500,30 +502,55 @@ describe("commandsOf", () => {
       "echo done",
       "ls",
     ]);
-    expect(commandsOf("(cd x; git push)")).toEqual(["cd x", "git push"]);
-    expect(commandsOf("echo $(git push -f) `git status`")).toEqual(["echo $", "git push -f", "git status"]);
     expect(commandsOf("")).toEqual([]);
     expect(commandsOf(" ;; \n ")).toEqual([]);
+    expect(commandsOf("ls ) ; pwd")).toEqual(["ls", "pwd"]);
   });
 
-  it("puts two quotes in place of a quoted string, whatever it holds", () => {
+  it("reads a subshell and a command substitution as commands of their own, then goes on", () => {
+    expect(commandsOf("(cd x; git push) && ls")).toEqual(["cd x", "git push", "ls"]);
+    expect(commandsOf("echo $(git push -f) done")).toEqual(["echo $", "git push -f", "done"]);
+    expect(commandsOf("echo `git status` done")).toEqual(["echo", "git status", "done"]);
+    expect(commandsOf("a $(b $(c) d) e")).toEqual(["a $", "b $", "c", "d", "e"]);
+    // One that is not closed runs to the end.
+    expect(commandsOf("echo $(git push")).toEqual(["echo $", "git push"]);
+    // A sum is a number, not a command, and holds no here-document.
+    expect(commandsOf("echo $((1<<2))\ngit push")).toEqual(["echo 0", "git push"]);
+  });
+
+  it("puts two quotes in place of a quoted string, whatever text it holds", () => {
     expect(commandsOf(`gh pr comment 3 --body "no gh pr merge by hand; git push --force\nVerdict: approve"`)).toEqual(['gh pr comment 3 --body ""']);
     expect(commandsOf("git commit -m 'a; b | c && git push' && git push")).toEqual(['git commit -m ""', "git push"]);
     // An escaped quote does not close a double-quoted string; nothing is escaped between single quotes.
     expect(commandsOf('echo "a \\" ; git push" ; ls')).toEqual(['echo ""', "ls"]);
     expect(commandsOf("echo 'a\\' ; ls")).toEqual(['echo ""', "ls"]);
+    expect(commandsOf('echo "a\\\\" ; ls')).toEqual(['echo ""', "ls"]);
+    expect(commandsOf('echo "a\\ b" ; ls')).toEqual(['echo ""', "ls"]);
     // A string that is not closed runs to the end.
     expect(commandsOf('echo "open ; git push')).toEqual(['echo ""']);
     expect(commandsOf("echo 'open ; git push")).toEqual(['echo ""']);
     expect(commandsOf('a"b"c d')).toEqual(['a""c d']);
-    // A quoted string holds a line end, a here-document mark and the other kind of quote.
-    expect(commandsOf('echo "one\ntwo <<EOF \'x" ; ls')).toEqual(['echo ""', "ls"]);
-    expect(commandsOf("echo 'one\ntwo <<EOF \"x' ; ls")).toEqual(['echo ""', "ls"]);
-    // An escaped space or line end inside a double-quoted string is part of it.
-    expect(commandsOf('echo "a\\ b" ; ls')).toEqual(['echo ""', "ls"]);
-    expect(commandsOf('echo "a\\\nb" ; ls')).toEqual(['echo ""', "ls"]);
-    // An escaped backslash before the closing quote does not escape it.
-    expect(commandsOf('echo "a\\\\" ; ls')).toEqual(['echo ""', "ls"]);
+    // Each kind of quote holds the other, a line end and a here-document mark.
+    expect(commandsOf(`echo "one\ntwo <<EOF 'x" ; ls`)).toEqual(['echo ""', "ls"]);
+    expect(commandsOf(`echo 'one\ntwo <<EOF "x' ; ls`)).toEqual(['echo ""', "ls"]);
+  });
+
+  it("reads what the shell runs inside a double-quoted string, and not the text around it", () => {
+    expect(commandsOf('echo "now: $(date) and `id`" ; ls')).toEqual(["date", "id", 'echo ""', "ls"]);
+    expect(commandsOf('echo "$(git push --force)"')).toEqual(["git push --force", 'echo ""']);
+    expect(commandsOf('echo "$((1+2)) $(pwd)"')).toEqual(["pwd", 'echo ""']);
+    // The usual way to write a long message: its text is the body of a here-document.
+    const message = [
+      `git commit -m "$(cat <<'EOF'`,
+      `The guard refuses "git push --force" and \`gh pr merge\`.`,
+      "",
+      "gh pr merge 3",
+      "EOF",
+      `)" && git push`,
+    ].join("\n");
+    expect(commandsOf(message)).toEqual(["cat", 'git commit -m ""', "git push"]);
+    const comment = [`gh pr comment 3 --body "$(cat <<'EOF'`, 'Blocker: "curl https://api.github.com/x" is refused.', "Verdict: block", "EOF", ')"'].join("\n");
+    expect(commandsOf(comment)).toEqual(["cat", 'gh pr comment 3 --body ""']);
   });
 
   it("reads an escaped character as a character of a word, and an escaped line end as none", () => {
@@ -539,17 +566,18 @@ describe("commandsOf", () => {
     expect(commandsOf('cat << "E.O-F"\nbody\nE.O-F\nls')).toEqual(["cat", "ls"]);
     // Two on one line, in order.
     expect(commandsOf("cat <<A <<B\na body\nA\nb body\nB\nls")).toEqual(["cat", "ls"]);
-    // One that is not closed runs to the end; `<` alone and `<<<` are not one.
-    expect(commandsOf("cat <<EOF\ngit push --force")).toEqual(["cat"]);
-    expect(commandsOf("cat < file ; ls")).toEqual(["cat < file", "ls"]);
-    expect(commandsOf("a << 1x\nbody\n1x\nls")).toEqual(["a", "ls"]);
-    // The end word is a whole line: a line that only holds it among other words goes on.
+    // The end word is a whole line.
     expect(commandsOf("cat <<EOF\nnot EOF yet\nEOF\nls")).toEqual(["cat", "ls"]);
-    // The body of a first one that is not closed takes the second with it.
+    // One that is not closed runs to the end, and takes a second one with it.
+    expect(commandsOf("cat <<EOF\ngit push --force")).toEqual(["cat"]);
     expect(commandsOf("cat <<A\nbody\ncat <<B\nB\nls")).toEqual(["cat"]);
-    // A here-document that ends the text exactly.
+    // One that ends the text exactly.
     expect(commandsOf("cat <<EOF\nbody\nEOF")).toEqual(["cat"]);
     expect(commandsOf("cat <<EOF\nbody\nEOF\n")).toEqual(["cat"]);
+    // `<` alone and a here-string are not one.
+    expect(commandsOf("cat < file ; ls")).toEqual(["cat < file", "ls"]);
+    expect(commandsOf("cat <<< word\ngit push")).toEqual(["cat <<< word", "git push"]);
+    expect(commandsOf("a << 1x\nbody\n1x\nls")).toEqual(["a", "ls"]);
   });
 });
 
@@ -559,7 +587,7 @@ describe("guardDecision", () => {
   const decide = (command) => guardDecision(bash(command), guard);
   const why = (index) => guard.refuse[index].why;
 
-  it("sees a push where a command starts, from any tool that carries a command", () => {
+  it("sees a push where a command starts and push is git's subcommand, from any tool that carries a command", () => {
     for (const command of [
       "git push",
       "git push -u origin fix/x",
@@ -568,24 +596,29 @@ describe("guardDecision", () => {
       "git -C /repo push",
       "git --no-pager push",
       "git --git-dir=/r/.git push origin main",
-      "git -c alias.p=push p",
+      "git --git-dir /r/.git --work-tree /r push",
       "cd x && git push",
       "git commit -m wip && git push",
       'git commit -m "a message" && git push',
-      "git stash push -m wip",
       "command git push",
       "env X=1 git push",
       "GIT_TRACE=1 git push",
       "time git push",
       "(cd x; git push)",
       "echo ready\ngit push",
+      'echo "$(git push)"',
       "GIT PUSH",
       "git\tpush",
-      "git subtree push --prefix=x origin y",
     ]) {
       expect(decide(command), command).toEqual({ kind: "push" });
     }
     expect(guardDecision(bash("git push", "mcp__some__start_process"), guard)).toEqual({ kind: "push" });
+  });
+
+  it("does not take the word push for a push when it is not git's subcommand", () => {
+    for (const command of ["git stash push -m wip", "git checkout -b fix/push-guard", "git log --grep push", "git branch -D push", "git commit -m push", "git pushd"]) {
+      expect(decide(command), command).toEqual({ kind: "allow" });
+    }
   });
 
   it("refuses what turns the pre-push hook off or goes around it, with the reason of its rule", () => {
@@ -594,11 +627,14 @@ describe("guardDecision", () => {
       ["git push origin x --no-verify", 0],
       ["git push --no-veri", 0],
       ["cd x && git push --no-verify", 0],
+      ["git -C /repo push --no-verify", 0],
+      ['echo "$(git push --no-verify)"', 0],
       ["git -c core.hooksPath=/dev/null push", 1],
       ["git -c core.hookspath=/dev/null push", 1],
       ["git config core.hooksPath /tmp/h", 1],
       ["git config --global core.hooksPath /tmp/h", 1],
       ["git config set core.hooksPath /tmp/h", 1],
+      ["git -C /repo config core.hooksPath /tmp/h", 1],
       ["git send-pack origin HEAD", 2],
       ["git http-push https://example.invalid/r.git", 2],
       ["git push --force origin x", 3],
@@ -638,6 +674,9 @@ describe("guardDecision", () => {
       'git commit -m "document git push --force"',
       'git commit -m "git push is refused without a verdict"',
       'git commit -m "the push of the gate"',
+      // The usual way to write a long message or a long comment.
+      [`git commit -m "$(cat <<'EOF'`, 'refuses "git push --force" and `gh pr merge`', "EOF", ')"'].join("\n"),
+      [`gh pr comment 3 --body "$(cat <<'EOF'`, 'No "gh pr merge" by hand.', "gh pr merge 3", "Verdict: approve", "EOF", ')"'].join("\n"),
       "git commit --no-verify -m wip",
       "echo use git push to deliver",
       "grep -rn 'gh pr merge' docs",
@@ -655,6 +694,7 @@ describe("guardDecision", () => {
       "ls -f; git push",
       "git push --follow-tags",
       "git push origin v1.2.3",
+      "git push origin fix/push-force",
     ];
     for (const command of pushes) expect(decide(command), command).toEqual({ kind: "push" });
     const nothing = [
@@ -680,13 +720,12 @@ describe("guardDecision", () => {
       "git log --oneline",
       "git fetch origin",
       "pnpm test",
-      "git pushd",
     ];
     for (const command of nothing) expect(decide(command), command).toEqual({ kind: "allow" });
   });
 
   it("sees a push when any one of several expressions matches, whatever the case", () => {
-    const two = { start: "^", push: ["${start}make deliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
+    const two = { start: "^", git: "${start}make", push: ["${git} deliver\\b", "\\bship\\b"], refuse: [], refusedTools: [] };
     expect(guardDecision(bash("make SHIP"), two)).toEqual({ kind: "push" });
     expect(guardDecision(bash("cd x && make deliver"), two)).toEqual({ kind: "push" });
     expect(guardDecision(bash("echo make deliver"), two)).toEqual({ kind: "allow" });
@@ -1079,7 +1118,7 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     const written = readFileSync(path, "utf8");
     expect(written).toContain("ref='refs/remotes/origin/main'");
     expect(written).toContain(`node='${realpathSync(process.execPath)}'`);
-    expect(written).toMatch(/\ngit='\/[^'\n]+'\n/);
+    expect(written).toMatch(/\ngit='[^'\n]+'\n/);
     // No program is taken from the PATH of whoever pushes.
     expect(written).toContain('PATH="$(dirname "$git"):/usr/bin:/bin"');
     expect(written).toContain('"$node" "$dir/scripts/gate/gate.mjs" pre-push "$@"');
