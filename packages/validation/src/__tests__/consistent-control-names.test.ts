@@ -107,6 +107,9 @@ describe("consistent_control_names (#118)", () => {
       '- AC-001: "Share" link copies the URL. Then nothing else.',
       "| AC-001 | Export icons are grey. |",
       "- AC-001: The File menu MUST list Save.",
+      "- AC-001: Le bouton DOIT copier le code.",
+      "- AC-001: Les boutons DOIVENT rester visibles et le menu PEUT se replier.",
+      "- AC-001: Le lien NE DOIT PAS s'ouvrir dans un nouvel onglet.",
     ]) {
       expect(messageOf("- FR-001: Each code block shows a Copy button, and the File menu lists it.", criterion), criterion).toBeUndefined();
     }
@@ -115,6 +118,22 @@ describe("consistent_control_names (#118)", () => {
     expect(messageOf("- FR-001: Share link opens a dialog.", "- AC-001: Then the Share link and the Clone button work.")).toBe(
       '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
     );
+  });
+
+  it("does not read a quoted number word inside a sentence as a name", () => {
+    // Review 1 of #346, note 2: "Two buttons" opens a sentence, so it did not
+    // test the number words; here only NOT_A_NAME keeps "Two" out.
+    expect(messageOf(COPY_FR, '- AC-001: The toolbar shows "Two" buttons.')).toBeUndefined();
+    expect(namedControlsIn('The toolbar shows "Two" buttons.')).toEqual([]);
+  });
+
+  it("does not report a name after a line end or a statement colon: two known misses", () => {
+    // Review 1 of #346, note 1. A definition's text joins its blocks with a
+    // line end, which a hard wrap cannot be told from, and "AC-001:" opens
+    // the statement; so these criteria are not reported. This test pins the
+    // misses: a change that reports them must update it and the CHANGELOG.
+    expect(messageOf(COPY_FR, "- AC-001: Every code block has exactly one\n  Clone control.")).toBeUndefined();
+    expect(messageOf(COPY_FR, "- AC-001: Clone button copies the code.")).toBeUndefined();
   });
 
   it("quotes at most 24 characters of a long control name", () => {
