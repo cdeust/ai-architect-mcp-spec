@@ -325,6 +325,9 @@ interface NamedControl {
  * there. Two misses follow, pinned by the tests: a criterion wrapped before
  * the name ("exactly one" / "Clone control.") and one whose statement opens
  * on the name ("AC-001: Clone button copies the code.") are not reported.
+ * Since emphasis marks are left out, the second covers a bold identifier
+ * ("**AC-001:** Clone button…") and a bold name ("AC-001: **Clone
+ * button**…") as well (review 1 of #350, note 1).
  * source: review 1 of #346, note 1.
  */
 const SENTENCE_BOUNDARY = new Set([".", "!", "?", ":", ";", "|", "\n"]);

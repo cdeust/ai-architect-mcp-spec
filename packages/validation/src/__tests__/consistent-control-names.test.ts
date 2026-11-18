@@ -194,7 +194,11 @@ describe("consistent_control_names (#118)", () => {
     // ":** Should link…", whose "**" hid the colon, so "should" was a name.
     expect(messageOf("**FR-001:** Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
     expect(messageOf("- **FR-001:** Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
-    expect(messageOf("- __FR-001:__ Should link to the docs.", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    // Review 1 of #350, note 2: "__FR-001:__" is not a defining line, so an
+    // assertion on it held with or without the skip of "_". An underscore
+    // emphasis after the colon is one: its "_" hid the colon.
+    expect(messageOf("- FR-001: _Should link to the docs._", "- AC-001: The page shows the Help button.")).toBeUndefined();
+    expect(namedControlsIn("FR-001: _Should link to the docs._")).toEqual([]);
     // Inside a sentence an emphasis mark opens no sentence.
     expect(messageOf(COPY_FR, "- AC-001: The page shows the **Clone button**.")).toBe(
       '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
@@ -218,6 +222,10 @@ describe("consistent_control_names (#118)", () => {
     // misses: a change that reports them must update it and the CHANGELOG.
     expect(messageOf(COPY_FR, "- AC-001: Every code block has exactly one\n  Clone control.")).toBeUndefined();
     expect(messageOf(COPY_FR, "- AC-001: Clone button copies the code.")).toBeUndefined();
+    // Review 1 of #350, note 1: since #350 emphasis marks are left out before
+    // a name, so the second miss covers a bold identifier and a bold name too.
+    expect(messageOf(COPY_FR, "- **AC-001:** Clone button copies the code.")).toBeUndefined();
+    expect(messageOf(COPY_FR, "- AC-001: **Clone button** copies the code.")).toBeUndefined();
   });
 
   it("quotes at most 24 characters of a long control name", () => {
