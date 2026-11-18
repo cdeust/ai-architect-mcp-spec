@@ -401,6 +401,13 @@ class ReadVerdictTests(unittest.TestCase):
         found, calls, _ = self.run_reads([error, error, []])
         self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 2))
 
+    def test_a_failed_read_between_two_empty_reads_is_counted_once(self):
+        # Note 3 of review 1 of #364: a count taken from the attempt number
+        # (`failed = attempt`) reads 2 here.
+        error = subprocess.CalledProcessError(1, "gh")
+        found, calls, _ = self.run_reads([[], error, []])
+        self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 1))
+
     def test_the_last_failure_is_raised(self):
         error = subprocess.CalledProcessError(1, "gh")
         with self.assertRaises(subprocess.CalledProcessError):
@@ -447,13 +454,14 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("failed (gh api)", last)
 
     def test_failed_reads_then_nothing_are_named_in_the_annotation(self):
+        # The last read succeeded and listed no verdict, so the title says the
+        # review posted none; the earlier failures are in the message (note 1
+        # of review 1 of #364).
         progress = comment(PROGRESS_ONLY, link=False)
         code, text = self.invoke([progress], failures=verdict.READ_ATTEMPTS - 1)
         self.assertEqual(code, 1)
         last = text.strip().splitlines()[-1]
-        self.assertTrue(
-            last.startswith("::error title=Claude review verdict could not be read::")
-        )
+        self.assertTrue(last.startswith("::error title=Claude review posted no verdict::"))
         self.assertIn(f"{verdict.READ_ATTEMPTS - 1} of which failed (gh api)", last)
 
 
