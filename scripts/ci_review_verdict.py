@@ -128,8 +128,10 @@ def read_verdict(
     so that the annotation of a run whose earlier reads failed names them (note 2
     of review 1 of #363). The last read is outside the loop, so its failure is
     raised as it is: a None verdict always comes from a last read that succeeded
-    and listed no verdict, so the review did post none, whatever failed before
-    (note 1 of review 1 of #364).
+    and listed no verdict, whatever failed before (note 1 of review 1 of #364).
+    It does not prove the review posted none: a verdict listed after the last
+    read, or one the resolver cannot read, ends here too (note 1 of review 1 of
+    #365).
     """
     failed = 0
     for attempt in range(1, READ_ATTEMPTS):
@@ -155,7 +157,7 @@ def main() -> int:
     )
     if verdict is None:
         print(
-            "::error title=Claude review posted no verdict::No comment of "
+            "::error title=Claude review verdict not found::No comment of "
             f"{REVIEWER} links run {run_id} with a 'Verdict: approve' or "
             f"'Verdict: block' line after {READ_ATTEMPTS} reads"
             + (f", {failed} of which failed (gh api)" if failed else "")

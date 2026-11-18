@@ -389,23 +389,29 @@ class ReadVerdictTests(unittest.TestCase):
                 self.assertEqual((found, calls, self.failed), ("approve", 2, 1))
 
     def test_no_verdict_after_every_read_is_none(self):
-        found, calls, sleeps = self.run_reads([[], [], []])
+        found, calls, sleeps = self.run_reads([[]] * verdict.READ_ATTEMPTS)
         self.assertIsNone(found)
         self.assertEqual(calls, verdict.READ_ATTEMPTS)
         self.assertEqual(len(sleeps), verdict.READ_ATTEMPTS - 1)
         self.assertEqual(self.failed, 0)
 
     def test_failed_reads_before_an_empty_last_read_are_counted(self):
-        # Note 2 of review 1 of #363: reads 1 and 2 fail, read 3 lists nothing.
+        # Note 2 of review 1 of #363: every read but the last fails, the last
+        # lists nothing.
         error = subprocess.CalledProcessError(1, "gh")
-        found, calls, _ = self.run_reads([error, error, []])
-        self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 2))
+        reads = [error] * (verdict.READ_ATTEMPTS - 1) + [[]]
+        found, calls, _ = self.run_reads(reads)
+        expected = (None, verdict.READ_ATTEMPTS, verdict.READ_ATTEMPTS - 1)
+        self.assertEqual((found, calls, self.failed), expected)
 
     def test_a_failed_read_between_two_empty_reads_is_counted_once(self):
         # Note 3 of review 1 of #364: a count taken from the attempt number
-        # (`failed = attempt`) reads 2 here.
+        # (`failed = attempt`) reads READ_ATTEMPTS - 1 here.
+        # Note 3 of review 1 of #365: the reads follow READ_ATTEMPTS, so the
+        # test does not assume three.
         error = subprocess.CalledProcessError(1, "gh")
-        found, calls, _ = self.run_reads([[], error, []])
+        reads = [[]] * (verdict.READ_ATTEMPTS - 2) + [error, []]
+        found, calls, _ = self.run_reads(reads)
         self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 1))
 
     def test_the_last_failure_is_raised(self):
@@ -448,20 +454,20 @@ class CliTests(unittest.TestCase):
         code, text = self.invoke([progress])
         self.assertEqual(code, 1)
         last = text.strip().splitlines()[-1]
-        self.assertTrue(last.startswith("::error title=Claude review posted no verdict::"))
+        self.assertTrue(last.startswith("::error title=Claude review verdict not found::"))
         self.assertEqual(text.count("reading again"), verdict.READ_ATTEMPTS - 1)
         self.assertIn(str(RUN), text)
         self.assertNotIn("failed (gh api)", last)
 
     def test_failed_reads_then_nothing_are_named_in_the_annotation(self):
-        # The last read succeeded and listed no verdict, so the title says the
-        # review posted none; the earlier failures are in the message (note 1
-        # of review 1 of #364).
+        # The last read succeeded and listed no verdict after N reads; the
+        # earlier failures are in the message (note 1 of review 1 of #364 and
+        # of review 1 of #365).
         progress = comment(PROGRESS_ONLY, link=False)
         code, text = self.invoke([progress], failures=verdict.READ_ATTEMPTS - 1)
         self.assertEqual(code, 1)
         last = text.strip().splitlines()[-1]
-        self.assertTrue(last.startswith("::error title=Claude review posted no verdict::"))
+        self.assertTrue(last.startswith("::error title=Claude review verdict not found::"))
         self.assertIn(f"{verdict.READ_ATTEMPTS - 1} of which failed (gh api)", last)
 
 
