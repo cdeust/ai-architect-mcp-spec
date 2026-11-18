@@ -1,0 +1,32 @@
+{
+  "description": "The contract of an operation of the delivery gate that needs no socket (build, perf): it reads the worktree and the tools of the machine, writes its outputs in the worktree and in a temporary directory of its own, and talks to no one. It cannot read the credentials of the user, and cannot write what judges it: the settings of Claude Code, the gate, its configuration, or the git directory where verdicts are kept. Variables: ${home} (the user's home), ${worktree}, ${tmp} (created for this operation, removed after it).",
+  "srt": {
+    "network": { "allowedDomains": [], "deniedDomains": [] },
+    "filesystem": {
+      "denyRead": [
+        "${home}/.ssh",
+        "${home}/.aws",
+        "${home}/.gnupg",
+        "${home}/.config/gh",
+        "${home}/.npmrc",
+        "${home}/.netrc",
+        "${home}/.claude",
+        "${home}/.claude.json",
+        "${home}/Library/Keychains"
+      ],
+      "allowRead": [],
+      "allowWrite": ["${worktree}", "${tmp}"],
+      "denyWrite": [
+        "${worktree}/.claude",
+        "${worktree}/.git",
+        "${worktree}/delivery-gate.json",
+        "${worktree}/stryker.config.json",
+        "${worktree}/scripts/gate"
+      ]
+    }
+  },
+  "env": {
+    "pass": ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM"],
+    "set": { "HOME": "${tmp}/home", "TMPDIR": "${tmp}", "CI": "1" }
+  }
+}

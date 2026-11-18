@@ -36,6 +36,9 @@ packages/skill/dist
 # runtime; never committed (the master gate-calibration-K100.json carries
 # the calibrated values; the XmR per-gate files are intermediate).
 packages/benchmark/calibration/data/gate-calibration-K100.xmr/
+# Delivery gate (scripts/gate): Stryker's sandbox and its report
+.stryker-tmp/
+reports/mutation/
 # Agent dispatch worktrees — ephemeral, never committed
 .claude/worktrees/
 

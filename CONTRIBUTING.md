@@ -96,7 +96,40 @@ sent back rather than merged with a follow-up promise.
   See `packages/benchmark/src/__tests__/pipeline-kpis.test.ts` for examples.
 - **Mutation survival check.** When adding a test, ask: "what mutation would
   this test fail to catch?" If the answer is "any non-trivial one," the test
-  is too weak.
+  is too weak. The delivery gate asks the same question with Stryker, below.
+
+### The delivery gate
+
+`pnpm gate` runs before a change is pushed: the checks listed in
+`delivery-gate.json` (build, unit, perf), then mutation testing of the
+production files the diff changed (`stryker.config.json`). Every mutant that
+touches a changed line must be detected by a test. One that no test can tell
+from the original is marked on the line above, with its reason:
+`// Stryker disable next-line <Mutator>: equivalent: <why>`.
+
+There are two layers. The hook is the check against a bypass: no delivery
+without a verdict. The sandbox is the defence against what runs: each
+operation of the gate is started in a sandbox of its own
+(`@anthropic-ai/sandbox-runtime`) with the profile `delivery-gate.json` names
+for it, in `scripts/gate/profiles/`. A profile is the contract of the
+operation: `offline` (build, perf) has no network; `loopback` (unit, mutation
+testing) adds the loopback the tests' servers need. Both write only the
+worktree and a temporary directory, cannot read the user's credentials, and
+cannot write `.claude/`, the gate, its configuration or the git directory.
+Before it runs anything, the gate proves the sandbox holds with a canary under
+each profile, and refuses to run when it does not: there is no unsandboxed
+fallback. The sandbox runtime needs Node 22.12 or later, and macOS or Linux.
+
+The gate records its verdict for the committed tree, under the git directory.
+In Claude Code, the `PreToolUse` hook of `.claude/settings.json` refuses a
+`git push`, a `gh pr create` or a GitHub write for a tree without a passed
+verdict; `.claude/skills/deliver/SKILL.md` is the procedure. What the gate
+runs, what counts as production code and what counts as a delivery are in
+`delivery-gate.json`: change that file, not `scripts/gate/`.
+
+Limits: the hook judges the tree of the directory the command runs in, so a
+push aimed at another directory (`git -C <dir> push`) is judged on the wrong
+tree; and the hosted Pipeline does not run the gate yet.
 - **Coverage by package:**
   - `core` / `validation` / `meta-prompting`: contract tests for every public
     surface.

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm gate)",
+      "Bash(pnpm build)",
+      "Bash(pnpm test)",
+      "Bash(pnpm test:perf)",
+      "Bash(git fetch *)",
+      "Bash(git grep *)",
+      "Bash(gh search *)",
+      "Bash(shasum *)",
+      "Bash(claude plugin list)",
+      "mcp__plugin_hypermnesia-mcp_cortex__recall"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Bash(git merge-base *)",
+      "Bash(gh pr update-branch *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__github__create_pull_request|mcp__github__push_files|mcp__github__create_or_update_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/gate/gate.mjs\" hook"
+          }
+        ]
+      }
+    ]
+  }
+}
