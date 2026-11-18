@@ -424,7 +424,7 @@ describe("verdictRefusal", () => {
 });
 
 describe("pushedCommits", () => {
-  it("reads the commits a push sends, and nothing for a deletion", () => {
+  it("reads the tip of each ref a push sends, and nothing for a deletion", () => {
     const input = [
       `refs/heads/a ${SHA("a")} refs/heads/a ${ZERO}`,
       "",
@@ -467,7 +467,7 @@ describe("prePush", () => {
   const passed = (tree) => ({ tree, passed: true, gate: "G" });
   const line = (name, digit) => `refs/heads/${name} ${SHA(digit)} refs/heads/${name} ${ZERO}`;
 
-  it("lets through a push whose every commit has a passed verdict of this gate", () => {
+  it("lets through a push whose every tip has a passed verdict of this gate", () => {
     const p = ports({ "tree-of-a": passed("tree-of-a"), "tree-of-b": passed("tree-of-b") });
     expect(prePush([line("a", "a"), line("b", "b")].join("\n"), p)).toBe(0);
     expect(p.lines).toEqual([]);
@@ -516,6 +516,11 @@ describe("commandsOf", () => {
     expect(commandsOf('echo "open ; git push')).toEqual(['echo ""']);
     expect(commandsOf("echo 'open ; git push")).toEqual(['echo ""']);
     expect(commandsOf('a"b"c d')).toEqual(['a""c d']);
+    // A quoted string holds a line end, a here-document mark and the other kind of quote.
+    expect(commandsOf('echo "one\ntwo <<EOF \'x" ; ls')).toEqual(['echo ""', "ls"]);
+    expect(commandsOf("echo 'one\ntwo <<EOF \"x' ; ls")).toEqual(['echo ""', "ls"]);
+    // An escaped backslash before the closing quote does not escape it.
+    expect(commandsOf('echo "a\\\\" ; ls')).toEqual(['echo ""', "ls"]);
   });
 
   it("reads an escaped character as a character of a word, and an escaped line end as none", () => {
@@ -535,6 +540,13 @@ describe("commandsOf", () => {
     expect(commandsOf("cat <<EOF\ngit push --force")).toEqual(["cat"]);
     expect(commandsOf("cat < file ; ls")).toEqual(["cat < file", "ls"]);
     expect(commandsOf("a << 1x\nbody\n1x\nls")).toEqual(["a", "ls"]);
+    // The end word is a whole line: a line that only holds it among other words goes on.
+    expect(commandsOf("cat <<EOF\nnot EOF yet\nEOF\nls")).toEqual(["cat", "ls"]);
+    // The body of a first one that is not closed takes the second with it.
+    expect(commandsOf("cat <<A\nbody\ncat <<B\nB\nls")).toEqual(["cat"]);
+    // A here-document that ends the text exactly.
+    expect(commandsOf("cat <<EOF\nbody\nEOF")).toEqual(["cat"]);
+    expect(commandsOf("cat <<EOF\nbody\nEOF\n")).toEqual(["cat"]);
   });
 });
 
