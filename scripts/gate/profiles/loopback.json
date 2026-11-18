@@ -1,5 +1,5 @@
 {
-  "description": "The contract of an operation of the delivery gate that runs the test suite (unit, mutation testing), whose tests start servers on a port of the loopback and call them: the loopback, and nothing outside the machine. On macOS the loopback is every local port, so a service of the host that listens on localhost is reachable; on Linux it is the sandbox's own. It reads the worktree, the git directory of the repository, the gate's checkout, its own temporary directory and the tools PATH names, and nothing else of the user's home. It writes the worktree and its temporary directory, except what judges it or what the gate runs outside the sandbox: the settings of Claude Code, the git directory, the gate and its configuration, and the installed tools (node_modules/.bin, the package store, the sandbox runtime, the mutation tool). Variables: ${home}, ${worktree}, ${repository} (the git directory all worktrees share), ${launcher} (the checkout of the gate that judges), ${tmp} (created for this operation, removed after it), ${toolchain} (the directories of PATH inside the home).",
+  "description": "The contract of an operation of the delivery gate that runs the test suite (unit, mutation testing), whose tests start servers on a port of the loopback and call them: the loopback, and nothing outside the machine. On macOS the loopback is every local port, so a service of the host that listens on localhost is reachable; on Linux it is the sandbox's own. It works on a copy of the committed tree, in the directory of the run, which is the only place it writes: the tree that is judged, the git directory, the gate and the settings are read-only to it, and the directory the sandbox runtime shares between its sandboxes is denied. It reads the directory of the run, the gate's checkout and the tools PATH names, and nothing else of the user's home. Variables: ${home}, ${run} (created for this run of the gate, removed after it: the copy in tree/, tmp/, home/), ${launcher} (the checkout of the gate that judges), ${toolchain} (the directories of PATH inside the home).",
   "srt": {
     "network": {
       "allowedDomains": [],
@@ -11,26 +11,16 @@
         "${home}"
       ],
       "allowRead": [
-        "${worktree}",
-        "${repository}",
+        "${run}",
         "${launcher}",
-        "${tmp}",
         "${toolchain}"
       ],
       "allowWrite": [
-        "${worktree}",
-        "${tmp}"
+        "${run}"
       ],
       "denyWrite": [
-        "${worktree}/.claude",
-        "${worktree}/.git",
-        "${worktree}/delivery-gate.json",
-        "${worktree}/stryker.config.json",
-        "${worktree}/scripts/gate",
-        "${worktree}/node_modules/.bin",
-        "${worktree}/node_modules/.pnpm",
-        "${worktree}/node_modules/@anthropic-ai",
-        "${worktree}/node_modules/@stryker-mutator"
+        "/tmp/claude",
+        "/private/tmp/claude"
       ]
     }
   },
@@ -43,8 +33,9 @@
       "TERM"
     ],
     "set": {
-      "HOME": "${tmp}/home",
-      "TMPDIR": "${tmp}",
+      "HOME": "${run}/home",
+      "TMPDIR": "${run}/tmp",
+      "CLAUDE_CODE_TMPDIR": "${run}/tmp",
       "CI": "1"
     }
   }

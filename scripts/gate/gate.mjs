@@ -4,7 +4,7 @@
  * sandbox runtime, files) and the commands that use them. The decisions are
  * in gate-lib.mjs; nothing is decided here.
  *
- *   gate.mjs run        judge the work in the current directory (pnpm gate)
+ *   gate.mjs run        judge the commit checked out in the current directory
  *   gate.mjs pre-push   the pre-push hook of git: refuse a push of a commit
  *                       whose tree has no passed verdict of this gate
  *   gate.mjs hook       the PreToolUse hook of Claude Code: refuse what goes
@@ -24,9 +24,11 @@
  * or a call the PreToolUse hook blocks).
  */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
+  constants,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -39,49 +41,54 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Refusal, canaryPlan, guardHook, prePush, resolveProfile, runGate, validateConfig } from "./gate-lib.mjs";
+import { Refusal, canaryPlan, guardDecision, guardHook, prePush, resolveProfile, runGate, validateConfig } from "./gate-lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The checkout this gate belongs to: its files judge, they are not judged. */
-const LAUNCHER = resolve(HERE, "..", "..");
+const LAUNCHER = realpathSync(resolve(HERE, "..", ".."));
 const GATE_FILES = ["delivery-gate.json", "stryker.config.json", "scripts/gate/gate.mjs", "scripts/gate/gate-lib.mjs", "scripts/gate/canary.mjs"];
 const PROFILES = join(HERE, "profiles");
 
 const inside = (path, root) => path === root || path.startsWith(root + sep);
 
 /**
- * git, by its absolute path, found on PATH outside the tree that is judged:
- * a check may write `node_modules/.bin`, which package managers put first on
- * PATH, and what it leaves there must never be run outside the sandbox.
+ * A program, by its absolute path, found on PATH outside the given trees: a
+ * tree that is judged, or one a sandboxed operation wrote, must never supply
+ * what runs outside the sandbox.
  */
-function findGit(judgedRoots) {
+function findOnPath(program, outside) {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-    if (dir === "" || judgedRoots.some((root) => inside(resolve(dir), root))) continue;
-    for (const name of process.platform === "win32" ? ["git.exe"] : ["git"]) {
+    if (dir === "" || outside.some((root) => inside(resolve(dir), root))) continue;
+    for (const name of process.platform === "win32" ? [`${program}.exe`] : [program]) {
       const candidate = join(dir, name);
       if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
     }
   }
-  throw new Refusal("git is not on PATH outside the tree that is judged");
+  throw new Refusal(`${program} is not on PATH outside the tree that is judged`);
 }
 
 function makeGit(gitPath, cwd) {
-  return (...args) => {
-    const out = spawnSync(gitPath, args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+  return (args, env = {}) => {
+    const out = spawnSync(gitPath, args, { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, ...env } });
     if (out.status !== 0) throw new Refusal(`git ${args.join(" ")}: ${(out.stderr ?? "").trim() || out.error?.message}`);
     return out.stdout;
   };
 }
 
-/** The repository the current directory is in, read without trusting its tree. */
+/**
+ * The repository the directory is in. git is found outside that directory
+ * first, then outside the root of its worktree once git has named it, and
+ * every later call runs from that root: a directory below it cannot answer
+ * for the repository.
+ */
 function repository(cwd) {
-  // The roots are not known before git answers: the first call excludes the
-  // current directory and the launcher, which is enough to find them.
-  const git = makeGit(findGit([resolve(cwd), LAUNCHER]), cwd);
-  const root = realpathSync(git("rev-parse", "--show-toplevel").trim());
-  const common = realpathSync(git("rev-parse", "--path-format=absolute", "--git-common-dir").trim());
+  const start = realpathSync(cwd);
+  const probe = makeGit(findOnPath("git", [start, LAUNCHER]), start);
+  const root = realpathSync(probe(["rev-parse", "--show-toplevel"]).trim());
+  const git = makeGit(findOnPath("git", [root, LAUNCHER]), root);
+  const common = realpathSync(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
   return { git, root, common };
 }
 
@@ -115,7 +122,7 @@ function readVerdict(common, tree) {
   }
 }
 
-// ─── The sandbox ────────────────────────────────────────────────────────────
+// ─── The run: a disposable copy, and a sandbox per operation ────────────────
 
 /** The sandbox runtime of the launcher, as the file node runs. */
 function sandboxRuntime() {
@@ -142,12 +149,48 @@ const kindOf = (path) => {
 };
 
 /**
- * One sandbox per operation: a temporary directory of its own, the profile
- * resolved for it, the sandbox runtime around the command. The operation
- * gets the environment of the profile and nothing else of the host.
+ * The directory of one run of the gate, beside the verdicts in the git
+ * directory: on the volume of the repository, outside every worktree. It
+ * holds the copy of the committed tree (tree/), and the temporary directory
+ * and home of the operations. It is the only place an operation writes.
  */
-function makeSandbox({ root, common }) {
+function makeRun({ git, root, common }, config) {
   const runtime = sandboxRuntime();
+  const sh = findOnPath("sh", [root, LAUNCHER]);
+  mkdirSync(join(common, "delivery-gate"), { recursive: true });
+  const run = realpathSync(mkdtempSync(join(common, "delivery-gate", "run-")));
+  const tree = join(run, "tree");
+  const settingsDir = realpathSync(mkdtempSync(join(tmpdir(), "gate-settings-")));
+  const home = realpathSync(homedir());
+  // What an operation may read of the user's home: the tools PATH names there.
+  const toolchain = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((dir) => dir !== "" && existsSync(dir))
+    .map((dir) => realpathSync(dir))
+    .filter((dir) => inside(dir, home) && !inside(dir, root));
+  const vars = { home, run, launcher: LAUNCHER, toolchain };
+
+  /** The committed tree, as git checks it out, then the installed dependencies of the worktree. */
+  const prepare = () => {
+    for (const dir of ["tmp", "home", "tree"]) mkdirSync(join(run, dir));
+    const index = { GIT_INDEX_FILE: join(run, "index") };
+    git(["read-tree", "HEAD"], index);
+    git(["checkout-index", "--all", `--prefix=${tree}${sep}`], index);
+    // Ignored directories the configuration names (node_modules): what is
+    // installed is not in the commit, and the checks need it.
+    const ignored = git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]).split("\0");
+    for (const entry of ignored) {
+      const path = entry.replace(/\/$/, "");
+      if (path === "" || !config.carry.includes(basename(path))) continue;
+      cpSync(join(root, path), join(tree, path), { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+    }
+  };
+
+  const dispose = () => {
+    rmSync(run, { recursive: true, force: true });
+    rmSync(settingsDir, { recursive: true, force: true });
+  };
+
   const loadProfile = (name) => {
     try {
       return JSON.parse(readFileSync(join(PROFILES, `${name}.json`), "utf8"));
@@ -155,68 +198,71 @@ function makeSandbox({ root, common }) {
       throw new Refusal(`profile ${name} cannot be read (${error.message})`);
     }
   };
-  // What an operation may read of the user's home: the tools PATH names there.
-  const home = realpathSync(homedir());
-  const toolchain = (process.env.PATH ?? "")
-    .split(delimiter)
-    .filter((dir) => dir !== "" && existsSync(dir))
-    .map((dir) => realpathSync(dir))
-    .filter((dir) => inside(dir, home) && !inside(dir, root));
 
-  const within = (profileName, use) => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "gate-sb-")));
-    try {
-      const tmp = join(dir, "tmp");
-      mkdirSync(join(tmp, "home"), { recursive: true });
-      const vars = { home, worktree: root, repository: common, launcher: LAUNCHER, tmp, toolchain };
-      const resolved = resolveProfile(loadProfile(profileName), vars, process.env);
-      const settings = join(dir, "srt.json");
-      writeFileSync(settings, JSON.stringify(resolved.srt));
-      const start = (argv, stdio) =>
-        spawnSync(process.execPath, [runtime, "--settings", settings, "--", ...argv], {
-          cwd: root,
-          env: resolved.env,
-          stdio,
-          encoding: "utf8",
-        });
-      return use(resolved, start);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  /** Start `argv` in the copy, under the profile; the settings file is outside what the operation writes. */
+  const start = (profileName, argv, stdio) => {
+    const resolved = resolveProfile(loadProfile(profileName), vars, process.env);
+    const settings = join(settingsDir, `${profileName}.json`);
+    writeFileSync(settings, JSON.stringify(resolved.srt));
+    const out = spawnSync(process.execPath, [runtime, "--settings", settings, "--", ...argv], {
+      cwd: tree,
+      env: resolved.env,
+      stdio,
+      encoding: "utf8",
+    });
+    return { out, srt: resolved.srt };
   };
 
-  const sandboxed = (argv, profileName) => within(profileName, (_, start) => start(argv, "inherit").status);
+  /**
+   * true when the command ran to its end with status 0. The sandbox runtime
+   * exits 0 when its command is ended by SIGINT or SIGTERM, so its status
+   * alone does not say that: the command leaves a mark when it succeeds, at
+   * a path only this process and the wrapper know.
+   */
+  const sandboxed = (argv, profileName) => {
+    const mark = join(run, "tmp", `done-${randomBytes(16).toString("hex")}`);
+    const script = `"$@" && : > '${mark}'`;
+    const { out } = start(profileName, [sh, "-c", script, "sh", ...argv], "inherit");
+    const done = existsSync(mark);
+    rmSync(mark, { force: true });
+    return out.status === 0 && done;
+  };
 
   /**
    * The proof that the sandbox holds, before anything is run in it: under
-   * the profile, the canary tries each thing the profile denies. One success
-   * and the gate refuses to run: there is no unsandboxed fallback.
+   * the profile, the canary tries each thing that must be refused. One
+   * success and the gate refuses to run: there is no unsandboxed fallback.
    */
   const proveIsolation = async (profileName) => {
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "gate-canary-")));
     const server = createServer((socket) => socket.destroy());
     await new Promise((done) => server.listen(0, "127.0.0.1", done));
-    let plan = { created: [] };
+    let created = [];
     try {
-      return within(profileName, (resolved, start) => {
-        plan = canaryPlan(resolved.srt, { kindOf, outside, hostPort: server.address().port });
-        const out = start([process.execPath, join(HERE, "canary.mjs"), ...plan.args], ["ignore", "pipe", "pipe"]);
-        if (out.status !== 0) {
-          throw new Refusal(
-            `the sandbox does not hold under profile ${profileName}: ${(out.stdout ?? "").trim() || (out.stderr ?? "").trim() || "the canary could not run"}`,
-          );
-        }
-        const { writes, reads, port } = plan.proves;
-        return `${writes} write(s) and ${reads} read(s) the profile denies were refused${port ? ", and the host's port was out of reach" : ""}`;
+      const srt = resolveProfile(loadProfile(profileName), vars, process.env).srt;
+      const plan = canaryPlan(srt, {
+        kindOf,
+        keep: [root, common, LAUNCHER, home, outside],
+        hostPort: server.address().port,
+        mark: `gate-canary-${randomBytes(8).toString("hex")}`,
       });
+      created = plan.created;
+      const { out } = start(profileName, [process.execPath, join(HERE, "canary.mjs"), ...plan.args], ["ignore", "pipe", "pipe"]);
+      if (out.status !== 0) {
+        throw new Refusal(
+          `the sandbox does not hold under profile ${profileName}: ${(out.stdout ?? "").trim() || (out.stderr ?? "").trim() || "the canary could not run"}`,
+        );
+      }
+      const { writes, reads, port } = plan.proves;
+      return `${writes} write(s) and ${reads} read(s) that must be refused were refused${port ? ", and the host's port was out of reach" : ""}`;
     } finally {
       server.close();
-      for (const file of plan.created) rmSync(file, { force: true });
+      for (const file of created) rmSync(file, { force: true });
       rmSync(outside, { recursive: true, force: true });
     }
   };
 
-  return { sandboxed, proveIsolation };
+  return { prepare, dispose, sandboxed, proveIsolation, tree };
 }
 
 // ─── The commands ───────────────────────────────────────────────────────────
@@ -226,41 +272,55 @@ const log = (line) => console.error(line);
 async function run() {
   const config = loadConfig();
   const repo = repository(process.cwd());
-  const { git, root, common } = repo;
-  const { sandboxed, proveIsolation } = makeSandbox(repo);
-  // The change: against the point where the work left `base`, uncommitted
-  // changes included. Names come NUL-separated, so git quotes none of them.
-  const diff = (...args) => git("diff", "--no-color", "--no-ext-diff", "--merge-base", config.base, ...args);
-  return runGate(config, {
+  const { prepare, dispose, sandboxed, proveIsolation, tree } = makeRun(repo, config);
+  // The directory of the run is removed however the run ends.
+  process.once("SIGINT", () => {
+    dispose();
+    process.exit(130);
+  });
+  try {
+    return await runGate(config, ports(config, repo, { prepare, dispose, sandboxed, proveIsolation, tree }));
+  } finally {
+    dispose();
+  }
+}
+
+function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsolation, tree }) {
+  // The change: the commits since the point where the work left `base`.
+  // `--text` and `--no-textconv`: an attribute of the tree cannot turn a
+  // file's diff into "binary files differ". Names come NUL-separated, so git
+  // quotes none of them.
+  const diff = (...args) => git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "--merge-base", config.base, "HEAD", ...args]);
+  return {
     log,
-    headTree: () => git("rev-parse", "HEAD^{tree}").trim(),
-    status: () => git("status", "--porcelain").trim(),
+    headTree: () => git(["rev-parse", "HEAD^{tree}"]).trim(),
+    status: () => git(["status", "--porcelain", "--untracked-files=all"]).trimEnd(),
     changedFiles: () => diff("--name-only", "--diff-filter=d", "-z").split("\0").filter((name) => name !== ""),
     fileDiff: (_, file) => diff("-U0", "--", file),
+    prepare,
+    dispose,
     proveIsolation,
     sandboxed,
-    removeReport: (path) => rmSync(join(root, path), { force: true }),
+    readSource: (file) => readFileSync(join(tree, file), "utf8"),
+    removeReport: (path) => rmSync(join(tree, path), { force: true }),
     readReport: (path) => {
       try {
-        return JSON.parse(readFileSync(join(root, path), "utf8"));
+        return JSON.parse(readFileSync(join(tree, path), "utf8"));
       } catch {
         return null;
       }
     },
-    recordVerdict: (tree, verdict) => {
-      mkdirSync(join(common, "delivery-gate"), { recursive: true });
-      writeFileSync(verdictPath(common, tree), JSON.stringify(verdict, null, 2));
-    },
+    recordVerdict: (hash, verdict) => writeFileSync(verdictPath(common, hash), JSON.stringify(verdict, null, 2)),
     gateHash: gateHash(),
     now: () => new Date().toISOString(),
     vars: { launcher: LAUNCHER },
-  });
+  };
 }
 
 function runPrePush() {
   const { git, common } = repository(process.cwd());
   return prePush(readFileSync(0, "utf8"), {
-    treeOf: (sha) => git("rev-parse", `${sha}^{tree}`).trim(),
+    treeOf: (sha) => git(["rev-parse", `${sha}^{tree}`]).trim(),
     readVerdict: (tree) => readVerdict(common, tree),
     gateHash: gateHash(),
     log,
@@ -280,16 +340,22 @@ const SHIM = [
 function hookProblem({ git, common }) {
   let hooksPath = "";
   try {
-    hooksPath = git("config", "--get", "core.hooksPath").trim();
+    hooksPath = git(["config", "--get", "core.hooksPath"]).trim();
   } catch {
     // not set: git reads the hooks of the git directory
   }
   if (hooksPath !== "") return `core.hooksPath is set to ${hooksPath}`;
+  const path = join(common, "hooks", "pre-push");
+  let content;
   try {
-    return readFileSync(join(common, "hooks", "pre-push"), "utf8") === SHIM ? null : "another pre-push hook is installed";
+    content = readFileSync(path, "utf8");
   } catch {
     return "no pre-push hook is installed";
   }
+  if (content !== SHIM) return "another pre-push hook is installed";
+  // git skips a hook it cannot execute, and says so only in a hint.
+  if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return "the pre-push hook is not executable";
+  return null;
 }
 
 function install() {
@@ -307,7 +373,13 @@ function install() {
   return 0;
 }
 
-/** The PreToolUse hook. Once the call is read, any failure blocks it. */
+/**
+ * The PreToolUse hook. The session is this project's: a call made from a
+ * directory that is in no repository is guarded like one made from the
+ * project (a command can name the repository itself, `git -C`). A call made
+ * from inside another repository is that repository's business. Once the
+ * call is read, any failure blocks it.
+ */
 function runHook() {
   let call;
   try {
@@ -315,15 +387,17 @@ function runHook() {
   } catch {
     return 0; // not a hook payload: nothing to judge
   }
-  let repo;
+  const guard = loadConfig().guard;
+  if (guardDecision(call, guard).kind === "allow") return 0;
+  const project = repository(LAUNCHER);
+  let here = project;
   try {
-    repo = repository(call.cwd ?? process.cwd());
+    here = repository(call.cwd ?? process.cwd());
   } catch {
-    return 0; // not in a git repository: nothing of this project can leave from here
+    // in no repository: the project's rules apply
   }
-  // Another repository than the one of this gate: not this gate's to guard.
-  if (repo.common !== repository(LAUNCHER).common) return 0;
-  return guardHook(call, loadConfig().guard, { hookProblem: () => hookProblem(repo), log });
+  if (here.common !== project.common) return 0;
+  return guardHook(call, guard, { hookProblem: () => hookProblem(here), log });
 }
 
 const COMMANDS = { run, "pre-push": runPrePush, hook: runHook, install, hash: () => (console.log(gateHash()), 0) };

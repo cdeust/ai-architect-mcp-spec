@@ -109,19 +109,22 @@ sent back rather than merged with a follow-up promise.
 
 ### The delivery gate
 
-`pnpm gate` judges a change before it is pushed. It runs the checks listed
+`pnpm gate` judges a commit before it is pushed. It runs the checks listed
 in `delivery-gate.json` (build, unit, perf), then mutation testing of the
-production files the change touches (`stryker.config.json`). Every mutant
+production files the commits touch (`stryker.config.json`). Every mutant
 that touches a changed line must be detected by a test. One that no test can
 tell from the original is marked on the line above, with its reason:
 `// Stryker disable next-line <Mutator>: equivalent: <why>`. A mark without
-that reason does not pass.
+that reason does not pass, and a file that turns mutation off for more than
+one line fails the gate.
 
-A verdict is recorded for the committed tree, under the git directory, when
-the work was committed before the first check and the tree is the same after
-the last. A check that rewrites tracked files (a build whose output is
-committed, such as `packages/mcp-server/dist`) fails the gate: commit the
-rebuilt files first.
+The gate judges the committed tree: it refuses work that is not committed.
+It checks that tree out into a directory of its own, beside the verdicts in
+the git directory, with the installed dependencies of the worktree
+(`carry` in `delivery-gate.json`), runs everything there, records a verdict
+for the tree, and removes the directory. The worktree is never written: what
+a check leaves behind is in the copy, so the verdict is for the tree the
+checks ran on, and nothing a check wrote stays to be run later.
 
 Three layers, and what each one holds against:
 
@@ -131,12 +134,16 @@ Three layers, and what each one holds against:
   names for it, in `scripts/gate/profiles/`. A profile is the contract of
   the operation: `offline` (build, perf) has no network; `loopback` (unit,
   mutation testing) adds the loopback the tests' servers need, which on macOS
-  is every local port. Both read the worktree, the tools and nothing else of
-  the user's home, and write the worktree except what judges them or what
-  the gate runs outside the sandbox: `.claude/`, the gate, its
-  configuration, the git directory, the installed tools. Before it runs
-  anything, the gate tries each of these under each profile with a canary and
-  refuses to run when one succeeds: there is no unsandboxed fallback.
+  is every local port. Both write the directory of the run and nothing else,
+  and read nothing of the user's home but that directory, the gate's
+  checkout and the tools PATH names. Before it runs anything, the gate tries
+  under each profile, with a canary, a write in the worktree, the git
+  directory, the gate's checkout, the home and a directory outside, each
+  write and read the profile denies, and, for `offline`, a port of the host;
+  it refuses to run when one succeeds. There is no unsandboxed fallback. A
+  check passes when its command ran to its end with status 0: the sandbox
+  runtime exits 0 when its command is ended by a signal, so the gate asks the
+  command for a mark of its success as well.
 - **The pre-push hook of git, against a push that skipped the gate.**
   `pnpm gate:install` puts it in the git directory, for every worktree. Git
   tells it the commits a push sends, whatever wrote the command (an alias, a
@@ -148,25 +155,36 @@ Three layers, and what each one holds against:
   (`node <main>/scripts/gate/gate.mjs run` in the worktree).
 - **The guard of the session, against going around the hook.** The
   `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
-  while the pre-push hook is not the one git will run, a command that
-  disables it (`--no-verify`, `core.hooksPath`), a write to the repository
-  through the API, and the GitHub tools that send content from their input.
+  while the pre-push hook is not the one git will run, and what the rules of
+  `guard.refuse` name: turning the hook off (`--no-verify`,
+  `core.hooksPath`), a forced push, a write to the repository through the
+  API; and the GitHub tools that send content from their input.
   `.claude/settings.json` is the one permission file of the repository.
 
-What the gate does not hold against: a session that writes a verdict file by
-hand, or edits the base revision, on purpose. Nothing on the machine of the
-session can: the session can write what the gate writes. The hosted Pipeline
-is what holds there, and it does not run the mutation testing yet. The
-results themselves come from the tree that is judged: a test suite that
-lies passes.
+What the gate does not hold against, and what does:
+
+- A session that writes a verdict file by hand, or moves the base revision,
+  on purpose: the session can write what the gate writes. A command written
+  to escape the guard's expressions: they are a list of known ways, not a
+  proof. A tool that pushes without running git's hooks. The hosted Pipeline
+  is what holds there; it does not run the mutation testing yet.
+- The truth of the results: they come from the tree that is judged. A test
+  suite that lies passes.
+- Dependencies that are not the ones of the lockfile: the copy takes
+  `node_modules` as it is in the worktree. The hosted Pipeline installs from
+  the lockfile.
+- A change that only deletes lines: no line of it is left to mutate.
+- On macOS, under `loopback`, a service of the host that listens on
+  localhost; and what is readable outside the user's home.
 
 What the gate runs, what counts as production code, what an operation may
 reach and what the guard refuses are in `delivery-gate.json` and
 `scripts/gate/profiles/`: change those files, not `scripts/gate/*.mjs`. The
 decisions are in `gate-lib.mjs`, tested with doubles and inside the gate's
 own mutation perimeter; `gate.mjs` holds the adapters and is tested as a
-program, with a real repository and a real push. The sandbox runtime needs
-Node 22.12 or later, and macOS or Linux.
+program: a real repository, a real push, and a run with a stand-in for the
+sandbox runtime. The sandbox runtime itself is proved by the canary at each
+run. It needs Node 22.12 or later, and macOS or Linux.
 
 ---
 

@@ -10,12 +10,13 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   Refusal,
+  blanketDisables,
   canaryPlan,
   fill,
   guardDecision,
@@ -80,12 +81,18 @@ describe("validateConfig", () => {
       [withValue("mutation.command", []), "mutation.command must be a list of arguments"],
       [without("mutation.report"), "mutation.report must be a path"],
       [without("mutation.profile"), "mutation.profile must name a profile"],
+      [without("carry"), "carry must be a list of directory names"],
+      [withValue("carry", ["node_modules", ""]), "carry must be a list of directory names"],
       [without("guard"), "guard must be an object"],
       [withValue("guard", null), "guard must be an object"],
       [without("guard.push"), "guard.push must be a list"],
-      [withValue("guard.bypass", "x"), "guard.bypass must be a list"],
-      [withValue("guard.bypass", ["ok", "["]), "guard.bypass[1] is not a regular expression"],
       [withValue("guard.push", [7]), "guard.push[0] must be a regular expression"],
+      [withValue("guard.push", ["ok", "["]), "guard.push[1] is not a regular expression"],
+      [without("guard.refuse"), "guard.refuse must be a list"],
+      [withValue("guard.refuse", "x"), "guard.refuse must be a list"],
+      [withValue("guard.refuse", [null]), "guard.refuse[0].pattern must be a regular expression"],
+      [withValue("guard.refuse", [{ pattern: "x", why: "y" }, { pattern: "(", why: "y" }]), "guard.refuse[1].pattern is not a regular expression"],
+      [withValue("guard.refuse", [{ pattern: "x" }]), "guard.refuse[0].why must say why"],
       [without("guard.refusedTools"), "guard.refusedTools must be a list of tool names"],
       [withValue("guard.refusedTools", ["a", ""]), "guard.refusedTools must be a list of tool names"],
     ];
@@ -158,6 +165,24 @@ describe("productionFiles and unsafeNames", () => {
     const unsafe = ["packages/x/src/[id].ts", "packages/x/src/a,b.ts", "packages/x/src/a b.ts", "packages/x/src/é.ts", "packages/x/src/$(id).ts", "a*.ts"];
     expect(unsafeNames([...safe, ...unsafe])).toEqual(unsafe);
     expect(unsafeNames(safe)).toEqual([]);
+  });
+});
+
+describe("blanketDisables", () => {
+  it("finds the lines that turn mutation off for more than the next line", () => {
+    const source = [
+      "// Stryker disable all: equivalent: x",
+      "const a = 1;",
+      "// Stryker disable next-line StringLiteral: equivalent: one element",
+      "const b = [a].join(' ');",
+      "/* Stryker disable StringLiteral,BooleanLiteral */",
+      "//   Stryker   disable   all",
+      "// Stryker restore all",
+      "const c = 'Strykers disable nothing';",
+      "// Stryker disable next-linear",
+    ].join("\n");
+    expect(blanketDisables(source)).toEqual([1, 5, 6, 9]);
+    expect(blanketDisables("")).toEqual([]);
   });
 });
 
@@ -272,7 +297,7 @@ describe("fill and resolveProfile", () => {
 describe("the profiles of the gate", () => {
   const names = readdirSync(join(HERE, "profiles")).map((file) => file.replace(/\.json$/, ""));
   const profile = (name) => readJson(HERE, "profiles", `${name}.json`);
-  const vars = { home: "/h", worktree: "/w", repository: "/r/.git", launcher: "/l", tmp: "/t", toolchain: ["/h/bin"] };
+  const vars = { home: "/h", run: "/r", launcher: "/l", toolchain: ["/h/bin"] };
 
   it("exist for every operation of the configuration, and resolve with the variables the gate gives", () => {
     const used = new Set([...CONFIG.checks.map((check) => check.profile), CONFIG.mutation.profile]);
@@ -280,20 +305,19 @@ describe("the profiles of the gate", () => {
     for (const name of names) {
       const { srt, env } = resolveProfile(profile(name), vars, { PATH: "/bin" });
       expect(JSON.stringify(srt), name).not.toContain("${");
-      expect(env, name).toEqual({ PATH: "/bin", HOME: "/t/home", TMPDIR: "/t", CI: "1" });
+      expect(env, name).toEqual({ PATH: "/bin", HOME: "/r/home", TMPDIR: "/r/tmp", CLAUDE_CODE_TMPDIR: "/r/tmp", CI: "1" });
     }
   });
 
-  it("let no operation reach outside the machine, read the user's home, or write what judges it", () => {
+  it("let an operation write the directory of its run and nothing else, read nothing of the user's home, and reach nothing outside the machine", () => {
     for (const name of names) {
       const { srt } = resolveProfile(profile(name), vars, {});
       expect(srt.network.allowedDomains, name).toEqual([]);
+      expect(srt.filesystem.allowWrite, name).toEqual(["/r"]);
       expect(srt.filesystem.denyRead, name).toEqual(["/h"]);
-      expect(srt.filesystem.allowRead, name).toEqual(["/w", "/r/.git", "/l", "/t", "/h/bin"]);
-      expect(srt.filesystem.allowWrite, name).toEqual(["/w", "/t"]);
-      for (const path of [".claude", ".git", "delivery-gate.json", "stryker.config.json", "scripts/gate", "node_modules/.bin", "node_modules/.pnpm", "node_modules/@anthropic-ai", "node_modules/@stryker-mutator"]) {
-        expect(srt.filesystem.denyWrite, `${name} ${path}`).toContain(`/w/${path}`);
-      }
+      expect(srt.filesystem.allowRead, name).toEqual(["/r", "/l", "/h/bin"]);
+      // The directory the sandbox runtime shares between its sandboxes.
+      expect(srt.filesystem.denyWrite, name).toEqual(["/tmp/claude", "/private/tmp/claude"]);
     }
   });
 
@@ -311,39 +335,42 @@ describe("canaryPlan", () => {
   const srt = (network = {}) => ({
     network: { allowedDomains: [], ...network },
     filesystem: {
-      denyWrite: ["/w/.claude", "/w/delivery-gate.json", "/w/absent"],
+      denyWrite: ["/shared", "/w/file", "/w/absent"],
       denyRead: ["/h", "/h/.netrc", "/h/absent"],
     },
   });
-  const kindOf = (path) => ({ "/w/.claude": "dir", "/w/delivery-gate.json": "file", "/h": "dir", "/h/.netrc": "file" })[path] ?? null;
+  const kindOf = (path) => ({ "/w": "dir", "/git": "dir", "/shared": "dir", "/w/file": "file", "/h": "dir", "/h/.netrc": "file" })[path] ?? null;
+  const plan = (network, over = {}) => canaryPlan(srt(network), { kindOf, keep: ["/w", "/git", "/gone"], hostPort: 4242, mark: "mark-1", ...over });
 
-  it("tries each thing the profile denies that is there, a write outside, and the host's port", () => {
-    const plan = canaryPlan(srt(), { kindOf, outside: "/out", hostPort: 4242 });
-    expect(plan.args).toEqual([
-      "--write", "/out/gate-canary",
-      "--write", "/w/.claude/gate-canary",
-      "--append", "/w/delivery-gate.json",
+  it("tries a write in each directory that must be kept and each path the profile denies, each read it denies, and the host's port", () => {
+    const { args, created, proves } = plan();
+    expect(args).toEqual([
+      "--write", "/w/mark-1",
+      "--write", "/git/mark-1",
+      "--write", "/shared/mark-1",
+      "--append", "/w/file",
       "--list", "/h",
       "--read", "/h/.netrc",
       "--connect", "4242",
     ]);
     // What a sandbox that does not hold would leave: the gate removes it.
-    expect(plan.created).toEqual(["/out/gate-canary", "/w/.claude/gate-canary"]);
-    expect(plan.proves).toEqual({ writes: 3, reads: 2, port: true });
+    expect(created).toEqual(["/w/mark-1", "/git/mark-1", "/shared/mark-1"]);
+    expect(proves).toEqual({ writes: 4, reads: 2, port: true });
   });
 
   it("does not try the host's port under a profile that grants the loopback", () => {
-    const plan = canaryPlan(srt({ allowLocalBinding: true }), { kindOf, outside: "/out", hostPort: 4242 });
-    expect(plan.args).not.toContain("--connect");
-    expect(plan.proves.port).toBe(false);
+    const granted = plan({ allowLocalBinding: true });
+    expect(granted.args).not.toContain("--connect");
+    expect(granted.proves.port).toBe(false);
     // Only `true` grants it.
-    expect(canaryPlan(srt({ allowLocalBinding: "yes" }), { kindOf, outside: "/out", hostPort: 1 }).proves.port).toBe(true);
+    expect(plan({ allowLocalBinding: "yes" }).proves.port).toBe(true);
   });
 
-  it("still tries a write outside when nothing the profile names is there", () => {
-    const plan = canaryPlan(srt(), { kindOf: () => null, outside: "/out", hostPort: 1 });
-    expect(plan.args).toEqual(["--write", "/out/gate-canary", "--connect", "1"]);
-    expect(plan.proves).toEqual({ writes: 1, reads: 0, port: true });
+  it("tries nothing on a path that is not there", () => {
+    const empty = plan({}, { kindOf: () => null });
+    expect(empty.args).toEqual(["--connect", "4242"]);
+    expect(empty.created).toEqual([]);
+    expect(empty.proves).toEqual({ writes: 0, reads: 0, port: true });
   });
 });
 
@@ -440,7 +467,8 @@ describe("prePush", () => {
 describe("guardDecision", () => {
   const guard = CONFIG.guard;
   const bash = (command, tool_name = "Bash") => ({ tool_name, tool_input: { command } });
-  const kind = (command) => guardDecision(bash(command), guard).kind;
+  const decide = (command) => guardDecision(bash(command), guard);
+  const why = (index) => guard.refuse[index].why;
 
   it("sees a push in every way of writing it, from any tool that carries a command", () => {
     for (const command of [
@@ -451,39 +479,50 @@ describe("guardDecision", () => {
       "git --git-dir=/r/.git push origin main",
       "git -c alias.p=push p",
       "cd x && git push",
+      "git commit -m wip && git push",
       "command git push",
       "env X=1 git push",
       "sh -c 'git push'",
       'git "push"',
+      "GIT PUSH",
       "git\tpush",
     ]) {
-      expect(kind(command), command).toBe("push");
+      expect(decide(command), command).toEqual({ kind: "push" });
     }
-    expect(guardDecision(bash("git push", "mcp__some__start_process"), guard).kind).toBe("push");
+    expect(guardDecision(bash("git push", "mcp__some__start_process"), guard)).toEqual({ kind: "push" });
   });
 
-  it("refuses what goes around the pre-push hook, and says what it matched", () => {
-    for (const command of [
-      "git push --no-verify",
-      "git push origin x --no-verify",
-      "git -c core.hooksPath=/dev/null push",
-      "git config core.hooksPath /tmp/h",
-      "git send-pack origin HEAD",
-      "gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc",
-      "gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc",
-      "gh api repos/o/r/contents/README.md -X PUT -f content=x",
-      "gh api repos/o/r/pulls -f title=x -f head=y -f base=main",
-      "gh api -X PUT repos/o/r/pulls/3/merge",
-      "gh api repos/o/r/merges --field base=main --field head=x",
-      "gh api repos/o/r/git/trees --input tree.json",
-      'curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs',
-    ]) {
-      const decision = guardDecision(bash(command), guard);
-      expect(decision.kind, command).toBe("refuse");
-      expect(decision.reason, command).toMatch(/^the command goes around the pre-push hook of the delivery gate \(it matches .+\)\.$/);
+  it("refuses what turns the pre-push hook off or goes around it, with the reason of its rule", () => {
+    const cases = [
+      ["git push --no-verify", 0],
+      ["git push origin x --no-verify", 0],
+      ["git push --no-veri", 0],
+      ["git -c core.hooksPath=/dev/null push", 1],
+      ["git -c core.hookspath=/dev/null push", 1],
+      ["git config core.hooksPath /tmp/h", 1],
+      ["git send-pack origin HEAD", 2],
+      ["git http-push https://example.invalid/r.git", 2],
+      ["git push --force origin x", 3],
+      ["git -C . push --force-with-lease", 3],
+      ["git push -f", 3],
+      ["git push -uf origin x", 3],
+      ["git push origin +HEAD:main", 3],
+      ["git push --mirror", 3],
+      ["gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", 4],
+      ["gh api -X PATCH repos/o/r/git/refs/heads/x -f sha=abc", 4],
+      ["gh api -XPUT repos/o/r/contents/README.md -fcontent=x", 4],
+      ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 4],
+      ["gh api -X PUT repos/o/r/pulls/3/merge", 4],
+      ["gh api repos/o/r/merges --field base=main --field head=x", 4],
+      ["gh api repos/o/r/git/trees --input tree.json", 4],
+      ["gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { commit { oid } } }'", 5],
+      ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 6],
+    ];
+    for (const [command, rule] of cases) {
+      expect(decide(command), command).toEqual({ kind: "refuse", reason: why(rule) });
     }
-    const decision = guardDecision(bash("git push --no-verify"), guard);
-    expect(decision.reason).toContain(`(it matches ${guard.bypass[0]})`);
+    expect(why(0)).toContain("--no-verify");
+    expect(why(3)).toContain("forced push");
   });
 
   it("refuses the tools that send content the gate cannot judge", () => {
@@ -501,6 +540,10 @@ describe("guardDecision", () => {
       "git status",
       "git log --oneline",
       "git fetch origin",
+      // Not a push: a stash, a commit whose message says the word, the way to undo a moved hooks path.
+      "git stash push -m wip",
+      'git commit -m "push the button"',
+      "git config --unset core.hooksPath",
       "gh pr view 3",
       "gh pr create --fill",
       // Reading through the API, and writing what is not a delivery (a comment).
@@ -509,10 +552,11 @@ describe("guardDecision", () => {
       "gh api repos/o/r/contents/README.md",
       "gh api repos/o/r/issues/3/comments -f body=done",
       "gh api repos/o/r/pulls/3/comments -f body=done",
+      "gh api graphql -f query='query { viewer { login } }'",
       "pnpm test",
       "git pushd",
     ]) {
-      expect(kind(command), command).toBe("allow");
+      expect(decide(command), command).toEqual({ kind: "allow" });
     }
     for (const call of [
       { tool_name: "Read", tool_input: { file_path: "git push" } },
@@ -561,7 +605,7 @@ describe("guardHook", () => {
     const out = run("git push --no-verify");
     expect(out.code).toBe(2);
     expect(out.asked).toBe(0);
-    expect(out.lines).toEqual([`Refused: the command goes around the pre-push hook of the delivery gate (it matches ${guard.bypass[0]}).`]);
+    expect(out.lines).toEqual([`Refused: ${guard.refuse[0].why}`]);
   });
 });
 
@@ -589,8 +633,9 @@ describe("runGate", () => {
       dirty: "",
       files: ["src/a.ts", "README.md"],
       diffs: { "src/a.ts": "@@ -5 +5 @@\n+x" },
+      sources: {},
       report: { files: { "src/a.ts": { mutants: [killed] } } },
-      statuses: {},
+      failing: [],
       isolation: {},
       ...over,
     };
@@ -600,6 +645,8 @@ describe("runGate", () => {
       status: () => w.dirty,
       changedFiles: (base) => (w.calls.push(`changed ${base}`), w.files),
       fileDiff: (base, file) => (w.calls.push(`diff ${base} ${file}`), w.diffs[file] ?? ""),
+      prepare: () => w.calls.push("prepare"),
+      dispose: () => w.calls.push("dispose"),
       proveIsolation: async (profile) => {
         w.calls.push(`prove ${profile}`);
         if (w.isolation[profile]) throw new Refusal(w.isolation[profile]);
@@ -607,9 +654,10 @@ describe("runGate", () => {
       },
       sandboxed: (argv, profile) => {
         w.calls.push(`run[${profile}] ${argv.join(" ")}`);
-        w.onRun?.(argv);
-        return Object.hasOwn(w.statuses, argv[0] + " " + argv[1]) ? w.statuses[argv[0] + " " + argv[1]] : 0;
+        const failing = w.failing.find(([name]) => name === argv[1]);
+        return failing ? failing[1] : true;
       },
+      readSource: (file) => (w.calls.push(`source ${file}`), w.sources[file] ?? "const x = 1;"),
       removeReport: (path) => w.calls.push(`remove ${path}`),
       readReport: (path) => (w.calls.push(`read ${path}`), w.report),
       recordVerdict: (tree, verdict) => w.verdicts.push([tree, verdict]),
@@ -620,19 +668,22 @@ describe("runGate", () => {
     return w;
   }
 
-  it("proves each sandbox once, runs the checks then the mutation in theirs, and records the verdict of the tree", async () => {
+  it("copies the committed tree, proves each sandbox once, runs the checks then the mutation, records the verdict, and removes the copy", async () => {
     const w = world();
     expect(await runGate(config, w.ports)).toBe(0);
     expect(w.calls).toEqual([
+      "changed origin/main",
+      "prepare",
       "prove offline",
       "prove loopback",
       "run[offline] pnpm build",
       "run[loopback] pnpm test /l/x",
-      "changed origin/main",
+      "source src/a.ts",
       "remove r.json",
       "run[loopback] stryker run /l/s.json --mutate src/a.ts",
       "read r.json",
       "diff origin/main src/a.ts",
+      "dispose",
     ]);
     expect(w.verdicts).toEqual([
       ["T1", { tree: "T1", passed: true, gate: "G", at: "2026-11-18T00:00:00.000Z", checks: ["build", "unit"], mutated_files: ["src/a.ts"], mutants_judged: 1 }],
@@ -648,19 +699,36 @@ describe("runGate", () => {
     ]);
   });
 
-  it("refuses to run anything when a sandbox does not hold", async () => {
-    const w = world({ isolation: { loopback: "the sandbox does not hold" } });
-    await expect(runGate(config, w.ports)).rejects.toThrow(new Refusal("the sandbox does not hold"));
-    expect(w.calls).toEqual(["prove offline", "prove loopback"]);
+  it("refuses work that is not committed, before it copies or runs anything", async () => {
+    const w = world({ dirty: " M src/a.ts\n?? new.txt" });
+    await expect(runGate(config, w.ports)).rejects.toThrow(
+      new Refusal("the gate judges the committed tree, and this work is not committed:\n M src/a.ts\n?? new.txt"),
+    );
+    expect(w.calls).toEqual([]);
     expect(w.verdicts).toEqual([]);
   });
 
-  it("stops at the first check that fails, whatever its status, and records nothing", async () => {
-    for (const status of [1, null]) {
-      const w = world({ statuses: { "pnpm build": status } });
+  it("refuses a production file whose name the mutation tool would misread, before it copies anything", async () => {
+    const w = world({ files: ["src/[id].ts", "src/a.ts", "src/b c.ts"] });
+    await expect(runGate(config, w.ports)).rejects.toThrow(new Refusal("the mutation tool cannot be given these file names: src/[id].ts, src/b c.ts"));
+    expect(w.calls).toEqual(["changed origin/main"]);
+  });
+
+  it("refuses to run anything when a sandbox does not hold, and removes the copy", async () => {
+    const w = world({ isolation: { loopback: "the sandbox does not hold" } });
+    await expect(runGate(config, w.ports)).rejects.toThrow(new Refusal("the sandbox does not hold"));
+    expect(w.calls).toEqual(["changed origin/main", "prepare", "prove offline", "prove loopback", "dispose"]);
+    expect(w.verdicts).toEqual([]);
+  });
+
+  it("stops at the first check that did not run to success, records nothing, and removes the copy", async () => {
+    // false: failed or was ended; a value that is not `true` is not a success either.
+    for (const result of [false, 0, undefined]) {
+      const w = world({ failing: [["build", result]] });
       expect(await runGate(config, w.ports)).toBe(1);
       expect(w.calls.filter((call) => call.startsWith("run"))).toEqual(["run[offline] pnpm build"]);
       expect(w.lines.at(-1)).toBe("[gate] FAILED: build");
+      expect(w.calls.at(-1)).toBe("dispose");
       expect(w.verdicts).toEqual([]);
     }
   });
@@ -668,15 +736,22 @@ describe("runGate", () => {
   it("passes without mutation when the change touches no production line", async () => {
     const w = world({ files: ["README.md", "src/a.test.js"] });
     expect(await runGate(config, w.ports)).toBe(0);
-    expect(w.calls.some((call) => call.includes("stryker"))).toBe(false);
+    expect(w.calls.some((call) => call.includes("stryker") || call.startsWith("source"))).toBe(false);
     expect(w.lines).toContain("[gate] mutation: the change touches no production line");
     expect(w.verdicts[0][1]).toMatchObject({ mutated_files: [], mutants_judged: 0 });
   });
 
-  it("refuses a production file whose name the mutation tool would misread", async () => {
-    const w = world({ files: ["src/[id].ts", "src/a.ts", "src/b c.ts"] });
-    await expect(runGate(config, w.ports)).rejects.toThrow(new Refusal("the mutation tool cannot be given these file names: src/[id].ts, src/b c.ts"));
+  it("fails when a changed file turns mutation off for more than one line, before it mutates", async () => {
+    const w = world({
+      files: ["src/a.ts", "src/b.ts"],
+      sources: { "src/a.ts": "// Stryker disable all: equivalent: x\nconst a = 1;", "src/b.ts": "const b = 1;\n\n/* Stryker disable BooleanLiteral */" },
+    });
+    expect(await runGate(config, w.ports)).toBe(1);
+    expect(w.lines.at(-1)).toBe(
+      "[gate] FAILED: mutation is turned off for more than one line at src/a.ts:1, src/b.ts:3. Only `// Stryker disable next-line <Mutator>: equivalent: <why>` is accepted.",
+    );
     expect(w.calls.some((call) => call.includes("stryker"))).toBe(false);
+    expect(w.verdicts).toEqual([]);
   });
 
   it("fails on an undetected mutant of a changed line, and shows it", async () => {
@@ -708,44 +783,13 @@ describe("runGate", () => {
     expect(w.verdicts[0][1]).toMatchObject({ mutated_files: ["src/a.ts", "src/b.ts"], mutants_judged: 1 });
   });
 
-  it("fails when the mutation tool fails, or leaves no report", async () => {
-    for (const over of [{ statuses: { "stryker run": 1 } }, { report: null }]) {
+  it("fails when the mutation tool did not run to success, or leaves no report", async () => {
+    for (const over of [{ failing: [["run", false]] }, { failing: [["run", undefined]] }, { report: null }]) {
       const w = world(over);
       expect(await runGate(config, w.ports)).toBe(1);
       expect(w.lines.at(-1)).toBe("[gate] FAILED: mutation testing did not run to its report");
       expect(w.verdicts).toEqual([]);
     }
-  });
-
-  it("passes without a record when the work was not committed at the start", async () => {
-    const w = world({ dirty: " M src/a.ts" });
-    expect(await runGate(config, w.ports)).toBe(0);
-    expect(w.lines.at(-1)).toBe("[gate] passed, not recorded: the work was not committed when the gate started. Commit it and run the gate again.");
-    expect(w.verdicts).toEqual([]);
-  });
-
-  it("fails when a check leaves tracked files changed: the verdict would be for a tree that was not tested", async () => {
-    const w = world();
-    w.onRun = (argv) => {
-      if (argv[1] === "build") w.dirty = " M packages/x/dist/a.js\n?? new.txt";
-    };
-    expect(await runGate(config, w.ports)).toBe(1);
-    expect(w.lines.slice(-3)).toEqual([
-      "[gate] FAILED: the tree is not the one the gate started on. A check wrote tracked files, or a commit was made meanwhile:",
-      "[gate]    M packages/x/dist/a.js",
-      "[gate]   ?? new.txt",
-    ]);
-    expect(w.verdicts).toEqual([]);
-  });
-
-  it("fails when a commit is made while it runs, even if the checkout is clean at the end", async () => {
-    const w = world();
-    w.onRun = (argv) => {
-      if (argv[0] === "stryker") w.tree = "T2";
-    };
-    expect(await runGate(config, w.ports)).toBe(1);
-    expect(w.lines.at(-1)).toBe("[gate] FAILED: the tree is not the one the gate started on. A check wrote tracked files, or a commit was made meanwhile:");
-    expect(w.verdicts).toEqual([]);
   });
 });
 
@@ -902,7 +946,7 @@ describe("the program, in a real repository with a real push", () => {
   it("refuses a push written to go around the hook, before git is asked", () => {
     const out = hook("git push --no-verify origin trunk");
     expect(out.status).toBe(2);
-    expect(out.stderr).toContain("goes around the pre-push hook");
+    expect(out.stderr).toContain(`Refused: ${CONFIG.guard.refuse[0].why}`);
   });
 
   it("refuses a push when core.hooksPath takes the hook away", () => {
@@ -927,13 +971,154 @@ describe("the program, in a real repository with a real push", () => {
     expect(hook("git status").status).toBe(0);
   });
 
-  it("stays out of the way of another repository, and of a directory that is none", () => {
+  it("stays out of the way of another repository, and guards a directory that is in none like the project", () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), "gate-other-")));
     const other = join(base, "other");
     git(base, "init", "-q", other);
-    expect(hook("git push", other).status).toBe(0);
-    expect(hook("git push", base).status).toBe(0);
+    // Another repository: its pushes are its own business, written any way.
+    expect(hook("git push --no-verify", other).status).toBe(0);
+    // No repository: a command can name the project itself (`git -C`).
+    expect(hook(`git -C ${main} push --no-verify`, base).status).toBe(2);
+    expect(hook(`git -C ${main} push`, base).status).toBe(0);
     expect(gate(main, "hook", "not json").status).toBe(0);
+  });
+
+  it("does not take a pre-push hook that git cannot execute for one that is in place", () => {
+    if (process.platform === "win32") return;
+    const path = join(main, ".git/hooks/pre-push");
+    chmodSync(path, 0o644);
+    const out = hook("git push");
+    expect(out.status).toBe(2);
+    expect(out.stderr).toContain("the pre-push hook is not executable");
+    chmodSync(path, 0o755);
+    expect(hook("git push").status).toBe(0);
+  });
+
+  describe("run, with a stand-in for the sandbox runtime", () => {
+    // The stand-in runs the command it is given with no isolation at all,
+    // except that it answers the canary as told: the adapters of `run` are
+    // what is tested here (the copy, the mark of success, the verdict), not
+    // the sandbox, which the gate proves each time it really runs.
+    let repo;
+    const stub = (canary) => `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+const argv = process.argv.slice(process.argv.indexOf("--") + 1);
+if (argv.some((arg) => arg.endsWith("canary.mjs"))) {
+  ${canary === "holds" ? "process.exit(0);" : ""}
+}
+if (argv.includes("--die")) process.exit(0); // as the runtime does when its command is ended by a signal
+const out = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+process.exit(out.status ?? 1);
+`;
+    const setRuntime = (canary) => writeFileSync(join(repo, "node_modules/@anthropic-ai/sandbox-runtime/cli.mjs"), stub(canary));
+    const setChecks = (checks) => {
+      const config = readJson(repo, "delivery-gate.json");
+      writeFileSync(join(repo, "delivery-gate.json"), JSON.stringify({ ...config, base: "start", carry: ["carried"], checks }));
+      git(repo, "add", ".");
+      git(repo, "commit", "-q", "-m", "checks");
+    };
+    const node = (script, ...rest) => [process.execPath, "-e", script, ...rest];
+    // The gate of this repository's own checkout, not the one of `main`.
+    const own = (mode) => spawnSync(process.execPath, [join(repo, "scripts/gate/gate.mjs"), mode], { ...PROCESS, cwd: repo });
+    const runGateIn = () => own("run");
+    const verdictOf = () => {
+      const tree = git(repo, "rev-parse", "HEAD^{tree}");
+      const path = join(repo, ".git/delivery-gate", `${tree}.json`);
+      return existsSync(path) ? readJson(path) : null;
+    };
+
+    beforeAll(() => {
+      const base = realpathSync(mkdtempSync(join(tmpdir(), "gate-run-")));
+      repo = join(base, "main");
+      mkdirSync(join(repo, "scripts"), { recursive: true });
+      cpSync(HERE, join(repo, "scripts/gate"), { recursive: true });
+      for (const file of ["delivery-gate.json", "stryker.config.json"]) cpSync(join(ROOT, file), join(repo, file));
+      const runtime = join(repo, "node_modules/@anthropic-ai/sandbox-runtime");
+      mkdirSync(runtime, { recursive: true });
+      writeFileSync(join(runtime, "package.json"), JSON.stringify({ name: "@anthropic-ai/sandbox-runtime", bin: { srt: "cli.mjs" } }));
+      mkdirSync(join(repo, "carried"));
+      writeFileSync(join(repo, "carried/installed.txt"), "installed");
+      writeFileSync(join(repo, ".gitignore"), "node_modules\ncarried\nleft-behind.txt\n");
+      writeFileSync(join(repo, "tracked.txt"), "committed");
+      git(repo, "init", "-q", "-b", "trunk");
+      git(repo, "add", ".");
+      git(repo, "commit", "-q", "-m", "start");
+      git(repo, "tag", "start");
+      setRuntime("holds");
+    });
+
+    it("runs each check in a copy of the committed tree, with the carried directories, and records the verdict", () => {
+      setChecks([
+        {
+          name: "reads",
+          profile: "offline",
+          // The copy has the committed file and the carried directory, and is not the repository.
+          command: node(
+            `const fs=require("fs");if(fs.readFileSync("tracked.txt","utf8")!=="committed"||fs.readFileSync("carried/installed.txt","utf8")!=="installed"||process.cwd()===process.argv[1])process.exit(1);fs.writeFileSync("left-behind.txt","x")`,
+            repo,
+          ),
+        },
+      ]);
+      const out = runGateIn();
+      expect(out.stderr).toContain("[gate] passed, recorded for tree");
+      expect(out.status).toBe(0);
+      expect(verdictOf()).toMatchObject({ passed: true, checks: ["reads"], mutated_files: [], mutants_judged: 0, gate: own("hash").stdout.trim() });
+      // What the check wrote is gone with the copy: the repository is as it was.
+      expect(existsSync(join(repo, "left-behind.txt"))).toBe(false);
+      expect(readdirSync(join(repo, ".git/delivery-gate")).filter((name) => name.startsWith("run-"))).toEqual([]);
+      expect(git(repo, "status", "--porcelain")).toBe("");
+    });
+
+    it("fails on a check that fails, and on one that is ended before it succeeds, though the runtime exits 0", () => {
+      setChecks([{ name: "fails", profile: "offline", command: node("process.exit(3)") }]);
+      let out = runGateIn();
+      expect(out.status).toBe(1);
+      expect(out.stderr).toContain("[gate] FAILED: fails");
+      expect(verdictOf()).toBeNull();
+
+      setChecks([{ name: "ended", profile: "offline", command: node("0", "--die") }]);
+      out = runGateIn();
+      expect(out.status).toBe(1);
+      expect(out.stderr).toContain("[gate] FAILED: ended");
+      expect(verdictOf()).toBeNull();
+    });
+
+    it("refuses work that is not committed, an untracked file included", () => {
+      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
+      writeFileSync(join(repo, "untracked.txt"), "x");
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain("the gate judges the committed tree, and this work is not committed:\n?? untracked.txt");
+      expect(verdictOf()).toBeNull();
+      git(repo, "add", ".");
+      git(repo, "commit", "-q", "-m", "now committed");
+      expect(runGateIn().status).toBe(0);
+    });
+
+    it("refuses to run when the canary could do what the profile denies, and leaves nothing behind", () => {
+      setChecks([{ name: "never", profile: "offline", command: node(`require("fs").writeFileSync(process.argv[1],"ran")`, join(repo, "..", "ran.txt")) }]);
+      setRuntime("breached");
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain("[gate] refused: the sandbox does not hold under profile offline: wrote ");
+      expect(existsSync(join(repo, "..", "ran.txt"))).toBe(false);
+      expect(verdictOf()).toBeNull();
+      // The files the canary could create are removed, and so is the copy.
+      expect(git(repo, "status", "--porcelain", "--untracked-files=all")).toBe("");
+      expect(readdirSync(join(repo, ".git")).filter((name) => name.startsWith("gate-canary-"))).toEqual([]);
+      expect(readdirSync(join(repo, ".git/delivery-gate")).filter((name) => name.startsWith("run-"))).toEqual([]);
+      setRuntime("holds");
+    });
+
+    it("refuses when the sandbox runtime is not installed", () => {
+      const pkg = join(repo, "node_modules/@anthropic-ai/sandbox-runtime/package.json");
+      const original = readFileSync(pkg, "utf8");
+      writeFileSync(pkg, "{}");
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain("the sandbox runtime is not installed in the gate's checkout");
+      writeFileSync(pkg, original);
+    });
   });
 
   it("answers an unknown command with its usage", () => {

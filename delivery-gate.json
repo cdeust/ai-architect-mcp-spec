@@ -1,5 +1,8 @@
 {
   "base": "origin/main",
+  "carry": [
+    "node_modules"
+  ],
   "checks": [
     {
       "name": "build",
@@ -40,15 +43,37 @@
   },
   "guard": {
     "push": [
-      "\\bgit\\b[^|;&\\n]*\\bpush\\b",
-      "\\bsend-pack\\b"
+      "\\bgit\\b(?![^|;&\\n]*\\b(?:stash|commit)\\b)[^|;&\\n]*\\bpush\\b"
     ],
-    "bypass": [
-      "--no-verify\\b",
-      "\\bcore\\.hooksPath\\b",
-      "\\bsend-pack\\b",
-      "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=[^|;&\\n]*\\s(?:-X|--method|-f|-F|--field|--raw-field|--input)\\b)",
-      "\\bcurl\\b[^|;&\\n]*api\\.github\\.com"
+    "refuse": [
+      {
+        "pattern": "--no-veri[fy]*\\b",
+        "why": "the command turns off the pre-push hook of the delivery gate (--no-verify)."
+      },
+      {
+        "pattern": "(?<!--unset\\s)(?<!--unset-all\\s)\\bcore\\.hookspath\\b",
+        "why": "the command moves git's hooks away from the pre-push hook of the delivery gate (core.hooksPath)."
+      },
+      {
+        "pattern": "\\b(?:send-pack|http-push)\\b",
+        "why": "the command sends commits without git's pre-push hook."
+      },
+      {
+        "pattern": "\\bpush\\b[^|;&\\n]*(?:\\s--force|\\s-[a-z]*f[a-z]*\\b|\\s\\+\\S|\\s--mirror\\b)",
+        "why": "a forced push is never used in this repository (docs/agent-guidance.md, CI contract, rule 3)."
+      },
+      {
+        "pattern": "\\bgh\\s+api\\b(?=[^|;&\\n]*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=[^|;&\\n]*\\s(?:-X|--method|-f|-F|--field|--raw-field|--input))",
+        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
+      },
+      {
+        "pattern": "\\bgh\\s+api\\s+graphql\\b[^|;&\\n]*(?:createCommitOnBranch|createRef|updateRef|mergePullRequest|mergeBranch)",
+        "why": "the command writes to the repository through the API, where the delivery gate judges nothing. Commit, run the gate, and push with git."
+      },
+      {
+        "pattern": "\\bcurl\\b[^|;&\\n]*api\\.github\\.com",
+        "why": "the command reaches the GitHub API outside the tools the delivery gate guards."
+      }
     ],
     "refusedTools": [
       "mcp__github__push_files",

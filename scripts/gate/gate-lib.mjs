@@ -11,8 +11,8 @@
  *
  * Threat model (CONTRIBUTING.md, "The delivery gate"):
  *   - what a check executes (dependencies, build scripts, tests) is not
- *     trusted: it runs in a sandbox that cannot write the gate, its tools,
- *     the settings or the verdicts, nor read the user's files;
+ *     trusted: it runs in a sandbox, on a copy of the committed tree, and
+ *     can write that copy and nothing else, nor read the user's files;
  *   - a session that forgets the gate is stopped at the push, by git itself;
  *   - a session that forges a verdict on purpose is not stopped here: the
  *     hosted pipeline is what holds against it.
@@ -30,7 +30,7 @@ const isArgv = (value) => isTextList(value) && value.length > 0;
 function expression(source, where) {
   if (!isText(source)) throw new Refusal(`delivery-gate.json: ${where} must be a regular expression`);
   try {
-    return new RegExp(source);
+    return new RegExp(source, "i");
   } catch (error) {
     throw new Refusal(`delivery-gate.json: ${where} is not a regular expression (${error.message})`);
   }
@@ -62,12 +62,16 @@ export function validateConfig(raw) {
   if (!isArgv(mutation.command)) fail("mutation.command must be a list of arguments");
   if (!isText(mutation.report)) fail("mutation.report must be a path");
   if (!isText(mutation.profile)) fail("mutation.profile must name a profile");
+  if (!isTextList(raw.carry)) fail("carry must be a list of directory names");
   const guard = raw.guard;
   if (guard === null || typeof guard !== "object") fail("guard must be an object");
-  for (const key of ["push", "bypass"]) {
-    if (!Array.isArray(guard[key])) fail(`guard.${key} must be a list`);
-    guard[key].forEach((source, index) => expression(source, `guard.${key}[${index}]`));
-  }
+  if (!Array.isArray(guard.push)) fail("guard.push must be a list");
+  guard.push.forEach((source, index) => expression(source, `guard.push[${index}]`));
+  if (!Array.isArray(guard.refuse)) fail("guard.refuse must be a list");
+  guard.refuse.forEach((rule, index) => {
+    expression(rule?.pattern, `guard.refuse[${index}].pattern`);
+    if (!isText(rule.why)) fail(`guard.refuse[${index}].why must say why`);
+  });
   if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
   return raw;
 }
@@ -110,6 +114,17 @@ export function productionFiles(names, production) {
  */
 export function unsafeNames(names) {
   return names.filter((name) => !/^[\w@./-]+$/.test(name));
+}
+
+/**
+ * postcondition: the lines of `source` that turn mutation off for more than
+ *                the next line (`// Stryker disable all`, `// Stryker
+ *                disable <Mutator>`): 1-based, in order. The gate accepts a
+ *                mark on one line with its reason; a mark over a file or a
+ *                block would give every mutant under it that one reason.
+ */
+export function blanketDisables(source) {
+  return source.split("\n").flatMap((line, index) => (/\bStryker\s+disable\b(?!\s+next-line\b)/.test(line) ? [index + 1] : []));
 }
 
 // ─── The mutants of a change ────────────────────────────────────────────────
@@ -218,26 +233,28 @@ export function resolveProfile(profile, vars, hostEnv) {
 /**
  * precondition:  `srt` is the resolved settings of a profile; `kindOf(path)`
  *                is "dir", "file" or null for a path that is not there;
- *                `outside` is a directory no profile lets an operation
- *                write; `hostPort` is a port of the host with a listener.
+ *                `keep` lists directories no operation may write (the tree
+ *                that is judged, the git directory, the gate, a directory
+ *                outside everything); `hostPort` is a port of the host with
+ *                a listener; `mark` is a name no file has yet.
  * postcondition: the attempts the canary makes inside the sandbox, one per
- *                promise of the profile that can be put to the test, as its
- *                arguments, with what they prove. Every write the profile
- *                denies, on a path that exists; a write outside; every read
- *                it denies, on a path that exists; and the host's port, when
- *                the profile does not grant the loopback. `created` lists the
+ *                promise that can be put to the test, as its arguments, with
+ *                what they prove: a write in each directory of `keep` and in
+ *                each path the profile denies that is there; a read of each
+ *                path it denies that is there; and the host's port, when the
+ *                profile does not grant the loopback. `created` lists the
  *                files a sandbox that does not hold would leave behind.
  */
-export function canaryPlan(srt, { kindOf, outside, hostPort }) {
-  const args = ["--write", `${outside}/gate-canary`];
-  const created = [`${outside}/gate-canary`];
-  let writes = 1;
+export function canaryPlan(srt, { kindOf, keep, hostPort, mark }) {
+  const args = [];
+  const created = [];
+  let writes = 0;
   let reads = 0;
-  for (const path of srt.filesystem.denyWrite) {
+  for (const path of [...keep, ...srt.filesystem.denyWrite]) {
     const kind = kindOf(path);
     if (kind === null) continue;
     // In a directory, a new file; on a file, an append of nothing.
-    const target = kind === "dir" ? `${path}/gate-canary` : path;
+    const target = kind === "dir" ? `${path}/${mark}` : path;
     args.push(kind === "dir" ? "--write" : "--append", target);
     if (kind === "dir") created.push(target);
     writes += 1;
@@ -314,8 +331,8 @@ export function prePush(input, ports) {
  *                the `guard` object of delivery-gate.json.
  * postcondition: what the guard does with the call:
  *                  { kind: "refuse", reason }  a tool that sends content the
- *                    gate cannot judge, or a command that goes around the
- *                    pre-push hook;
+ *                    gate cannot judge, or a command one of the rules of
+ *                    `guard.refuse` matches, with the rule's reason;
  *                  { kind: "push" }  a command that pushes: the caller lets
  *                    it through only when the pre-push hook is in place;
  *                  { kind: "allow" }  anything else.
@@ -332,14 +349,9 @@ export function guardDecision(call, guard) {
   }
   const command = call?.tool_input?.command;
   if (typeof command !== "string") return { kind: "allow" };
-  const bypass = guard.bypass.find((source) => new RegExp(source).test(command));
-  if (bypass !== undefined) {
-    return {
-      kind: "refuse",
-      reason: `the command goes around the pre-push hook of the delivery gate (it matches ${bypass}).`,
-    };
-  }
-  if (guard.push.some((source) => new RegExp(source).test(command))) return { kind: "push" };
+  const rule = guard.refuse.find(({ pattern }) => new RegExp(pattern, "i").test(command));
+  if (rule !== undefined) return { kind: "refuse", reason: rule.why };
+  if (guard.push.some((source) => new RegExp(source, "i").test(command))) return { kind: "push" };
   return { kind: "allow" };
 }
 
@@ -366,102 +378,115 @@ export function guardHook(call, guard, ports) {
 
 /**
  * The gate: the checks, then mutation testing of the production lines the
- * change touches, each operation in its sandbox; a verdict for the tree when
- * it was committed before the first check and is the same after the last.
+ * change touches, each operation in its sandbox, on a disposable copy of the
+ * committed tree; then a verdict for that tree.
+ *
+ * The tree that is judged is never written: what a check leaves behind (a
+ * build, a cache, a planted file) is in the copy, which is removed. So the
+ * verdict is for the tree the checks ran on, by construction, and nothing a
+ * check wrote is there to be run later outside the sandbox.
  *
  * ports:
  *   log(line)
  *   headTree()                    the hash of the tree of HEAD
  *   status()                      `git status --porcelain`, "" when clean
- *   changedFiles(base)            the files the change adds or modifies
+ *   changedFiles(base)            the files the commits add or modify
  *   fileDiff(base, file)          `git diff -U0` of one file
+ *   prepare()                     make the copy of the committed tree
+ *   dispose()                     remove it
  *   proveIsolation(profile)       resolves to what the canary proved; rejects
  *                                 with a Refusal when the sandbox does not hold
- *   sandboxed(argv, profile)      the exit status of the command (null: none)
- *   removeReport(path), readReport(path)   the report, or null when absent
+ *   sandboxed(argv, profile)      true when the command ran to its end with
+ *                                 status 0, in the copy
+ *   readSource(file)              a file of the copy
+ *   removeReport(path), readReport(path)   the report in the copy, or null
  *   recordVerdict(tree, verdict)
  *   gateHash, now(), vars         `vars` fills `${name}` in a command
  *
- * postcondition: 0 passed (recorded, or not when the work was not committed),
- *                1 a check failed, a mutant is undetected, the report is
- *                missing or the tree changed under the checks. A Refusal
- *                (exit 2) leaves before anything ran or was recorded.
+ * postcondition: 0 passed and recorded; 1 a check failed, a mutant is
+ *                undetected, a file turns mutation off, or the report is
+ *                missing. A Refusal (exit 2) leaves before a verdict: work
+ *                that is not committed, a sandbox that does not hold, a file
+ *                name the mutation tool would misread.
  */
 export async function runGate(config, ports) {
   const { log } = ports;
-  const treeAtStart = ports.headTree();
-  const committed = ports.status() === "";
-
-  const profiles = [...new Set([...config.checks.map((check) => check.profile), config.mutation.profile])];
-  for (const profile of profiles) {
-    log(`[gate] sandbox ${profile}: ${await ports.proveIsolation(profile)}`);
+  const dirty = ports.status();
+  if (dirty !== "") {
+    throw new Refusal(`the gate judges the committed tree, and this work is not committed:\n${dirty}`);
   }
-
-  for (const check of config.checks) {
-    log(`[gate] ${check.name}: ${check.command.join(" ")}  (sandbox: ${check.profile})`);
-    if (ports.sandboxed(fill(check.command, ports.vars), check.profile) !== 0) {
-      log(`[gate] FAILED: ${check.name}`);
-      return 1;
-    }
-  }
-
+  const tree = ports.headTree();
   const files = productionFiles(ports.changedFiles(config.base), config.mutation.production);
   const unsafe = unsafeNames(files);
   if (unsafe.length > 0) {
     throw new Refusal(`the mutation tool cannot be given these file names: ${unsafe.join(", ")}`);
   }
-  let judged = 0;
-  if (files.length === 0) {
-    log("[gate] mutation: the change touches no production line");
-  } else {
-    // The tool mutates the changed files whole; the verdict is on the mutants
-    // that touch a changed line. A line filter given to the tool would drop
-    // the mutants of an expression that starts above the changed line.
-    ports.removeReport(config.mutation.report);
-    const command = [...fill(config.mutation.command, ports.vars), "--mutate", files.join(",")];
-    log(`[gate] mutation: ${command.join(" ")}  (sandbox: ${config.mutation.profile})`);
-    const status = ports.sandboxed(command, config.mutation.profile);
-    const report = ports.readReport(config.mutation.report);
-    if (status !== 0 || report === null) {
-      log("[gate] FAILED: mutation testing did not run to its report");
-      return 1;
-    }
-    const changes = new Map(files.map((file) => [file, hunkRanges(ports.fileDiff(config.base, file))]));
-    const verdict = judgeMutants(report, changes);
-    judged = verdict.judged;
-    for (const mutant of verdict.undetected) {
-      log(`[gate] ${mutant.status}: ${mutant.file}:${mutant.line} ${mutant.mutator} -> ${mutant.replacement.split("\n")[0].slice(0, 80)}`);
-    }
-    if (verdict.undetected.length > 0) {
-      log(
-        `[gate] FAILED: mutation, ${verdict.undetected.length} of ${judged} mutant(s) on the changed lines undetected. ` +
-          "Each needs a test that kills it, or, when no test can tell it from the original, " +
-          "`// Stryker disable next-line <Mutator>: equivalent: <why>` on the line above.",
-      );
-      return 1;
-    }
-    log(`[gate] mutation: ${judged} mutant(s) on the changed lines, all detected`);
-  }
 
-  if (!committed) {
-    log("[gate] passed, not recorded: the work was not committed when the gate started. Commit it and run the gate again.");
+  ports.prepare();
+  try {
+    const profiles = [...new Set([...config.checks.map((check) => check.profile), config.mutation.profile])];
+    for (const profile of profiles) {
+      log(`[gate] sandbox ${profile}: ${await ports.proveIsolation(profile)}`);
+    }
+
+    for (const check of config.checks) {
+      log(`[gate] ${check.name}: ${check.command.join(" ")}  (sandbox: ${check.profile})`);
+      if (ports.sandboxed(fill(check.command, ports.vars), check.profile) !== true) {
+        log(`[gate] FAILED: ${check.name}`);
+        return 1;
+      }
+    }
+
+    let judged = 0;
+    if (files.length === 0) {
+      log("[gate] mutation: the change touches no production line");
+    } else {
+      const blanket = files.flatMap((file) => blanketDisables(ports.readSource(file)).map((line) => `${file}:${line}`));
+      if (blanket.length > 0) {
+        log(`[gate] FAILED: mutation is turned off for more than one line at ${blanket.join(", ")}. Only \`// Stryker disable next-line <Mutator>: equivalent: <why>\` is accepted.`);
+        return 1;
+      }
+      // The tool mutates the changed files whole; the verdict is on the
+      // mutants that touch a changed line. A line filter given to the tool
+      // would drop the mutants of an expression that starts above the line.
+      ports.removeReport(config.mutation.report);
+      const command = [...fill(config.mutation.command, ports.vars), "--mutate", files.join(",")];
+      log(`[gate] mutation: ${command.join(" ")}  (sandbox: ${config.mutation.profile})`);
+      const ran = ports.sandboxed(command, config.mutation.profile);
+      const report = ports.readReport(config.mutation.report);
+      if (ran !== true || report === null) {
+        log("[gate] FAILED: mutation testing did not run to its report");
+        return 1;
+      }
+      const changes = new Map(files.map((file) => [file, hunkRanges(ports.fileDiff(config.base, file))]));
+      const verdict = judgeMutants(report, changes);
+      judged = verdict.judged;
+      for (const mutant of verdict.undetected) {
+        log(`[gate] ${mutant.status}: ${mutant.file}:${mutant.line} ${mutant.mutator} -> ${mutant.replacement.split("\n")[0].slice(0, 80)}`);
+      }
+      if (verdict.undetected.length > 0) {
+        log(
+          `[gate] FAILED: mutation, ${verdict.undetected.length} of ${judged} mutant(s) on the changed lines undetected. ` +
+            "Each needs a test that kills it, or, when no test can tell it from the original, " +
+            "`// Stryker disable next-line <Mutator>: equivalent: <why>` on the line above.",
+        );
+        return 1;
+      }
+      log(`[gate] mutation: ${judged} mutant(s) on the changed lines, all detected`);
+    }
+
+    ports.recordVerdict(tree, {
+      tree,
+      passed: true,
+      gate: ports.gateHash,
+      at: ports.now(),
+      checks: config.checks.map((check) => check.name),
+      mutated_files: files,
+      mutants_judged: judged,
+    });
+    log(`[gate] passed, recorded for tree ${tree}`);
     return 0;
+  } finally {
+    ports.dispose();
   }
-  const statusAtEnd = ports.status();
-  if (statusAtEnd !== "" || ports.headTree() !== treeAtStart) {
-    log("[gate] FAILED: the tree is not the one the gate started on. A check wrote tracked files, or a commit was made meanwhile:");
-    for (const line of statusAtEnd.split("\n").filter((entry) => entry !== "")) log(`[gate]   ${line}`);
-    return 1;
-  }
-  ports.recordVerdict(treeAtStart, {
-    tree: treeAtStart,
-    passed: true,
-    gate: ports.gateHash,
-    at: ports.now(),
-    checks: config.checks.map((check) => check.name),
-    mutated_files: files,
-    mutants_judged: judged,
-  });
-  log(`[gate] passed, recorded for tree ${treeAtStart}`);
-  return 0;
 }
