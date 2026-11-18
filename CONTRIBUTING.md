@@ -136,10 +136,12 @@ Three layers, and what each one holds against:
   the operation: `offline` (build, perf) has no network; `loopback` (unit,
   mutation testing) adds the loopback the tests' servers need, which on macOS
   is every local port. Both write the directory of the run and nothing else,
-  and read nothing of the user's home but that directory, the gate's
-  checkout and the tools PATH names. Before it runs anything, the gate tries
+  and read nothing of the user's home but that directory, the files of the
+  gate that judges, and the tools: the directories of PATH, the one of node
+  with the packages installed beside it, and the real directory of each
+  program a check starts. Before it runs anything, the gate tries
   under each profile, with a canary, a write in the worktree, the git
-  directory, the gate's checkout, the home and a directory outside, each
+  directory, the files of the gate, the home and a directory outside, each
   write and read the profile denies, and, for `offline`, a port of the host;
   it refuses to run when one succeeds, or when the canary does not say that
   every attempt was refused. What this process reads back from the copy (a
@@ -155,15 +157,17 @@ Three layers, and what each one holds against:
   `pnpm gate:install` puts it in the git directory, for every worktree. Git
   tells it the commits a push sends, whatever wrote the command (an alias, a
   script, another tool), and it refuses one whose tree has no passed verdict.
-  It runs the gate of the main checkout and accepts the verdicts of that
-  gate only (a verdict names the hash of the gate's code, configuration and
-  profiles). `pnpm gate` in a worktree hands the run over to the gate of the
-  main checkout when it has one, and in the main checkout the gate refuses a
-  commit that changes its own files: a change of the gate is judged from a
-  worktree, by the gate of the main checkout, never by itself. (A base with
-  no gate is the exception: nothing is there to judge the first one.) The
-  hook is not installed where the main checkout has no gate: it would refuse
-  every push.
+  The gate that judges, and the gate that reads the verdict, is the one of
+  the base revision (`base` in `delivery-gate.json`: `origin/main`) as git
+  has it, not a file of a checkout. `pnpm gate` takes that gate out of git
+  and hands the run over to it; the hook, which no commit reaches, does the
+  same before it reads a verdict, and a verdict names the hash of the gate
+  that wrote it (code, configuration, profiles). So a commit that changes
+  the gate, in a worktree or in the main checkout, is judged by the gate it
+  replaces: the verdict of the gate it brings is refused at the push. A
+  base with no gate is the exception: nothing is there to judge the first
+  one, which judges itself. After a change of the gate is merged, verdicts
+  of the gate before it are no longer accepted: run the gate again.
 - **The guard of the session, against going around the hook.** The
   `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
   while the pre-push hook is not the one git will run, and what the rules of
@@ -197,9 +201,12 @@ What the gate does not hold against, and what does:
   reachable (it tries a port of the host, for `offline` only), and a hard
   link from outside into the directory of the run. Those rest on the sandbox
   runtime.
-- The gate that judges a change of the gate is the one of the main
-  checkout as it is on disk, committed or not: keep the main checkout on the
-  base revision.
+- The base revision is what the local repository has under that name: a
+  fetch that is not made judges with the gate of an older base, and a ref
+  moved by hand judges with whatever it names.
+- The `ci-contract` check needs PyYAML where the Python of PATH finds it
+  without the user's home (a system or Homebrew install): a user-site or
+  virtual-environment install under the home is not readable in the sandbox.
 - The guard reads git where a command starts (after a separator, a quote,
   `env`, `command` and the like). A commit message that opens on `git push`
   is read as a push; a push behind a wrapper the expression does not know is

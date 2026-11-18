@@ -417,7 +417,7 @@ describe("verdictRefusal", () => {
       expect(verdictRefusal(verdict, "T", "G")).toBe("its verdict is not a passed verdict for this tree");
     }
     for (const verdict of [{ ...good, gate: "H" }, { tree: "T", passed: true }]) {
-      expect(verdictRefusal(verdict, "T", "G")).toBe("its verdict was written by another gate than the one of the main checkout");
+      expect(verdictRefusal(verdict, "T", "G")).toBe("its verdict was written by another gate than the one of the base revision");
     }
   });
 });
@@ -477,7 +477,7 @@ describe("prePush", () => {
     expect(prePush([line("a", "a"), line("b", "b"), line("c", "c")].join("\n"), p)).toBe(1);
     expect(p.lines).toEqual([
       "[gate] push refused: refs/heads/b (tree tree-of-b): it has no verdict of the delivery gate. Commit the work and run the gate (pnpm gate).",
-      "[gate] push refused: refs/heads/c (tree tree-of-c): its verdict was written by another gate than the one of the main checkout. Commit the work and run the gate (pnpm gate).",
+      "[gate] push refused: refs/heads/c (tree tree-of-c): its verdict was written by another gate than the one of the base revision. Commit the work and run the gate (pnpm gate).",
     ]);
   });
 
@@ -726,8 +726,6 @@ describe("runGate", () => {
       headTree: () => w.tree,
       status: () => w.dirty,
       changedFiles: (base) => (w.calls.push(`changed ${base}`), w.files),
-      changedGateFiles: () => w.gateFiles ?? [],
-      judgesItself: w.judgesItself ?? false,
       fileDiff: (base, file) => (w.calls.push(`diff ${base} ${file}`), w.diffs[file] ?? ""),
       prepare: () => w.calls.push("prepare"),
       dispose: () => w.calls.push("dispose"),
@@ -790,25 +788,6 @@ describe("runGate", () => {
     );
     expect(w.calls).toEqual([]);
     expect(w.verdicts).toEqual([]);
-  });
-
-  it("refuses a commit that changes the gate when the gate that would judge it is its own", async () => {
-    const w = world({ gateFiles: ["delivery-gate.json", "scripts/gate/profiles/offline.json"], judgesItself: true });
-    await expect(runGate(config, w.ports)).rejects.toThrow(
-      new Refusal(
-        "this commit changes the gate (delivery-gate.json, scripts/gate/profiles/offline.json), and the gate that would judge it is its own. " +
-          "Judge it from a worktree: there the gate of the main checkout judges it.",
-      ),
-    );
-    expect(w.calls).toEqual([]);
-    expect(w.verdicts).toEqual([]);
-  });
-
-  it("judges a commit that changes the gate when another checkout's gate judges it, and any commit that does not", async () => {
-    const other = world({ gateFiles: ["delivery-gate.json"], judgesItself: false });
-    expect(await runGate(config, other.ports)).toBe(0);
-    const own = world({ gateFiles: [], judgesItself: true });
-    expect(await runGate(config, own.ports)).toBe(0);
   });
 
   it("refuses a production file whose name the mutation tool would misread, before it copies anything", async () => {
@@ -1034,7 +1013,8 @@ describe("the program, in a real repository with a real push", () => {
     git(base, "init", "-q", other);
     const out = gate(other, "install");
     expect(out.status).toBe(2);
-    expect(out.stderr).toContain("the main checkout has no gate yet");
+    expect(out.stderr).toContain("neither origin/main nor the main checkout");
+    expect(out.stderr).toContain("has a gate yet: install the hook once one has");
     expect(existsSync(join(other, ".git/hooks/pre-push"))).toBe(false);
   });
 
@@ -1049,7 +1029,7 @@ describe("the program, in a real repository with a real push", () => {
     giveVerdict(main, { passed: false });
     expect(push(main, "origin", "trunk").stderr).toContain("its verdict is not a passed verdict for this tree");
     giveVerdict(main, { gate: "0".repeat(64) });
-    expect(push(main, "origin", "trunk").stderr).toContain("its verdict was written by another gate than the one of the main checkout");
+    expect(push(main, "origin", "trunk").stderr).toContain("its verdict was written by another gate than the one of the base revision");
     expect(git(remote, "branch", "--list")).toBe("");
   });
 
@@ -1134,8 +1114,10 @@ describe("the program, in a real repository with a real push", () => {
     // what is tested here (the copy, the mark of success, the verdict), not
     // the sandbox, which the gate proves each time it really runs.
     //
-    // `repo` is the main checkout: its gate judges, with the configuration
-    // each test writes there. `work` is a worktree: its commits are judged.
+    // `repo` is the main checkout. Each test commits there the gate's
+    // configuration it needs and moves the tag `base` onto it: the gate of
+    // `base`, taken out of git, is the one that judges. `work` is a worktree
+    // reset to `base`: the commits a test makes there are what is judged.
     let repo;
     let work;
     const stub = (canary) => `#!/usr/bin/env node
@@ -1152,11 +1134,17 @@ process.exit(out.status ?? 1);
 `;
     const setRuntime = (canary) => writeFileSync(join(repo, "node_modules/@anthropic-ai/sandbox-runtime/cli.mjs"), stub(canary));
     const FIXTURE = readJson(ROOT, "delivery-gate.json");
-    const setGate = (over) =>
-      writeFileSync(join(repo, "delivery-gate.json"), JSON.stringify({ ...FIXTURE, base: "start", carry: ["carried"], checks: [], ...over }));
+    const gateConfig = (over) => JSON.stringify({ ...FIXTURE, base: "base", carry: ["carried"], checks: [], ...over });
+    const setGate = (over) => {
+      writeFileSync(join(repo, "delivery-gate.json"), gateConfig(over));
+      git(repo, "add", "delivery-gate.json");
+      git(repo, "commit", "-q", "--allow-empty", "-m", "the gate of the base");
+      git(repo, "tag", "-f", "base");
+      git(work, "reset", "-q", "--hard", "base");
+    };
     const setChecks = (checks) => setGate({ checks });
     const node = (script, ...rest) => [process.execPath, "-e", script, ...rest];
-    // The gate of the main checkout, judging the worktree.
+    // Started from the main checkout's gate; the run is handed over to the gate of `base`.
     const own = (mode, cwd = work) => spawnSync(process.execPath, [join(repo, "scripts/gate/gate.mjs"), mode], { ...PROCESS, cwd });
     const runGateIn = () => own("run");
     const verdictOf = (cwd = work) => {
@@ -1185,7 +1173,9 @@ process.exit(out.status ?? 1);
       git(repo, "init", "-q", "-b", "trunk");
       git(repo, "add", ".");
       git(repo, "commit", "-q", "-m", "start");
-      git(repo, "tag", "start");
+      git(repo, "tag", "base");
+      git(base, "init", "-q", "--bare", join(base, "remote.git"));
+      git(repo, "remote", "add", "origin", join(base, "remote.git"));
       work = join(repo, ".claude/worktrees/work");
       git(repo, "worktree", "add", "-q", work, "-b", "topic");
       mkdirSync(join(work, "carried"));
@@ -1194,7 +1184,6 @@ process.exit(out.status ?? 1);
     });
 
     it("runs each check in a copy of the committed tree, with the carried directories, and records the verdict", () => {
-      commitInWork("change.txt");
       setChecks([
         {
           name: "reads",
@@ -1206,7 +1195,9 @@ process.exit(out.status ?? 1);
           ),
         },
       ]);
+      commitInWork("change.txt");
       const out = runGateIn();
+      expect(out.stderr).toContain("[gate] judged by the gate of base");
       expect(out.stderr).toContain("[gate] passed, recorded for tree");
       expect(out.status).toBe(0);
       expect(verdictOf()).toMatchObject({ passed: true, checks: ["reads"], mutated_files: [], mutants_judged: 0, gate: own("hash").stdout.trim() });
@@ -1217,14 +1208,15 @@ process.exit(out.status ?? 1);
     });
 
     it("fails on a check that fails, and on one that is ended before it succeeds, though the runtime exits 0", () => {
-      commitInWork("second.txt");
       setChecks([{ name: "fails", profile: "offline", command: node("process.exit(3)") }]);
+      commitInWork("second.txt");
       let out = runGateIn();
       expect(out.status).toBe(1);
       expect(out.stderr).toContain("[gate] FAILED: fails");
       expect(verdictOf()).toBeNull();
 
       setChecks([{ name: "ended", profile: "offline", command: node("0", "--die") }]);
+      commitInWork("second.txt");
       out = runGateIn();
       expect(out.status).toBe(1);
       expect(out.stderr).toContain("[gate] FAILED: ended");
@@ -1244,8 +1236,8 @@ process.exit(out.status ?? 1);
     });
 
     it("refuses to run when the canary could do what the profile denies, and leaves nothing behind", () => {
-      commitInWork("third.txt");
       setChecks([{ name: "never", profile: "offline", command: node(`require("fs").writeFileSync(process.argv[1],"ran")`, join(repo, "..", "ran.txt")) }]);
+      commitInWork("third.txt");
       setRuntime("breached");
       const out = runGateIn();
       expect(out.status).toBe(2);
@@ -1268,10 +1260,10 @@ process.exit(out.status ?? 1);
     });
 
     it("gives the operation a PATH with no entry of the judged tree, none that is relative, and none that links into it", () => {
+      setChecks([{ name: "path", profile: "offline", command: node(`require("fs").writeFileSync(process.argv[1], process.env.PATH)`, join(repo, "..", "path.txt")) }]);
       const linked = join(repo, "..", "linked-bin");
       mkdirSync(join(work, "bin"), { recursive: true });
       symlinkSync(join(work, "bin"), linked);
-      setChecks([{ name: "path", profile: "offline", command: node(`require("fs").writeFileSync(process.argv[1], process.env.PATH)`, join(repo, "..", "path.txt")) }]);
       const out = spawnSync(process.execPath, [join(repo, "scripts/gate/gate.mjs"), "run"], {
         ...PROCESS,
         cwd: work,
@@ -1286,6 +1278,7 @@ process.exit(out.status ?? 1);
     });
 
     it("does not run a git that a link on PATH takes from the judged tree", () => {
+      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
       // A directory outside the tree, on PATH first, whose `git` is a link to a file of the tree.
       const outsideBin = join(repo, "..", "outside-bin");
       mkdirSync(outsideBin, { recursive: true });
@@ -1294,7 +1287,6 @@ process.exit(out.status ?? 1);
       symlinkSync(join(work, "bin/git"), join(outsideBin, "git"));
       git(work, "add", ".");
       git(work, "commit", "-q", "-m", "a git of its own");
-      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
       const out = spawnSync(process.execPath, [join(repo, "scripts/gate/gate.mjs"), "run"], {
         ...PROCESS,
         cwd: work,
@@ -1305,7 +1297,6 @@ process.exit(out.status ?? 1);
     });
 
     it("mutates the changed production files, and says which ones the report does not name", () => {
-      commitInWork("src/a.js", "export const a = 1;\n");
       setGate({
         mutation: {
           production: "^src/.*\\.js$",
@@ -1315,6 +1306,7 @@ process.exit(out.status ?? 1);
           profile: "loopback",
         },
       });
+      commitInWork("src/a.js", "export const a = 1;\n");
       const out = runGateIn();
       expect(out.stderr).toContain("--mutate src/a.js  (sandbox: loopback)");
       expect(out.stderr).toContain("[gate] mutation: no mutant in src/a.js");
@@ -1326,12 +1318,12 @@ process.exit(out.status ?? 1);
       const outside = join(repo, "..", "outside-reports");
       mkdirSync(join(outside, "mutation"), { recursive: true });
       writeFileSync(join(outside, "mutation/mutation.json"), "kept");
-      commitInWork("src/b.js", "export const b = 1;\n");
       setGate({
         // The check plants `reports` as a link to a directory outside the copy.
         checks: [{ name: "plants", profile: "offline", command: node(`require("fs").symlinkSync(process.argv[1], "reports")`, outside) }],
         mutation: { production: "^src/.*\\.js$", command: node("0", "--"), report: "reports/mutation/mutation.json", profile: "loopback" },
       });
+      commitInWork("src/b.js", "export const b = 1;\n");
       const out = runGateIn();
       expect(out.status).toBe(2);
       expect(out.stderr).toContain("reports/mutation/mutation.json leads outside the copy of the tree");
@@ -1339,25 +1331,39 @@ process.exit(out.status ?? 1);
       expect(verdictOf()).toBeNull();
     });
 
-    it("hands a run started from a worktree's own gate over to the gate of the main checkout", () => {
-      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
-      // The worktree changes its own gate: it is not the one that judges.
-      commitInWork("delivery-gate.json", "{}");
+    it("judges a commit that brings a weaker gate with the gate of the base, even when started from the commit's own gate", () => {
+      // The gate of the base refuses a tree that holds bad.txt.
+      setChecks([{ name: "no-bad-file", profile: "offline", command: node(`process.exit(require("fs").existsSync("bad.txt") ? 1 : 0)`) }]);
+      // The commit adds the file, and a gate of its own that checks nothing.
+      writeFileSync(join(work, "delivery-gate.json"), gateConfig({ checks: [] }));
+      commitInWork("bad.txt");
       const out = spawnSync(process.execPath, [join(work, "scripts/gate/gate.mjs"), "run"], { ...PROCESS, cwd: work });
-      expect(out.stderr).toContain(`[gate] judged by the gate of the main checkout: ${join(repo, "scripts/gate/gate.mjs")}`);
-      expect(out.status, out.stderr).toBe(0);
-      expect(verdictOf()).toMatchObject({ passed: true, gate: own("hash").stdout.trim() });
+      expect(out.stderr).toContain("[gate] judged by the gate of base");
+      expect(out.stderr).toContain("[gate] FAILED: no-bad-file");
+      expect(out.status).toBe(1);
+      expect(verdictOf()).toBeNull();
     });
 
-    it("refuses, in the main checkout, a commit that changes the gate: it would be judged by itself", () => {
-      // The main checkout commits the configuration it has on disk: no check at all.
-      writeFileSync(join(repo, "delivery-gate.json"), JSON.stringify({ ...FIXTURE, base: "start", carry: [], checks: [] }));
-      git(repo, "add", "delivery-gate.json");
-      git(repo, "commit", "-q", "-m", "a gate that checks nothing");
-      const out = own("run", repo);
-      expect(out.status).toBe(2);
-      expect(out.stderr).toContain("this commit changes the gate (delivery-gate.json), and the gate that would judge it is its own.");
-      expect(verdictOf(repo)).toBeNull();
+    it("refuses at the push the verdict of a gate the commit brought with it", () => {
+      setChecks([{ name: "no-bad-file", profile: "offline", command: node(`process.exit(require("fs").existsSync("bad.txt") ? 1 : 0)`) }]);
+      expect(own("install", repo).status).toBe(0);
+      // The commit names itself as the base and checks nothing: its own gate judges it, and passes it.
+      writeFileSync(join(work, "delivery-gate.json"), gateConfig({ base: "HEAD", checks: [] }));
+      commitInWork("bad.txt");
+      const selfJudged = spawnSync(process.execPath, [join(work, "scripts/gate/gate.mjs"), "run"], { ...PROCESS, cwd: work });
+      expect(selfJudged.stderr).toContain("[gate] judged by the gate of HEAD");
+      expect(selfJudged.status, selfJudged.stderr).toBe(0);
+      expect(verdictOf()).toMatchObject({ passed: true });
+      // git's hook runs the gate of `base`, out of git: that verdict is not one of its own.
+      const pushed = spawnSync("git", ["push", "-q", "origin", "HEAD:refs/heads/topic"], { ...PROCESS, cwd: work });
+      expect(pushed.status).not.toBe(0);
+      expect(pushed.stderr).toContain("its verdict was written by another gate");
+      expect(git(join(repo, "..", "remote.git"), "branch", "--list")).toBe("");
+      // A commit the gate of the base passed is pushed.
+      git(work, "reset", "-q", "--hard", "base");
+      commitInWork("good.txt");
+      expect(runGateIn().status).toBe(0);
+      expect(spawnSync("git", ["push", "-q", "origin", "HEAD:refs/heads/topic"], { ...PROCESS, cwd: work }).status).toBe(0);
     });
 
     it("removes the directory a killed run left, and leaves the one of a run that is alive", () => {
@@ -1439,8 +1445,12 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(".claude/setti
     expect(entry.matcher).toBe("Bash|mcp__.*");
     // Any way the guard ends other than "let it through" blocks the call (a crash, a missing node);
     // a checkout that has no gate at all is not guarded.
+    // "No gate" is read from the commit, not from the working tree: a gate file moved aside blocks.
     expect(entry.hooks).toEqual([
-      { type: "command", command: 'f="$CLAUDE_PROJECT_DIR/scripts/gate/gate.mjs"; [ ! -f "$f" ] || node "$f" hook || exit 2' },
+      {
+        type: "command",
+        command: 'cd "$CLAUDE_PROJECT_DIR" || exit 2; git cat-file -e HEAD:scripts/gate/gate.mjs 2>/dev/null || exit 0; node scripts/gate/gate.mjs hook || exit 2',
+      },
     ]);
     expect(existsSync(join(ROOT, "scripts/gate/gate.mjs"))).toBe(true);
   });

@@ -13,15 +13,16 @@
  *   gate.mjs hash       print the hash of this gate (code, configuration,
  *                       profiles)
  *
- * The gate that judges is this file's own checkout (the launcher): its
- * configuration, its profiles, its canary and its sandbox runtime are read
- * from beside this file. The pre-push hook runs the gate of the main
- * checkout and accepts the verdicts of that gate only; a worktree's gate
- * hands its run over to it. Where the gate that judges is the one of the
- * checkout it judges (the main checkout), it refuses a commit that changes
- * the gate: such a commit is judged from a worktree, by the gate of the main
- * checkout, never by itself. The one exception is a base that has no gate
- * yet: there is none to judge the first one.
+ * The gate that judges is the one of the base revision, as git has it, not
+ * a file of a checkout: `run` takes the gate's files out of that revision
+ * and hands the run over to them, and the pre-push hook, which lives in the
+ * git directory where no commit reaches, does the same before it reads a
+ * verdict, and accepts the verdicts of that gate only. So a commit that
+ * changes the gate, wherever it is made, is judged by the gate it replaces:
+ * a verdict its own gate wrote is refused at the push. The one exception is
+ * a base that has no gate yet: there is none to judge the first one, which
+ * judges itself. Each gate reads its configuration, its profiles and its
+ * canary from beside its own file (the launcher).
  *
  * Exit codes: 0 passed or let through; 1 failed or refused by git's hook;
  * 2 refused (configuration, repository state, a sandbox that does not hold,
@@ -137,7 +138,9 @@ function readVerdict(common, tree) {
 
 /** The sandbox runtime of the launcher, as the file node runs. */
 function sandboxRuntime() {
-  const pkgDir = join(LAUNCHER, "node_modules", "@anthropic-ai", "sandbox-runtime");
+  // A gate taken out of a revision has no installed packages: the gate that
+  // handed the run over says where the runtime is.
+  const pkgDir = process.env.GATE_RUNTIME ?? join(LAUNCHER, "node_modules", "@anthropic-ai", "sandbox-runtime");
   let bin;
   try {
     bin = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).bin.srt;
@@ -208,7 +211,9 @@ function makeRun({ git, root, common }, config, commit) {
   const toolchain = [
     ...new Set([
       ...path.split(delimiter).filter((dir) => dir !== "" && existsSync(dir)).map(realDir),
-      resolve(dirname(realpathSync(process.execPath)), ".."),
+      // node itself, and the packages installed beside it (corepack, a global pnpm).
+      dirname(realpathSync(process.execPath)),
+      resolve(dirname(realpathSync(process.execPath)), "..", "lib", "node_modules"),
       ...programs.flatMap((program) => {
         try {
           return [dirname(findOnPath(program, written))];
@@ -342,26 +347,50 @@ function makeRun({ git, root, common }, config, commit) {
 
 const log = (line) => console.error(line);
 
+const GATE_PATHS = ["scripts/gate", "delivery-gate.json", "stryker.config.json"];
+
 /**
- * The gate that judges is the one of the main checkout, when it has one: the
- * pre-push hook accepts its verdicts only, and a worktree's own copy may be
- * the change that is judged. A worktree's gate hands the run over to it.
+ * The gate of a revision, written out of git into a directory of its own,
+ * or null when the revision has none. Nothing of a working tree is read.
  */
-function mainGate(common) {
-  const main = resolve(common, "..");
-  const path = join(main, "scripts", "gate", "gate.mjs");
-  return main !== LAUNCHER && existsSync(path) ? path : null;
+function gateAt(git, ref) {
+  try {
+    git(["cat-file", "-e", `${ref}:scripts/gate/gate.mjs`]);
+  } catch {
+    return null;
+  }
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "gate-judge-")));
+  const files = git(["ls-tree", "-r", "--name-only", "-z", ref, "--", ...GATE_PATHS]).split("\0").filter((name) => name !== "");
+  for (const file of files) {
+    mkdirSync(dirname(join(dir, file)), { recursive: true });
+    writeFileSync(join(dir, file), git(["show", `${ref}:${file}`]));
+  }
+  return dir;
 }
 
 async function run() {
   const repo = repository(process.cwd());
-  const { git, root } = repo;
-  const other = mainGate(repo.common);
-  if (other !== null) {
-    log(`[gate] judged by the gate of the main checkout: ${other}`);
-    return spawnSync(process.execPath, [other, "run"], { cwd: root, stdio: "inherit" }).status ?? 2;
-  }
+  const { git, root, common } = repo;
   const config = loadConfig();
+  // The gate that judges is the one of the base revision. This one, which
+  // may be the change that is judged, only finds it and hands the run over.
+  if (process.env.GATE_JUDGE !== "1") {
+    const judge = gateAt(git, config.base);
+    if (judge !== null) {
+      // The runtime of the main checkout when it is installed there, else this one's.
+      const installed = [join(common, ".."), LAUNCHER]
+        .map((checkout) => join(checkout, "node_modules", "@anthropic-ai", "sandbox-runtime"))
+        .find((dir) => existsSync(join(dir, "package.json")));
+      try {
+        log(`[gate] judged by the gate of ${config.base}`);
+        const env = { ...process.env, GATE_JUDGE: "1", ...(installed ? { GATE_RUNTIME: installed } : {}) };
+        return spawnSync(process.execPath, [join(judge, "scripts", "gate", "gate.mjs"), "run"], { cwd: root, stdio: "inherit", env }).status ?? 2;
+      } finally {
+        rmSync(judge, { recursive: true, force: true });
+      }
+    }
+    log(`[gate] ${config.base} has no gate yet: this one judges`);
+  }
   // The commit that is judged and the base it is compared with, read once:
   // the copy, the diff and the verdict are of these two, whatever is
   // committed or fetched while the gate runs.
@@ -375,7 +404,7 @@ async function run() {
   }
 }
 
-function ports(config, { git, root, common }, { prepare, dispose, sandboxed, proveIsolation, inCopy }, commit, base) {
+function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsolation, inCopy }, commit, base) {
   // The change: the commits since the point where the work left the base.
   // `--text` and `--no-textconv`: an attribute of the tree cannot turn a
   // file's diff into "binary files differ". Names come NUL-separated, so git
@@ -391,18 +420,6 @@ function ports(config, { git, root, common }, { prepare, dispose, sandboxed, pro
     dispose,
     proveIsolation,
     sandboxed,
-    // The files of the gate the commits change, when the base has a gate.
-    changedGateFiles: () => {
-      try {
-        git(["cat-file", "-e", `${base}:scripts/gate/gate.mjs`]);
-      } catch {
-        return []; // no gate at the base: this is the first one
-      }
-      return git(["diff", "--name-only", "-z", "--merge-base", base, commit, "--", ...GATE_FILES, "scripts/gate/profiles"])
-        .split("\0")
-        .filter((name) => name !== "");
-    },
-    judgesItself: root === LAUNCHER,
     readSource: (file) => readFileSync(inCopy(file), "utf8"),
     removeReport: (path) => rmSync(inCopy(path), { force: true }),
     readReport: (path) => {
@@ -430,17 +447,39 @@ function runPrePush() {
   });
 }
 
-const SHIM = [
-  "#!/bin/sh",
-  "# The delivery gate (scripts/gate): refuses a push of a commit whose tree has",
-  "# no passed verdict. It runs the gate of the main checkout, whatever the",
-  "# worktree the push is made from. Written by `pnpm gate:install`.",
-  'exec node "$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/gate/gate.mjs" pre-push "$@"',
-  "",
-].join("\n");
+/**
+ * The pre-push hook, as text. It lives in the git directory, where no
+ * commit and no sandboxed operation reaches, and it runs the gate of `ref`
+ * taken out of git: a commit cannot bring the gate that reads its verdict.
+ */
+const shim = (ref) =>
+  [
+    "#!/bin/sh",
+    "# The delivery gate (scripts/gate): refuses a push of a commit whose tree has",
+    "# no passed verdict. The gate that reads the verdict is the one of the",
+    "# revision below, as git has it, not a file of a checkout.",
+    "# Written by `pnpm gate:install`.",
+    `ref='${ref}'`,
+    'if git cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
+    "  dir=$(mktemp -d) || exit 1",
+    "  trap 'rm -rf \"$dir\"' EXIT",
+    `  git archive "$ref" ${GATE_PATHS.join(" ")} | tar -x -C "$dir" || exit 1`,
+    '  node "$dir/scripts/gate/gate.mjs" pre-push "$@"',
+    "else",
+    "  # No gate at that revision yet: the first one is the main checkout's.",
+    '  node "$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/gate/gate.mjs" pre-push "$@"',
+    "fi",
+    "",
+  ].join("\n");
+
+/** The revision the hook takes the gate from: a name git and the shell read as one word. */
+function hookRef(config) {
+  if (!/^[\w./-]+$/.test(config.base)) throw new Refusal(`delivery-gate.json: base (${config.base}) cannot be written in the pre-push hook`);
+  return config.base;
+}
 
 /** null when git will run the gate's pre-push hook in this repository, else why not. */
-function hookProblem({ git, common }) {
+function hookProblem({ git, common }, ref) {
   let hooksPath = "";
   try {
     hooksPath = git(["config", "--get", "core.hooksPath"]).trim();
@@ -455,7 +494,7 @@ function hookProblem({ git, common }) {
   } catch {
     return "no pre-push hook is installed";
   }
-  if (content !== SHIM) return "another pre-push hook is installed";
+  if (content !== shim(ref)) return "another pre-push hook is installed";
   // git skips a hook it cannot execute, and says so only in a hint.
   if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return "the pre-push hook is not executable";
   return null;
@@ -463,25 +502,32 @@ function hookProblem({ git, common }) {
 
 function install() {
   const repo = repository(process.cwd());
-  // The hook runs the gate of the main checkout: without one there, it
-  // would refuse every push of the repository.
+  const ref = hookRef(loadConfig());
+  // The hook runs the gate of `ref`, or the main checkout's while `ref` has
+  // none: with neither, it would refuse every push of the repository.
   const main = join(repo.common, "..", "scripts", "gate", "gate.mjs");
-  if (!existsSync(main)) {
-    throw new Refusal(`the main checkout has no gate yet (${resolve(main)}): install the hook once the gate is on its branch`);
+  let atRef = true;
+  try {
+    repo.git(["cat-file", "-e", `${ref}:scripts/gate/gate.mjs`]);
+  } catch {
+    atRef = false;
+  }
+  if (!atRef && !existsSync(main)) {
+    throw new Refusal(`neither ${ref} nor the main checkout (${resolve(main)}) has a gate yet: install the hook once one has`);
   }
   const path = join(repo.common, "hooks", "pre-push");
   mkdirSync(dirname(path), { recursive: true });
   try {
     // Created only if no file is there: no moment between a look and the write.
-    writeFileSync(path, SHIM, { flag: "wx", mode: 0o755 });
+    writeFileSync(path, shim(ref), { flag: "wx", mode: 0o755 });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    if (readFileSync(path, "utf8") !== SHIM) {
+    if (readFileSync(path, "utf8") !== shim(ref)) {
       throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);
     }
     chmodSync(path, 0o755);
   }
-  const problem = hookProblem(repo);
+  const problem = hookProblem(repo, ref);
   if (problem !== null) throw new Refusal(`the pre-push hook is written, but git will not run it: ${problem}`);
   log(`[gate] pre-push hook installed: ${path}`);
   return 0;
@@ -501,7 +547,8 @@ function runHook() {
   } catch {
     return 0; // not a hook payload: nothing to judge
   }
-  const guard = loadConfig().guard;
+  const config = loadConfig();
+  const guard = config.guard;
   if (guardDecision(call, guard).kind === "allow") return 0;
   const project = repository(LAUNCHER);
   let here = project;
@@ -511,7 +558,7 @@ function runHook() {
     // in no repository: the project's rules apply
   }
   if (here.common !== project.common) return 0;
-  return guardHook(call, guard, { hookProblem: () => hookProblem(here), env: process.env, log });
+  return guardHook(call, guard, { hookProblem: () => hookProblem(here, hookRef(config)), env: process.env, log });
 }
 
 const COMMANDS = { run, "pre-push": runPrePush, hook: runHook, install, hash: () => (console.log(gateHash()), 0) };

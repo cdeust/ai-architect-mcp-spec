@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/gate/gate.mjs\"; [ ! -f \"$f\" ] || node \"$f\" hook || exit 2"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" || exit 2; git cat-file -e HEAD:scripts/gate/gate.mjs 2>/dev/null || exit 0; node scripts/gate/gate.mjs hook || exit 2"
           }
         ]
       }
