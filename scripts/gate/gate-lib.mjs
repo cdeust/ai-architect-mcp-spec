@@ -118,10 +118,13 @@ export function unsafeNames(names) {
 
 /**
  * postcondition: the lines of `source` that turn mutation off for more than
- *                the next line (`// Stryker disable all`, `// Stryker
- *                disable <Mutator>`): 1-based, in order. The gate accepts a
- *                mark on one line with its reason; a mark over a file or a
- *                block would give every mutant under it that one reason.
+ *                the next line (the tool's directive to disable, for `all`
+ *                or for a mutator, without `next-line`): 1-based, in order.
+ *                The gate accepts a mark on one line with its reason; a mark
+ *                over a file or a block would give every mutant under it
+ *                that one reason. The words are looked for anywhere in a
+ *                line, a comment that only quotes them included: this file
+ *                does not write them out for that reason.
  */
 export function blanketDisables(source) {
   return source.split("\n").flatMap((line, index) => (/\bStryker\s+disable\b(?!\s+next-line\b)/.test(line) ? [index + 1] : []));
