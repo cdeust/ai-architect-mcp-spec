@@ -160,14 +160,19 @@ Three layers, and what each one holds against:
   The gate that judges, and the gate that reads the verdict, is the one of
   the base revision (`base` in `delivery-gate.json`: `origin/main`) as git
   has it, not a file of a checkout. `pnpm gate` takes that gate out of git
-  and hands the run over to it; the hook, which no commit reaches, does the
-  same before it reads a verdict, and a verdict names the hash of the gate
-  that wrote it (code, configuration, profiles). So a commit that changes
-  the gate, in a worktree or in the main checkout, is judged by the gate it
-  replaces: the verdict of the gate it brings is refused at the push. A
-  base with no gate is the exception: nothing is there to judge the first
-  one, which judges itself. After a change of the gate is merged, verdicts
-  of the gate before it are no longer accepted: run the gate again.
+  and hands the run over to it. The hook, which no commit reaches, does the
+  same before it reads a verdict: it names the revision it was installed
+  with, which must be a branch of a remote that has the gate, and where that
+  revision has no gate (not fetched, pruned, another remote) it refuses the
+  push; it never reads a gate from a checkout. A verdict names the hash of
+  the gate that wrote it (code, configuration, profiles). So, with the hook
+  installed, a commit that changes the gate, in a worktree or in the main
+  checkout, is judged by the gate it replaces: the verdict of the gate it
+  brings is refused at the push. While the base has no gate, `pnpm gate`
+  lets the gate of the checkout judge (nothing is there to judge the first
+  one) and the hook cannot be installed. After a change of the gate is
+  merged, verdicts of the gate before it are no longer accepted: run the
+  gate again.
 - **The guard of the session, against going around the hook.** The
   `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
   while the pre-push hook is not the one git will run, and what the rules of
@@ -204,6 +209,12 @@ What the gate does not hold against, and what does:
 - The base revision is what the local repository has under that name: a
   fetch that is not made judges with the gate of an older base, and a ref
   moved by hand judges with whatever it names.
+- The sandbox runtime is the one installed in the main checkout, or in the
+  worktree when the main checkout has none; the hash of the gate does not
+  cover it, so a change of its version is judged with the new one.
+- The guard of the session reads its rules from the checkout, and is off in
+  a checkout whose commit has no gate. Git's hook is not: it has its own
+  revision.
 - The `ci-contract` check needs PyYAML where the Python of PATH finds it
   without the user's home (a system or Homebrew install): a user-site or
   virtual-environment install under the home is not readable in the sandbox.

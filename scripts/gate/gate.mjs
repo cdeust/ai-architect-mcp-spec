@@ -17,12 +17,15 @@
  * a file of a checkout: `run` takes the gate's files out of that revision
  * and hands the run over to them, and the pre-push hook, which lives in the
  * git directory where no commit reaches, does the same before it reads a
- * verdict, and accepts the verdicts of that gate only. So a commit that
- * changes the gate, wherever it is made, is judged by the gate it replaces:
- * a verdict its own gate wrote is refused at the push. The one exception is
- * a base that has no gate yet: there is none to judge the first one, which
- * judges itself. Each gate reads its configuration, its profiles and its
- * canary from beside its own file (the launcher).
+ * verdict, and accepts the verdicts of that gate only. The hook names the
+ * revision it was installed with, a branch of a remote, and refuses the push
+ * where that revision has no gate: it never reads a gate from a checkout.
+ * So, once the hook is installed, a commit that changes the gate, wherever
+ * it is made, is judged by the gate it replaces: a verdict its own gate
+ * wrote is refused at the push. While the base has no gate, `run` lets the
+ * gate of the checkout judge (there is none to judge the first one), and
+ * the hook cannot be installed. Each gate reads its configuration, its
+ * profiles and its canary from beside its own file (the launcher).
  *
  * Exit codes: 0 passed or let through; 1 failed or refused by git's hook;
  * 2 refused (configuration, repository state, a sandbox that does not hold,
@@ -142,14 +145,18 @@ function sandboxRuntime() {
   // handed the run over says where the runtime is.
   const pkgDir = process.env.GATE_RUNTIME ?? join(LAUNCHER, "node_modules", "@anthropic-ai", "sandbox-runtime");
   let bin;
+  let needs;
   try {
-    bin = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")).bin.srt;
+    const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+    bin = pkg.bin.srt;
+    // The Node the runtime needs is the one its own package declares.
+    needs = /^>=(\d+)\.(\d+)/.exec(pkg.engines?.node ?? "");
   } catch {
     throw new Refusal("the sandbox runtime is not installed in the gate's checkout (pnpm install)");
   }
   const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major < 22 || (major === 22 && minor < 12)) {
-    throw new Refusal(`the sandbox runtime needs Node 22.12 or later (this is ${process.versions.node})`);
+  if (needs && (major < Number(needs[1]) || (major === Number(needs[1]) && minor < Number(needs[2])))) {
+    throw new Refusal(`the sandbox runtime needs Node ${needs[1]}.${needs[2]} or later (this is ${process.versions.node})`);
   }
   return realpathSync(join(pkgDir, bin));
 }
@@ -457,30 +464,43 @@ const shim = (ref) =>
     "#!/bin/sh",
     "# The delivery gate (scripts/gate): refuses a push of a commit whose tree has",
     "# no passed verdict. The gate that reads the verdict is the one of the",
-    "# revision below, as git has it, not a file of a checkout.",
+    "# revision below, as git has it, never a file of a checkout: where that",
+    "# revision has no gate, the push is refused.",
     "# Written by `pnpm gate:install`.",
     `ref='${ref}'`,
-    'if git cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
-    // In TMPDIR when it is set: without a template, mktemp of macOS ignores it.
-    '  dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-hook.XXXXXX") || exit 1',
-    "  trap 'rm -rf \"$dir\"' EXIT",
-    // The same bytes `run` takes: each blob as git stores it, no conversion of line ends.
-    `  for f in $(git ls-tree -r --name-only "$ref" -- ${GATE_PATHS.join(" ")}); do`,
-    '    mkdir -p "$dir/$(dirname "$f")" && git show "$ref:$f" > "$dir/$f" || exit 1',
-    "  done",
-    '  [ -f "$dir/scripts/gate/gate.mjs" ] || exit 1',
-    '  node "$dir/scripts/gate/gate.mjs" pre-push "$@"',
-    "else",
-    "  # No gate at that revision yet: the first one is the main checkout's.",
-    '  node "$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/gate/gate.mjs" pre-push "$@"',
+    'if ! git cat-file -e "$ref:scripts/gate/gate.mjs" 2>/dev/null; then',
+    '  echo "[gate] push refused: $ref has no delivery gate in this repository (not fetched, pruned, or another remote). Fetch it, or install the hook again (pnpm gate:install)." >&2',
+    "  exit 1",
     "fi",
+    // In TMPDIR when it is set: without a template, mktemp of macOS ignores it.
+    'dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-hook.XXXXXX") || exit 1',
+    "trap 'rm -rf \"$dir\"' EXIT",
+    // The same bytes `run` takes: each blob as git stores it, no conversion of line ends.
+    `for f in $(git ls-tree -r --name-only "$ref" -- ${GATE_PATHS.join(" ")}); do`,
+    '  mkdir -p "$dir/$(dirname "$f")" && git show "$ref:$f" > "$dir/$f" || exit 1',
+    "done",
+    '[ -f "$dir/scripts/gate/gate.mjs" ] || exit 1',
+    'node "$dir/scripts/gate/gate.mjs" pre-push "$@"',
     "",
   ].join("\n");
 
-/** The revision the hook takes the gate from: a name git and the shell read as one word. */
-function hookRef(config) {
-  if (!/^[\w./-]+$/.test(config.base)) throw new Refusal(`delivery-gate.json: base (${config.base}) cannot be written in the pre-push hook`);
-  return config.base;
+/**
+ * The revision the hook takes the gate from: the base of the configuration,
+ * by its full name, and only a branch of a remote. A commit does not move a
+ * remote-tracking branch, and `HEAD` or a local branch would name the commit
+ * that is pushed.
+ */
+function hookRef(git, config) {
+  let full = "";
+  try {
+    full = git(["rev-parse", "--verify", "--symbolic-full-name", config.base]).trim();
+  } catch {
+    // does not resolve here
+  }
+  if (!/^refs\/remotes\/[\w./-]+$/.test(full)) {
+    throw new Refusal(`delivery-gate.json: base (${config.base}) is not a branch of a remote in this repository: the pre-push hook takes the gate from one`);
+  }
+  return full;
 }
 
 /** null when git will run the gate's pre-push hook in this repository, else why not. */
@@ -507,18 +527,13 @@ function hookProblem({ git, common }, ref) {
 
 function install() {
   const repo = repository(process.cwd());
-  const ref = hookRef(loadConfig());
-  // The hook runs the gate of `ref`, or the main checkout's while `ref` has
-  // none: with neither, it would refuse every push of the repository.
-  const main = join(repo.common, "..", "scripts", "gate", "gate.mjs");
-  let atRef = true;
+  const ref = hookRef(repo.git, loadConfig());
+  // The hook runs the gate of `ref` and nothing else: where `ref` has none,
+  // it would refuse every push of the repository.
   try {
     repo.git(["cat-file", "-e", `${ref}:scripts/gate/gate.mjs`]);
   } catch {
-    atRef = false;
-  }
-  if (!atRef && !existsSync(main)) {
-    throw new Refusal(`neither ${ref} nor the main checkout (${resolve(main)}) has a gate yet: install the hook once one has`);
+    throw new Refusal(`${ref} has no gate yet: install the hook once the gate is on it`);
   }
   const path = join(repo.common, "hooks", "pre-push");
   mkdirSync(dirname(path), { recursive: true });
@@ -563,7 +578,7 @@ function runHook() {
     // in no repository: the project's rules apply
   }
   if (here.common !== project.common) return 0;
-  return guardHook(call, guard, { hookProblem: () => hookProblem(here, hookRef(config)), env: process.env, log });
+  return guardHook(call, guard, { hookProblem: () => hookProblem(here, hookRef(here.git, config)), env: process.env, log });
 }
 
 const COMMANDS = { run, "pre-push": runPrePush, hook: runHook, install, hash: () => (console.log(gateHash()), 0) };

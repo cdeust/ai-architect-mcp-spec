@@ -970,6 +970,9 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     git(main, "init", "-q", "-b", "trunk");
     git(main, "remote", "add", "origin", remote);
     commit(main, "first.txt");
+    // The base of the configuration, `origin/main`, with the gate on it: the hook takes its gate from there.
+    git(main, "push", "-q", "origin", "trunk:main");
+    git(main, "fetch", "-q", "origin");
   });
 
   it("prints one hash for the gate, which changes with its configuration", () => {
@@ -994,7 +997,11 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
   it("installs the pre-push hook, once, and does not overwrite another one", () => {
     expect(gate(main, "install").status).toBe(0);
     const path = join(main, ".git/hooks/pre-push");
-    expect(readFileSync(path, "utf8")).toContain('scripts/gate/gate.mjs" pre-push');
+    const written = readFileSync(path, "utf8");
+    expect(written).toContain("ref='refs/remotes/origin/main'");
+    expect(written).toContain('node "$dir/scripts/gate/gate.mjs" pre-push "$@"');
+    // It runs no file of a checkout.
+    expect(written).not.toContain("git-common-dir");
     expect(gate(main, "install").status).toBe(0);
     expect(hook("git push origin trunk").status).toBe(0);
 
@@ -1007,14 +1014,35 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     writeFileSync(path, shim);
   });
 
-  it("does not install the hook in a repository whose main checkout has no gate: it would refuse every push", () => {
+  it("installs the hook only on a branch of a remote that has the gate: it would otherwise refuse every push, or trust the commit", () => {
+    const config = join(main, "delivery-gate.json");
+    const original = readFileSync(config, "utf8");
+    const withBase = (base) => writeFileSync(config, JSON.stringify({ ...JSON.parse(original), base }));
+    const path = join(main, ".git/hooks/pre-push");
+    const installed = readFileSync(path, "utf8");
+    // The commit that is pushed, a local branch, a revision that is not there: none is a branch of a remote.
+    for (const base of ["HEAD", "trunk", "origin/nowhere"]) {
+      withBase(base);
+      const out = gate(main, "install");
+      expect(out.status, base).toBe(2);
+      expect(out.stderr, base).toContain(`delivery-gate.json: base (${base}) is not a branch of a remote in this repository`);
+      // The guard does not take the installed hook for the one of that configuration either.
+      expect(hook("git push").status, base).toBe(2);
+    }
+    writeFileSync(config, original);
+    expect(readFileSync(path, "utf8")).toBe(installed);
+
+    // A remote branch that has no gate.
     const base = realpathSync(mkdtempSync(join(tmpdir(), "gate-nogate-")));
     const other = join(base, "other");
-    git(base, "init", "-q", other);
+    git(base, "init", "-q", "-b", "trunk", other);
+    writeFileSync(join(other, "file.txt"), "x");
+    git(other, "add", ".");
+    git(other, "commit", "-q", "-m", "no gate here");
+    git(other, "update-ref", "refs/remotes/origin/main", "HEAD");
     const out = gate(other, "install");
     expect(out.status).toBe(2);
-    expect(out.stderr).toContain("neither origin/main nor the main checkout");
-    expect(out.stderr).toContain("has a gate yet: install the hook once one has");
+    expect(out.stderr).toContain("refs/remotes/origin/main has no gate yet: install the hook once the gate is on it");
     expect(existsSync(join(other, ".git/hooks/pre-push"))).toBe(false);
   });
 
@@ -1022,7 +1050,7 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     const out = push(main, "origin", "trunk");
     expect(out.status).not.toBe(0);
     expect(out.stderr).toContain(`push refused: refs/heads/trunk (tree ${git(main, "rev-parse", "HEAD^{tree}")}): it has no verdict of the delivery gate`);
-    expect(git(remote, "branch", "--list")).toBe("");
+    expect(git(remote, "branch", "--list", "trunk")).toBe("");
   });
 
   it("refuses a verdict that failed, or that another gate wrote", () => {
@@ -1030,7 +1058,7 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     expect(push(main, "origin", "trunk").stderr).toContain("its verdict is not a passed verdict for this tree");
     giveVerdict(main, { gate: "0".repeat(64) });
     expect(push(main, "origin", "trunk").stderr).toContain("its verdict was written by another gate than the one of the base revision");
-    expect(git(remote, "branch", "--list")).toBe("");
+    expect(git(remote, "branch", "--list", "trunk")).toBe("");
   });
 
   it("lets the push through once the tree has a passed verdict of this gate", () => {
@@ -1105,10 +1133,9 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     expect(hook("git push").status).toBe(0);
   });
 
-  // The gate itself runs on macOS and Linux only, on the Node its sandbox runtime needs.
-  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
-  const gateRuns = process.platform !== "win32" && (nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 12));
-  // Each test starts the gate once or twice, and each start copies a tree: well above the 5 s default under load.
+  // The gate itself runs on macOS and Linux only: its sandbox runtime does. The stand-in declares no
+  // Node version of its own, so these tests run on every Node the repository supports.
+  const gateRuns = process.platform !== "win32";
   describe.skipIf(!gateRuns)("run, with a stand-in for the sandbox runtime", { timeout: 120_000 }, () => {
     // The stand-in runs the command it is given with no isolation at all,
     // except that it answers the canary as told: the adapters of `run` are
@@ -1116,9 +1143,10 @@ describe("the program, in a real repository with a real push", { timeout: 60_000
     // the sandbox, which the gate proves each time it really runs.
     //
     // `repo` is the main checkout. Each test commits there the gate's
-    // configuration it needs and moves the tag `base` onto it: the gate of
-    // `base`, taken out of git, is the one that judges. `work` is a worktree
-    // reset to `base`: the commits a test makes there are what is judged.
+    // configuration it needs and moves the remote branch `origin/base` onto
+    // it: the gate of that revision, taken out of git, is the one that
+    // judges. `work` is a worktree reset to it: the commits a test makes
+    // there are what is judged.
     let repo;
     let work;
     const stub = (canary) => `#!/usr/bin/env node
@@ -1135,13 +1163,14 @@ process.exit(out.status ?? 1);
 `;
     const setRuntime = (canary) => writeFileSync(join(repo, "node_modules/@anthropic-ai/sandbox-runtime/cli.mjs"), stub(canary));
     const FIXTURE = readJson(ROOT, "delivery-gate.json");
-    const gateConfig = (over) => JSON.stringify({ ...FIXTURE, base: "base", carry: ["carried"], checks: [], ...over });
+    const gateConfig = (over) => JSON.stringify({ ...FIXTURE, base: "origin/base", carry: ["carried"], checks: [], ...over });
     const setGate = (over) => {
       writeFileSync(join(repo, "delivery-gate.json"), gateConfig(over));
       git(repo, "add", "delivery-gate.json");
       git(repo, "commit", "-q", "--allow-empty", "-m", "the gate of the base");
-      git(repo, "tag", "-f", "base");
-      git(work, "reset", "-q", "--hard", "base");
+      // The branch of the remote, as a fetch would leave it.
+      git(repo, "update-ref", "refs/remotes/origin/base", "HEAD");
+      git(work, "reset", "-q", "--hard", "origin/base");
     };
     const setChecks = (checks) => setGate({ checks });
     const node = (script, ...rest) => [process.execPath, "-e", script, ...rest];
@@ -1174,7 +1203,7 @@ process.exit(out.status ?? 1);
       git(repo, "init", "-q", "-b", "trunk");
       git(repo, "add", ".");
       git(repo, "commit", "-q", "-m", "start");
-      git(repo, "tag", "base");
+      git(repo, "update-ref", "refs/remotes/origin/base", "HEAD");
       git(base, "init", "-q", "--bare", join(base, "remote.git"));
       git(repo, "remote", "add", "origin", join(base, "remote.git"));
       work = join(repo, ".claude/worktrees/work");
@@ -1198,7 +1227,7 @@ process.exit(out.status ?? 1);
       ]);
       commitInWork("change.txt");
       const out = runGateIn();
-      expect(out.stderr).toContain("[gate] judged by the gate of base");
+      expect(out.stderr).toContain("[gate] judged by the gate of origin/base");
       expect(out.stderr).toContain("[gate] passed, recorded for tree");
       expect(out.status).toBe(0);
       expect(verdictOf()).toMatchObject({ passed: true, checks: ["reads"], mutated_files: [], mutants_judged: 0, gate: own("hash").stdout.trim() });
@@ -1339,7 +1368,7 @@ process.exit(out.status ?? 1);
       writeFileSync(join(work, "delivery-gate.json"), gateConfig({ checks: [] }));
       commitInWork("bad.txt");
       const out = spawnSync(process.execPath, [join(work, "scripts/gate/gate.mjs"), "run"], { ...PROCESS, cwd: work });
-      expect(out.stderr).toContain("[gate] judged by the gate of base");
+      expect(out.stderr).toContain("[gate] judged by the gate of origin/base");
       expect(out.stderr).toContain("[gate] FAILED: no-bad-file");
       expect(out.status).toBe(1);
       expect(verdictOf()).toBeNull();
@@ -1360,8 +1389,15 @@ process.exit(out.status ?? 1);
       expect(pushed.status).not.toBe(0);
       expect(pushed.stderr).toContain("its verdict was written by another gate");
       expect(git(join(repo, "..", "remote.git"), "branch", "--list")).toBe("");
+      // Where the revision of the hook is gone, the push is refused: no gate is read from a checkout.
+      const kept = git(repo, "rev-parse", "refs/remotes/origin/base");
+      git(repo, "update-ref", "-d", "refs/remotes/origin/base");
+      const orphan = spawnSync("git", ["push", "-q", "origin", "HEAD:refs/heads/topic"], { ...PROCESS, cwd: work });
+      expect(orphan.status).not.toBe(0);
+      expect(orphan.stderr).toContain("[gate] push refused: refs/remotes/origin/base has no delivery gate in this repository");
+      git(repo, "update-ref", "refs/remotes/origin/base", kept);
       // A commit the gate of the base passed is pushed.
-      git(work, "reset", "-q", "--hard", "base");
+      git(work, "reset", "-q", "--hard", "origin/base");
       commitInWork("good.txt");
       expect(runGateIn().status).toBe(0);
       expect(spawnSync("git", ["push", "-q", "origin", "HEAD:refs/heads/topic"], { ...PROCESS, cwd: work }).status).toBe(0);
@@ -1379,6 +1415,27 @@ process.exit(out.status ?? 1);
       mkdirSync(join(runs, "run-nopid"));
       expect(runGateIn().status).toBe(0);
       expect(readdirSync(runs).filter((name) => name.startsWith("run-"))).toEqual(["run-alive"]);
+    });
+
+    it("refuses on a Node older than the one the sandbox runtime declares", () => {
+      setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
+      commitInWork("node.txt");
+      const pkg = join(repo, "node_modules/@anthropic-ai/sandbox-runtime/package.json");
+      const original = readFileSync(pkg, "utf8");
+      writeFileSync(pkg, JSON.stringify({ ...JSON.parse(original), engines: { node: ">=999.1.0" } }));
+      const out = runGateIn();
+      expect(out.status).toBe(2);
+      expect(out.stderr).toContain(`the sandbox runtime needs Node 999.1 or later (this is ${process.versions.node})`);
+      // The same major, a later minor.
+      const [major, minor] = process.versions.node.split(".").map(Number);
+      writeFileSync(pkg, JSON.stringify({ ...JSON.parse(original), engines: { node: `>=${major}.${minor + 1}.0` } }));
+      expect(runGateIn().status).toBe(2);
+      // The one it runs on, and none declared.
+      writeFileSync(pkg, JSON.stringify({ ...JSON.parse(original), engines: { node: `>=${major}.${minor}.0` } }));
+      expect(runGateIn().status).toBe(0);
+      writeFileSync(pkg, original);
+      commitInWork("node2.txt");
+      expect(runGateIn().status).toBe(0);
     });
 
     it("refuses when the sandbox runtime is not installed", () => {
