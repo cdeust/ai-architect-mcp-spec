@@ -237,7 +237,7 @@ export function digitsValue(spelling: string): string {
 /** The longest spelling a finding quotes; a longer one is cut and ends with "…". */
 const MAX_QUOTED_CHARS = 24;
 
-function quoted(spelling: string): string {
+export function quoted(spelling: string): string {
   return spelling.length > MAX_QUOTED_CHARS ? `${spelling.slice(0, MAX_QUOTED_CHARS)}…` : spelling;
 }
 
