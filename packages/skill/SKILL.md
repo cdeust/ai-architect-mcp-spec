@@ -29,7 +29,7 @@ ecosystem:
 You (the host) drive a loop:
 
 1. Call `start_pipeline` → receive an envelope with `{ run_id, messages, action, ... }`.
-   Size the run before you call it: pass `prd_context` from the verification the request needs, as you would size a workflow (your advisor model can judge it). A one-line change is `tiny` (4 sections, 4 to 5 clarification rounds); `get_prd_context_info(context)` gives the rounds and sections of a context. Omit `prd_context` and the server detects it from `feature_description` or asks the user.
+   Size the run before you call it: pass `prd_context` from the verification the request needs, as you would size a workflow (your advisor model can judge it). A one-line change is `tiny` (4 sections, 4 to 5 clarification rounds), but an incident is never `tiny`: "Outage: a one-line config change took down checkout" is `incident`, whose report needs the security, deployment and risks sections. `get_prd_context_info(context)` gives the clarification range and the expected section count of a context. Omit `prd_context` and the server detects it from `feature_description` or asks the user.
 2. Display every entry in `messages` to the user.
 3. Execute `action` per the dispatch table below.
 4. Call `submit_action_result(run_id, result)` → receive next envelope.

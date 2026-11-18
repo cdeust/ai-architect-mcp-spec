@@ -190,7 +190,7 @@ export function registerPipelineTools(server) {
             .describe("If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall."),
         prd_context: PRDContextSchema
             .optional()
-            .describe("Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds). Sets the clarification rounds and sections from the calibrated values get_prd_context_info returns for that context. Omit it to detect the context from feature_description or ask the user."),
+            .describe("Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds); an incident is never 'tiny', whatever the size of the change that caused it. Sets the clarification rounds and sections from the calibrated configuration of that context (get_prd_context_info returns its clarification range and expected section count). Omit it to detect the context from feature_description or ask the user."),
     }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
