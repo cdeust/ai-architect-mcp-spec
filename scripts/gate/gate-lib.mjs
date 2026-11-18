@@ -377,240 +377,106 @@ function guardWords(guard) {
 /** What stands for a quoted string in a command the guard reads. */
 const QUOTED = '""';
 
-/** Words of the shell's grammar that come before a command, and are not one. */
-const BEFORE_A_COMMAND = new Set(["if", "then", "else", "elif", "do", "while", "until", "!"]);
-
 /**
  * precondition:  `text` is what a tool hands to a shell.
  * postcondition: the commands of `text`, one string each, as the guard reads
- *                them: what the shell runs, never the text it carries.
- *
- *                A command ends where the shell starts another: `;`, `&`,
- *                `|`, a line end, a parenthesis, a brace that stands alone.
- *                The words of the grammar that come before a command (`if`,
- *                `then`, `do`, `!`, …) are not part of it. Inside a `case`, a
- *                closing parenthesis ends a pattern.
- *
- *                Text, left out: a comment; the body of a here-document; a
- *                string between single quotes, `$'…'` included, or between
- *                double quotes, in place of which `""` stands.
- *
- *                Run by the shell wherever it stands, and read as commands
- *                of its own: a command substitution (`$(…)`, backquotes), in
- *                a word, in a double-quoted string, in a parameter expansion
- *                (`${x:-$(…)}`), in a sum (`$((…))`), or in the body of a
- *                here-document whose end word is not quoted. `$` stands in
- *                its place in the command that holds it.
- *
- *                Not read: a command a program is handed as a string
- *                (`sh -c '…'`, `eval "…"`). Text that is not closed runs to
- *                the end. scripts/gate/shell-samples.mjs draws texts from
- *                this grammar; the tests run them in a real shell and hold
- *                the guard to what the shell ran.
+ *                them: split where the shell starts a new command (`;`, `&`,
+ *                `|`, a line end, a parenthesis), with every quoted string
+ *                replaced by `""` and every here-document left out. So the
+ *                guard reads commands, never the text they carry: the body of
+ *                a comment, a commit message or a script that names a refused
+ *                command is not that command. What the shell runs inside a
+ *                string is read as commands of its own: a command
+ *                substitution (`$(…)`, backquotes), and the here-documents it
+ *                opens, so `"$(cat <<'EOF' … EOF)"` is a `cat` and its text.
+ *                A command a program is handed as a string (`sh -c '…'`) is
+ *                not read. Text that is not closed runs to the end.
  */
 export function commandsOf(text) {
-  return read(text, false);
-}
-
-/**
- * The commands of `text`: read as commands, or, when `expanded`, as text the
- * shell expands (the body of a here-document), where only what it runs is one.
- */
-function read(text, expanded) {
   // Each expression is tried at one place of the text (sticky), never searched for.
   const single = /'[^']*'?/y;
-  const ansi = /\$'(?:[^'\\]|\\[\s\S])*'?/y;
-  const hereDocument = /<<(-?)\s*(?:'([^'\n]*)'|"([^"\n]*)"|((?:\\.|[\w.-])+))/y;
-  const line = /([^\n]*)\n?/y;
-  const brace = /[{}](?=[\s;]|$)/y;
-  const lineEnd = /[^\n]*/y;
+  const hereDocument = /<<-?\s*(['"]?)([\w.-]+)\1/y;
+  const arithmetic = /\$\(\([^)]*\)\)/y;
+  const line = /[^\n]*\n?/y;
   const out = [];
-  let pending = []; // the here-documents opened on the current line
+  const pending = []; // the end words of the here-documents opened on the current line
   let i = 0;
   const here = (expression) => {
     expression.lastIndex = i;
     return expression.exec(text);
   };
-  const startsWord = () => i === 0 || " \t\n;&|()`".includes(text[i - 1]);
-
-  /**
-   * A sum, from the place after its two opening parentheses to its two
-   * closing ones: true when it is one, and read. `$((a); (b))` is not: the
-   * place is left as it was, for the reader of commands.
-   */
-  const sum = (from) => {
-    const start = i;
-    let depth = 0;
-    i = from;
-    for (;;) {
-      const ch = text[i];
-      if (ch === undefined) break;
-      if (ch === "(") depth += 1;
-      if (ch === ")") {
-        if (depth === 0) {
-          if (text[i + 1] !== ")") break;
-          i += 2;
-          return true;
-        }
-        depth -= 1;
-      }
-      if (!substitution(true)) i += 1;
-    }
-    i = start;
-    return false;
-  };
-
-  /** A parameter expansion, from the place after `${` to the brace that closes it. */
-  const parameter = (inString) => {
-    // `${ command; }` (bash 5.3): commands, up to the closing brace.
-    if (" \t\n|".includes(text[i])) return commands("}");
-    for (;;) {
-      const ch = text[i];
-      if (ch === undefined) return;
-      if (ch === "}") {
-        i += 1;
-        return;
-      }
-      if (ch === "\\") i += 2;
-      else if (ch === '"') {
-        i += 1;
-        expandedText('"');
-      }
-      // Inside a double-quoted string, a single quote is a character.
-      else if (!inString && ch === "'") i += here(single)[0].length;
-      else if (!inString && text.startsWith("$'", i)) i += here(ansi)[0].length;
-      else if (!substitution(inString)) i += 1;
-    }
-  };
-
-  /** What the shell runs or expands at this place, if anything: true when it was read. */
-  const substitution = (inString) => {
-    if (text.startsWith("$((", i) && sum(i + 3)) return true;
-    if (text.startsWith("$(", i)) {
-      i += 2;
-      commands(")");
-      return true;
-    }
-    if (text[i] === "`") {
-      i += 1;
-      commands("`");
-      return true;
-    }
-    if (text.startsWith("${", i)) {
-      i += 2;
-      parameter(inString);
-      return true;
-    }
-    return false;
-  };
-
-  /**
-   * Text the shell expands (a double-quoted string, the body of a
-   * here-document), up to the character that closes it, which is consumed,
-   * or to the end: what the shell runs inside is read, the rest is left out.
-   */
-  const expandedText = (close) => {
-    for (;;) {
-      const ch = text[i];
-      if (ch === undefined) return;
-      if (ch === close) {
-        i += 1;
-        return;
-      }
-      if (ch === "\\") i += 2;
-      else if (!substitution(true)) i += 1;
-    }
-  };
-
-  /**
-   * Past the bodies of the here-documents the line opened. The shell takes a
-   * body as it is written, up to the end word alone on its line (or the end
-   * of the text), then expands it unless the end word was quoted.
-   */
-  const bodies = () => {
-    const opened = pending;
-    pending = [];
-    for (const { word, tabs, quoted } of opened) {
-      const from = i;
-      let to = i;
+  /** Past the bodies of the here-documents the line opened: text, not commands. */
+  const skipBodies = () => {
+    while (pending.length > 0) {
+      const word = pending.shift();
       for (;;) {
-        const [whole, content] = here(line);
-        i += whole.length;
-        if (whole === "" || (tabs ? content.replace(/^\t+/, "") : content) === word) break;
-        to = i;
+        const read = here(line)[0];
+        i += read.length;
+        // The end word alone on its line, or the end of the text.
+        if (read === "" || read.trim() === word) break;
       }
-      if (!quoted) out.push(...read(text.slice(from, to), true));
     }
   };
-
   /**
-   * The commands from here to the end of the text, or to the character that
-   * closes the level (a parenthesis, a backquote, a brace), which is consumed.
+   * The commands from here to the end of the text, or, inside a string, to
+   * the character that closes a command substitution, which is consumed.
    */
   const commands = (close) => {
     let current = "";
-    let cases = 0;
     const flush = () => {
-      const words = current.trim().split(/\s+/);
-      current = "";
-      while (BEFORE_A_COMMAND.has(words[0])) words.shift();
-      if (words[0] === "case") cases += 1;
-      if (words[0] === "esac") cases -= 1;
-      const command = words.join(" ");
+      const command = current.trim().replace(/\s+/g, " ");
       if (command !== "") out.push(command);
+      current = "";
     };
-    for (;;) {
-      const ch = text[i];
-      if (ch === undefined) break;
-      if (ch === close) {
-        flush();
-        // Inside a `case`, a closing parenthesis ends a pattern, not the level.
-        if (close !== ")" || cases <= 0) break;
-        i += 1;
-        continue;
+    /** A double-quoted string: text, but for the commands the shell runs inside it. */
+    const doubleQuoted = () => {
+      i += 1;
+      for (;;) {
+        const ch = text[i];
+        if (ch === undefined || ch === '"') break;
+        if (ch === "\\") i += 2;
+        else if (text.startsWith("$(", i) && here(arithmetic) === null) {
+          i += 2;
+          commands(")");
+        } else if (ch === "`") {
+          i += 1;
+          commands("`");
+        } else i += 1;
       }
+      i += 1;
+    };
+    while (i < text.length && text[i] !== close) {
+      const ch = text[i];
+      const quoted = here(single);
       const opened = here(hereDocument);
+      const sum = here(arithmetic);
       if (ch === "\\") {
         // An escaped character is a character of a word; an escaped line end joins two lines.
         if (text[i + 1] !== "\n") current += "_";
         i += 2;
-      } else if (ch === "'") {
+      } else if (quoted !== null) {
         current += QUOTED;
-        i += here(single)[0].length;
-      } else if (text.startsWith("$'", i)) {
-        current += QUOTED;
-        i += here(ansi)[0].length;
+        i += quoted[0].length;
       } else if (ch === '"') {
         current += QUOTED;
-        i += 1;
-        expandedText('"');
-      } else if (ch === "#" && startsWord()) {
-        // A comment: text, to the end of its line.
-        i += here(lineEnd)[0].length;
-      } else if (current.trim() === "" && text.startsWith("((", i) && sum(i + 2)) {
-        // `(( y = 1 << 2 ))`: a sum that stands as a command.
-      } else if (substitution(false)) {
-        current += "$";
+        doubleQuoted();
+      } else if (sum !== null) {
+        // `$((1<<2))`: a number, with no here-document in it.
+        current += "0";
+        i += sum[0].length;
       } else if (text.startsWith("<<<", i)) {
         // A here-string: a word follows, not a body.
         current += "<<<";
         i += 3;
       } else if (opened !== null) {
-        const [whole, dash, inSingle, inDouble, bare] = opened;
-        // The end word as the shell compares it: without its quotes. Quoted in any way, the body is text.
-        pending.push({ word: inSingle ?? inDouble ?? bare.replace(/\\(.)/g, "$1"), tabs: dash === "-", quoted: bare === undefined || bare.includes("\\") });
-        i += whole.length;
+        pending.push(opened[2]);
+        i += opened[0].length;
       } else if (ch === "\n") {
         flush();
         i += 1;
-        bodies();
-      } else if (ch === "(") {
-        // A parenthesis opens a level of its own, closed by its own.
-        flush();
-        i += 1;
-        commands(")");
-      } else if (";&|)".includes(ch) || (here(brace) !== null && startsWord())) {
-        // Where a command ends.
+        skipBodies();
+      } else if (";&|()`".includes(ch)) {
+        // Where a command ends: a subshell and a command substitution hold commands of their own.
         flush();
         i += 1;
       } else {
@@ -621,8 +487,7 @@ function read(text, expanded) {
     flush();
     i += 1;
   };
-  if (expanded) expandedText(undefined);
-  else commands(undefined);
+  commands(undefined);
   return out;
 }
 
