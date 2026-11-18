@@ -269,40 +269,46 @@ function makeRun({ git, root, common }, config, commit) {
       const size = Number(header[2]);
       const content = blobs.subarray(headerEnd + 1, headerEnd + 1 + size);
       at = headerEnd + 1 + size + 1;
-      const target = join(tree, path);
       if (mode === "120000") {
-        links.push([target, content.toString("utf8")]);
+        links.push([path, content.toString("utf8")]);
         continue;
       }
+      const target = join(tree, path);
       mkdirSync(dirname(target), { recursive: true });
       // `wx`: a path a file already took (two names that differ by case, on a disk that does not tell them apart) is refused.
       writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644, flag: "wx" });
     }
-    // The links last: no file is ever written through a link of the commit.
-    // Nor a link, nor a directory, through another link: on a disk that does
-    // not tell `A` from `a`, a link `A` and a link `a/b/x` would make `b`,
-    // then `x`, where `A` leads. Each directory on the way is looked at
-    // before it is used, and made one level at a time: nothing is created
-    // under a link.
-    for (const [target, to] of links) {
+    // Once the commit has put a link in the copy, nothing is written through
+    // one: on a disk that does not tell `A` from `a`, a link `A` and a path
+    // `a/b/x` would make `b`, then `x`, where `A` leads. So the files come
+    // first, and what comes after (the links, then what is carried) goes
+    // through `place`: each directory on the way is looked at before it is
+    // used and made one level at a time, and the place itself is free.
+    const place = (path) => {
+      const parts = path.split("/");
       let at = tree;
-      for (const part of dirname(target).slice(tree.length).split(sep).filter((name) => name !== "")) {
+      for (const part of parts.slice(0, -1)) {
         at = join(at, part);
         const found = lstatSync(at, { throwIfNoEntry: false });
         if (found === undefined) mkdirSync(at);
         else if (!found.isDirectory()) {
-          throw new Refusal(`${target.slice(tree.length + 1)} would be written through ${at.slice(tree.length + 1)}, which is not a directory of the copy`);
+          throw new Refusal(`${path} would be written through ${at.slice(tree.length + 1)}, which is not a directory of the copy`);
         }
       }
-      symlinkSync(to, target);
-    }
+      const target = join(at, parts.at(-1));
+      if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) {
+        throw new Refusal(`${path} would be written over a path the commit already holds in the copy`);
+      }
+      return target;
+    };
+    for (const [path, to] of links) symlinkSync(to, place(path));
     // Ignored directories the configuration names (node_modules): what is
     // installed is not in the commit, and the checks need it.
     const ignored = git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]).split("\0");
     for (const entry of ignored) {
       const path = entry.replace(/\/$/, "");
       if (path === "" || !config.carry.includes(basename(path))) continue;
-      cpSync(join(root, path), join(tree, path), { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+      cpSync(join(root, path), place(path), { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
     }
   };
 

@@ -57,7 +57,7 @@
     "profile": "loopback"
   },
   "guard": {
-    "start": "^(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?",
+    "start": "^(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|eval|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?",
     "git": "${start}git(?:\\s+(?:-[cC]\\s+\\S+|--(?:git-dir|work-tree|namespace|config-env|attr-source|super-prefix)\\s+\\S+|-(?![cC](?:\\s|$))(?!-(?:git-dir|work-tree|namespace|config-env|attr-source|super-prefix)(?:\\s|$))\\S+))*",
     "push": [
       "${git}\\s+push\\b"

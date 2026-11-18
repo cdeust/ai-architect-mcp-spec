@@ -223,13 +223,22 @@ What the gate does not hold against, and what does:
   without the user's home (a system or Homebrew install): a user-site or
   virtual-environment install under the home is not readable in the sandbox.
 - The guard reads the commands of what a tool hands to a shell, not the
-  text they carry: a quoted string and a here-document are not read, so a
-  comment, a commit message or a script that names a refused command is not
-  refused. What the shell runs inside a string (a command substitution,
-  with the parentheses it holds) is read. What a program is handed as a string is not (`sh -c '…'`), nor a
-  quoted word of a command (a quoted refspec, a quoted payload for the API),
-  nor a push through an alias. Its rules are a list of known ways, not a
-  proof; a push it does not see is still judged by git's hook.
+  text they carry: a quoted string, a comment and the body of a
+  here-document are not read, so a comment, a commit message or a script
+  that names a refused command is not refused. What the shell runs inside a
+  word or a text is read: a command substitution in a string, in a
+  parameter expansion (`${x:-$(…)}`), in a sum, in the body of a
+  here-document whose end word is not quoted; and a command after `then`,
+  `do`, `!` or inside braces. The reader is held to a real shell: the tests
+  draw texts from its grammar (`scripts/gate/shell-samples.mjs`), run them in
+  bash and in zsh with a stand-in `git`, and fail when the shell ran a git
+  the guard did not see. What that proves is bounded by the grammar the
+  texts are drawn from. Not read: what a program is handed as a string
+  (`sh -c '…'`, `eval "…"`), a quoted word of a command (a quoted refspec, a
+  quoted payload for the API), a push through an alias or a function defined
+  elsewhere, and what only one shell reads its own way (a parenthesis in a
+  glob of zsh). Its rules are a list of known ways, not a proof; a push it
+  does not see is still judged by git's hook.
 
 What the gate runs, what counts as production code, what an operation may
 reach and what the guard refuses are in `delivery-gate.json` and
