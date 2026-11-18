@@ -33,7 +33,11 @@ def _candidates(root: Path):
         base = root / rel
         paths = sorted(base.rglob("*")) if base.is_dir() else []
         for path in paths:
-            if path.suffix in SUFFIXES and not SKIP_DIRS & set(path.parts):
+            # The directories to skip are those below the root. Read on the
+            # whole path, a checkout that itself lives under a directory
+            # named dist, .git or node_modules would be skipped entirely, and
+            # the guard would pass on anything.
+            if path.suffix in SUFFIXES and not SKIP_DIRS & set(path.relative_to(root).parts):
                 yield path
 
 
@@ -65,6 +69,18 @@ class FrozenBaselineIsProvenanceTests(unittest.TestCase):
             for index, marker in enumerate(FORBIDDEN):
                 (docs / f"p{index}.md").write_text(f"- {marker}\n", encoding="utf-8")
             self.assertEqual(len(find_violations(Path(tmp))), len(FORBIDDEN))
+
+    def test_guard_reads_a_checkout_that_lives_under_a_skipped_name(self) -> None:
+        # The delivery gate checks a commit out under the git directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            for parent in sorted(SKIP_DIRS):
+                root = Path(tmp) / parent / "checkout"
+                (root / "docs").mkdir(parents=True)
+                (root / "docs" / "p.md").write_text(f"- {FORBIDDEN[0]}\n", encoding="utf-8")
+                # Below the root, the same names are still skipped.
+                (root / "docs" / parent).mkdir()
+                (root / "docs" / parent / "q.md").write_text(f"- {FORBIDDEN[0]}\n", encoding="utf-8")
+                self.assertEqual(len(find_violations(root)), 1, parent)
 
 
 if __name__ == "__main__":
