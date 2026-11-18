@@ -464,7 +464,11 @@ const shim = (ref) =>
     // In TMPDIR when it is set: without a template, mktemp of macOS ignores it.
     '  dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-hook.XXXXXX") || exit 1',
     "  trap 'rm -rf \"$dir\"' EXIT",
-    `  git archive "$ref" ${GATE_PATHS.join(" ")} | tar -x -C "$dir" || exit 1`,
+    // The same bytes `run` takes: each blob as git stores it, no conversion of line ends.
+    `  for f in $(git ls-tree -r --name-only "$ref" -- ${GATE_PATHS.join(" ")}); do`,
+    '    mkdir -p "$dir/$(dirname "$f")" && git show "$ref:$f" > "$dir/$f" || exit 1',
+    "  done",
+    '  [ -f "$dir/scripts/gate/gate.mjs" ] || exit 1',
     '  node "$dir/scripts/gate/gate.mjs" pre-push "$@"',
     "else",
     "  # No gate at that revision yet: the first one is the main checkout's.",
