@@ -9,12 +9,20 @@
 
 import {
   PRD_CONTEXT_CONFIGS,
+  REQUEST_SIZE_DEFAULT,
+  clarificationRangeFor,
   type PRDContext,
+  type RequestSize,
 } from "@prd-gen/core";
 
 export interface ClarificationPromptInput {
   readonly feature_description: string;
   readonly prd_context: PRDContext;
+  /**
+   * The declared size of the request (#119): the round count the question
+   * composer is told comes from it when it sets one. Absent: `standard`.
+   */
+  readonly request_size?: RequestSize;
   readonly round: number;
   readonly prior_qa: ReadonlyArray<{ question: string; answer?: string }>;
   readonly recall_summary: string;
@@ -52,7 +60,7 @@ export function buildClarificationPrompt(
     "",
     `<feature>${input.feature_description}</feature>`,
     "",
-    `<round>${input.round} of ${ctx.clarificationRange[1]}</round>`,
+    `<round>${input.round} of ${clarificationRangeFor(input.prd_context, input.request_size ?? REQUEST_SIZE_DEFAULT)[1]}</round>`,
     "",
     `<prior_questions_and_answers>`,
     priorBlock,

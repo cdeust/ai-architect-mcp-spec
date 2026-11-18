@@ -1,53 +1,141 @@
 /**
- * A PRD context the host declares at start_pipeline (#119, slice 3).
+ * The kind of PRD: declared by the host at start_pipeline, read from the
+ * words of the description, or answered by the user (#119).
  *
- * The host sizes the run from the verification the request needs (it may
- * ask its advisor model) and passes the context; the server keeps it, reads
- * no trigger word and asks no context question. The rounds and sections are
- * the calibrated ones of PRD_CONTEXT_CONFIGS: the host picks a size, it sets
- * no number.
- *
- * source: #119, owner comment of 2026-11-18: "/workflow is supposed to be
- * sized based on the verification needed and /advisor can already give the
- * information needed".
+ * A declared kind is kept as it is: the server reads no trigger word and
+ * asks no question. The three ways to a kind end in the same step and say
+ * which one it was.
  */
 
 import { describe, expect, it } from "vitest";
-import { PRD_CONTEXT_CONFIGS } from "@prd-gen/core";
 import { newPipelineState, step } from "../index.js";
 import type { PipelineState } from "../index.js";
 
 function atContextDetection(
   feature_description: string,
   prd_context?: PipelineState["prd_context"],
+  request_size?: PipelineState["request_size"],
 ): PipelineState {
   return {
-    ...newPipelineState({ run_id: "host_ctx", feature_description, prd_context }),
+    ...newPipelineState({ run_id: "host_ctx", feature_description, prd_context, request_size }),
     current_step: "context_detection",
   };
 }
 
-describe("host-declared PRD context (#119)", () => {
-  it("keeps the declared context over the trigger words of the description", () => {
-    // "build" and "feature" would detect `feature` (8 to 10 rounds).
-    const out = step({ state: atContextDetection("build a feature: copy button", "tiny") });
-    expect(out.state.prd_context).toBe("tiny");
-    expect(out.state.current_step).not.toBe("context_detection");
+describe("the kind of PRD of a run (#119)", () => {
+  it("keeps the declared kind over the trigger words of the description", () => {
+    // "build" and "feature" would detect `feature`.
+    const out = step({ state: atContextDetection("build a feature: copy button", "bug") });
+    expect(out.state.prd_context).toBe("bug");
+    // The run goes on to the next step and says which kind it kept.
+    expect(out.state.current_step).toBe("input_analysis");
+    expect(out.messages).toEqual([{ text: "PRD context: Bug Fix", level: "info" }]);
+    expect(out.action.kind).not.toBe("failed");
   });
 
   it("asks no context question for a description that names no trigger", () => {
     const out = step({ state: atContextDetection("something unclassifiable", "incident") });
     expect(out.state.prd_context).toBe("incident");
-    // context_detection keeps the declared context and announces it; the
-    // runner coalesces that message and steps past, so no ask_user follows.
-    expect(out.messages.map((m) => m.text)).toContain(
-      `PRD context: ${PRD_CONTEXT_CONFIGS.incident.displayName}`,
-    );
     expect(out.action.kind).not.toBe("ask_user");
+    expect(out.messages.map((m) => m.text)).toEqual(["PRD context: Incident"]);
   });
 
-  it("detects from the description when the host declares nothing", () => {
-    expect(step({ state: atContextDetection("build a feature: copy button") }).state.prd_context).toBe("feature");
+  it("says the size of a run declared tiny, and that an incident does not take it", () => {
+    const tiny = step({ state: atContextDetection("x", "bug", "tiny") });
+    expect(tiny.messages.map((m) => m.text)).toEqual(["PRD context: Bug Fix. Request size: Tiny change."]);
+    expect(tiny.state.request_size).toBe("tiny");
+
+    const incident = step({ state: atContextDetection("x", "incident", "tiny") });
+    expect(incident.messages.map((m) => m.text)).toEqual([
+      'PRD context: Incident. The declared size "tiny" is not applied: a run of this kind keeps the rounds and sections of its kind.',
+    ]);
+    // What the host declared stays on record; the plan is the incident's.
+    expect(incident.state.request_size).toBe("tiny");
+  });
+
+  it("reads each kind from its trigger word when the host declares nothing", () => {
+    const kinds = {
+      proposal: ["a pitch for the board", "Proposal"],
+      feature: ["implement dark mode", "Feature"],
+      bug: ["the login redirect is broken", "Bug Fix"],
+      incident: ["outage of the checkout", "Incident"],
+      poc: ["a spike on vector search", "Proof of Concept"],
+      mvp: ["the minimum viable onboarding", "MVP"],
+      release: ["production launch of billing", "Release"],
+      cicd: ["deploy automation for the api", "CI/CD Pipeline"],
+    } as const;
+    for (const [context, [description, name]] of Object.entries(kinds)) {
+      const out = step({ state: atContextDetection(description) });
+      expect(out.state.prd_context, description).toBe(context);
+      expect(out.messages[0]?.text, description).toBe(`PRD context detected: ${name} (from trigger words)`);
+    }
     expect(step({ state: atContextDetection("build a feature: copy button", null) }).state.prd_context).toBe("feature");
+  });
+
+  it("reads an incident before every other kind, so that no size shortens it", () => {
+    // "fix" names a bug; the outage makes it an incident.
+    const out = step({ state: atContextDetection("Outage: a one-line fix took down checkout", null, "tiny") });
+    expect(out.state.prd_context).toBe("incident");
+    expect(out.messages.map((m) => m.text)).toEqual([
+      'PRD context detected: Incident (from trigger words). The declared size "tiny" is not applied: a run of this kind keeps the rounds and sections of its kind.',
+    ]);
+    expect(step({ state: atContextDetection("Outage: fix checkout") }).state.prd_context).toBe("incident");
+  });
+
+  it("says the size of a run declared tiny whose kind is detected or answered", () => {
+    const detected = step({ state: atContextDetection("fix the footer typo", null, "tiny") });
+    expect(detected.messages.map((m) => m.text)).toEqual(["PRD context detected: Bug Fix (from trigger words). Request size: Tiny change."]);
+    const answered = step({
+      state: atContextDetection("something unclassifiable", null, "tiny"),
+      result: { kind: "user_answer", question_id: "prd_context", selected: ["feature"] },
+    });
+    expect(answered.messages.map((m) => m.text)).toEqual(["PRD context: Feature. Request size: Tiny change."]);
+  });
+
+  it("asks which kind when no word names one, with the kinds as options", () => {
+    const out = step({ state: atContextDetection("something unclassifiable") });
+    expect(out.state.prd_context).toBeNull();
+    expect(out.state.current_step).toBe("context_detection");
+    expect(out.action).toMatchObject({
+      kind: "ask_user",
+      question_id: "prd_context",
+      header: "Which kind of PRD?",
+      multi_select: false,
+    });
+    if (out.action.kind !== "ask_user") return;
+    // The protocol allows four options: the first four kinds.
+    expect(out.action.options?.map((o) => o.label)).toEqual(["proposal", "feature", "bug", "incident"]);
+    expect(out.action.description).toMatch(/couldn't infer the PRD type/);
+  });
+
+  function answer(result: { selected: string[]; freeform?: string }, question_id = "prd_context") {
+    return step({
+      state: atContextDetection("something unclassifiable"),
+      result: { kind: "user_answer", question_id, ...result },
+    });
+  }
+
+  it("takes the answer to its question, picked or typed, whatever its case and the spaces around it", () => {
+    const picked = answer({ selected: ["bug"] });
+    expect(picked.state.prd_context).toBe("bug");
+    expect(picked.messages.map((m) => m.text)).toEqual(["PRD context: Bug Fix"]);
+    // A kind the four options do not list is typed.
+    expect(answer({ selected: [], freeform: "  Release " }).state.prd_context).toBe("release");
+  });
+
+  it("fails on an answer that names no kind, and says which", () => {
+    for (const result of [{ selected: ["epic"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
+      const out = answer(result);
+      expect(out.state.prd_context).toBeNull();
+      expect(out.action).toMatchObject({ kind: "failed", step: "context_detection" });
+      if (out.action.kind !== "failed") return;
+      expect(out.action.reason).toBe(`Invalid PRD context choice: ${result.selected[0] ?? result.freeform ?? ""}`);
+    }
+  });
+
+  it("does not read the answer to another question as the kind", () => {
+    const out = answer({ selected: ["bug"] }, "clarification_answer");
+    expect(out.state.prd_context).toBeNull();
+    expect(out.action.kind).toBe("ask_user");
   });
 });

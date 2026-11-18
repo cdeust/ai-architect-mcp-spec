@@ -40,6 +40,7 @@ import {
   type JudgeVerdict,
 } from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
+import { runRequestSize } from "../section-plan.js";
 import {
   resolveVerifyBudget,
   reduceJudgeRequests,
@@ -187,6 +188,8 @@ function finalize(
     outcome.status === "passed"
       ? `Self-check complete.`
       : `Self-check complete: NEEDS ATTENTION (${outcome.reasons.join("; ")}).`,
+    // The size the run was held to: what its sections and rounds followed.
+    `Request size: ${runRequestSize(state)}.`,
     `Sections: ${sectionsPassed}/${sectionsTotal} passed, ${sectionsFailed} failed.`,
     `Deterministic violations: ${docReport.violations.length} (${docCritical} critical, ${docAdvisory} advisory)`,
     `Hard-output score: ${docReport.totalScore.toFixed(2)} / 1.00`,

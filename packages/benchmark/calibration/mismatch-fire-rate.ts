@@ -9,7 +9,7 @@
  *      Each row has shape:
  *        {
  *          "run_id": string,
- *          "prd_context": one of the 8 pre-registered PRDContext values (PRD_CONTEXT_DOMAIN),
+ *          "prd_context": one of the 8 PRDContext values,
  *          "mismatch_fired": boolean,
  *          "mismatch_kinds": MismatchKind[]
  *        }
@@ -54,10 +54,8 @@ import {
 // change after first data collection — assertion below enforces this.
 export const PRE_REGISTERED_SEED = 0xc0ffee0403;
 
-// source: PHASE_4_PLAN.md §4.3 stratification. Round-robin over the eight
-// PRDContextSchema values (packages/core/src/domain/prd-context.ts) that
-// existed when §4.3 was pre-registered. `tiny` (#119) came later and is left
-// out: adding it would change PER_CONTEXT_FLOOR after registration.
+// source: PHASE_4_PLAN.md §4.3 stratification. Round-robin over
+// PRDContextSchema (packages/core/src/domain/prd-context.ts).
 export const PRD_CONTEXT_DOMAIN = [
   "proposal",
   "feature",

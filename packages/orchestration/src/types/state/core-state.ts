@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { AgentIdentitySchema, ClaimSchema, PRDContextSchema } from "@prd-gen/core";
+import {
+  AgentIdentitySchema,
+  ClaimSchema,
+  PRDContextSchema,
+  REQUEST_SIZE_DEFAULT,
+  RequestSizeSchema,
+} from "@prd-gen/core";
 import { ExecutionResultSchema } from "@prd-gen/strategy";
 import { DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
@@ -55,6 +61,12 @@ export const PipelineStateSchema = z.object({
   run_id: z.string(),
   current_step: PipelineStepSchema,
   prd_context: PRDContextSchema.nullable(),
+  /**
+   * The size of the request, declared by the host at start_pipeline (#119).
+   * `standard` when nothing was declared, and for a run kept before the
+   * field existed.
+   */
+  request_size: RequestSizeSchema.default(REQUEST_SIZE_DEFAULT),
   feature_description: z.string(),
   codebase_path: z.string().nullable(),
   /**

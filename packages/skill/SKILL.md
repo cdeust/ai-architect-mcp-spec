@@ -3,7 +3,8 @@ name: ai-architect-mcp-spec
 version: 0.9.0
 description: Action-driven PRD generation. The MCP server runs a stateless 20-step pipeline reducer (11 PRD-generation steps + 9 opt-in implementation steps behind a human gate); the host (Claude Code) executes each substantive action and feeds the result back via submit_action_result, looping until done. Multi-judge verification combines genius reasoning patterns with zetetic team subagents. Grounded in the ai-architect ecosystem (ai-architect-mcp-codebase MCP, Cortex MCP, zetetic-team-subagents).
 dependencies: node>=20
-prd_contexts: proposal, feature, bug, incident, poc, mvp, release, cicd, tiny
+prd_contexts: proposal, feature, bug, incident, poc, mvp, release, cicd
+request_sizes: standard, tiny
 mcp_tools:
   - start_pipeline
   - submit_action_result
@@ -29,7 +30,10 @@ ecosystem:
 You (the host) drive a loop:
 
 1. Call `start_pipeline` → receive an envelope with `{ run_id, messages, action, ... }`.
-   Size the run before you call it: pass `prd_context` from the verification the request needs, as you would size a workflow (your advisor model can judge it). A one-line change is `tiny` (4 sections, 4 to 5 clarification rounds), but an incident is never `tiny`: "Outage: a one-line config change took down checkout" is `incident`, whose report needs the security, deployment and risks sections. `get_prd_context_info(context)` gives the clarification range and the expected section count of a context. Omit `prd_context` and the server detects it from `feature_description` or asks the user.
+   Declare what you know and the server does not. You have the whole conversation; the server has only `feature_description`.
+   - `prd_context`: the kind of PRD. Omit it and the server reads the kind from the words of the description, or asks the user.
+   - `request_size`: `"tiny"` for a small, self-contained change. It is the fast path: 4 sections (overview, requirements, acceptance criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. What it leaves out: the technical specification, security, deployment and risks sections; with them the affected-symbols file (`stage-5.affected_symbols.json`), so on a codebase the PRD-versus-graph check reads the PRD text alone and the grounding before an implementation has no blast radius; and the quality score of the run, which is not filed in the history of its kind. An incident keeps the plan of its kind whatever the size. The server never reads a size from the description: omit `request_size` and the run has the rounds and sections of its kind.
+   - These two choices set the cost of the whole run. Make them the way you commit to an approach: in Claude Code with an advisor configured, that is a point where you consult it.
 2. Display every entry in `messages` to the user.
 3. Execute `action` per the dispatch table below.
 4. Call `submit_action_result(run_id, result)` → receive next envelope.
@@ -359,9 +363,9 @@ If a section's recall returns content stale enough to mislead the engineer, the 
 ## MINIMAL WORKED LOOP (illustrative; not exhaustive)
 
 ```
-host: start_pipeline({ feature_description: "build OAuth login", codebase_path: "/abs/path" })
+host: start_pipeline({ feature_description: "build OAuth login", codebase_path: "/abs/path", prd_context: "feature" })
 
-  → envelope { run_id, messages: [<welcome banner>, <PRD context detected: Feature>],
+  → envelope { run_id, messages: [<welcome banner>, <PRD context: Feature>],
               action: { kind: "call_pipeline_tool", tool_name: "index_codebase",
                         arguments: { path: "/abs/path", output_dir: "...", language: "auto" },
                         correlation_id: "input_analysis_index" } }

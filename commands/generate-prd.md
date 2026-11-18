@@ -26,7 +26,9 @@ If the user provided a project description in `$ARGUMENTS`, use it as the
 initial input. Otherwise, ask for a project description with
 `AskUserQuestion`.
 
-Then call `start_pipeline(feature_description, codebase_path?)`, display
+Then call `start_pipeline(feature_description, codebase_path?, prd_context?,
+request_size?)` (SKILL.md, step 1, says how to declare the kind and the size),
+display
 each `messages` entry returned, execute `action`, and call
 `submit_action_result(run_id, result)` until `action.kind === "done"` or
 `"failed"`. Every action kind is governed by the SKILL.md dispatch table.

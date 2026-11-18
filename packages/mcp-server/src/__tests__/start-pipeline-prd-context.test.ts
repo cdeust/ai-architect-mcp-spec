@@ -1,11 +1,18 @@
 /**
- * MCP contract of the `prd_context` input of start_pipeline (#119, slice 3).
+ * MCP contract of the two inputs a host declares at start_pipeline (#119):
+ * `prd_context`, the kind of PRD, and `request_size`, its size.
  *
  * Drives a real MCP Client over an in-memory transport against the production
  * registerPipelineTools, so the registered input schema and its forwarding to
- * the reducer are exercised through the protocol: a declared context reaches
- * the run state, an omitted one is detected from the description as before, and a
- * value outside PRDContextSchema is refused before any run starts.
+ * the reducer are exercised through the protocol. Proves: (1) both inputs are
+ * listed, optional, and described with the numbers the run uses; (2) a
+ * declared kind is the context of the run, over the trigger words of the
+ * description; (3) a declared size `tiny` is the size of the run, which keeps
+ * its kind, and each envelope says both; (4) nothing declared: the kind is
+ * read from the words, and no size is; (5) an incident declared tiny runs the
+ * plan of an incident, and says so; (6) a value that is no kind or no size is
+ * refused before any run starts. The sections and rounds of a size are proven
+ * in orchestration (request-size.test.ts, smoke.test.ts).
  *
  * source: Codex review of #356 (P1, "Add MCP contract tests for the new
  * context input"); AGENTS.md review guideline on observable behavior.
@@ -14,6 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { REQUEST_SIZE_CONFIGS } from "@prd-gen/core";
 
 import { registerPipelineTools } from "../pipeline-tools.js";
 
@@ -37,56 +45,121 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolRe
   return (await client.callTool({ name, arguments: args })) as ToolResult;
 }
 
-async function stateOf(run_id: string): Promise<Record<string, unknown>> {
-  const res = await call("get_pipeline_state", { run_id, format: "full" });
+const DESCRIPTION = "build a feature: a tiny copy button";
+
+/** The run a start_pipeline call makes: its first envelope, and its state. */
+async function started(args: Record<string, unknown>) {
+  const res = await call("start_pipeline", { feature_description: DESCRIPTION, skip_preflight: true, ...args });
   expect(res.isError).toBeFalsy();
-  const body = JSON.parse(res.content[0].text) as Record<string, unknown>;
-  return (body.state ?? body) as Record<string, unknown>;
+  const envelope = JSON.parse(res.content[0].text) as {
+    run_id: string;
+    messages: Array<{ text: string }>;
+    state_summary: { prd_context: string | null; request_size: string };
+  };
+  expect(typeof envelope.run_id).toBe("string");
+  const stateRes = await call("get_pipeline_state", { run_id: envelope.run_id, format: "full" });
+  expect(stateRes.isError).toBeFalsy();
+  const body = JSON.parse(stateRes.content[0].text) as { state: { prd_context: string; request_size: string } };
+  return { ...body.state, summary: envelope.state_summary, messages: envelope.messages.map((m) => m.text) };
 }
 
-async function start(args: Record<string, unknown>): Promise<string> {
-  const res = await call("start_pipeline", { skip_preflight: true, ...args });
-  expect(res.isError).toBeFalsy();
-  const run_id = (JSON.parse(res.content[0].text) as { run_id?: string }).run_id;
-  expect(typeof run_id).toBe("string");
-  return run_id as string;
+/** true when the server refuses the call, as a tool error or as a protocol error. */
+async function refused(args: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await call("start_pipeline", { feature_description: DESCRIPTION, skip_preflight: true, ...args });
+    return res.isError === true;
+  } catch {
+    return true; // SDK versions that raise the validation error as McpError
+  }
 }
 
-describe("start_pipeline prd_context over MCP (#119)", () => {
-  it("lists prd_context as an optional input of start_pipeline", async () => {
+describe("start_pipeline: the kind and the size a host declares, over MCP (#119)", () => {
+  it("lists both inputs as optional, and describes each input of the tool", async () => {
     const { tools } = await client.listTools();
-    const schema = tools.find((t) => t.name === "start_pipeline")?.inputSchema as {
-      properties?: Record<string, unknown>;
+    const tool = tools.find((t) => t.name === "start_pipeline");
+    const schema = tool?.inputSchema as {
+      properties: Record<string, { description?: string; enum?: string[] }>;
       required?: string[];
     };
-    expect(schema.properties).toHaveProperty("prd_context");
-    expect(schema.required ?? []).not.toContain("prd_context");
+    expect(tool?.description).toMatch(/Initialize a new PRD pipeline run/);
+    expect(Object.keys(schema.properties).sort()).toEqual([
+      "codebase_path",
+      "feature_description",
+      "prd_context",
+      "request_size",
+      "skip_preflight",
+    ]);
+    expect(schema.required).toEqual(["feature_description"]);
+    expect(schema.properties.feature_description.description).toMatch(/What the PRD is about/);
+    expect(schema.properties.codebase_path.description).toMatch(/Absolute path/);
+    expect(schema.properties.skip_preflight.description).toMatch(/skip the preflight/);
+    expect(schema.properties.prd_context.description).toMatch(/^The kind of PRD the request calls for, declared by the host/);
+    // A size is not a kind.
+    expect(schema.properties.prd_context.enum).not.toContain("tiny");
+    expect(schema.properties.request_size.enum).toEqual(["standard", "tiny"]);
   });
 
-  it("forwards a declared context to the run, over the trigger words of the description", async () => {
+  it("describes request_size with the numbers the run uses", async () => {
+    const { tools } = await client.listTools();
+    const schema = tools.find((t) => t.name === "start_pipeline")?.inputSchema as {
+      properties: Record<string, { description?: string }>;
+    };
+    // The sentence of `tiny` is the first after the opening one: `standard` has none.
+    expect(schema.properties.request_size.description).toBe(
+      "The size of the request, declared by the host: the server never reads a size from feature_description. " +
+        "'tiny' (Tiny change) is the fast path for a small, self-contained change: 4 sections (overview, requirements, acceptance_criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. " +
+        "It is not for: incident, which keeps the rounds and sections of its kind. " +
+        "Omit it for a request of ordinary size.",
+    );
+    const { sections, clarificationRange, notFor } = REQUEST_SIZE_CONFIGS.tiny.plan!;
+    expect([sections.length, sections.join(", "), clarificationRange.join(" to "), notFor.join(", ")]).toEqual([
+      4,
+      "overview, requirements, acceptance_criteria, testing",
+      "4 to 5",
+      "incident",
+    ]);
+  });
+
+  it("runs under the declared kind, not the one the description's words name", async () => {
     // "build" and "feature" would detect `feature`.
-    const run_id = await start({ feature_description: "build a feature: copy button", prd_context: "tiny" });
-    expect((await stateOf(run_id)).prd_context).toBe("tiny");
+    const run = await started({ prd_context: "bug" });
+    expect(run.prd_context).toBe("bug");
+    expect(run.request_size).toBe("standard");
+    expect(run.messages).toContain("PRD context: Bug Fix");
   });
 
-  it("detects the context from the description when prd_context is omitted", async () => {
+  it("keeps the kind of a run declared tiny, and says its size in each envelope", async () => {
+    const run = await started({ prd_context: "bug", request_size: "tiny" });
+    expect(run.prd_context).toBe("bug");
+    expect(run.request_size).toBe("tiny");
+    expect(run.messages).toContain("PRD context: Bug Fix. Request size: Tiny change.");
+    expect(run.summary).toMatchObject({ prd_context: "bug", request_size: "tiny" });
+  });
+
+  it("reads the kind, and no size, from the description when nothing is declared", async () => {
     // start_pipeline steps through context_detection before it answers.
-    const run_id = await start({ feature_description: "build a feature: copy button" });
-    expect((await stateOf(run_id)).prd_context).toBe("feature");
+    const run = await started({});
+    expect(run.prd_context).toBe("feature");
+    expect(run.request_size).toBe("standard");
+    expect(run.messages).toContain("PRD context detected: Feature (from trigger words)");
+    expect(run.summary).toMatchObject({ prd_context: "feature", request_size: "standard" });
   });
 
-  it("refuses a context outside PRDContextSchema", async () => {
-    let refused: boolean;
-    try {
-      const res = await call("start_pipeline", {
-        feature_description: "build a feature: copy button",
-        skip_preflight: true,
-        prd_context: "huge",
-      });
-      refused = res.isError === true;
-    } catch {
-      refused = true; // SDK versions that raise the validation error as McpError
-    }
-    expect(refused).toBe(true);
+  it("says that an incident declared tiny keeps the plan of an incident", async () => {
+    const run = await started({ prd_context: "incident", request_size: "tiny" });
+    expect(run.messages).toContain(
+      'PRD context: Incident. The declared size "tiny" is not applied: a run of this kind keeps the rounds and sections of its kind.',
+    );
+    // What was declared stays in the state; the run is held to standard.
+    expect(run.request_size).toBe("tiny");
+    expect(run.summary).toMatchObject({ prd_context: "incident", request_size: "standard" });
+  });
+
+  it("refuses a kind or a size that is not one, before any run starts", async () => {
+    expect(await refused({ prd_context: "huge" })).toBe(true);
+    // A size is not a kind, and a kind is not a size.
+    expect(await refused({ prd_context: "tiny" })).toBe(true);
+    expect(await refused({ request_size: "bug" })).toBe(true);
+    expect(await refused({ prd_context: "bug", request_size: "tiny" })).toBe(false);
   });
 });

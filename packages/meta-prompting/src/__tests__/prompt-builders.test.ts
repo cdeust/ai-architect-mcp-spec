@@ -45,6 +45,24 @@ describe("buildClarificationPrompt", () => {
     expect(out).toContain("Feature");
   });
 
+  it("tells the composer the last round: the size's when the run has one, else the kind's (#119)", () => {
+    const round = (request_size?: "standard" | "tiny", prd_context: "feature" | "incident" = "feature") =>
+      buildClarificationPrompt({
+        feature_description: "x",
+        prd_context,
+        request_size,
+        round: 2,
+        prior_qa: [],
+        recall_summary: "",
+      });
+    // One block per line, the empty lines dropped: the prompt is text, not a list.
+    expect(round()).toContain("</role>\n<feature>x</feature>\n<round>2 of 10</round>\n<prior_questions_and_answers>");
+    expect(round("standard")).toContain("<round>2 of 10</round>");
+    expect(round("tiny")).toContain("<round>2 of 5</round>");
+    // An incident is never a fast path.
+    expect(round("tiny", "incident")).toContain("<round>2 of 12</round>");
+  });
+
   it("includes prior Q&A when present", () => {
     const out = buildClarificationPrompt({
       feature_description: "x",
