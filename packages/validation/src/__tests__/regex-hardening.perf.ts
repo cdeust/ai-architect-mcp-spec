@@ -338,6 +338,9 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       ["words", (n) => "- AC-1: " + "Clone ".repeat(n) + "x"],
       ["quotes", (n) => "- AC-1: " + '"'.repeat(n) + "Clone x"],
       ["nouns", (n) => "- AC-1: " + "bouton ".repeat(n) + "x"],
+      // Codex review of #345: unclosed backtick runs of growing lengths, each looking for its closer.
+      ["backticks", (n) => "- AC-1: " + Array.from({ length: Math.floor(Math.sqrt(n)) }, (_, i) => "`".repeat(i + 1) + " x ").join("")],
+      ["ticks", (n) => "- AC-1: " + "` ".repeat(n) + "x"],
     ];
     for (const [label, build] of builders) {
       const small = build(32000);

@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { isBlockingViolation, type SectionType } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
-import { namedControlsIn } from "../hard-output-rules/rules/control-name-rules.js";
+import { namedControlsIn, withoutCodeSpans } from "../hard-output-rules/rules/control-name-rules.js";
 
 const findings = (sections: ReadonlyArray<{ type: SectionType; content: string }>) =>
   validateDocument(sections).violations.filter((v) => v.rule === "consistent_control_names");
@@ -75,6 +75,56 @@ describe("consistent_control_names (#118)", () => {
     expect(messageOf(COPY_FR, criteria)).toBe(
       '2 acceptance criterion(s) name a control no requirement names: AC-001 ("Share link"), AC-003 ("Export icon")',
     );
+  });
+
+  it("ends a requirement's text at a criterion in the same section, so the criterion's name is not the requirement's", () => {
+    // Codex review of #345, P2: read with FR and NFR only, the heading's body
+    // and the bold line ran on into the criterion below them.
+    const heading = [{ type: "requirements" as const, content: "### FR-001: Show a Copy button.\n\n- AC-001: Show a Clone button." }];
+    const bold = [{ type: "requirements" as const, content: "**FR-001** Show a Copy button.\n**AC-001** Show a Clone button." }];
+    for (const sections of [heading, bold]) {
+      expect(findings(sections).map((v) => v.message)).toEqual([
+        '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
+      ]);
+    }
+  });
+
+  it("leaves out code spans of any backtick run, over a line end, and keeps an unclosed run literal", () => {
+    // Codex review of #345, P2: ``Clone button`` was read as a name.
+    expect(namedControlsIn("Use ``Clone button`` or ```a `Clone` button``` here.")).toEqual([]);
+    expect(namedControlsIn("Use `Clone\nbutton` here.")).toEqual([]);
+    expect(withoutCodeSpans("a ``b` c`` d")).toBe("a   d");
+    expect(withoutCodeSpans("a `` b ` c")).toBe("a `` b ` c");
+    expect(namedControlsIn("An unclosed `` run, then the Clone button.").map((c) => c.key)).toEqual(["clone"]);
+  });
+
+  it("does not check a criterion name that opens a sentence, a requirement keyword or a number word", () => {
+    // Review 1 of #345, note 2: harmless text was flagged once a requirement named a control.
+    for (const criterion of [
+      "- AC-001: External links open in a new tab.",
+      "- AC-001: Access control rejects a reader without a session.",
+      "- AC-001: Two buttons sit in the corner.",
+      '- AC-001: "Share" link copies the URL. Then nothing else.',
+      "| AC-001 | Export icons are grey. |",
+      "- AC-001: The File menu MUST list Save.",
+    ]) {
+      expect(messageOf("- FR-001: Each code block shows a Copy button, and the File menu lists it.", criterion), criterion).toBeUndefined();
+    }
+    // A name inside the sentence is still checked, and a requirement's
+    // sentence-initial name still defines it.
+    expect(messageOf("- FR-001: Share link opens a dialog.", "- AC-001: Then the Share link and the Clone button work.")).toBe(
+      '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
+    );
+  });
+
+  it("quotes at most 24 characters of a long control name", () => {
+    expect(messageOf(COPY_FR, `- AC-001: The A${"b".repeat(200)} button works.`)).toBe(
+      `1 acceptance criterion(s) name a control no requirement names: AC-001 ("A${"b".repeat(23)}…")`,
+    );
+  });
+
+  it("reads every noun of controlNouns with its plural, switches included", () => {
+    expect(namedControlsIn("the Dark switches and the Dark switch").map((c) => c.key)).toEqual(["dark", "dark"]);
   });
 
   it("collects the requirement names across sections and NFR definitions", () => {

@@ -170,6 +170,7 @@ export const QUALITY_LEXICON = {
       "toggle",
       "toggles",
       "switch",
+      "switches",
       "checkbox",
       "checkboxes",
       "dropdown",
