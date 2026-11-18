@@ -519,6 +519,9 @@ describe("commandsOf", () => {
     // A quoted string holds a line end, a here-document mark and the other kind of quote.
     expect(commandsOf('echo "one\ntwo <<EOF \'x" ; ls')).toEqual(['echo ""', "ls"]);
     expect(commandsOf("echo 'one\ntwo <<EOF \"x' ; ls")).toEqual(['echo ""', "ls"]);
+    // An escaped space or line end inside a double-quoted string is part of it.
+    expect(commandsOf('echo "a\\ b" ; ls')).toEqual(['echo ""', "ls"]);
+    expect(commandsOf('echo "a\\\nb" ; ls')).toEqual(['echo ""', "ls"]);
     // An escaped backslash before the closing quote does not escape it.
     expect(commandsOf('echo "a\\\\" ; ls')).toEqual(['echo ""', "ls"]);
   });
