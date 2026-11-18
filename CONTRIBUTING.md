@@ -110,7 +110,8 @@ sent back rather than merged with a follow-up promise.
 ### The delivery gate
 
 `pnpm gate` judges a commit before it is pushed. It runs the checks listed
-in `delivery-gate.json` (build, unit, perf), then mutation testing of the
+in `delivery-gate.json` (build, the unit suite with coverage, perf, the
+Python suites of `scripts/tests`), then mutation testing of the
 production files the commits touch (`stryker.config.json`). Every mutant
 that touches a changed line must be detected by a test. One that no test can
 tell from the original is marked on the line above, with its reason:
@@ -141,7 +142,9 @@ Three layers, and what each one holds against:
   directory, the gate's checkout, the home and a directory outside, each
   write and read the profile denies, and, for `offline`, a port of the host;
   it refuses to run when one succeeds, or when the canary does not say that
-  every attempt was refused. There is no unsandboxed fallback. The sandbox
+  every attempt was refused. What this process reads back from the copy (a
+  source, the mutation report) is refused when a link leads it outside the
+  copy. There is no unsandboxed fallback. The sandbox
   runtime and the operation get a PATH without any entry of the judged tree
   or of the run, and without relative entries: the runtime starts programs
   by name before the sandbox is up. A
@@ -155,10 +158,12 @@ Three layers, and what each one holds against:
   It runs the gate of the main checkout and accepts the verdicts of that
   gate only (a verdict names the hash of the gate's code, configuration and
   profiles). `pnpm gate` in a worktree hands the run over to the gate of the
-  main checkout when it has one, so a change that rewrites the gate is
-  judged by the gate that is checked out there, not by its own. The hook is
-  not installed where the main checkout has no gate: it would refuse every
-  push.
+  main checkout when it has one, and in the main checkout the gate refuses a
+  commit that changes its own files: a change of the gate is judged from a
+  worktree, by the gate of the main checkout, never by itself. (A base with
+  no gate is the exception: nothing is there to judge the first one.) The
+  hook is not installed where the main checkout has no gate: it would refuse
+  every push.
 - **The guard of the session, against going around the hook.** The
   `PreToolUse` hook of `.claude/settings.json` refuses a command that pushes
   while the pre-push hook is not the one git will run, and what the rules of
@@ -192,6 +197,9 @@ What the gate does not hold against, and what does:
   reachable (it tries a port of the host, for `offline` only), and a hard
   link from outside into the directory of the run. Those rest on the sandbox
   runtime.
+- The gate that judges a change of the gate is the one of the main
+  checkout as it is on disk, committed or not: keep the main checkout on the
+  base revision.
 - The guard reads git where a command starts (after a separator, a quote,
   `env`, `command` and the like). A commit message that opens on `git push`
   is read as a push; a push behind a wrapper the expression does not know is

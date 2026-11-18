@@ -84,10 +84,18 @@ the prompt was written before the contract, and the repository's own standards a
 
 `CONTRIBUTING.md`, "The delivery gate", and `.claude/skills/deliver/SKILL.md`
 bind every agent that pushes from a machine of its own: the commit is judged
-by `pnpm gate` (its tests, then mutation testing of the lines it touches, each
-operation in a sandbox) before it is pushed, and git's pre-push hook refuses a
-commit without a passed verdict. Rule 8 of the CI contract above is met by
-that run: its checks are played on a clean copy of the commit.
+by `pnpm gate` before it is pushed, and git's pre-push hook refuses a commit
+without a passed verdict.
+
+The gate does not replace rule 8 of the CI contract above: rule 8 still
+applies. What the gate plays of it, on a clean copy of the commit: the build,
+the unit suite with its coverage thresholds (`pnpm test:coverage`), the perf
+suite, and the Python suites of `scripts/tests` (those of the `regression`
+command of `ci.json`, and the two guards beside them); then mutation testing
+of the changed lines, which rule 8 does not ask for. What stays the agent's
+job: whatever a command of `ci.json` does that `delivery-gate.json` does not
+list, and the pull request body, with each command and its passed, failed
+and skipped counts, read from the gate's output.
 
 A session on a hosted runner or in a cloud session has no hook and no
 verdict, and cannot be asked for them: its push is let through, and the

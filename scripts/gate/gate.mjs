@@ -13,11 +13,15 @@
  *   gate.mjs hash       print the hash of this gate (code, configuration,
  *                       profiles)
  *
- * The gate that judges is this file's own checkout (the launcher), not the
- * tree it judges: its configuration, its profiles, its canary and its
- * sandbox runtime are read from beside this file. The pre-push hook runs the
- * gate of the main checkout and accepts the verdicts of that gate only, so
- * a change that rewrites the gate is judged by the gate it replaces.
+ * The gate that judges is this file's own checkout (the launcher): its
+ * configuration, its profiles, its canary and its sandbox runtime are read
+ * from beside this file. The pre-push hook runs the gate of the main
+ * checkout and accepts the verdicts of that gate only; a worktree's gate
+ * hands its run over to it. Where the gate that judges is the one of the
+ * checkout it judges (the main checkout), it refuses a commit that changes
+ * the gate: such a commit is judged from a worktree, by the gate of the main
+ * checkout, never by itself. The one exception is a base that has no gate
+ * yet: there is none to judge the first one.
  *
  * Exit codes: 0 passed or let through; 1 failed or refused by git's hook;
  * 2 refused (configuration, repository state, a sandbox that does not hold,
@@ -62,8 +66,15 @@ function findOnPath(program, outside) {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (dir === "" || outside.some((root) => inside(resolve(dir), root))) continue;
     for (const name of process.platform === "win32" ? [`${program}.exe`] : [program]) {
-      const candidate = join(dir, name);
-      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+      // The file that would run, links followed: a link from a directory
+      // outside into the judged tree is the judged tree.
+      let real;
+      try {
+        real = realpathSync(join(dir, name));
+      } catch {
+        continue;
+      }
+      if (statSync(real).isFile() && !outside.some((root) => inside(real, root))) return real;
     }
   }
   throw new Refusal(`${program} is not on PATH outside the tree that is judged`);
@@ -177,17 +188,36 @@ function makeRun({ git, root, common }, config, commit) {
   // PATH for the runtime and the operation: nothing a check can write, and
   // nothing relative, which the runtime would read from the copy.
   const written = [root, LAUNCHER, run];
+  const realDir = (dir) => {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return resolve(dir);
+    }
+  };
   const path = safePath(process.env.PATH ?? "", delimiter, {
     isAbsolute,
-    inside: (dir) => written.some((place) => inside(resolve(dir), place)),
+    // Links followed: a directory outside that leads into one of them is one of them.
+    inside: (dir) => written.some((place) => inside(realDir(dir), place)),
   });
   const hostEnv = { ...process.env, PATH: path };
-  // What an operation may read of the user's home: the tools PATH names there.
-  const toolchain = path
-    .split(delimiter)
-    .filter((dir) => dir !== "" && existsSync(dir))
-    .map((dir) => realpathSync(dir))
-    .filter((dir) => inside(dir, home));
+  // What an operation may read of the user's home: the directories PATH
+  // names there, the installation of node, and the real directory of each
+  // program a check starts (a link in a PATH directory leads elsewhere).
+  const programs = [...new Set([...config.checks, config.mutation].map((operation) => operation.command[0]))];
+  const toolchain = [
+    ...new Set([
+      ...path.split(delimiter).filter((dir) => dir !== "" && existsSync(dir)).map(realDir),
+      resolve(dirname(realpathSync(process.execPath)), ".."),
+      ...programs.flatMap((program) => {
+        try {
+          return [dirname(findOnPath(program, written))];
+        } catch {
+          return []; // not found here: the check will say so when it starts
+        }
+      }),
+    ]),
+  ].filter((dir) => inside(dir, home));
   const vars = { home, run, launcher: LAUNCHER, toolchain };
 
   /** The tree of the commit, as git checks it out, then the installed dependencies of the worktree. */
@@ -283,7 +313,29 @@ function makeRun({ git, root, common }, config, commit) {
     }
   };
 
-  return { prepare, dispose, sandboxed, proveIsolation, tree };
+  /**
+   * A path of the copy, for this process to read or remove: links followed,
+   * it must still be in the copy. A check can leave a link there that leads
+   * outside, and this process is not in the sandbox.
+   */
+  const inCopy = (path) => {
+    const wanted = join(tree, path);
+    let real;
+    try {
+      real = realpathSync(wanted);
+    } catch {
+      // Not there (yet): its directory decides.
+      try {
+        real = join(realpathSync(dirname(wanted)), basename(wanted));
+      } catch {
+        real = wanted;
+      }
+    }
+    if (!inside(real, realpathSync(tree))) throw new Refusal(`${path} leads outside the copy of the tree (${real})`);
+    return real;
+  };
+
+  return { prepare, dispose, sandboxed, proveIsolation, inCopy };
 }
 
 // ─── The commands ───────────────────────────────────────────────────────────
@@ -323,7 +375,7 @@ async function run() {
   }
 }
 
-function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsolation, tree }, commit, base) {
+function ports(config, { git, root, common }, { prepare, dispose, sandboxed, proveIsolation, inCopy }, commit, base) {
   // The change: the commits since the point where the work left the base.
   // `--text` and `--no-textconv`: an attribute of the tree cannot turn a
   // file's diff into "binary files differ". Names come NUL-separated, so git
@@ -339,11 +391,24 @@ function ports(config, { git, common }, { prepare, dispose, sandboxed, proveIsol
     dispose,
     proveIsolation,
     sandboxed,
-    readSource: (file) => readFileSync(join(tree, file), "utf8"),
-    removeReport: (path) => rmSync(join(tree, path), { force: true }),
-    readReport: (path) => {
+    // The files of the gate the commits change, when the base has a gate.
+    changedGateFiles: () => {
       try {
-        return JSON.parse(readFileSync(join(tree, path), "utf8"));
+        git(["cat-file", "-e", `${base}:scripts/gate/gate.mjs`]);
+      } catch {
+        return []; // no gate at the base: this is the first one
+      }
+      return git(["diff", "--name-only", "-z", "--merge-base", base, commit, "--", ...GATE_FILES, "scripts/gate/profiles"])
+        .split("\0")
+        .filter((name) => name !== "");
+    },
+    judgesItself: root === LAUNCHER,
+    readSource: (file) => readFileSync(inCopy(file), "utf8"),
+    removeReport: (path) => rmSync(inCopy(path), { force: true }),
+    readReport: (path) => {
+      const real = inCopy(path);
+      try {
+        return JSON.parse(readFileSync(real, "utf8"));
       } catch {
         return null;
       }
@@ -405,12 +470,17 @@ function install() {
     throw new Refusal(`the main checkout has no gate yet (${resolve(main)}): install the hook once the gate is on its branch`);
   }
   const path = join(repo.common, "hooks", "pre-push");
-  if (existsSync(path) && readFileSync(path, "utf8") !== SHIM) {
-    throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);
-  }
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, SHIM);
-  chmodSync(path, 0o755);
+  try {
+    // Created only if no file is there: no moment between a look and the write.
+    writeFileSync(path, SHIM, { flag: "wx", mode: 0o755 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    if (readFileSync(path, "utf8") !== SHIM) {
+      throw new Refusal(`${path} is another hook: remove it or chain it by hand, the gate does not overwrite it`);
+    }
+    chmodSync(path, 0o755);
+  }
   const problem = hookProblem(repo);
   if (problem !== null) throw new Refusal(`the pre-push hook is written, but git will not run it: ${problem}`);
   log(`[gate] pre-push hook installed: ${path}`);

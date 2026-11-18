@@ -311,8 +311,10 @@ export function canaryPlan(srt, { kindOf, keep, hostPort, mark }) {
  * postcondition: null when `verdict` is a passed verdict of this gate for
  *                this tree; else the reason it is not, in words. A verdict
  *                written by another gate (other code, other configuration,
- *                other profiles) is not one: a change cannot be judged by
- *                the gate it brings.
+ *                other profiles) is not one. With the refusal of runGate (a
+ *                commit that changes the gate is not judged by its own), a
+ *                change of the gate is judged by the gate of the main
+ *                checkout, from a worktree, or not at all.
  */
 export function verdictRefusal(verdict, tree, gateHash) {
   if (verdict === null) return "it has no verdict of the delivery gate";
@@ -435,6 +437,10 @@ export function guardHook(call, guard, ports) {
  *   headTree()                    the hash of the tree of HEAD
  *   status()                      `git status --porcelain`, "" when clean
  *   changedFiles(base)            the files the commits add or modify
+ *   changedGateFiles(base)        the files of the gate the commits change,
+ *                                 delete included, when the base has a gate
+ *   judgesItself                  true when the gate that runs is the one of
+ *                                 the checkout it judges
  *   fileDiff(base, file)          `git diff -U0` of one file
  *   prepare()                     make the copy of the committed tree
  *   dispose()                     remove it
@@ -450,7 +456,8 @@ export function guardHook(call, guard, ports) {
  * postcondition: 0 passed and recorded; 1 a check failed, a mutant is
  *                undetected, a file turns mutation off, or the report is
  *                missing. A Refusal (exit 2) leaves before a verdict: work
- *                that is not committed, a sandbox that does not hold, a file
+ *                that is not committed, a commit that changes the gate and
+ *                would be judged by it, a sandbox that does not hold, a file
  *                name the mutation tool would misread.
  */
 export async function runGate(config, ports) {
@@ -458,6 +465,13 @@ export async function runGate(config, ports) {
   const dirty = ports.status();
   if (dirty !== "") {
     throw new Refusal(`the gate judges the committed tree, and this work is not committed:\n${dirty}`);
+  }
+  const own = ports.changedGateFiles(config.base);
+  if (own.length > 0 && ports.judgesItself) {
+    throw new Refusal(
+      `this commit changes the gate (${own.join(", ")}), and the gate that would judge it is its own. ` +
+        "Judge it from a worktree: there the gate of the main checkout judges it.",
+    );
   }
   const tree = ports.headTree();
   const files = productionFiles(ports.changedFiles(config.base), config.mutation.production);

@@ -17,7 +17,7 @@
       "profile": "loopback",
       "command": [
         "pnpm",
-        "test"
+        "test:coverage"
       ]
     },
     {
@@ -26,6 +26,21 @@
       "command": [
         "pnpm",
         "test:perf"
+      ]
+    },
+    {
+      "name": "ci-contract",
+      "profile": "offline",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_*.py"
       ]
     }
   ],
@@ -42,7 +57,7 @@
     "profile": "loopback"
   },
   "guard": {
-    "git": "(?:^|[|;&\\n(]|['\"])\\s*(?:\\S+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:\\S+=\\S*\\s+)*)?git\\b",
+    "git": "(?:^|[|;&\\n(]|['\"])\\s*(?:[^\\s=]+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup|xargs)\\s+(?:[^\\s=]+=\\S*\\s+)*)?git\\b",
     "push": [
       "${git}[^|;&\\n\"']*\\bpush\\b"
     ],
