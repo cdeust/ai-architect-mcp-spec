@@ -72,3 +72,27 @@ it("retains an unmetered probe failure and the reducer's terminal decision", asy
   expect(record.terminal.kind).toBe("failed");
   expect(record.quality).toEqual({ outcome: null, distribution: null, hard_output_score: null });
 });
+
+it("passes a registered clarification answer into the section prompt", async () => {
+  const freeform = "Only the pilot tenant can log in.";
+  const prompts: string[] = [];
+  await runBench({ ...plan, answers: { clarification_answer: { selected: [], freeform } } }, {
+    ...ports, answer: question => {
+      expect(question.question_id).not.toBe("clarification_answer");
+      return cannedAnswer(question);
+    }, invoke: async (inv, settings) => {
+      prompts.push(inv.prompt);
+      return cannedInvoke(inv, settings);
+    },
+  });
+  expect(prompts.some(prompt => prompt.includes(freeform))).toBe(true);
+});
+
+it("keeps billed usage when a provider reports failure", async () => {
+  const record = await runBench(plan, { ...ports, invoke: async (inv, settings) => {
+    const result = await cannedInvoke(inv, settings);
+    return { ...result, error: "provider failed", usage: { ...result.usage, cost_usd: 0.25 } };
+  } });
+  expect(record.terminal.kind).toBe("failed");
+  expect(record.totals).toMatchObject({ errors: 1, unmetered_calls: 0, cost_usd: 0.25 });
+});

@@ -18,7 +18,8 @@ async function measure(inv: Invocation, batch_id: string, plan: RunPlan, ports: 
     const result = await ports.invoke(inv, used);
     row.usage = result.usage;
     row.error = result.error ?? null;
-    return { row, response: { invocation_id: inv.invocation_id, raw_text: result.text, error: result.error } };
+    const response = row.error === null ? { raw_text: result.text } : { error: row.error };
+    return { row, response: { invocation_id: inv.invocation_id, ...response } };
   } catch (cause) {
     row.error = cause instanceof Error ? cause.message : String(cause);
     return { row, response: { invocation_id: inv.invocation_id, error: row.error } };
@@ -29,8 +30,11 @@ async function batch(action: SpawnSubagentsAction, plan: RunPlan, ports: Ports, 
   const run = (inv: SpawnSubagentsAction["invocations"][number]) =>
     measure({ ...inv, purpose: action.purpose }, action.batch_id, plan, ports);
   const calls = [];
-  if (plan.mode === "parallel") calls.push(...await Promise.all(action.invocations.map(run)));
-  else for (const inv of action.invocations) calls.push(await run(inv));
+  if (plan.mode === "parallel") {
+    calls.push(...await Promise.all(action.invocations.map(run)));
+  } else {
+    for (const inv of action.invocations) calls.push(await run(inv));
+  }
   rows.push(...calls.map(call => call.row));
   return { kind: "subagent_batch_result", batch_id: action.batch_id, responses: calls.map(call => call.response) };
 }
