@@ -134,6 +134,24 @@ const NOT_A_NAME: ReadonlySet<string> = new Set([
   "huit",
   "neuf",
   "dix",
+  // The French forms of those keywords, written in capitals after the noun:
+  // in "Le bouton DOIT copier le code" the French pattern read "bouton DOIT"
+  // as a control named "DOIT". "NE" opens the negative form ("NE DOIT PAS").
+  // source: review 1 of #346, note 2.
+  "doit",
+  "doivent",
+  "devrait",
+  "devraient",
+  "peut",
+  "peuvent",
+  "ne",
+  "obligatoire",
+  "recommandé",
+  "recommandée",
+  "optionnel",
+  "optionnelle",
+  "facultatif",
+  "facultative",
 ]);
 
 /** A noun as written lowercase or capitalized ("button", "Button"), as one alternation. */
@@ -165,9 +183,12 @@ const FR_CONTROL = new RegExp(
 
 /**
  * The text with its code spans blanked. A code span opens on a run of
- * backticks and closes on the next run of the same length, as in CommonMark
- * (``Clone button`` is one span), and may go over a line end; a run with no
- * closer is literal. One scan lists the runs, and the closer of each length is
+ * backticks and closes on the next run of the same length (``Clone button``
+ * is one span), and may go over a line end; a run with no closer is literal.
+ * This is the CommonMark pairing within one paragraph, not all of it: the
+ * text of a definition joins its blocks, so a span can close across a
+ * paragraph or table-cell boundary, and a backslash before a backtick is not
+ * read as an escape (review 1 of #346, note 3). One scan lists the runs, and the closer of each length is
  * looked for from a pointer that only moves forward, so the scan is linear: a
  * pattern with a back-reference rescanned the rest of the text from each
  * unclosed run.
@@ -226,7 +247,17 @@ interface NamedControl {
   readonly opensSentence: boolean;
 }
 
-/** Marks that end a sentence or open a statement: what comes after them is capitalized for that reason. */
+/**
+ * Marks that end a sentence or open a statement: what comes after them is
+ * capitalized for that reason. A line end is one because the text of a
+ * definition joins its blocks with it (a nested item, a heading's next
+ * paragraph), which a hard wrap inside a paragraph cannot be told from; and
+ * `:` is one because "AC-001: External links open…" opens its statement
+ * there. Two misses follow, pinned by the tests: a criterion wrapped before
+ * the name ("exactly one" / "Clone control.") and one whose statement opens
+ * on the name ("AC-001: Clone button copies the code.") are not reported.
+ * source: review 1 of #346, note 1.
+ */
 const SENTENCE_BOUNDARY = new Set([".", "!", "?", ":", ";", "|", "\n"]);
 
 /** Whether the text before `at`, spaces, tabs and opening quotes left out, is empty or ends a sentence. */
