@@ -84,7 +84,16 @@ describe("the kind of PRD of a run (#119)", () => {
 
   it("says the size of a run declared tiny whose kind is detected or answered", () => {
     const detected = step({ state: atContextDetection("fix the footer typo", null, "tiny") });
-    expect(detected.messages.map((m) => m.text)).toEqual(["PRD context detected: Bug Fix (from trigger words). Request size: Tiny change."]);
+    // A kind read from the words is a guess, and the fast path leaves out what an incident needs: the run says so.
+    expect(detected.messages.map((m) => m.text)).toEqual([
+      'PRD context detected: Bug Fix (from trigger words). Request size: Tiny change. The kind was read from the words of the description, not declared: if this request is an incident, start again with prd_context "incident", which keeps the plan of its kind.',
+    ]);
+    // An incident whose words do not name it is read as another kind, and takes the fast path: the limit the message is for.
+    const unnamed = step({ state: atContextDetection("Checkout returns 500 since the deploy, fix it", null, "tiny") });
+    expect(unnamed.state.prd_context).toBe("bug");
+    expect(unnamed.messages[0].text).toContain('start again with prd_context "incident"');
+    // Of ordinary size, a detected kind says nothing of it.
+    expect(step({ state: atContextDetection("fix the footer typo") }).messages.map((m) => m.text)).toEqual(["PRD context detected: Bug Fix (from trigger words)"]);
     const answered = step({
       state: atContextDetection("something unclassifiable", null, "tiny"),
       result: { kind: "user_answer", question_id: "prd_context", selected: ["feature"] },

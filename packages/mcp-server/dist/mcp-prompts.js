@@ -29,7 +29,7 @@ import { PRDContextSchema } from "@prd-gen/core";
 const runPipelineSteps = (context) => [
     {
         tool: "start_pipeline",
-        guidance: `Initialize the run with prd_context: "${context}" (add request_size: "tiny" for a small, self-contained change); it returns the first NextAction to execute.`,
+        guidance: `Initialize the run with prd_context: "${context}" (add request_size: "tiny" for a small, self-contained change that is not an incident); it returns the first NextAction to execute.`,
     },
     { tool: "get_pipeline_state", guidance: "Read the current state by run_id whenever you need to re-orient." },
     { tool: "submit_action_result", guidance: "Feed each executed action's result back; repeat until the action is `done`." },

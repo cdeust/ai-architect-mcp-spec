@@ -81,12 +81,14 @@ Verification is not a one-shot pass/fail report. Every claim resolution can flus
 ```
 start_pipeline(feature_description, codebase_path?, prd_context?, request_size?)
   → returns the first NextAction; the host executes it and feeds the result
-    back via submit_action_result. Eleven steps later: 9 PRD files written.
+    back via submit_action_result. Eleven steps later the PRD files are
+    written: 9 for a feature of standard size, 5 for a run declared tiny.
     The host declares what it knows and the server does not: prd_context,
     the kind of PRD (omitted, it is read from the words of the description
     or asked), and request_size ("tiny" is the fast path for a small change:
     4 sections, 4 to 5 clarification rounds, whatever the kind but an
-    incident). The server never reads a size from the description.
+    incident; declare prd_context with it, a kind read from the words can
+    miss an incident). The server never reads a size from the description.
 
 submit_action_result(run_id, result)
   → drives the reducer one more step. The host sees only SUBSTANTIVE actions

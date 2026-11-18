@@ -216,7 +216,7 @@ export function registerPipelineTools(server) {
             .describe("The kind of PRD the request calls for, declared by the host, which has the whole conversation where the server has only feature_description. Omit it and the server reads the kind from the words of feature_description, or asks the user. get_prd_context_info gives the clarification range and the section count of a kind."),
         request_size: RequestSizeSchema
             .optional()
-            .describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Omit it for a request of ordinary size.`),
+            .describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`),
     }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
