@@ -34,6 +34,7 @@ import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rule
 import { checkDocumentMeasurableRequirements } from "../hard-output-rules/rules/measurable-requirement-rules.js";
 import { checkDocumentTestableAcceptanceCriteria } from "../hard-output-rules/rules/testable-acceptance-criteria-rules.js";
 import { checkDocumentContradictoryRequirements } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
+import { checkDocumentConsistentControlNames } from "../hard-output-rules/rules/control-name-rules.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -322,6 +323,28 @@ describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
       run(small);
       run(large);
       expect(growthRatio(run, small, large), head).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+    }
+  });
+
+  it("long capitalized words, space runs and open quotes before a control noun (consistent_control_names)", () => {
+    const run = (input: string): void =>
+      void checkDocumentConsistentControlNames([
+        { type: "requirements", content: "- FR-1: The Copy button." },
+        { type: "acceptance_criteria", content: input },
+      ]);
+    const builders: ReadonlyArray<readonly [string, (n: number) => string]> = [
+      ["word", (n) => "- AC-1: C" + "o".repeat(n) + " x"],
+      ["spaces", (n) => "- AC-1: Clone" + " ".repeat(n) + "x"],
+      ["words", (n) => "- AC-1: " + "Clone ".repeat(n) + "x"],
+      ["quotes", (n) => "- AC-1: " + '"'.repeat(n) + "Clone x"],
+      ["nouns", (n) => "- AC-1: " + "bouton ".repeat(n) + "x"],
+    ];
+    for (const [label, build] of builders) {
+      const small = build(32000);
+      const large = build(64000);
+      run(small);
+      run(large);
+      expect(growthRatio(run, small, large), label).toBeLessThan(QUADRATIC_GROWTH_CEILING);
     }
   });
 

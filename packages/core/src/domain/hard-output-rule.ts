@@ -3,7 +3,8 @@ import { z } from "zod";
 /**
  * The Hard Output Rules, first ported from HardOutputRule.swift; #118 added
  * `dependency_targets_defined`, `measurable_requirements`,
- * `testable_acceptance_criteria` and `contradictory_requirements`. The count
+ * `testable_acceptance_criteria`, `contradictory_requirements` and
+ * `consistent_control_names`. The count
  * is `HardOutputRuleSchema.options.length`; neither it nor the position of a
  * rule is written by hand here, since both drifted when rules were added.
  * These are the #1 quality driver in the system (per Feynman/Ginzburg audit).
@@ -40,6 +41,7 @@ export const HardOutputRuleSchema = z.enum([
   "measurable_requirements",
   "testable_acceptance_criteria",
   "contradictory_requirements",
+  "consistent_control_names",
   // Architecture & Code Quality
   "generic_over_specific",
   "no_nested_types",
@@ -112,6 +114,7 @@ const NON_CRITICAL_RULES: ReadonlySet<HardOutputRule> = new Set([
   "measurable_requirements",
   "testable_acceptance_criteria",
   "contradictory_requirements",
+  "consistent_control_names",
   "explicit_access_control",
   "code_reusability",
   "immutability_by_default",

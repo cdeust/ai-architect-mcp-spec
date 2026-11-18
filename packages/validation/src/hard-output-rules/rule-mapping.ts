@@ -169,6 +169,7 @@ export const DOCUMENT_LEVEL_RULES = [
   "measurable_requirements",
   "testable_acceptance_criteria",
   "contradictory_requirements",
+  "consistent_control_names",
 ] as const satisfies readonly HardOutputRule[];
 
 /** A rule carried by DOCUMENT_LEVEL_RULES. */
