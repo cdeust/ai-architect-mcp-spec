@@ -397,6 +397,7 @@ export function commandsOf(text) {
   const single = /'[^']*'?/y;
   const hereDocument = /<<-?\s*(['"]?)([\w.-]+)\1/y;
   const arithmetic = /\$\(\([^)]*\)\)/y;
+  const line = /[^\n]*\n?/y;
   const out = [];
   const pending = []; // the end words of the here-documents opened on the current line
   let i = 0;
@@ -408,16 +409,18 @@ export function commandsOf(text) {
   const skipBodies = () => {
     while (pending.length > 0) {
       const word = pending.shift();
-      let closed = false;
-      while (!closed && i < text.length) {
-        const end = text.indexOf("\n", i);
-        const line = text.slice(i, end === -1 ? text.length : end);
-        i += line.length + 1;
-        closed = line.trim() === word;
+      for (;;) {
+        const read = here(line)[0];
+        i += read.length;
+        // The end word alone on its line, or the end of the text.
+        if (read === "" || read.trim() === word) break;
       }
     }
   };
-  /** The commands up to `close` (or the end), which is consumed. */
+  /**
+   * The commands from here to the end of the text, or, inside a string, to
+   * the character that closes a command substitution, which is consumed.
+   */
   const commands = (close) => {
     let current = "";
     const flush = () => {
@@ -428,17 +431,16 @@ export function commandsOf(text) {
     /** A double-quoted string: text, but for the commands the shell runs inside it. */
     const doubleQuoted = () => {
       i += 1;
-      while (i < text.length && text[i] !== '"') {
-        if (text[i] === "\\") i += 2;
+      for (;;) {
+        const ch = text[i];
+        if (ch === undefined || ch === '"') break;
+        if (ch === "\\") i += 2;
         else if (text.startsWith("$(", i) && here(arithmetic) === null) {
           i += 2;
           commands(")");
-        } else if (text[i] === "`") {
+        } else if (ch === "`") {
           i += 1;
           commands("`");
-        } else if (text[i] === "\n") {
-          i += 1;
-          skipBodies();
         } else i += 1;
       }
       i += 1;
@@ -473,12 +475,8 @@ export function commandsOf(text) {
         flush();
         i += 1;
         skipBodies();
-      } else if (ch === "(" || ch === "`") {
-        // A subshell, a command substitution: commands of their own, up to what closes them.
-        flush();
-        i += 1;
-        commands(ch === "(" ? ")" : "`");
-      } else if (";&|)".includes(ch)) {
+      } else if (";&|()`".includes(ch)) {
+        // Where a command ends: a subshell and a command substitution hold commands of their own.
         flush();
         i += 1;
       } else {
@@ -489,7 +487,7 @@ export function commandsOf(text) {
     flush();
     i += 1;
   };
-  while (i < text.length) commands(undefined);
+  commands(undefined);
   return out;
 }
 

@@ -512,7 +512,6 @@ describe("commandsOf", () => {
     expect(commandsOf("echo $(git push -f) done")).toEqual(["echo $", "git push -f", "done"]);
     expect(commandsOf("echo `git status` done")).toEqual(["echo", "git status", "done"]);
     expect(commandsOf("a $(b $(c) d) e")).toEqual(["a $", "b $", "c", "d", "e"]);
-    // One that is not closed runs to the end.
     expect(commandsOf("echo $(git push")).toEqual(["echo $", "git push"]);
     // A sum is a number, not a command, and holds no here-document.
     expect(commandsOf("echo $((1<<2))\ngit push")).toEqual(["echo 0", "git push"]);
@@ -539,6 +538,14 @@ describe("commandsOf", () => {
     expect(commandsOf('echo "now: $(date) and `id`" ; ls')).toEqual(["date", "id", 'echo ""', "ls"]);
     expect(commandsOf('echo "$(git push --force)"')).toEqual(["git push --force", 'echo ""']);
     expect(commandsOf('echo "$((1+2)) $(pwd)"')).toEqual(["pwd", 'echo ""']);
+    // After what closes it, the string goes on as text; then the command does.
+    expect(commandsOf('echo "$(date); git push --force" x ; ls')).toEqual(["date", 'echo "" x', "ls"]);
+    expect(commandsOf('echo "`date`; git push --force" x ; ls')).toEqual(["date", 'echo "" x', "ls"]);
+    // A backslash inside the string escapes what follows, a `$(` included.
+    expect(commandsOf('echo "\\$(not run) \\`nor this\\`" ; ls')).toEqual(['echo ""', "ls"]);
+    // One that is not closed runs to the end.
+    expect(commandsOf('echo "$(git push')).toEqual(["git push", 'echo ""']);
+    expect(commandsOf('echo "`git push')).toEqual(["git push", 'echo ""']);
     // The usual way to write a long message: its text is the body of a here-document.
     const message = [
       `git commit -m "$(cat <<'EOF'`,
