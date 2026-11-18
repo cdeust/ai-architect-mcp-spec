@@ -242,7 +242,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       prd_context: PRDContextSchema
         .optional()
         .describe(
-          "Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds). Sets the clarification rounds and sections from the calibrated values get_prd_context_info returns for that context. Omit it to detect the context from feature_description or ask the user.",
+          "Size of the run, declared by the host from the verification the request needs (your advisor model can judge it): 'tiny' for a one-line change (4 sections, 4-5 clarification rounds), up to 'incident' (10-12 rounds); an incident is never 'tiny', whatever the size of the change that caused it. Sets the clarification rounds and sections from the calibrated configuration of that context (get_prd_context_info returns its clarification range and expected section count). Omit it to detect the context from feature_description or ask the user.",
         ),
     },
     { destructiveHint: true },

@@ -79,7 +79,7 @@ Verification is not a one-shot pass/fail report. Every claim resolution can flus
 ## What an agent can ask it
 
 ```
-start_pipeline(feature_description, codebase_path?)
+start_pipeline(feature_description, codebase_path?, prd_context?)
   → returns the first NextAction; the host executes it and feeds the result
     back via submit_action_result. Eleven steps later: 9 PRD files written.
 

@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { PRD_CONTEXT_CONFIGS } from "@prd-gen/core";
 import { newPipelineState, step } from "../index.js";
 import type { PipelineState } from "../index.js";
 
@@ -37,7 +38,12 @@ describe("host-declared PRD context (#119)", () => {
   it("asks no context question for a description that names no trigger", () => {
     const out = step({ state: atContextDetection("something unclassifiable", "incident") });
     expect(out.state.prd_context).toBe("incident");
-    expect(out.action.kind === "ask_user" && out.action.question_id).not.toBe("prd_context");
+    // context_detection keeps the declared context and announces it; the
+    // runner coalesces that message and steps past, so no ask_user follows.
+    expect(out.messages.map((m) => m.text)).toContain(
+      `PRD context: ${PRD_CONTEXT_CONFIGS.incident.displayName}`,
+    );
+    expect(out.action.kind).not.toBe("ask_user");
   });
 
   it("detects from the description when the host declares nothing", () => {
