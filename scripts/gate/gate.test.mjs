@@ -578,6 +578,9 @@ describe("commandsOf", () => {
     expect(commandsOf("x=$(( ((1+2)) * (3) )) ; ls")).toEqual(["x=$", "ls"]);
     expect(commandsOf("echo $((1 + $(git push)))")).toEqual(["git push", "echo $"]);
     expect(commandsOf("echo $((1 + `git push`))")).toEqual(["git push", "echo $"]);
+    expect(commandsOf("(($(git push)))")).toEqual(["git push"]);
+    // A sum is read as a double-quoted string is: a single quote in it is a character.
+    expect(commandsOf("echo $(( ${x:-'} )) ; git push")).toEqual(["echo $", "git push"]);
     // A sum that stands as a command, where a command starts.
     expect(commandsOf("(( y = 1 << 2 ))\ngit push")).toEqual(["git push"]);
     expect(commandsOf("ls; ((y++)) ; pwd")).toEqual(["ls", "pwd"]);
@@ -712,7 +715,7 @@ describe("commandsOf", () => {
     // The end word is a whole line, as it is written: only `<<-` lets tabs come before it.
     expect(commandsOf("cat <<EOF\nnot EOF yet\nEOF\nls")).toEqual(["cat", "ls"]);
     expect(commandsOf("cat <<EOF\n\tEOF\nEOF x\n EOF\nEOF \nEOF\nls")).toEqual(["cat", "ls"]);
-    expect(commandsOf("cat <<-EOF\n EOF\nx\tEOF\n\tEOF\nls")).toEqual(["cat", "ls"]);
+    expect(commandsOf("cat <<-EOF\n EOF\nx\tEOF\nE\tOF\ngit push\n\tEOF\nls")).toEqual(["cat", "ls"]);
     // One that is not closed runs to the end, and takes a second one with it.
     expect(commandsOf("cat <<EOF\ngit push --force")).toEqual(["cat"]);
     expect(commandsOf("cat <<A\nbody\ncat <<B\nB\nls")).toEqual(["cat"]);

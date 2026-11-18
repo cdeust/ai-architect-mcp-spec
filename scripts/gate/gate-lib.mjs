@@ -421,7 +421,8 @@ function read(text, expanded) {
   const single = /'[^']*'?/y;
   const ansi = /\$'(?:[^'\\]|\\[\s\S])*'?/y;
   const hereDocument = /<<(-?)\s*(?:'([^'\n]*)'|"([^"\n]*)"|((?:\\.|[\w.-])+))/y;
-  const line = /[^\n]*\n?/y;
+  const line = /([^\n]*)\n?/y;
+  const brace = /[{}](?=[\s;]|$)/y;
   const lineEnd = /[^\n]*/y;
   const out = [];
   let pending = []; // the here-documents opened on the current line
@@ -533,8 +534,7 @@ function read(text, expanded) {
       const from = i;
       let to = i;
       for (;;) {
-        const whole = here(line)[0];
-        const content = whole.endsWith("\n") ? whole.slice(0, -1) : whole;
+        const [whole, content] = here(line);
         i += whole.length;
         if (whole === "" || (tabs ? content.replace(/^\t+/, "") : content) === word) break;
         to = i;
@@ -609,7 +609,7 @@ function read(text, expanded) {
         flush();
         i += 1;
         commands(")");
-      } else if (";&|)".includes(ch) || ("{}".includes(ch) && startsWord() && " \t\n;".includes(text[i + 1] ?? " "))) {
+      } else if (";&|)".includes(ch) || (here(brace) !== null && startsWord())) {
         // Where a command ends.
         flush();
         i += 1;
