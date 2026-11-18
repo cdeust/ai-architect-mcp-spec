@@ -38,6 +38,7 @@ import {
   constants,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -278,12 +279,20 @@ function makeRun({ git, root, common }, config, commit) {
       writeFileSync(target, content, { mode: mode === "100755" ? 0o755 : 0o644, flag: "wx" });
     }
     // The links last: no file is ever written through a link of the commit.
-    // Nor a link through another link: on a disk that does not tell `A` from
-    // `a`, a link `A` and a link `a/x` would put `x` where `A` leads.
+    // Nor a link, nor a directory, through another link: on a disk that does
+    // not tell `A` from `a`, a link `A` and a link `a/b/x` would make `b`,
+    // then `x`, where `A` leads. Each directory on the way is looked at
+    // before it is used, and made one level at a time: nothing is created
+    // under a link.
     for (const [target, to] of links) {
-      mkdirSync(dirname(target), { recursive: true });
-      if (!inside(realpathSync(dirname(target)), tree)) {
-        throw new Refusal(`${target.slice(tree.length + 1)} would be written outside the copy of the tree, through a link of the commit`);
+      let at = tree;
+      for (const part of dirname(target).slice(tree.length).split(sep).filter((name) => name !== "")) {
+        at = join(at, part);
+        const found = lstatSync(at, { throwIfNoEntry: false });
+        if (found === undefined) mkdirSync(at);
+        else if (!found.isDirectory()) {
+          throw new Refusal(`${target.slice(tree.length + 1)} would be written through ${at.slice(tree.length + 1)}, which is not a directory of the copy`);
+        }
       }
       symlinkSync(to, target);
     }

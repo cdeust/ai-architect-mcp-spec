@@ -553,6 +553,11 @@ describe("commandsOf", () => {
     ]);
     expect(commandsOf('echo "$(a (b; c) d; e) text" ; ls')).toEqual(["a", "b", "c", "d", "e", 'echo ""', "ls"]);
     expect(commandsOf('echo "`a (b) c` text" ; ls')).toEqual(["a", "b", "c", 'echo ""', "ls"]);
+    // A parameter expansion is a word: a parenthesis in it opens nothing, in a string or out of one.
+    expect(commandsOf('echo "$(echo ${x:-(})"; git push --force origin main')).toEqual(["echo $", 'echo ""', "git push --force origin main"]);
+    expect(commandsOf("echo ${x:-(} ; git push")).toEqual(["echo $", "git push"]);
+    expect(commandsOf("echo ${x} ${y:-a b} z")).toEqual(["echo $ $ z"]);
+    expect(commandsOf("echo ${open ; ls")).toEqual(["echo $"]);
     // One that is not closed runs to the end.
     expect(commandsOf('echo "$(git push')).toEqual(["git push", 'echo ""']);
     expect(commandsOf('echo "$(a (b')).toEqual(["a", "b", 'echo ""']);
@@ -615,6 +620,7 @@ describe("guardDecision", () => {
       "git --no-pager push",
       "git --git-dir=/r/.git push origin main",
       "git --git-dir /r/.git --work-tree /r push",
+      "git --config-env http.extraheader=TOKEN --attr-source HEAD push",
       "cd x && git push",
       "git commit -m wip && git push",
       'git commit -m "a message" && git push',
@@ -646,6 +652,8 @@ describe("guardDecision", () => {
       "git -C push status",
       "git --git-dir push status",
       "git --work-tree push --git-dir push log",
+      "git --config-env push status",
+      "git --attr-source push log",
     ]) {
       expect(decide(command), command).toEqual({ kind: "allow" });
     }
@@ -660,6 +668,8 @@ describe("guardDecision", () => {
       ["git -C /repo push --no-verify", 0],
       ['echo "$(git push --no-verify)"', 0],
       ['echo "$(echo $(date); git push --no-verify)"', 0],
+      ['echo "$(echo ${x:-(})"; git push --no-verify', 0],
+      ["git --config-env a=B push --no-verify", 0],
       ["git -c core.hooksPath=/dev/null push", 1],
       ["git -c core.hookspath=/dev/null push", 1],
       ["git config core.hooksPath /tmp/h", 1],
@@ -756,15 +766,21 @@ describe("guardDecision", () => {
   });
 
   it("reads the options of git one way only: a long run of them is read at once", () => {
-    // Read as an option with its value, or as two options: an expression that
-    // allows both takes a time that doubles with each word, and a hook that
-    // runs out of time lets the call through.
-    const options = Array.from({ length: 40 }, () => "-c a=b -C dir --git-dir d -x").join(" ");
+    // `-c -c -c …`: each `-c` could be read as an option with the next word
+    // as its value, or as an option without one. An expression that allows
+    // both tries every split, and a hook that runs out of time lets the call
+    // through. Forty words are enough to tell the two apart, and few enough
+    // for the slow one to end and fail here.
+    // source: measured on 2026-11-18 with the expression of #359, one
+    // decision: 30 words 127 ms, 34 words 883 ms (about 1.6 times more per
+    // word, so forty take some 16 s); with this one, 600 words 0.2 ms.
+    const options = Array.from({ length: 40 }, () => "-c").join(" ");
     const started = process.hrtime.bigint();
     expect(decide(`git ${options} status`)).toEqual({ kind: "allow" });
     expect(decide(`git ${options} push`)).toEqual({ kind: "push" });
-    expect(decide(`git ${options} push --force`).kind).toBe("refuse");
-    // Far under a second on any machine; minutes or more when both readings are open.
+    expect(decide(`git ${options} -c x push --force`).kind).toBe("refuse");
+    // The word after the last pair is git's subcommand: this one is not a push.
+    expect(decide(`git ${options} x push --force`)).toEqual({ kind: "allow" });
     expect(Number(process.hrtime.bigint() - started) / 1e6).toBeLessThan(2000);
   });
 
@@ -1539,17 +1555,17 @@ process.exit(out.status ?? 1);
       const outside = join(repo, "..", "through-a-link");
       mkdirSync(outside, { recursive: true });
       setChecks([{ name: "ok", profile: "offline", command: node("0") }]);
-      // A tree with a link `A` that leads outside, and a link `a/x`. On a disk that does not
-      // tell `A` from `a`, the directory of `a/x` is the link `A`.
+      // A tree with a link `A` that leads outside, and a link `a/b/x`. On a disk that does not
+      // tell `A` from `a`, the directory `a` of that link is the link `A`.
       const blob = (content) => spawnSync("git", ["hash-object", "-w", "--stdin"], { ...PROCESS, cwd: work, input: content }).stdout.trim();
       const tree = (entries) => spawnSync("git", ["mktree"], { ...PROCESS, cwd: work, input: entries.join("\n") + "\n" }).stdout.trim();
-      const inner = tree([`120000 blob ${blob("anywhere")}\tx`]);
+      const inner = tree([`040000 tree ${tree([`120000 blob ${blob("anywhere")}\tx`])}\tb`]);
       const root = tree([...git(work, "ls-tree", "HEAD").split("\n"), `120000 blob ${blob(outside)}\tA`, `040000 tree ${inner}\ta`]);
       const commitId = spawnSync("git", ["commit-tree", root, "-p", "HEAD", "-m", "links"], { ...PROCESS, cwd: work }).stdout.trim();
       // The commit is made the tip without being checked out here: git itself would not write it on such a disk.
       git(work, "reset", "-q", "--soft", commitId);
       git(work, "read-tree", commitId);
-      git(work, "update-index", "--skip-worktree", "A", "a/x");
+      git(work, "update-index", "--skip-worktree", "A", "a/b/x");
       expect(git(work, "status", "--porcelain")).toBe("");
 
       const out = runGateIn();
@@ -1558,11 +1574,12 @@ process.exit(out.status ?? 1);
         expect(out.status, out.stderr).toBe(0);
       } else {
         expect(out.status).toBe(2);
-        expect(out.stderr).toContain("a/x would be written outside the copy of the tree, through a link of the commit");
+        expect(out.stderr).toContain("a/b/x would be written through a, which is not a directory of the copy");
         expect(verdictOf()).toBeNull();
       }
+      // Nothing was made where the link leads: no file, and no directory on the way.
       expect(readdirSync(outside)).toEqual([]);
-      git(work, "update-index", "--no-skip-worktree", "A", "a/x");
+      git(work, "update-index", "--no-skip-worktree", "A", "a/b/x");
     });
 
     it("mutates the changed production files, and says which ones the report does not name", () => {

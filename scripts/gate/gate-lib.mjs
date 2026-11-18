@@ -397,6 +397,7 @@ export function commandsOf(text) {
   const single = /'[^']*'?/y;
   const hereDocument = /<<-?\s*(['"]?)([\w.-]+)\1/y;
   const arithmetic = /\$\(\([^)]*\)\)/y;
+  const parameter = /\$\{[^}]*\}?/y;
   const line = /[^\n]*\n?/y;
   const out = [];
   const pending = []; // the end words of the here-documents opened on the current line
@@ -450,6 +451,7 @@ export function commandsOf(text) {
       const quoted = here(single);
       const opened = here(hereDocument);
       const sum = here(arithmetic);
+      const expansion = here(parameter);
       if (ch === "\\") {
         // An escaped character is a character of a word; an escaped line end joins two lines.
         if (text[i + 1] !== "\n") current += "_";
@@ -464,6 +466,10 @@ export function commandsOf(text) {
         // `$((1<<2))`: a number, with no here-document in it.
         current += "0";
         i += sum[0].length;
+      } else if (expansion !== null) {
+        // `${x:-(}`: a word; a parenthesis in it opens nothing.
+        current += "$";
+        i += expansion[0].length;
       } else if (text.startsWith("<<<", i)) {
         // A here-string: a word follows, not a body.
         current += "<<<";
