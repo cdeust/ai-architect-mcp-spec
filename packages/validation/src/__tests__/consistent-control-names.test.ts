@@ -227,9 +227,9 @@ describe("consistent_control_names (#118)", () => {
     expect(messageOf(COPY_FR, "- AC-001: Every code block has exactly one\n  Clone control.")).toBeUndefined();
     expect(messageOf(COPY_FR, "- AC-001: Clone button copies the code.")).toBeUndefined();
     // The colon outside the bold already opened the statement before #350.
-    // definingLine drops the "**", so this form reads as the plain one above;
-    // the positive case shows its name is still read past the statement start
-    // (review 1 of #352, note 2).
+    // The positive case shows the line is still read as a definition, so
+    // this miss is the statement start alone (review 1 of #352, note 2;
+    // review 1 of #353, note 2).
     expect(messageOf(COPY_FR, "- **AC-001**: Clone button copies the code.")).toBeUndefined();
     expect(messageOf(COPY_FR, "- **AC-001**: The Clone button copies the code.")).toBe(
       '1 acceptance criterion(s) name a control no requirement names: AC-001 ("Clone button")',
