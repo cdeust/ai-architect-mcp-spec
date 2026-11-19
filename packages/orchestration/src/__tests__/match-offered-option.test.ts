@@ -3,13 +3,18 @@ import { matchOfferedOption } from "../handlers/match-offered-option.js";
 
 const options = [{ label: "First   Option" }, { label: "No" }];
 
-it("returns the canonical offered label and rejects more than one nonblank selection", () => {
-  expect(matchOfferedOption(options, { selected: [" first\tOPTION "], freeform: " FIRST Option " })).toBe("First   Option");
+it("returns the canonical offered label and refuses multiple selections even when freeform agrees with the first", () => {
   expect(matchOfferedOption(options, { selected: [" first\tOPTION ", "No"], freeform: " FIRST Option " })).toBeUndefined();
-  expect(matchOfferedOption(options, { selected: ["No", "No"] })).toBeUndefined();
-  expect(matchOfferedOption(options, { selected: ["No", "  "] })).toBe("No");
+  expect(matchOfferedOption(options, { selected: ["", " first\tOPTION ", "  "], freeform: " FIRST Option " })).toBe("First   Option");
   expect(matchOfferedOption(options, { selected: [], freeform: " NO " })).toBe("No");
   expect(matchOfferedOption(options, { selected: ["unknown", "No"], freeform: "No" })).toBeUndefined();
+});
+
+it.each([
+  { selected: ["No", "No"], expected: undefined },
+  { selected: ["No", "  "], expected: "No" },
+])("matches $selected as $expected", ({ selected, expected }) => {
+  expect(matchOfferedOption(options, { selected })).toBe(expected);
 });
 
 it.each(["first", "not first option", "", undefined])("requires a whole option for %s", (freeform) => {
@@ -36,4 +41,11 @@ it("compares lowercase labels without aliasing Unicode long s to ASCII S", () =>
   expect(matchOfferedOption(labels, { selected: ["PUSH"] })).toBe("PUSH");
   expect(matchOfferedOption(labels, { selected: ["PuSh"] })).toBe("PUSH");
   expect(matchOfferedOption(labels, { selected: ["Puſh"] })).toBeUndefined();
+});
+
+it("compares canonically equivalent text on both sides and preserves compatibility distinctions", () => {
+  const nfd = "de\u0301rogation";
+  expect(matchOfferedOption([{ label: nfd }], { selected: ["dérogation"] })).toBe(nfd);
+  expect(matchOfferedOption([{ label: "dérogation" }], { selected: [], freeform: nfd })).toBe("dérogation");
+  expect(matchOfferedOption(options, { selected: ["Ｎｏ"] })).toBeUndefined();
 });

@@ -124,6 +124,33 @@ describe.each([
   },
 );
 
+describe("multiple selections at the blocked implementation gate", () => {
+  const override = "Override policy (explicit)";
+  it.each(["PRD only", override, "not an option"])("counts an override plus %s without recording a derogation", (extra) => {
+    const issued = step({ state: stateAtGateWithJudgeVerdicts() });
+    const answer = { kind: "user_answer" as const, question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [override, extra] };
+    let saved = issued.state;
+    for (const count of [1, 2]) {
+      const out = step({ state: saved, result: answer });
+      expectOptionRetry(out.action, issued.action);
+      expect(out.state.unmatched_answers).toEqual({ implementation_gate: count });
+      expect(out.state.post_specs).toMatchObject({ decision: "pending", policy_derogation: null });
+      saved = out.state;
+    }
+    const third = step({ state: saved, result: answer });
+    expect(third.state.post_specs).toMatchObject({ decision: "prd_only", policy_derogation: null });
+    expect(third.messages).toContainEqual({ level: "warn", text: 'implementation_gate: 3 unmatched answers. Using "PRD only".' });
+  });
+
+  it.each(["", " \t "])("records an explicit override accompanied by %j", (blank) => {
+    const out = step({ state: stateAtGateWithJudgeVerdicts(), result: {
+      kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [override, blank],
+    } });
+    expect(out.action.kind).toBe("write_file");
+    expect(out.state.post_specs).toMatchObject({ decision: "implement", policy_derogation: { policy_status: "blocked" } });
+  });
+});
+
 it("re-asks for a bare Implement when the policy is blocked", () => {
   const issued = step({ state: stateAtGateWithJudgeVerdicts() });
   const out = step({ state: issued.state, result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: ["Implement"] } });
@@ -361,7 +388,7 @@ describe("implementation_gate — policy-shaped gate (needs_attention)", () => {
       result: {
         kind: "user_answer",
         question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-        selected: ["Implement anyway (dérogation explicite)"],
+        selected: ["Implement anyway (de\u0301rogation explicite)"],
       },
     });
     expect(answered.action.kind).toBe("write_file");

@@ -7,11 +7,15 @@ import {
   RequestSizeSchema,
 } from "@prd-gen/core";
 import { ExecutionResultSchema } from "@prd-gen/strategy";
-import { DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
+import { ASK_USER_MAX_OPTIONS, ASK_USER_MIN_OPTIONS, DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
 import { SectionStatusSchema } from "./section-status.js";
 import { VerificationPlanSnapshotSchema } from "./verification-plan.js";
-import { MAX_CLARIFICATION_TURNS, MAX_PIPELINE_ERRORS } from "./bounded-io.js";
+import {
+  CLARIFICATION_TURN_CHARS,
+  MAX_CLARIFICATION_TURNS,
+  MAX_PIPELINE_ERRORS,
+} from "./bounded-io.js";
 import { PostSpecsStateSchema } from "./post-specs-state.js";
 import { VerifyBudgetConfigSchema } from "./verify-budget.js";
 import { VerificationPolicySchema } from "./verification-policy.js";
@@ -50,7 +54,11 @@ export type ReliabilityObservationRecord = z.infer<typeof ReliabilityObservation
 
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
+  // Earlier versions persisted questions of any length. Keep their exact text on resume.
   question: z.string(),
+  options: z.array(z.string().max(CLARIFICATION_TURN_CHARS).refine(label => label.trim().length > 0))
+    .min(ASK_USER_MIN_OPTIONS).max(ASK_USER_MAX_OPTIONS).nullish(),
+  rationale: z.string().max(CLARIFICATION_TURN_CHARS).optional(),
   answer: z.string().optional(),
   asked_at: z.string(),
   answered_at: z.string().optional(),
@@ -142,6 +150,8 @@ export const PipelineStateSchema = z.object({
       message: `clarifications exceeds ${MAX_CLARIFICATION_TURNS}-turn bounded-I/O cap (Claude Code 100,000-char MCP response budget). source: see MAX_CLARIFICATION_TURNS in state.ts.`,
     })
     .default([]),
+  // Older checkpoints did not distinguish a continuation prompt from the following compose action.
+  clarification_continue_pending: z.boolean().optional(),
   /**
    * Set when the user types "proceed" or clarification reaches max rounds.
    * Read by handleBudget to sanity-check that clarification finished cleanly
