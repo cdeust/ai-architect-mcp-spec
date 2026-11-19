@@ -273,7 +273,7 @@ it("checks the summed reported spend between arms in execution order and uses fr
   }
 });
 
-it("limits the second $1 arm to the remainder of a $2 plan", async () => {
+it.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget after two $%s calls", async (cost, remainder) => {
   const out = await mkdtemp(join(tmpdir(), "bench-remainder-"));
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
@@ -281,17 +281,21 @@ it("limits the second $1 arm to the remainder of a $2 plan", async () => {
     const file = join(out, "plan.json");
     await writeFile(file, JSON.stringify(plan));
     const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
-    await writeFile(join(out, "response"), JSON.stringify({ ...fixture, total_cost_usd: 0.9 }));
+    await writeFile(join(out, "response"), JSON.stringify({ ...fixture, total_cost_usd: cost }));
     await writeFile(join(out, "claude"), '#!/bin/sh\n/bin/cat >/dev/null\n/bin/cat "$DATA/response"\n', { mode: 0o700 });
     const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
       "--plan", file, "--out", out], { cwd, encoding: "utf8", env: { PATH: out, DATA: out } });
     expect(result.status).toBe(1);
     const [first, second] = await Promise.all(plan.arms.map(async ({ name }: { name: string }) =>
       JSON.parse(await readFile(join(out, name, "record.json"), "utf8"))));
-    expect(first.totals.cost_usd).toBe(1.8);
-    expect(second.plan.limits.max_cost_usd).toBeCloseTo(0.2);
+    expect(first.totals.cost_usd).toBe(2 * cost);
+    expect(first.configured_limits).toEqual(plan.limits);
+    expect(first.effective_limits).toEqual(plan.limits);
+    expect(second.configured_limits).toEqual(plan.limits);
+    expect(second.effective_limits).toEqual({ ...plan.limits, max_cost_usd: remainder });
+    expect(second.plan.limits).toEqual(second.effective_limits);
     expect(second.rows).toHaveLength(1);
-    expect(first.totals.cost_usd + second.totals.cost_usd).toBeLessThanOrEqual(2 + 0.9);
+    expect(first.totals.cost_usd + second.totals.cost_usd).toBeLessThanOrEqual(2 + cost);
     expect(result.stdout.split("\n")[0]).toContain("plus at most one in-flight batch or call");
   } finally {
     await rm(out, { recursive: true, force: true });

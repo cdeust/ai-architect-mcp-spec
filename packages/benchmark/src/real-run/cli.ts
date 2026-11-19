@@ -1,6 +1,7 @@
 import { appendFileSync, lstatSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { all, create } from "mathjs";
 import { parseArgs } from "node:util";
 import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
@@ -62,7 +63,7 @@ function appendRow(journal: string, row: Row) {
   active.delete(row);
 }
 
-async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string[]) {
+async function runArm(dir: string, plan: RunPlan, configured_limits: RunPlan["limits"], dry: boolean, armOrder: string[]) {
   await mkdir(dir);
   const journal = join(dir, "rows.jsonl");
   await writeFile(journal, "", { flag: "wx" });
@@ -73,7 +74,7 @@ async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string
     }),
     record: row => appendRow(journal, row),
   });
-  await writeJson(join(dir, "record.json"), { dry_run: dry, arm_order_so_far: armOrder, plan, ...record });
+  await writeJson(join(dir, "record.json"), { dry_run: dry, arm_order_so_far: armOrder, plan, configured_limits, effective_limits: plan.limits, ...record });
   await writeJson(join(dir, "sections.json"), record.sections);
   return record;
 }
@@ -97,10 +98,17 @@ async function main() {
   const armOrder: string[] = [];
   const skipped: string[] = [];
   const kept: string[] = [];
-  let reportedSpend = 0;
+  // Subtract decimal reports exactly even when a small charge follows a large cap.
+  // One digit for every decimal position from Number.MAX_VALUE to Number.MIN_VALUE.
+  const precision = Math.floor(Math.log10(Number.MAX_VALUE)) - Math.floor(Math.log10(Number.MIN_VALUE)) + 1;
+  const { bignumber } = create(all, { precision });
+  let remaining = bignumber(String(planCap));
   let baseline: Totals | undefined;
   for (const arm of arms) {
-    const max_cost_usd = Math.min(arm.plan.limits.max_cost_usd, planCap - reportedSpend);
+    const configured = bignumber(String(arm.plan.limits.max_cost_usd));
+    const available = remaining.lt(configured) ? remaining : configured;
+    // The plan contract expresses effective dollars to six places, rounded down.
+    const max_cost_usd = available.times(1e6).floor().div(1e6).toNumber();
     if (max_cost_usd <= 0) {
       const message = `${arm.name}: skipped by the plan cap (effective limit ${Math.max(0, max_cost_usd)} USD).`;
       skipped.push(message);
@@ -110,15 +118,16 @@ async function main() {
     }
     const effectivePlan = { ...arm.plan, limits: { ...arm.plan.limits, max_cost_usd } };
     armOrder.push(arm.name);
-    const record = await runArm(join(out, arm.name), effectivePlan, dry, armOrder);
+    const record = await runArm(join(out, arm.name), effectivePlan, arm.plan.limits, dry, armOrder);
     for (const row of record.rows) {
+      if (row.usage?.cost_usd != null) remaining = remaining.minus(String(row.usage.cost_usd));
       if (row.workspace_kept && row.workspace_path) kept.push(row.workspace_path);
     }
-    reportedSpend += record.totals.cost_usd;
     baseline ??= record.totals;
     summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
-    if (reportedSpend > planCap) {
+    if (remaining.isNegative()) {
+      const reportedSpend = bignumber(String(planCap)).minus(remaining);
       const message = `Plan stopped at ${reportedSpend} reported USD (plan_max_cost_usd ${planCap}).`;
       summary.push("", message);
       console.error(message);
