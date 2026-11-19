@@ -125,5 +125,5 @@ it.each([
   const result = { kind: "user_answer" as const, question_id: "feasibility_focus", selected, freeform };
   const out = step({ state: stateAt("original scope"), result });
   expect(out.state.feature_description).toBe("OAuth  login");
-  expect(out.action).toEqual({ kind: "emit_message", message: "Focused scope: OAuth  login" });
+  expect(out.messages).toContainEqual({ level: "info", text: "Focused scope: OAuth  login" });
 });

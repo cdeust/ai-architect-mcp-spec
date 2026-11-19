@@ -143,7 +143,7 @@ it("clears prior attempts when the user chooses another clarification round", ()
 
 it.each([
   [null, "prd_context", "context_detection", "release", "input_analysis"],
-  ["feature", "clarification_continue", "clarification", "proceed", "budget"],
+  ["feature", "clarification_continue", "clarification", "proceed", "section_generation"],
 ] as const)("emits repeated failures then accepts a valid answer for %s context", (prd_context, question, failedStep, valid, nextStep) => {
   const dispatch = makeCannedDispatcher();
   let out = step({ state: newPipelineState({ run_id: "wrong-from-start", feature_description: "x", prd_context }) });
