@@ -35,9 +35,9 @@ the prompt was written before the contract, and the repository's own standards a
    a pull request whose last verdict covers its head, reads approve, and whose required
    checks are green. No agent merges by hand or enables auto-merge.
 2. **Three reviews per branch.** The budget counts review runs by branch name, so every
-   push to an open pull request spends one. Push once per verdict, with every blocker of
-   that verdict fixed, and never while a `PR Review` run is in progress on the pull
-   request: the review would land on a commit that is no longer the head.
+   push to a pull request ready for review spends one. Push once per verdict, with every
+   blocker of that verdict fixed, and never while a `PR Review` run is in progress on the
+   pull request: the review would land on a commit that is no longer the head.
 3. **Budget spent without an approve on the head: a new branch.** Push the same commits to
    `<branch>-r<N>`, open a pull request with the same title and body plus a "Continuation"
    section naming the old one, leave one "Continued in #n" line on the old one, close it.
@@ -79,6 +79,28 @@ the prompt was written before the contract, and the repository's own standards a
    it; what fails without the key, a validator that requires it or a reader that refuses
    its absence, comes with the key or after it; a key the validator requires leaves
    `ci.json` after the validator stopped requiring it.
+10. **Work in small batches, in a draft.** Open a draft pull request as soon as the first
+    gated commit exists, and push each gated batch to it. Routines leave drafts alone
+    (rule 7), and draft pushes spend none of rule 2's three reviews because the review
+    jobs skip drafts ([budget job](../.github/workflows/claude-review.yml#L28),
+    [review job](../.github/workflows/claude-review.yml#L67)). In
+    [PR #374](https://github.com/cdeust/ai-architect-mcp-spec/pull/374) (2026-11-19),
+    the autopilot pushed its own fix (`42423f2`) while the session's commits were still
+    local, so the branch diverged. The owner chose small batches on 2026-11-19
+    ("Oui c'est préférable de faire par petits lots").
+    Mark the pull request ready only after the gate passes on its head, a reviewer other
+    than its author has read it, and its body carries the counts of rule 8. Marking it
+    ready starts the review ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
+    For every push from a local machine, the delivery gate's pre-push hook requires a
+    passed verdict on the tip. Make each batch worth a gate run, such as one pass or one slice,
+    and keep commits local between gate runs only for the length of that work.
+    Run `git fetch` before working on the branch and before every push. Read and
+    integrate commits pushed by another author, including the autopilot, before pushing.
+    If they conflict, use a merge commit and follow rule 4's conflict procedure. Never force
+    a push. Once the pull request is ready, keep local commits ahead of its remote head
+    for at most one gate run, except while a `PR Review` run is in progress (rule 2).
+    Under rule 5, a draft with a running check is in flight. This is this repository's
+    addition to the `cdeust/Cortex` contract, and the same rule is owed there.
 
 ## The delivery gate
 
