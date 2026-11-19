@@ -20,6 +20,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, wri
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  CLARIFICATION_CONTINUE_QUESTION_ID,
   NextActionSchema,
   PipelineStateSchema,
   isTerminalRun,
@@ -215,6 +216,12 @@ function parseRunFile(runId: string, text: string): RunFileRead {
   if (doc.action === null) return { kind: "found", run: { state: state.data, action: null } };
   const action = NextActionSchema.safeParse(doc.action);
   if (!action.success) return { kind: "unreadable", reason: `its action is not valid (${action.error.message})` };
+  // Older clarification checkpoints kept the pending action but no marker.
+  // The saved action distinguishes a decision from a compose already authorized.
+  if (state.data.current_step === "clarification" && state.data.clarification_continue_pending === undefined) {
+    state.data.clarification_continue_pending = action.data.kind === "ask_user"
+      && action.data.question_id === CLARIFICATION_CONTINUE_QUESTION_ID;
+  }
   return { kind: "found", run: { state: state.data, action: action.data } };
 }
 

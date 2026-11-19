@@ -12,7 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeCannedDispatcher, type NextAction } from "@prd-gen/orchestration";
+import { makeCannedDispatcher, newPipelineState, step, type NextAction } from "@prd-gen/orchestration";
+import { RunFiles } from "../run-files.js";
 import { startStdioServer, type StdioServer } from "./stdio-server.js";
 
 const TEST_TIMEOUT_MS = 120_000;
@@ -21,7 +22,7 @@ const EARLY_RESTART_AFTER_STEPS = 5;
 interface Envelope {
   readonly run_id: string;
   readonly current_step: string;
-  readonly action: { readonly kind: string; readonly batch_id?: string };
+  readonly action: { readonly kind: string; readonly batch_id?: string; readonly question_id?: string };
 }
 
 let scratch: string;
@@ -173,3 +174,41 @@ describe("a pipeline run and a restart of the server (#121)", () => {
     TEST_TIMEOUT_MS,
   );
 });
+
+it.each(["continuation", "compose"] as const)(
+  "uses the saved %s action in a markerless clarification checkpoint", async (pending) => {
+    const own = join(scratch, `home-legacy-${pending}`);
+    const run_id = `run_legacy_${pending}`;
+    const state = newPipelineState({ run_id, feature_description: "x", prd_context: "feature" });
+    state.current_step = "clarification";
+    state.clarifications = Array.from({ length: 8 }, (_, i) => ({
+      round: i + 1, asked_at: "then", question: "Detail?", answer: i < 7 ? "given" : undefined,
+    }));
+    const decision = step({ state, result: {
+      kind: "user_answer", question_id: "clarification_answer", selected: ["new detail"],
+    } });
+    const compose = step({ state: decision.state, result: {
+      kind: "user_answer", question_id: "clarification_continue", selected: ["continue"],
+    } });
+    const saved = pending === "continuation" ? decision : compose;
+    delete saved.state.clarification_continue_pending;
+    new RunFiles(join(own, ".prd-gen", "runs")).write(saved.state, saved.action);
+
+    const server = await start(own);
+    const dispatch = makeCannedDispatcher();
+    const composeResult = dispatch(compose.action);
+    const unexpected = pending === "continuation" ? composeResult : {
+      kind: "user_answer", question_id: "clarification_continue", selected: ["proceed"],
+    };
+    const resumed = await ok(server, "submit_action_result", { run_id, result: unexpected });
+    expect(resumed.action).toEqual(saved.action);
+    const expected = pending === "continuation" ? {
+      kind: "user_answer", question_id: "clarification_continue", selected: ["continue"],
+    } : composeResult;
+    const next = await ok(server, "submit_action_result", { run_id, result: expected });
+    expect(next.action).toMatchObject(pending === "continuation"
+      ? { kind: "spawn_subagents", batch_id: "clarification_compose_9" }
+      : { kind: "ask_user", question_id: "clarification_answer" });
+    await server.close();
+  }, TEST_TIMEOUT_MS,
+);
