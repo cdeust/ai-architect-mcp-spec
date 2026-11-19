@@ -9,9 +9,11 @@ function streams() {
   const child = Object.assign(new ChildProcess(), {
     stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(),
   }) as ChildProcessWithoutNullStreams;
+  const stdoutEncoding = vi.spyOn(child.stdout, "setEncoding");
+  const stderrEncoding = vi.spyOn(child.stderr, "setEncoding");
   const kill = vi.fn();
   const result = collectOutput(child, 1000, kill);
-  return { child, kill, result };
+  return { child, kill, result, stdoutEncoding, stderrEncoding };
 }
 
 it("settles on late pipe data and preserves the first stdin error and the leader signal", async () => {
@@ -58,7 +60,9 @@ it("bounds and trims stderr on timeout, then clears the watchdog after a success
 });
 
 it("decodes UTF-8 on both pipes and skips parsing after settlement", async () => {
-  const { child, result } = streams();
+  const { child, result, stdoutEncoding, stderrEncoding } = streams();
+  expect(stdoutEncoding).toHaveBeenCalledExactlyOnceWith("utf8");
+  expect(stderrEncoding).toHaveBeenCalledExactlyOnceWith("utf8");
   expect(child.stdout.readableEncoding).toBe("utf8");
   expect(child.stderr.readableEncoding).toBe("utf8");
   child.stdout.emit("data", fixture);

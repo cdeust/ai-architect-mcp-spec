@@ -20,6 +20,7 @@ it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals t
   const exitCode = vi.fn();
   const host = harness({ PATH: out, MARKER: marker }, { exitCode });
   const exiting = vi.spyOn(host.io, "exit");
+  const stderr = vi.spyOn(host.io, "stderr");
   const run = host.run("--i-accept-model-cost", "--plan", "real-run/plans/smoke.json", "--out", out);
   try {
     await expect.poll(async () => {
@@ -32,7 +33,9 @@ it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals t
     if (signal !== "exit") expect(exiting).toHaveBeenCalledWith(1);
     const row = JSON.parse(readFileSync(join(out, "smoke/rows.jsonl"), "utf8"));
     expect(row).toMatchObject({ purpose: "probe", usage: null, error: `Interrupted by ${signal === "exit" ? "CLI exit" : signal}` });
-    expect((await run).status).toBe(1);
+    const result = await run;
+    expect(result.status).toBe(1);
+    expect(stderr).not.toHaveBeenCalled();
     expect(JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"))).toEqual(row);
     expect(host.events.eventNames()).toEqual([]);
     for (const pid of pids) await expect.poll(() => {
