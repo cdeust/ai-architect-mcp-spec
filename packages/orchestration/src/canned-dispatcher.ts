@@ -75,15 +75,12 @@ export interface CannedDispatcherOptions {
    * so planDocumentVerification yields claims and the judge phase fires.
    */
   readonly fake_section_draft?: (section_type: string) => string;
-  /**
-   * Answer for the `implementation_gate` ask_user (PR 3b,
-   * design-phases-3-5.md §3). Default "PRD only" — the zero-regression
-   * default every pre-existing smoke/KPI baseline depends on. Set to
-   * "Implement" to drive the post-specs loop's pre_impl_grounding dead-end
-   * path in a full smoke run.
-   */
-  /** Exercise a flagged implementation path only when a test explicitly requests a policy override. */
+  /** Allow "Implement" to select the explicit override offered for a non-pass verdict. */
   readonly override_policy?: boolean;
+  /**
+   * Defaults to "PRD only". "Implement" selects implementation on a pass.
+   * A non-pass verdict keeps "PRD only" unless override_policy is true.
+   */
   readonly implementation_gate_answer?: "PRD only" | "Implement";
   /**
    * Per-attempt verdict producer for the `review` step (PR 4b). Default:
