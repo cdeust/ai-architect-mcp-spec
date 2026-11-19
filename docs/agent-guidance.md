@@ -56,8 +56,10 @@ the prompt was written before the contract, and the repository's own standards a
 6. **No comment after an approve.** No reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
-7. **Owner decisions are left alone:** a pull request on the branch
-   `ci/budget-counts-contract-reviews`, anything labelled `hold` or `do-not-merge`, a draft.
+7. **Owner decisions are left alone.** Leave a pull request on the branch
+   `ci/budget-counts-contract-reviews` and anything labelled `hold` or `do-not-merge` alone.
+   Routines leave drafts alone. A session may push to its own draft and mark it ready
+   under rule 10. Leave another session's draft alone.
 8. **The work is verified before the pull request exists** (Cortex ADR-1132). Before
    opening a pull request, and before each push to one, run the `unit` and `regression`
    commands of `ci.json` on a clean copy of the commit, a worktree under
