@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SpawnSubagentsActionSchema } from "@prd-gen/orchestration";
@@ -9,7 +8,7 @@ import { runBench } from "../real-run/run-bench.js";
 import { cannedInvoke } from "../real-run/canned-ports.js";
 import { expect, it } from "vitest";
 
-import { localCli } from "./real-run-cli-harness.js";
+import { localCli, tempDirectory } from "./real-run-cli-harness.js";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
 function cli(...args: string[]) {
@@ -32,7 +31,7 @@ it("requires explicit cost acceptance before opening a live plan", async () => {
 });
 
 it("writes five dry-run records and the comparison without an installed model CLI", async () => {
-  const out = await mkdtemp(join(tmpdir(), "real-run-test-"));
+  const out = await tempDirectory("real-run-test-");
   try {
     const result = await localCli({}, "--dry-run", "--plan", "real-run/plans/pilot.json", "--out", out);
     expect(result.status, result.stderr).toBe(0);
@@ -100,7 +99,7 @@ it("loads a bounded smoke arm with Haiku at low effort for every reducer purpose
 });
 
 it("requires plan limits, merges per-arm overrides, and journals a stopped CLI run", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-limits-"));
+  const out = await tempDirectory("bench-limits-");
   try {
     const file = join(out, "plan.json");
     const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
@@ -125,7 +124,7 @@ it("requires plan limits, merges per-arm overrides, and journals a stopped CLI r
 });
 
 it("journals a metered stand-in response through the CLI before the cost stop", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-stand-in-"));
+  const out = await tempDirectory("bench-stand-in-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.limits.max_cost_usd = 0.0001;
@@ -155,7 +154,7 @@ it("journals a metered stand-in response through the CLI before the cost stop", 
 
 it.each([["tiny-as-emitted"], ["summary.md"], ["tiny-as-emitted", "summary.md"]])(
   "refuses existing outputs before the first arm (%s)", async (...names) => {
-    const out = await mkdtemp(join(tmpdir(), "bench-conflict-"));
+    const out = await tempDirectory("bench-conflict-");
     try {
       for (const name of names) {
         if (name === "summary.md") await writeFile(join(out, name), "original");
@@ -175,7 +174,7 @@ it.each([["tiny-as-emitted"], ["summary.md"], ["tiny-as-emitted", "summary.md"]]
 );
 
 it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-cli-error-"));
+  const out = await tempDirectory("bench-cli-error-");
   try {
     const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
     fixture.is_error = true;
@@ -203,7 +202,7 @@ it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", a
 });
 
 it("checks the summed reported spend between arms in execution order and uses fresh call directories", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-plan-cap-"));
+  const out = await tempDirectory("bench-plan-cap-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.arms = ["a", "b", "c"].map(name => ({ ...plan.arms[0], name }));
@@ -242,7 +241,7 @@ it("checks the summed reported spend between arms in execution order and uses fr
 });
 
 it.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget after two $%s calls", async (cost, remainder) => {
-  const out = await mkdtemp(join(tmpdir(), "bench-remainder-"));
+  const out = await tempDirectory("bench-remainder-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.arms = ["first", "second"].map(name => ({ ...plan.arms[0], name }));
@@ -271,7 +270,7 @@ it.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget 
 });
 
 it("journals a timeout and removes its call directory", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-cli-timeout-"));
+  const out = await tempDirectory("bench-cli-timeout-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     const file = join(out, "plan.json");
@@ -288,9 +287,11 @@ it("journals a timeout and removes its call directory", async () => {
   }
 });
 it("journals a failed workspace removal and runs the next arm", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-kept-"));
+  const out = await tempDirectory("bench-kept-");
   const marker = join(out, "locked");
   try {
+    const alias = join(out, "alias");
+    await symlink(out, alias);
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.arms = ["first", "second"].map(name => ({ ...plan.arms[0], name, limits: { max_invocations: 1 } }));
     const file = join(out, "plan.json");
@@ -302,12 +303,13 @@ it("journals a failed workspace removal and runs the next arm", async () => {
     ].join("\n"), { mode: 0o700 });
     const fixture = join(cwd, "src/__tests__/fixtures/claude-cli-result.json");
     const result = await localCli({ PATH: out, MARKER: marker, FIXTURE: fixture }, "--i-accept-model-cost",
-      "--plan", file, "--out", out);
+      "--plan", file, "--out", alias);
     const kept = (await readFile(marker, "utf8")).trim();
     for (const name of ["first", "second"]) {
       const dir = join(out, name);
       const row = JSON.parse(await readFile(join(dir, "rows.jsonl"), "utf8"));
       expect(row).toMatchObject({ error: null, workspace_kept: name === "first" });
+      if (name === "first") expect(row.workspace_path).toBe(kept);
       if (name === "first") expect(row.workspace_removal_error).toMatch(/EACCES|EPERM|ENOTEMPTY/);
       const record = JSON.parse(await readFile(join(dir, "record.json"), "utf8"));
       expect(record.rows).toEqual([row]);
@@ -322,7 +324,7 @@ it("journals a failed workspace removal and runs the next arm", async () => {
   }
 });
 it("reports a configured zero arm limit while the plan still has budget", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-zero-arm-"));
+  const out = await tempDirectory("bench-zero-arm-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.arms[0].limits = { max_cost_usd: 0 };
@@ -337,7 +339,7 @@ it("reports a configured zero arm limit while the plan still has budget", async 
   }
 });
 it("keeps the numeric limit below the decimal remainder when adjacent numbers are dollars apart", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-large-cap-"));
+  const out = await tempDirectory("bench-large-cap-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
     plan.plan_max_cost_usd = 1e16;

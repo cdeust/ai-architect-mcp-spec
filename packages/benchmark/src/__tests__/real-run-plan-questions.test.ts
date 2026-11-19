@@ -1,5 +1,5 @@
-import { readFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { tempDirectory } from "./real-run-cli-harness.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { API } from "typescript/unstable/sync";
@@ -72,7 +72,7 @@ it.each(["pilot", "smoke"])("%s arms register all reachable handler questions", 
   }
 });
 it("finds literal, local, imported, shorthand and assigned question IDs across the source tree", async () => {
-  const root = await mkdtemp(join(tmpdir(), "bench-question-ids-"));
+  const root = await tempDirectory("bench-question-ids-");
   try {
     const src = join(root, "src");
     await mkdir(join(src, "nested"), { recursive: true });

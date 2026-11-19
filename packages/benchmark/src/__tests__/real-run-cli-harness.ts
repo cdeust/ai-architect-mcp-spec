@@ -1,6 +1,7 @@
 import { appendFileSync, lstatSync, rmSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
@@ -8,6 +9,10 @@ import { runCli, type CliIO } from "../real-run/cli-main.js";
 import { loadArms } from "../real-run/plan-file.js";
 
 const base = fileURLToPath(new URL("../../", import.meta.url));
+
+export async function tempDirectory(prefix: string) {
+  return realpath(await mkdtemp(resolve(tmpdir(), prefix)));
+}
 
 export function harness(env: NodeJS.ProcessEnv, overrides: Partial<CliIO> = {}) {
   const events = new EventEmitter();

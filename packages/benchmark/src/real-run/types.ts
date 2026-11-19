@@ -44,6 +44,7 @@ export interface Ports {
 }
 export interface Row {
   workspace_kept: boolean;
+  /** Absolute physical path of the retained workspace, with symlinks resolved. */
   workspace_path?: string;
   workspace_removal_error?: string;
   notes?: string[];

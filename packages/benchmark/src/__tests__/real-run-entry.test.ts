@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
+import { tempDirectory } from "./real-run-cli-harness.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ vi.mock("../real-run/claude-cli-invoker.js", () => ({
 const smoke = fileURLToPath(new URL("../../real-run/plans/smoke.json", import.meta.url));
 
 it("uses the host streams, clock, environment and exit status at the process entry", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-entry-"));
+  const dir = await tempDirectory("bench-entry-");
   const status = process.exitCode;
   const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
   const stderr = vi.spyOn(console, "error").mockImplementation(() => {});

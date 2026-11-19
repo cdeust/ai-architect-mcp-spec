@@ -1,18 +1,17 @@
 import { readFileSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, vi } from "vitest";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
 import { cannedInvoke } from "../real-run/canned-ports.js";
-import { harness } from "./real-run-cli-harness.js";
+import { harness, tempDirectory } from "./real-run-cli-harness.js";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
 
 it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
-  const out = await mkdtemp(join(tmpdir(), "bench-signal-"));
+  const out = await tempDirectory("bench-signal-");
   const marker = join(out, "pids");
   const standIn = join(out, "claude");
   let pids: number[] = [];
@@ -79,7 +78,7 @@ async function parallelStandIn(file: string, out: string) {
 }
 
 it("journals the entire interrupted parallel batch when one workspace cannot be removed", async () => {
-  const out = await mkdtemp(join(tmpdir(), "bench-parallel-exit-"));
+  const out = await tempDirectory("bench-parallel-exit-");
   const dir = join(out, "parallel");
   let run: Promise<unknown> | undefined;
   let interrupt: (() => void) | undefined;

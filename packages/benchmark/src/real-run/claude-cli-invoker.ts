@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendStderr, settleOutput, type readResult } from "./claude-result.js";
@@ -82,7 +82,7 @@ export function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: 
 
 export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall, env = process.env, remove = rmSync): Ports["invoke"] {
   return async (inv, settings, row) => {
-    const cwd = mkdtempSync(resolve(directory, "call-"));
+    const cwd = mkdtempSync(resolve(realpathSync(directory), "call-"));
     const cleanup = () => {
       try {
         remove(cwd, { recursive: true, force: true });

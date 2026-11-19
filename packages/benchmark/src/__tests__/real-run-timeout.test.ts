@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tempDirectory } from "./real-run-cli-harness.js";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
@@ -8,7 +8,7 @@ import { runBench } from "../real-run/run-bench.js";
 import { fileURLToPath } from "node:url";
 
 it("kills a hanging executable and records the timeout on its invocation", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-timeout-"));
+  const dir = await tempDirectory("bench-timeout-");
   try {
     const program = join(dir, "stand-in");
     await writeFile(program, '#!/bin/sh\necho $$ > "$0.pid"\n/bin/sleep 3 &\necho $! > \"$0.descendant\"\nwait\n', { mode: 0o700 });
@@ -39,7 +39,7 @@ it("kills a hanging executable and records the timeout on its invocation", async
 });
 
 it.each(["complete", "incomplete", "billed error"])("handles %s output when a descendant holds stdout after exit", async output => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-inherited-pipe-"));
+  const dir = await tempDirectory("bench-inherited-pipe-");
   try {
     const program = join(dir, "stand-in");
     const fixture = new URL("./fixtures/claude-cli-result.json", import.meta.url);
@@ -74,7 +74,7 @@ it.each(["complete", "incomplete", "billed error"])("handles %s output when a de
 });
 
 it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe returns %s", async code => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-group-"));
+  const dir = await tempDirectory("bench-group-");
   const kill = vi.spyOn(process, "kill");
   if (code === "EPERM") kill.mockImplementation(() => { throw Object.assign(new Error("EPERM"), { code }); });
   try {
@@ -95,7 +95,7 @@ it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe return
 });
 
 it("passes the prompt and isolated environment to the executable in its call directory", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-stdin-"));
+  const dir = await tempDirectory("bench-stdin-");
   try {
     const program = join(dir, "stand-in");
     const fixture = fileURLToPath(new URL("./fixtures/claude-cli-result.json", import.meta.url));

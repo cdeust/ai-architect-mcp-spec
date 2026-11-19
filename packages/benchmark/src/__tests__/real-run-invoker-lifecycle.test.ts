@@ -1,12 +1,12 @@
 import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
 import type { Invocation, Row } from "../real-run/types.js";
 
 vi.mock(import("node:child_process"), async original => ({ ...await original(), spawn: vi.fn() }));
-vi.mock(import("node:fs"), async original => ({ ...await original(), mkdtempSync: vi.fn() }));
+vi.mock(import("node:fs"), async original => ({ ...await original(), mkdtempSync: vi.fn(), realpathSync: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
 
 function invocation(pid?: number) {
@@ -14,6 +14,7 @@ function invocation(pid?: number) {
     pid, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
   }) as ChildProcessWithoutNullStreams;
   vi.mocked(spawn).mockReturnValue(child);
+  vi.mocked(realpathSync).mockReturnValue("/bench");
   vi.mocked(mkdtempSync).mockReturnValue("/bench/call-test");
   const signal = vi.spyOn(process, "kill").mockReturnValue(true);
   const track = vi.fn<NonNullable<Parameters<typeof makeClaudeInvoker>[3]>>();

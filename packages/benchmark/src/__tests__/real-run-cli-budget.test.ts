@@ -1,17 +1,16 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { cannedInvoke } from "../real-run/canned-ports.js";
-import { harness } from "./real-run-cli-harness.js";
+import { harness, tempDirectory } from "./real-run-cli-harness.js";
 
 const source = new URL("../../real-run/plans/smoke.json", import.meta.url);
 it.each([
   [0.0000001, 2, "configured arm limit"],
   [1, 0.0000001, "remaining plan budget"],
 ])("explains skipped sub-microdollar budgets, arm=%s plan=%s", async (limit, cap, cause) => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-skip-"));
+  const dir = await tempDirectory("bench-skip-");
   try {
     const plan = JSON.parse(await readFile(source, "utf8"));
     plan.limits.max_cost_usd = limit;
@@ -29,7 +28,7 @@ it.each([
 });
 
 it("prints unequal caps, exact overspend and flushed JSON lines", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "bench-caps-"));
+  const dir = await tempDirectory("bench-caps-");
   try {
     const plan = JSON.parse(await readFile(source, "utf8"));
     plan.arms.push({ ...plan.arms[0], name: "later", limits: { max_cost_usd: 2 } });
