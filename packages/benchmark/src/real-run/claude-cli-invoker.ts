@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { z } from "zod";
 import type { Ports, Row, Settings } from "./types.js";
 
@@ -13,14 +13,21 @@ const accounting = z.object({
   cache_creation_input_tokens: tokens,
 });
 const modelAccounting = z.object({
-  inputTokens: tokens, outputTokens: tokens, cacheReadInputTokens: tokens,
-  cacheCreationInputTokens: tokens, costUSD: z.number().nonnegative(),
+  inputTokens: tokens,
+  outputTokens: tokens,
+  cacheReadInputTokens: tokens,
+  cacheCreationInputTokens: tokens,
+  costUSD: z.number().nonnegative(),
 }).partial();
 const envelope = z.object({
-  type: z.literal("result"), subtype: z.string(), is_error: z.boolean(),
-  result: z.string().optional(), errors: z.array(z.string()).optional(),
+  type: z.literal("result"),
+  subtype: z.string(),
+  is_error: z.boolean(),
+  result: z.string().optional(),
+  errors: z.array(z.string()).optional(),
   error: z.union([z.string(), z.object({ message: z.string() })]).optional(),
-  duration_ms: z.number().nonnegative().nullish(), total_cost_usd: z.number().nonnegative().nullish(),
+  duration_ms: z.number().nonnegative().nullish(),
+  total_cost_usd: z.number().nonnegative().nullish(),
   usage: accounting.partial().nullish(),
   modelUsage: z.record(z.string(), modelAccounting).nullish(),
 });
@@ -75,65 +82,96 @@ function readResult(stdout: string, stderr: string, failure?: string) {
   return { ...result, error: error.join(": ") || undefined };
 }
 
-function killGroup(pid: number) {
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-      throw error;
+function groupKiller(child: ChildProcessWithoutNullStreams) {
+  let killed = false;
+  return () => {
+    if (killed || child.pid === undefined) return;
+    killed = true;
+    try {
+      // The leader can be reaped before inherited pipes close. Probe for surviving
+      // group members before sending a fatal signal to the former group ID.
+      if (child.exitCode !== null || child.signalCode !== null) process.kill(-child.pid, 0);
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
-  }
+  };
 }
 
 type TrackCall = (row: Row, kill: () => void) => () => void;
 
-export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall): Ports["invoke"] {
-  return (inv, settings, row) => new Promise((resolve, reject) => {
-    const cwd = mkdtempSync(join(directory, "call-"));
-    const child = spawn(program, claudeArgs(settings), {
-      cwd, detached: true, stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
-    });
-    let killed = false;
-    const kill = () => {
-      if (!killed && child.pid !== undefined) {
-        killed = true;
-        killGroup(child.pid);
-      }
-    };
-    const release = track?.(row, kill);
+function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number, kill: () => void) {
+  return new Promise<ReturnType<typeof readResult>>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    child.stderr.setEncoding("utf8").on("data", chunk => {
-      stderr += chunk.slice(0, STDERR_LIMIT - stderr.length);
-    });
     let failure: string | undefined;
+    let settled = false;
+    function finish(result: ReturnType<typeof readResult> | Error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        kill();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    }
+    function read(final: boolean) {
+      if (settled) return;
+      try {
+        finish(readResult(stdout, stderr.trim(), failure));
+      } catch (error) {
+        if (final) finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
     const timer = setTimeout(() => {
-      failure = `Claude CLI timed out after ${timeoutMs} ms`;
-      kill();
-      release?.();
-      reject(new Error([failure, stderr.trim()].filter(Boolean).join(": ")));
+      finish(new Error([`Claude CLI timed out after ${timeoutMs} ms`, stderr.trim()].filter(Boolean).join(": ")));
     }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", chunk => {
       stdout += chunk;
+      if (child.exitCode === 0) read(false);
     });
-    child.on("error", reject);
+    child.stderr.setEncoding("utf8").on("data", chunk => {
+      stderr += chunk.slice(0, STDERR_LIMIT - stderr.length);
+    });
+    child.once("error", finish);
     child.stdin.on("error", error => {
       failure ??= error.message;
     });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      kill();
-      release?.();
-      if (code !== 0) {
-        failure ??= `Claude CLI exited with ${signal ?? code}`;
-      }
-      try {
-        resolve(readResult(stdout, stderr.trim(), failure));
-      } catch (error) {
-        reject(error);
-      }
+    child.once("exit", code => {
+      if (code === 0) read(false);
     });
-    child.stdin.end(inv.prompt);
+    child.once("close", (code, signal) => {
+      if (code !== 0) failure ??= `Claude CLI exited with ${signal ?? code}`;
+      read(true);
+    });
   });
+}
+
+export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall): Ports["invoke"] {
+  return async (inv, settings, row) => {
+    const cwd = mkdtempSync(join(directory, "call-"));
+    const child = spawn(program, claudeArgs(settings), {
+      cwd,
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      },
+    });
+    const kill = groupKiller(child);
+    const release = track?.(row, kill);
+    try {
+      const result = collectOutput(child, timeoutMs, kill);
+      child.stdin.end(inv.prompt);
+      return await result;
+    } finally {
+      release?.();
+    }
+  };
 }
