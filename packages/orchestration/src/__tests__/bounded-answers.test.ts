@@ -1,3 +1,4 @@
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
 import { makeCannedDispatcher, newPipelineState, PipelineStateSchema, step, type PipelineState } from "../index.js";
 import { selfCheckState } from "./verify-budget-fixture.js";
@@ -194,4 +195,38 @@ it.each([
   expect(continued.action.kind).not.toBe("failed");
   expect(continued.state.current_step).toBe(nextStep);
   expect(continued.state.unmatched_answers).toEqual({});
+});
+
+it.each(["continue", "stray clarification_answer"])("starts a fresh continuation budget in the next round after %s", (transition) => {
+  const continueId = "clarification_continue";
+  const answer = (question_id: string, choice: string) => ({ kind: "user_answer" as const, question_id, selected: [choice] });
+  const dispatch = makeCannedDispatcher();
+  // A feature first asks whether to continue after eight completed rounds.
+  const clarifications = Array.from({ length: 8 }, (_, index) => ({
+    round: index + 1, asked_at: "now", question: "Which detail?", answer: index < 7 ? "detail" : undefined,
+  }));
+  const first = step({ state: { ...clarify, clarifications, unmatched_answers: { other: 2 } }, result: answer("clarification_answer", "detail") });
+  expect(first.action).toMatchObject({ kind: "ask_user", question_id: continueId, header: "Asked 8 questions. Proceed?" });
+  const wrong = answer(continueId, "wrong");
+  const retry = step({ state: first.state, result: wrong });
+  expect(retry.state.unmatched_answers).toEqual({ other: 2, clarification_continue: 1 });
+
+  // A duplicate clarification_answer also re-enters composition without resolving the old prompt.
+  const next = step({ state: retry.state, result: transition === "continue" ? answer(continueId, "continue") : answer("clarification_answer", "duplicate") });
+  expect(next.action).toMatchObject({ kind: "spawn_subagents", batch_id: "clarification_compose_9" });
+  const composed = step({ state: next.state, result: dispatch(next.action) });
+  expect(composed.action).toMatchObject({ kind: "ask_user", question_id: "clarification_answer" });
+  const second = step({ state: composed.state, result: answer("clarification_answer", "new detail") });
+  expect(second.action).toMatchObject({ kind: "ask_user", question_id: continueId, header: "Asked 9 questions. Proceed?" });
+  expect(second.state.unmatched_answers).toEqual({ other: 2 });
+  let saved = second.state;
+  for (const count of [1, 2]) {
+    const out = step({ state: saved, result: wrong });
+    expectOptionRetry(out.action, second.action);
+    expect(out.state.unmatched_answers).toEqual({ other: 2, clarification_continue: count });
+    saved = out.state;
+  }
+  const failed = step({ state: saved, result: wrong });
+  expect(failed.action).toEqual({ kind: "failed", step: "clarification", reason: "clarification_continue: 3 unmatched answers." });
+  expect(failed.state.unmatched_answers).toEqual({ other: 2, clarification_continue: 3 });
 });

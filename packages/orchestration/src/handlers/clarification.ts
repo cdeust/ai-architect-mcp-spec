@@ -216,8 +216,10 @@ function recordAnswerAndDispatch(
     };
   }
 
+  // Each round reuses this question ID but starts with its own retry budget.
+  const { [QUESTION_ID_CONTINUE]: _previousRound, ...unmatched_answers } = state.unmatched_answers;
   return {
-    state: { ...state, clarifications },
+    state: { ...state, clarifications, unmatched_answers },
     action: continueQuestion(completed, bounds),
   };
 }
