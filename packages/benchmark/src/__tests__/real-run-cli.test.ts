@@ -27,6 +27,10 @@ it("writes five dry-run records and the comparison without an installed model CL
     const arms = ["standard-as-emitted", "tiny-as-emitted", "standard-tiered", "tiny-tiered", "tiny-tiered-parallel"];
     expect((await readdir(out)).sort()).toEqual([...arms, "summary.md"].sort());
     const summary = await readFile(join(out, "summary.md"), "utf8");
+    expect(result.stdout).toMatch(/standard-as-emitted:[^\n]*\n  Expected by model: session=20, haiku=\d+/);
+    expect(result.stdout).toMatch(/standard-tiered:[^\n]*\n  Expected by model: session=0, .*sonnet=20/);
+    expect(summary).toContain("Reported models");
+    expect(summary).toContain("| canned |");
     for (const arm of arms) {
       const count = arm.startsWith("tiny") ? 12 : 27;
       expect(result.stdout).toContain(`${arm}: ${count} expected invocations (canned)`);

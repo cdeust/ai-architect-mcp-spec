@@ -6,16 +6,8 @@ import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
 import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
 import { makeClaudeInvoker } from "./claude-cli-invoker.js";
-import type { Row, RunRecord } from "./types.js";
-
-function summaryRow(name: string, record: RunRecord) {
-  const { totals, quality } = record;
-  const distribution = Object.entries(quality.distribution ?? {}).map(([k, v]) => `${k} ${v}`).join(", ");
-  const cells = [name, totals.input_tokens, totals.output_tokens, totals.cache_read_tokens, totals.cache_creation_tokens,
-    totals.cost_usd ?? "unknown", record.wall_time_ms.toFixed(1), totals.invocations, totals.errors, totals.unmetered_calls,
-    quality.outcome?.status ?? record.terminal.kind, quality.hard_output_score ?? "—", distribution || "—"];
-  return `| ${cells.join(" | ")} |`;
-}
+import { expectedModels, summaryRow } from "./report.js";
+import type { Row } from "./types.js";
 
 async function main() {
   const { values } = parseArgs({ options: { plan: { type: "string" }, out: { type: "string" },
@@ -29,12 +21,13 @@ async function main() {
   for (const arm of arms) {
     const record = await runBench(arm.plan, ports);
     console.log(`${arm.name}: ${record.totals.invocations} expected invocations (canned)`);
-    estimates.push({ ...arm, record });
+    console.log(`  Expected by model: ${expectedModels(record)}`);
+    estimates.push(arm);
   }
   const summary = [dry ? "# Dry run (canned responses)" : "# Model run",
     "", "Token columns sum metered calls. A call without metering makes the total cost unknown.", "",
-    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | USD | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification |",
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|"];
+    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | USD | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|"];
   for (const arm of estimates) {
     const dir = join(values.out, arm.name);
     await mkdir(dir, { recursive: true });
