@@ -11,7 +11,12 @@ import { DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
 import { SectionStatusSchema } from "./section-status.js";
 import { VerificationPlanSnapshotSchema } from "./verification-plan.js";
-import { MAX_CLARIFICATION_TURNS, MAX_PIPELINE_ERRORS } from "./bounded-io.js";
+import {
+  boundedClarificationOptions,
+  boundedClarificationText,
+  MAX_CLARIFICATION_TURNS,
+  MAX_PIPELINE_ERRORS,
+} from "./bounded-io.js";
 import { PostSpecsStateSchema } from "./post-specs-state.js";
 import { VerifyBudgetConfigSchema } from "./verify-budget.js";
 import { VerificationPolicySchema } from "./verification-policy.js";
@@ -50,9 +55,9 @@ export type ReliabilityObservationRecord = z.infer<typeof ReliabilityObservation
 
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
-  question: z.string(),
-  options: z.array(z.string()).nullable().optional(),
-  rationale: z.string().optional(),
+  question: z.string().transform(boundedClarificationText),
+  options: z.unknown().transform(boundedClarificationOptions).optional(),
+  rationale: z.string().transform(boundedClarificationText).optional(),
   answer: z.string().optional(),
   asked_at: z.string(),
   answered_at: z.string().optional(),

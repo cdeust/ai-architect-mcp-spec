@@ -37,7 +37,9 @@ export const MAX_RESPONSE_CHARS = 100_000;
  * reserved for clarifications so the other half covers the rest of the state
  * (sections, errors, grounding) when format:"full" is requested.
  */
-const CLARIFICATION_TURN_CHARS = 1_000; // measured 740, rounded up (see above)
+// source: measured 740, rounded up (see above). Reuse the turn estimate as
+// the per-field ceiling for composed text (1,000 UTF-16 code units per field).
+const CLARIFICATION_TURN_CHARS = 1_000;
 export const MAX_CLARIFICATION_TURNS = Math.floor(
   MAX_RESPONSE_CHARS / 2 / CLARIFICATION_TURN_CHARS,
 ); // 50
@@ -62,3 +64,20 @@ const ERROR_MESSAGE_CHARS = 500; // project convention, measured max 312
 export const MAX_PIPELINE_ERRORS = Math.floor(
   MAX_RESPONSE_CHARS / 4 / ERROR_MESSAGE_CHARS,
 ); // 50
+
+export function boundedClarificationText(value: string): string {
+  return value.slice(0, CLARIFICATION_TURN_CHARS);
+}
+
+// The compose protocol supplies labels only. Its rationale is the ask_user description.
+export function boundedClarificationOptions(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 4) return null;
+  const labels: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") return null;
+    const label = boundedClarificationText(entry);
+    if (!label.trim()) return null;
+    labels.push(label);
+  }
+  return labels;
+}

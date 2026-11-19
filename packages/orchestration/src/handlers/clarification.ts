@@ -1,4 +1,5 @@
 import { answerOptionQuestion } from "./match-offered-option.js";
+import { boundedClarificationOptions, boundedClarificationText } from "../types/state/bounded-io.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import type { ClarificationTurn, PipelineState } from "../types/state.js";
@@ -57,13 +58,11 @@ function tryParseGeneratedQuestion(rawText: string) {
   try {
     const obj = extractJsonObject(rawText) as Partial<GeneratedQuestion>;
     if (typeof obj.question !== "string" || !obj.question.trim()) return null;
-    const options =
-      Array.isArray(obj.options) && obj.options.every((o) => typeof o === "string")
-        ? obj.options
-        : null;
-    const rationale =
-      typeof obj.rationale === "string" ? obj.rationale : "";
-    return { question: obj.question.trim(), options, rationale };
+    return {
+      question: boundedClarificationText(obj.question.trim()),
+      options: boundedClarificationOptions(obj.options),
+      rationale: typeof obj.rationale === "string" ? boundedClarificationText(obj.rationale) : "",
+    };
   } catch {
     return null;
   }
@@ -238,9 +237,10 @@ function handleComposedQuestion(
       }
     : {
         round: expectedRound,
-        question:
+        question: boundedClarificationText(
           response?.error ??
           `What is the most important detail about "${state.feature_description}" that should drive this PRD?`,
+        ),
         options: null,
         rationale: generated
           ? ""
