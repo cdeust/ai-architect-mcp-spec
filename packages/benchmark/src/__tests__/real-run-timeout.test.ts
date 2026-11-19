@@ -16,12 +16,12 @@ it("kills a hanging executable and records the timeout on its invocation", async
     const pilot = fileURLToPath(new URL("../../real-run/plans/pilot.json", import.meta.url));
     const [{ plan }] = await loadArms(pilot);
     const record = await runBench(plan, {
-      invoke: makeClaudeInvoker(200, program),
+      invoke: makeClaudeInvoker(1500, program),
       answer: cannedAnswer,
       record: () => {},
       clock: Date.now,
     });
-    expect(record.rows[0]).toMatchObject({ error: "Claude CLI timed out after 200 ms", usage: null });
+    expect(record.rows[0]).toMatchObject({ error: "Claude CLI timed out after 1500 ms", usage: null });
     const pid = Number(await readFile(program + ".pid", "utf8"));
     expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   } finally {

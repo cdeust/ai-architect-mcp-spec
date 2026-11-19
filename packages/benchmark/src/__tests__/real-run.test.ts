@@ -147,7 +147,7 @@ it("records a completed call before a later host failure", async () => {
     answer: () => { throw new Error("host interrupted"); },
   });
   await expect(aborted).rejects.toThrow("host interrupted");
-  expect(saved).toEqual(["probe"]);
+  expect(saved).toEqual(["probe", "draft"]);
 });
 
 it("compares all four token counters and spend to the first arm", async () => {
@@ -157,4 +157,22 @@ it("compares all four token counters and spend to the first arm", async () => {
   expect(summaryRow("second", run, baseline)).toContain("| 168 | 2.00× | 3 | 0.25× |");
   expect(summaryRow("second", run, { ...baseline, input_tokens: 0, cost_usd: null }))
     .toContain("| 168 | — | 3 | — |");
+});
+
+it("accounts for all in-flight calls when a parallel batch crosses the cost limit", async () => {
+  const full = await runBench(plan, ports);
+  const grouped = full.rows.find((row, i) => row.batch_id === full.rows[i + 1]?.batch_id);
+  expect(grouped).toBeDefined();
+  const record = await runBench({ ...plan, mode: "parallel", limits: { ...plan.limits, max_cost_usd: 0 } }, {
+    ...ports,
+    invoke: async (...args) => {
+      const result = await cannedInvoke(...args);
+      const cost_usd = args[0].invocation_id === grouped?.invocation_id ? 1 : 0;
+      return { ...result, usage: { ...result.usage, cost_usd } };
+    },
+  });
+  expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
+  const last = full.rows.map(row => row.batch_id).lastIndexOf(grouped!.batch_id);
+  expect(record.rows.map(row => row.invocation_id)).toEqual(full.rows.slice(0, last + 1).map(row => row.invocation_id));
+  expect(record.totals.cost_usd).toBe(1);
 });
