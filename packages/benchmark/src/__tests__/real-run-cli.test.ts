@@ -33,6 +33,15 @@ it("writes five dry-run records and the comparison without an installed model CL
       const record = JSON.parse(await readFile(join(out, arm, "record.json"), "utf8"));
       expect(record).toMatchObject({ dry_run: true, totals: { invocations: count, cost_usd: 0, errors: 0 },
         quality: { hard_output_score: 0.85, outcome: { status: "needs_attention" } } });
+      const sections = JSON.parse(await readFile(join(out, arm, "sections.json"), "utf8"));
+      expect(sections).toEqual(record.sections);
+      expect(sections).toContainEqual({
+        section_type: "overview",
+        status: expect.any(String),
+        attempt: expect.any(Number),
+        violation_count: expect.any(Number),
+        content: expect.stringMatching(/\S/),
+      });
       const journal = await readFile(join(out, arm, "rows.jsonl"), "utf8");
       expect(journal.trimEnd().split("\n").map(line => JSON.parse(line))).toEqual(expect.arrayContaining(record.rows));
       expect(journal.trimEnd().split("\n")).toHaveLength(count);

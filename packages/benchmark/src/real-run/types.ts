@@ -1,5 +1,5 @@
 import type { PRDContext, RequestSize } from "@prd-gen/core";
-import type { AskUserAction, DoneAction, FailedAction, SpawnSubagentsAction, UserAnswer } from "@prd-gen/orchestration";
+import type { AskUserAction, DoneAction, FailedAction, SectionStatus, SpawnSubagentsAction, UserAnswer } from "@prd-gen/orchestration";
 
 export type Purpose = SpawnSubagentsAction["purpose"];
 export type Invocation = SpawnSubagentsAction["invocations"][number] & { purpose: Purpose };
@@ -65,6 +65,9 @@ export interface Totals {
 }
 export interface RunRecord {
   rows: Row[];
+  sections: (Pick<SectionStatus, "section_type" | "status" | "attempt" | "violation_count"> & {
+    content: string | null;
+  })[];
   totals: Totals;
   per_purpose: Partial<Record<Purpose, Totals>>;
   batches: number;

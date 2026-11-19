@@ -46,6 +46,7 @@ async function main() {
       record: (row: Row) => appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true }),
     });
     await writeFile(join(dir, "record.json"), JSON.stringify({ dry_run: dry, plan: arm.plan, ...record }, null, 2) + "\n");
+    await writeFile(join(dir, "sections.json"), JSON.stringify(record.sections, null, 2) + "\n");
     summary.push(summaryRow(arm.name, record));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
   }

@@ -134,6 +134,9 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
   }
   return {
     terminal, rows, batches, steps,
+    sections: state.sections.map(({ section_type, status, attempt, violation_count, content }) => ({
+      section_type, status, attempt, violation_count, content: content ?? null,
+    })),
     totals: totals(rows),
     per_purpose: perPurpose(rows),
     quality: quality(terminal),
