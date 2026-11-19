@@ -114,6 +114,7 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
       "The size of the request, declared by the host: the server never reads a size from feature_description. " +
         "'tiny' (Tiny change) is the fast path for a small, self-contained change: 4 sections (overview, requirements, acceptance_criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. " +
         "It is not for: incident, which keeps the rounds and sections of its kind. " +
+        "Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. " +
         "Omit it for a request of ordinary size.",
     );
     const { sections, clarificationRange, notFor } = REQUEST_SIZE_CONFIGS.tiny.plan!;

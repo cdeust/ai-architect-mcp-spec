@@ -274,7 +274,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       request_size: RequestSizeSchema
         .optional()
         .describe(
-          `The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Omit it for a request of ordinary size.`,
+          `The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`,
         ),
     },
     { destructiveHint: true },

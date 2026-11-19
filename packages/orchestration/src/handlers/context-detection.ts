@@ -55,15 +55,22 @@ const QUESTION_ID = "prd_context";
  *                the host declared a size that is not for this kind (an
  *                incident is never a fast path), it says the run is held to
  *                the plan of its kind: a declaration is never dropped
- *                without a word.
+ *                without a word. When a size with a plan of its own is kept
+ *                for a kind the server read from the words (`guessed`), it
+ *                says what that guess cannot see: an incident is exempt from
+ *                a fast path only when its kind is known, and its words may
+ *                not name it ("checkout returns 500 since the deploy").
  */
-function settle(state: PipelineState, context: PRDContext, said: (kind: string) => string) {
+function settle(state: PipelineState, context: PRDContext, said: (kind: string) => string, guessed = false) {
   const kept = effectiveRequestSize(context, state.request_size);
   let message = said(PRD_CONTEXT_CONFIGS[context].displayName);
   if (kept !== state.request_size) {
     message += `. The declared size "${state.request_size}" is not applied: a run of this kind keeps the rounds and sections of its kind.`;
   } else if (kept !== REQUEST_SIZE_DEFAULT) {
     message += `. Request size: ${REQUEST_SIZE_CONFIGS[kept].displayName}.`;
+    if (guessed) {
+      message += ` The kind was read from the words of the description, not declared: if this request is an incident, start again with prd_context "incident", which keeps the plan of its kind.`;
+    }
   }
   return {
     state: { ...state, prd_context: context, current_step: "input_analysis" as const },
@@ -107,7 +114,7 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
   // Try to detect from feature_description.
   const detected = detectFromText(state.feature_description);
   if (detected && allowed.includes(detected)) {
-    return settle(state, detected, detectedFromWords);
+    return settle(state, detected, detectedFromWords, true);
   }
 
   // Ask user — restricted to tier-allowed options.

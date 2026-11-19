@@ -44,7 +44,7 @@ start_pipeline({
   feature_description: "<parsed description>",
   codebase_path: "<parsed path, or omit>",
   prd_context: "<the kind of PRD you declare, see SKILL.md step 1, or omit>",
-  request_size: "<\"tiny\" for a small, self-contained change, or omit>"
+  request_size: "<\"tiny\" for a small, self-contained change that is not an incident (declare prd_context with it), or omit>"
 })
 ```
 
