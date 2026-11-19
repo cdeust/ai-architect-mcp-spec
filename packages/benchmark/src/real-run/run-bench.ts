@@ -49,6 +49,15 @@ interface Measurements {
   unmetered_calls: number;
 }
 
+function limitExceeded(measurements: Measurements, limits: RunPlan["limits"]) {
+  if (measurements.unmetered_calls > limits.max_unmetered_calls) {
+    return stopped("max_unmetered_calls");
+  }
+  if (measurements.cost_usd > limits.max_cost_usd) {
+    return stopped("max_cost_usd");
+  }
+}
+
 async function batch(
   action: SpawnSubagentsAction,
   plan: RunPlan,
@@ -56,7 +65,7 @@ async function batch(
   measurements: Measurements,
 ): Promise<BatchResult | Stopped> {
   const { rows } = measurements;
-  const { max_invocations, max_cost_usd } = plan.limits;
+  const { max_invocations } = plan.limits;
   const remaining = max_invocations - rows.length;
   const run = async (inv: SpawnSubagentsAction["invocations"][number]) => {
     const call = await measure({ ...inv, purpose: action.purpose }, action.batch_id, plan, ports);
@@ -69,14 +78,6 @@ async function batch(
     responses.push(call.response);
     addCost(measurements, call.row.usage);
   }
-  function limitExceeded() {
-    if (measurements.unmetered_calls > plan.limits.max_unmetered_calls) {
-      return stopped("max_unmetered_calls");
-    }
-    if (measurements.cost_usd > max_cost_usd) {
-      return stopped("max_cost_usd");
-    }
-  }
 
   if (plan.mode === "parallel") {
     if (action.invocations.length > remaining) {
@@ -84,7 +85,7 @@ async function batch(
     }
     const calls = await Promise.all(action.invocations.map(run));
     calls.forEach(collect);
-    const stop = limitExceeded();
+    const stop = limitExceeded(measurements, plan.limits);
     if (stop) {
       return stop;
     }
@@ -94,7 +95,7 @@ async function batch(
         return stopped("max_invocations");
       }
       collect(await run(inv));
-      const stop = limitExceeded();
+      const stop = limitExceeded(measurements, plan.limits);
       if (stop) {
         return stop;
       }
@@ -103,14 +104,18 @@ async function batch(
   return { kind: "subagent_batch_result", batch_id: action.batch_id, responses };
 }
 
-export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> {
-  const start = ports.clock();
-  let state = newPipelineState({
+function initialState(plan: RunPlan) {
+  return newPipelineState({
     run_id: "real-run",
     feature_description: plan.description,
     prd_context: plan.prd_context,
     request_size: plan.request_size,
   });
+}
+
+export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> {
+  const start = ports.clock();
+  let state = initialState(plan);
   const canned = makeCannedDispatcher();
   const measurements: Measurements = { rows: [], cost_usd: 0, unmetered_calls: 0 };
   const { rows } = measurements;

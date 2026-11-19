@@ -227,3 +227,33 @@ it("stops before reducer recovery when the first failed call is unmetered and no
   expect(record.terminal).toEqual({ kind: "stopped", reason: "max_unmetered_calls" });
   expect(record.totals).toMatchObject({ invocations: 1, errors: 1, unmetered_calls: 1, cost_usd: 0 });
 });
+
+it("records every probe field and the elapsed clock difference", async () => {
+  let time = 11;
+  const limits = { ...plan.limits, max_invocations: 1 };
+  const record = await runBench({ ...plan, limits, mode: "parallel" }, {
+    ...ports, clock: () => time++, record: () => {},
+  });
+  expect(record.wall_time_ms).toBe(1);
+  expect(record.batches).toBe(1);
+  expect(record.rows).toEqual([{
+    batch_id: "preflight_subagent_probe", invocation_id: "preflight_subagent_probe", purpose: "probe",
+    agent_type: "zetetic-team-subagents:engineer", isolation: "none", prompt_characters: 70,
+    requested: { model: "haiku", effort: "low" }, used: { model: "haiku", effort: "low" },
+    workspace_kept: false, error: null, usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+      cache_creation_tokens: 0, duration_ms: 0, cost_usd: 0, model_reported: "canned" },
+  }]);
+});
+
+it("preserves a zero step budget and counts only batches that invoked a worker", async () => {
+  const empty = await runBench({ ...plan, limits: { ...plan.limits, max_steps: 0 } }, ports);
+  expect(empty).toMatchObject({ steps: 0, rows: [], batches: 0, terminal: { kind: "stopped", reason: "max_steps" } });
+  const denied = await runBench({ ...plan, limits: { ...plan.limits, max_invocations: 0 } }, ports);
+  expect(denied).toMatchObject({ batches: 0, rows: [], terminal: { kind: "stopped", reason: "max_invocations" } });
+});
+
+it("preserves the printable cause when an invoker rejects with a string", async () => {
+  const record = await runBench(plan, { ...ports, invoke: async () => { throw "transport closed"; } });
+  expect(record.rows[0].error).toBe("transport closed");
+  expect(record.terminal.kind).toBe("failed");
+});
