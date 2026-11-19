@@ -56,3 +56,28 @@ it("bounds and trims stderr on timeout, then clears the watchdog after a success
     vi.useRealTimers();
   }
 });
+
+it("decodes UTF-8 on both pipes and skips parsing after settlement", async () => {
+  const { child, result } = streams();
+  expect(child.stdout.readableEncoding).toBe("utf8");
+  expect(child.stderr.readableEncoding).toBe("utf8");
+  child.stdout.emit("data", fixture);
+  child.emit("exit", 0, null);
+  await result;
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    child.emit("close");
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("allows late output to complete an incomplete envelope before close", async () => {
+  const { child, kill, result } = streams();
+  child.emit("exit", 0, null);
+  child.stdout.emit("data", fixture.slice(0, 2));
+  expect(kill).not.toHaveBeenCalled();
+  child.stdout.emit("data", fixture.slice(2));
+  expect(await result).toMatchObject({ text: "ok" });
+});

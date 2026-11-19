@@ -53,7 +53,7 @@ it("retains each mixed model's own counters independently of the top-level total
   const first = r.modelUsage["claude-haiku-5-5"];
   r.modelUsage.second = { ...first, inputTokens: 123, costUSD: 0.75 };
   const { usage } = parseClaudeResult(JSON.stringify(r));
-  expect(usage).toMatchObject({ input_tokens: 2, cost_usd: r.total_cost_usd, per_model: {
+  expect(usage).toMatchObject({ input_tokens: 2, cost_usd: r.total_cost_usd, model_reported: "claude-haiku-5-5, second", per_model: {
     "claude-haiku-5-5": { inputTokens: 2, outputTokens: 4, cacheReadInputTokens: 649,
       cacheCreationInputTokens: 3122, costUSD: first.costUSD },
     second: { inputTokens: 123, costUSD: 0.75 },
@@ -88,6 +88,7 @@ it.each([
 });
 
 it("waits for incomplete data and includes diagnostics only for failures", () => {
+  expect(settleOutput("{", "", undefined, true)).toEqual(new Error("Claude CLI returned invalid or incomplete JSON"));
   expect(settleOutput("{", " ignored ", undefined, false)).toBeUndefined();
   expect(settleOutput("{", " detail ", "exit 9", true))
     .toEqual(new Error("exit 9: Claude CLI returned invalid or incomplete JSON: detail"));
