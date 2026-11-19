@@ -25,7 +25,10 @@ it("kills a hanging executable and records the timeout on its invocation", async
     expect((await readdir(dir)).filter(name => name.startsWith("call-"))).toEqual([]);
     const descendant = Number(await readFile(program + ".descendant", "utf8"));
     await expect.poll(() => {
-      try { process.kill(descendant, 0); return false; }
+      try {
+        process.kill(descendant, 0);
+        return false;
+      }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
     }).toBe(true);
     const pid = Number(await readFile(program + ".pid", "utf8"));
@@ -59,7 +62,10 @@ it.each(["complete", "incomplete", "billed error"])("handles %s output when a de
         : { error: "Claude CLI timed out after 1500 ms", usage: null });
     const pid = Number(await readFile(program + ".descendant", "utf8"));
     await expect.poll(() => {
-      try { process.kill(pid, 0); return false; }
+      try {
+        process.kill(pid, 0);
+        return false;
+      }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
     }).toBe(true);
   } finally {
@@ -84,6 +90,37 @@ it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe return
     expect(kill).not.toHaveBeenCalledWith(-pid, "SIGKILL");
   } finally {
     kill.mockRestore();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("passes the prompt and isolated environment to the executable in its call directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bench-stdin-"));
+  try {
+    const program = join(dir, "stand-in");
+    const fixture = fileURLToPath(new URL("./fixtures/claude-cli-result.json", import.meta.url));
+    await writeFile(program, [
+      "#!/bin/sh", '/bin/cat > "$OUT/input"', 'pwd > "$OUT/cwd"',
+      'echo "$CLAUDE_CODE_DISABLE_CLAUDE_MDS/$CLAUDE_CODE_DISABLE_AUTO_MEMORY/$MARK" > "$OUT/settings"',
+      'exec /bin/cat "$FIXTURE"',
+    ].join("\n"), { mode: 0o700 });
+    const [{ plan }] = await loadArms(fileURLToPath(new URL("../../real-run/plans/smoke.json", import.meta.url)));
+    plan.limits.max_invocations = 1;
+    const env = { FIXTURE: fixture, OUT: dir, MARK: "supplied", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" };
+    const invoke = makeClaudeInvoker(1500, dir, program, undefined, env);
+    let prompt = "";
+    const record = await runBench(plan, { clock: Date.now, record: () => {}, invoke: (inv, used, row) => {
+      prompt = inv.prompt;
+      return invoke(inv, used, row);
+    } });
+    expect(record.rows[0].error).toBeNull();
+    expect(prompt).not.toBe("");
+    expect(await readFile(join(dir, "input"), "utf8")).toBe(prompt);
+    expect(await readFile(join(dir, "settings"), "utf8")).toBe("1/1/supplied\n");
+    const cwd = (await readFile(join(dir, "cwd"), "utf8")).trim();
+    expect(cwd.startsWith(join(dir, "call-"))).toBe(true);
+    await expect(readdir(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

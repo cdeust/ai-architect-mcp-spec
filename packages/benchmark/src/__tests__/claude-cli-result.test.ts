@@ -1,3 +1,4 @@
+import { appendStderr, settleOutput } from "../real-run/claude-result.js";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { claudeArgs, parseClaudeResult } from "../real-run/claude-cli-invoker.js";
@@ -57,4 +58,46 @@ it("retains each mixed model's own counters independently of the top-level total
       cacheCreationInputTokens: 3122, costUSD: first.costUSD },
     second: { inputTokens: 123, costUSD: 0.75 },
   } });
+});
+
+it.each(["result", "duration_ms", "modelUsage", "usage"])("requires %s in a success envelope", key => {
+  const data = JSON.parse(fixture);
+  delete data[key];
+  expect(() => parseClaudeResult(JSON.stringify(data))).toThrow("Claude CLI returned an incomplete success envelope");
+});
+
+it.each([
+  ["provider", false, "denied", "provider: denied: first: second: retry"],
+  ["success", true, { message: "denied" }, "success: denied: first: second: retry"],
+])("preserves error detail for %s", (subtype, is_error, error, expected) => {
+  const data = { type: "result", subtype, is_error, error, errors: ["first", "", "second"], result: "retry" };
+  expect(parseClaudeResult(JSON.stringify(data))).toEqual({ text: "", error: expected, usage: null });
+});
+
+it.each([
+  [{ duration_ms: 0 }, { duration_ms: 0 }],
+  [{ total_cost_usd: 0 }, { cost_usd: 0 }],
+  [{ modelUsage: { solo: {} } }, { model_reported: "solo" }],
+  [{ usage: { input_tokens: 0 } }, { input_tokens: 0 }],
+])("retains isolated accounting evidence %j", (field, expected) => {
+  const data = { type: "result", subtype: "failed", is_error: true, ...field };
+  expect(parseClaudeResult(JSON.stringify(data))).toEqual({ text: "", error: "failed", usage: {
+    input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_creation_tokens: null,
+    cost_usd: null, duration_ms: null, model_reported: "", ...expected,
+  } });
+});
+
+it("waits for incomplete data and includes diagnostics only for failures", () => {
+  expect(settleOutput("{", " ignored ", undefined, false)).toBeUndefined();
+  expect(settleOutput("{", " detail ", "exit 9", true))
+    .toEqual(new Error("exit 9: Claude CLI returned invalid or incomplete JSON: detail"));
+  expect(settleOutput(fixture, " warning ", undefined, false)).toEqual(parseClaudeResult(fixture));
+  expect(settleOutput(fixture, " detail ", "exit 9", true)).toEqual({ ...parseClaudeResult(fixture), error: "exit 9: detail" });
+});
+
+it("keeps exactly the first 4000 diagnostic characters across chunks", () => {
+  const first = "a".repeat(3998);
+  const full = appendStderr(first, "bcde");
+  expect(full).toBe(first + "bc");
+  expect(appendStderr(full, "later")).toBe(full);
 });
