@@ -142,6 +142,8 @@ export const PipelineStateSchema = z.object({
       message: `clarifications exceeds ${MAX_CLARIFICATION_TURNS}-turn bounded-I/O cap (Claude Code 100,000-char MCP response budget). source: see MAX_CLARIFICATION_TURNS in state.ts.`,
     })
     .default([]),
+  // Older checkpoints did not distinguish a continuation prompt from the following compose action.
+  clarification_continue_pending: z.boolean().optional(),
   /**
    * Set when the user types "proceed" or clarification reaches max rounds.
    * Read by handleBudget to sanity-check that clarification finished cleanly

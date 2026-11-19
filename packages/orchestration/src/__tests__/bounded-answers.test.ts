@@ -194,10 +194,11 @@ it.each([
   const continued = step({ state: fourth.state, result: { ...answer, selected: [valid] } });
   expect(continued.action.kind).not.toBe("failed");
   expect(continued.state.current_step).toBe(nextStep);
+  if (question === "clarification_continue") expect(continued.state.clarification_continue_pending).toBe(false);
   expect(continued.state.unmatched_answers).toEqual({});
 });
 
-it.each(["continue", "stray clarification_answer"])("starts a fresh continuation budget in the next round after %s", (transition) => {
+it("starts a fresh continuation budget in the next round after continue", () => {
   const continueId = "clarification_continue";
   const answer = (question_id: string, choice: string) => ({ kind: "user_answer" as const, question_id, selected: [choice] });
   const dispatch = makeCannedDispatcher();
@@ -211,9 +212,11 @@ it.each(["continue", "stray clarification_answer"])("starts a fresh continuation
   const retry = step({ state: first.state, result: wrong });
   expect(retry.state.unmatched_answers).toEqual({ other: 2, clarification_continue: 1 });
 
-  // A duplicate clarification_answer also re-enters composition without resolving the old prompt.
-  const next = step({ state: retry.state, result: transition === "continue" ? answer(continueId, "continue") : answer("clarification_answer", "duplicate") });
+  const next = step({ state: retry.state, result: answer(continueId, "continue") });
   expect(next.action).toMatchObject({ kind: "spawn_subagents", batch_id: "clarification_compose_9" });
+  const recovered = step({ state: PipelineStateSchema.parse(next.state), result: answer("clarification_answer", "duplicate") });
+  expect(recovered.action).toEqual(next.action);
+  expect(recovered.state.unmatched_answers).toEqual({ other: 2 });
   const composed = step({ state: next.state, result: dispatch(next.action) });
   expect(composed.action).toMatchObject({ kind: "ask_user", question_id: "clarification_answer" });
   const second = step({ state: composed.state, result: answer("clarification_answer", "new detail") });
@@ -221,7 +224,7 @@ it.each(["continue", "stray clarification_answer"])("starts a fresh continuation
   expect(second.state.unmatched_answers).toEqual({ other: 2 });
   let saved = second.state;
   for (const count of [1, 2]) {
-    const out = step({ state: saved, result: wrong });
+    const out = step({ state: saved, result: answer("clarification_answer", "duplicate") });
     expectOptionRetry(out.action, second.action);
     expect(out.state.unmatched_answers).toEqual({ other: 2, clarification_continue: count });
     saved = out.state;
@@ -229,4 +232,52 @@ it.each(["continue", "stray clarification_answer"])("starts a fresh continuation
   const failed = step({ state: saved, result: wrong });
   expect(failed.action).toEqual({ kind: "failed", step: "clarification", reason: "clarification_continue: 3 unmatched answers." });
   expect(failed.state.unmatched_answers).toEqual({ other: 2, clarification_continue: 3 });
+});
+
+it("charges stray answers to the pending continuation across checkpoints", () => {
+  const turns = Array.from({ length: 8 }, (_, i) => ({ round: i + 1, asked_at: "now", question: "Detail?", answer: i < 7 ? "given" : undefined }));
+  const submit = (state: PipelineState, question_id: string, choice: string) =>
+    step({ state, result: { kind: "user_answer", question_id, selected: [choice] } });
+  const issued = submit({ ...clarify, clarifications: turns }, "clarification_answer", "last detail");
+  expect(issued.state.clarification_continue_pending).toBe(true);
+  let state = issued.state;
+  for (const [id, choice, count] of [
+    ["clarification_answer", "continue", 1], ["clarification_continue", "unknown", 2], ["other", "proceed", 3],
+  ] as const) {
+    const out = submit(PipelineStateSchema.parse(state), id, choice);
+    if (count < 3) expectOptionRetry(out.action, issued.action);
+    else expect(out.action).toEqual({ kind: "failed", step: "clarification", reason: "clarification_continue: 3 unmatched answers." });
+    expect(out.state.unmatched_answers).toEqual({ clarification_continue: count });
+    expect(out.state.clarifications).toEqual(issued.state.clarifications);
+    expect(out.state.proceed_signal).toBe(false);
+    state = out.state;
+  }
+});
+
+it("reissues the outstanding composition when there is no user question yet", () => {
+  const result = { kind: "user_answer" as const, question_id: "clarification_answer", selected: ["duplicate"] };
+  for (const clarifications of [[], [{ round: 1, asked_at: "now", question: "Detail?", answer: "given" }]]) {
+    const state = { ...clarify, clarifications };
+    const out = step({ state, result });
+    expect(out.action).toEqual(step({ state }).action);
+    expect(out.action).toMatchObject({ kind: "spawn_subagents", batch_id: `clarification_compose_${clarifications.length + 1}` });
+    expect(out.state.unmatched_answers).toEqual({});
+  }
+});
+
+it("recovers continuation from a legacy checkpoint only after an eligible turn was answered", () => {
+  for (const [rounds, answer, pending] of [[7, "done", false], [8, undefined, false], [8, "", true]] as const) {
+    const clarifications = Array.from({ length: rounds }, (_, i) => ({
+      round: i + 1, asked_at: "now", question: "Detail?", answer: i === rounds - 1 ? answer : "given",
+    }));
+    const state = { ...clarify, clarifications };
+    const out = step({ state, result: { kind: "user_answer", question_id: "other", selected: ["continue"] } });
+    if (pending) {
+      expect(out.state.unmatched_answers).toEqual({ clarification_continue: 1 });
+      expect(out.action).toMatchObject({ kind: "ask_user", header: "Asked 8 questions. Proceed?" });
+    } else {
+      expect(out.state.unmatched_answers).toEqual({});
+      expect(out.action).toMatchObject({ kind: "spawn_subagents", batch_id: `clarification_compose_${rounds + 1}` });
+    }
+  }
 });

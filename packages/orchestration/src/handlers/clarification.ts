@@ -164,7 +164,7 @@ function handleProceedOrContinue(
   return answerOptionQuestion(state, question, question.options, result, (answered, choice) => {
     if (choice === PROCEED_LABEL) {
       return {
-        state: { ...answered, proceed_signal: true, current_step: "budget" },
+        state: { ...answered, clarification_continue_pending: false, proceed_signal: true, current_step: "budget" },
         action: {
           kind: "emit_message",
           message: `Clarification complete (${state.clarifications.length} rounds).`,
@@ -172,7 +172,7 @@ function handleProceedOrContinue(
       };
     }
     return {
-      state: answered,
+      state: { ...answered, clarification_continue_pending: false },
       action: composeAction(answered, state.clarifications.length + 1),
     };
   });
@@ -219,7 +219,7 @@ function recordAnswerAndDispatch(
   // Each round reuses this question ID but starts with its own retry budget.
   const { [QUESTION_ID_CONTINUE]: _previousRound, ...unmatched_answers } = state.unmatched_answers;
   return {
-    state: { ...state, clarifications, unmatched_answers },
+    state: { ...state, clarifications, unmatched_answers, clarification_continue_pending: true },
     action: continueQuestion(completed, bounds),
   };
 }
@@ -274,11 +274,15 @@ export const handleClarification: StepHandler = ({ state, result }) => {
   const bounds = computeBounds(state);
   const expectedRound = state.clarifications.length + 1;
 
-  if (
-    result?.kind === "user_answer" &&
-    result.question_id === QUESTION_ID_CONTINUE
-  ) {
-    return handleProceedOrContinue(state, result, bounds);
+  if (result?.kind === "user_answer") {
+    // For a legacy checkpoint, an answered round at or above the minimum may
+    // already have offered continuation. Require an explicit decision there.
+    const continuationPending = state.clarification_continue_pending ?? (
+      state.clarifications.length >= bounds.min && state.clarifications[state.clarifications.length - 1]!.answer !== undefined
+    );
+    if (continuationPending || result.question_id === QUESTION_ID_CONTINUE) {
+      return handleProceedOrContinue(state, result, bounds);
+    }
   }
 
   if (

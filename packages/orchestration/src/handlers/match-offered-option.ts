@@ -30,7 +30,7 @@ export function answerOptionQuestion<Label extends string>(
   state: PipelineState,
   question: AskUserAction,
   accepted: readonly Option<Label>[],
-  answer: Answer,
+  answer: Answer & { question_id: string },
   route: (state: PipelineState, label: Label) => ReturnType<StepHandler>,
   fallback?: NoInfer<Label>,
 ): ReturnType<StepHandler> {
@@ -39,7 +39,7 @@ export function answerOptionQuestion<Label extends string>(
     const { [id]: _cleared, ...remaining } = state.unmatched_answers;
     return { ...state, unmatched_answers: remaining };
   }
-  const label = matchOfferedOption(accepted, answer);
+  const label = answer.question_id === id ? matchOfferedOption(accepted, answer) : undefined;
   if (label !== undefined) {
     return route(clearedState(), label);
   }
