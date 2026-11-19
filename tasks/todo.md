@@ -42,15 +42,3 @@ Réf. preuve : session-optimizer/prd-output/run_mrlq/10-verification-report.md +
 
 ## Gates
 - [ ] build tsc clean, suite complète verte (≥631 tests), pas de --no-verify, commits conventionnels sur fix/e2e-gaps, pas de push sans OK user.
-
-## Exact gate answers
-
-- [x] Characterize option routing and retry feedback on the original reducer.
-- [x] Share exact option matching across decision questions and update the host documentation.
-- [x] Rebuild and verify the local changes with lint and the full test suite.
-
-### Review
-
-- Before the fix, 41 characterization cases failed and 77 passed. The new matcher test suite could not load until the module existed. The same selection then passed all 123 tests. Three further edge cases brought the final selection to 126 passing tests.
-- The five decision questions use the options they emit. Preflight consumes probe results. The feasibility focus and composed clarification answers carry user content.
-- `pnpm build` and `pnpm lint` passed. The full `pnpm vitest run` passed all 2,488 tests in 163 files with local loopback and a writable session scratch directory. The tracked MCP server dist had no diff after the build.
