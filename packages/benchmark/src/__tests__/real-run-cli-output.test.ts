@@ -107,5 +107,6 @@ it.each([
   }
   const summary = String(host.write.mock.calls.find(([path]) => path === join("out", "summary.md"))?.[1]);
   expect(summary.split("\n").find(line => line.startsWith("| smoke |"))).toContain(`| ${count} | ${total} | ${minimum} |`);
-  expect(host.footer().split("\n").includes(qualityWarning)).toBe(warns);
+  const warningBlock = warns ? `\n\n${qualityWarning}` : "";
+  expect(host.footer()).toBe(`${warningBlock}\n\nArm execution order: smoke\n`);
 });
