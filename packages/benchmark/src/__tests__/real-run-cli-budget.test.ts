@@ -31,18 +31,19 @@ it("prints unequal caps, exact overspend and flushed JSON lines", async () => {
   const dir = await tempDirectory("bench-caps-");
   try {
     const plan = JSON.parse(await readFile(source, "utf8"));
-    plan.arms.push({ ...plan.arms[0], name: "later", limits: { max_cost_usd: 2 } });
-    plan.plan_max_cost_usd = 1;
+    plan.limits.max_cost_usd = 0.1;
+    plan.arms.push({ ...plan.arms[0], name: "later", limits: { max_cost_usd: 0.2 } });
+    plan.plan_max_cost_usd = 0.1;
     const file = join(dir, "plan.json");
     await writeFile(file, JSON.stringify(plan));
     const append = vi.fn(appendFileSync);
     const host = harness({}, { append, invoker: () => async inv => {
       const result = await cannedInvoke(inv);
-      return { ...result, usage: { ...result.usage, cost_usd: 1.25 } };
+      return { ...result, usage: { ...result.usage, cost_usd: 0.125 } };
     } });
     const result = await host.run("--i-accept-model-cost", "--plan", file, "--out", dir);
-    expect(result.stdout.split("\n")[0]).toBe("Reported-spend limits: 1 + 2 = 3 USD across arms. Plan cap 1 USD. Worst case for reported spend: plan cap plus at most one in-flight batch or call.");
-    const message = "Plan stopped at 1.25 reported USD (plan_max_cost_usd 1).";
+    expect(result.stdout.split("\n")[0]).toBe("Reported-spend limits: 0.1 + 0.2 = 0.3 USD across arms. Plan cap 0.1 USD. Worst case for reported spend: plan cap plus at most one in-flight batch or call.");
+    const message = "Plan stopped at 0.125 reported USD (plan_max_cost_usd 0.1).";
     expect(result.stderr).toBe(message + "\nlater: skipped because the plan cap is exhausted (effective limit 0 USD).");
     expect(result.status).toBe(1);
     const journal = join(dir, "smoke", "rows.jsonl");
@@ -65,11 +66,12 @@ it.each([["--out", "folder"], ["--plan", "plan"]])("requires both paths with %s 
 
 it("releases listeners and preserves non-Error messages after a failing read", async () => {
   const exitCode = vi.fn();
-  const host = harness({}, { exitCode, loadArms: async () => {
+  const host = harness({}, { platform: "darwin", exitCode, loadArms: async () => {
+    expect(host.events.listenerCount("exit")).toBe(1);
     host.events.emit("exit");
     throw "storage unavailable";
   } });
-  const result = await host.run("--dry-run", "--plan", "plan", "--out", "out");
+  const result = await host.run("--i-accept-model-cost", "--plan", "plan", "--out", "out");
   expect(result).toEqual({ status: 1, stderr: "storage unavailable", stdout: "" });
   expect(exitCode).not.toHaveBeenCalled();
   expect(host.events.eventNames()).toEqual([]);
