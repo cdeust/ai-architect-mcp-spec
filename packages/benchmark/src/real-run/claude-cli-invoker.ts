@@ -106,6 +106,7 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
     let stderr = "";
     let failure: string | undefined;
     let settled = false;
+    let exited = false;
     function finish(result: ReturnType<typeof readResult> | Error) {
       if (settled) return;
       settled = true;
@@ -132,7 +133,7 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
     }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", chunk => {
       stdout += chunk;
-      if (child.exitCode === 0) read(false);
+      if (exited) read(false);
     });
     child.stderr.setEncoding("utf8").on("data", chunk => {
       stderr += chunk.slice(0, STDERR_LIMIT - stderr.length);
@@ -141,13 +142,12 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
     child.stdin.on("error", error => {
       failure ??= error.message;
     });
-    child.once("exit", code => {
-      if (code === 0) read(false);
+    child.once("exit", (code, signal) => {
+      exited = true;
+      if (code !== 0) failure = [`Claude CLI exited with ${signal ?? code}`, failure].filter(Boolean).join(": ");
+      read(false);
     });
-    child.once("close", (code, signal) => {
-      if (code !== 0) failure ??= `Claude CLI exited with ${signal ?? code}`;
-      read(true);
-    });
+    child.once("close", () => read(true));
   });
 }
 
