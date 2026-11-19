@@ -28,6 +28,9 @@ import { VerdictSchema, JudgeVerdictSchema } from "@prd-gen/core";
 
 // ─── Action 1: ask_user ─────────────────────────────────────────────────────
 
+export const ASK_USER_MIN_OPTIONS = 2;
+export const ASK_USER_MAX_OPTIONS = 4;
+
 export const AskUserActionSchema = z.object({
   kind: z.literal("ask_user"),
   /** Identifies the question so the host can map answer → state */
@@ -41,8 +44,8 @@ export const AskUserActionSchema = z.object({
         description: z.string().optional(),
       }),
     )
-    .min(2)
-    .max(4)
+    .min(ASK_USER_MIN_OPTIONS)
+    .max(ASK_USER_MAX_OPTIONS)
     .nullable()
     .describe("Structured options for AskUserQuestion. Null = freeform answer."),
   multi_select: z.boolean().default(false),
@@ -320,7 +323,9 @@ export type NextAction = z.infer<typeof NextActionSchema>;
 export const UserAnswerSchema = z.object({
   kind: z.literal("user_answer"),
   question_id: z.string(),
-  selected: z.array(z.string()).default([]),
+  // A selection cannot exceed the offered options. These questions are single-select:
+  // the matcher already rejects more than one nonblank entry.
+  selected: z.array(z.string()).max(ASK_USER_MAX_OPTIONS).default([]),
   freeform: z.string().optional(),
 });
 export type UserAnswer = z.infer<typeof UserAnswerSchema>;

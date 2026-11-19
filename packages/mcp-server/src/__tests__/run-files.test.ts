@@ -57,6 +57,29 @@ describe("the file of a run (#121)", () => {
     expect(files.read(RUN)).toEqual({ kind: "found", run: { state: FIRST.state, action: null } });
   });
 
+  const question = {
+    kind: "ask_user", question_id: "clarification_answer", header: "Which detail?",
+    description: "Choose a detail.", options: null, multi_select: false,
+  } as const;
+  const continuation = { ...question, question_id: "clarification_continue" };
+  it.each([
+    ["old pending continuation", "clarification", continuation, undefined, true],
+    ["old pending clarification answer", "clarification", question, undefined, false],
+    ["old non-question action", "clarification", FIRST.action, undefined, false],
+    ["old missing action", "clarification", null, undefined, undefined],
+    ["explicit false", "clarification", continuation, false, false],
+    ["explicit true", "clarification", question, true, true],
+    ["another step", FIRST.state.current_step, continuation, undefined, undefined],
+  ] as const)("restores the continuation marker for %s", (_, current_step, action, marker, expected) => {
+    const state = { ...FIRST.state, current_step, clarification_continue_pending: marker };
+    files.write(state, action);
+    expect(files.read(RUN)).toEqual({
+      kind: "found", run: { state: { ...state, clarification_continue_pending: expected }, action },
+    });
+    const path = files.pathOf(RUN)!;
+    expect(JSON.parse(readFileSync(path, "utf8")).state.clarification_continue_pending).toBe(marker);
+  });
+
   it.skipIf(process.platform === "win32")("keeps the directory and the file to their owner", () => {
     files.write(FIRST.state, FIRST.action);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
@@ -99,6 +122,32 @@ describe("the file of a run (#121)", () => {
       // Reading changes nothing: the file is left for whoever looks into it.
       expect(readFileSync(path, "utf8"), label).toBe(text);
     }
+  });
+
+  it.each([
+    ["options", ["a", "x".repeat(1001)]],
+    ["options", ["a"]],
+    ["options", ["a", "b", "c", "d", "e"]],
+    ["options", ["a", "  "]],
+    ["options", ["a", false]],
+    ["rationale", "x".repeat(1001)],
+  ])("reports invalid clarification %s and preserves the file", (field, value) => {
+    mkdirSync(dir);
+    const turn = { round: 1, asked_at: "now", question: "Which?", [String(field)]: value };
+    const text = JSON.stringify({ version: 1, state: { ...FIRST.state, clarifications: [turn] }, action: null });
+    const path = files.pathOf(RUN)!;
+    writeFileSync(path, text);
+    const read = files.read(RUN);
+    expect(read.kind).toBe("unreadable");
+    expect(read.kind === "unreadable" && read.reason).toMatch(new RegExp(`its state is not valid.*${field}`, "s"));
+    expect(readFileSync(path, "utf8")).toBe(text);
+  });
+
+  it("loads the complete question from a legacy checkpoint", () => {
+    const turn = { round: 1, asked_at: "now", question: "x".repeat(5000) };
+    const state = { ...FIRST.state, clarifications: [turn] };
+    files.write(state, null);
+    expect(files.read(RUN)).toEqual({ kind: "found", run: { state, action: null } });
   });
 
   it("removes the file of a run, and does not mind one that is not there", () => {

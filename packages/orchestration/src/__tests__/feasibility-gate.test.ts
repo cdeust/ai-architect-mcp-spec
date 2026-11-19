@@ -109,3 +109,21 @@ describe("feasibility-gate", () => {
     expect(out.state.current_step).toBe("clarification");
   });
 });
+
+it.each(["", "  "])("ignores blank focus text %j", (freeform) => {
+  const state = stateAt("original scope");
+  for (const selected of [[], ["picked scope"]]) {
+    const result = { kind: "user_answer" as const, question_id: "feasibility_focus", selected, freeform };
+    expect(step({ state, result }).state.feature_description).toBe(selected[0] ?? "original scope");
+  }
+});
+
+it.each([
+  { freeform: "  OAuth  login\n", selected: ["other scope"] },
+  { freeform: "  ", selected: ["\tOAuth  login  "] },
+])("trims the chosen focus before saving and reporting it", ({ freeform, selected }) => {
+  const result = { kind: "user_answer" as const, question_id: "feasibility_focus", selected, freeform };
+  const out = step({ state: stateAt("original scope"), result });
+  expect(out.state.feature_description).toBe("OAuth  login");
+  expect(out.messages).toContainEqual({ level: "info", text: "Focused scope: OAuth  login" });
+});

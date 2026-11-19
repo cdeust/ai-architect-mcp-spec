@@ -71,6 +71,7 @@ export interface StepOutput {
 export type StepHandler = (input: StepInput) => {
   readonly state: PipelineState;
   readonly action: HandlerAction;
+  readonly warning?: string;
 };
 
 const HANDLERS: Record<PipelineState["current_step"], StepHandler> = {
@@ -135,6 +136,7 @@ export function step(input: StepInput): StepOutput {
 
   for (let i = 0; i < COALESCE_CAP; i++) {
     const out = invoke(currentState, pendingResult);
+    if (out.warning) messages.push({ text: out.warning, level: "warn" });
     currentState = out.state;
     pendingResult = undefined; // result is consumed on the first iteration only
 
@@ -220,7 +222,7 @@ function terminalFromMessages(
 function invoke(
   state: PipelineState,
   result: ActionResult | undefined,
-): { state: PipelineState; action: HandlerAction } {
+): ReturnType<StepHandler> {
   const handler = HANDLERS[state.current_step];
   if (!handler) {
     return {

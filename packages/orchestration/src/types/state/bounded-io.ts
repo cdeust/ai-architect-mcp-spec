@@ -25,19 +25,19 @@
 export const MAX_RESPONSE_CHARS = 100_000;
 
 /**
- * Max clarification turns retained. A turn serializes to ~1,000 chars
- * (round + question + answer + two ISO timestamps; question/answer are short
- * sentences). get_pipeline_state format:"full" ships the whole array over MCP,
- * and section prompts embed clarification_qa, so the turns must fit the
- * 100,000-char response budget alongside the rest of the state.
+ * MAX_CLARIFICATION_TURNS budgets ~1,000 chars per turn from the measurement
+ * below. A composed turn can carry a question, up to four labels and a
+ * rationale, each up to that estimate, plus the answer and metadata.
  *   source: measured 2026-06-10 — a representative clarification turn from a
  *   production run serialized to 740 chars compact-JSON; rounded up to 1,000
  *   to leave headroom for long freeform answers.
- * Cap = floor((MAX_RESPONSE_CHARS / 2) / 1000) = 50. Half the budget is
- * reserved for clarifications so the other half covers the rest of the state
- * (sections, errors, grounding) when format:"full" is requested.
+ * Cap = floor((MAX_RESPONSE_CHARS / 2) / 1000) = 50. This allocates half the budget at
+ * the estimated turn size. boundFullStateResponse sheds older turns from an
+ * oversized full response and reports the count in __bounded.applied.
  */
-const CLARIFICATION_TURN_CHARS = 1_000; // measured 740, rounded up (see above)
+// source: measured 740, rounded up (see above). Reuse the turn estimate as
+// the per-field ceiling for composed text (1,000 UTF-16 code units per field).
+export const CLARIFICATION_TURN_CHARS = 1_000;
 export const MAX_CLARIFICATION_TURNS = Math.floor(
   MAX_RESPONSE_CHARS / 2 / CLARIFICATION_TURN_CHARS,
 ); // 50
@@ -58,7 +58,8 @@ export const MAX_CLARIFICATION_TURNS = Math.floor(
  * never silent loss (Phase 1c rule). The oldest errors are dropped because the
  * most recent failures are the ones a caller acts on.
  */
-const ERROR_MESSAGE_CHARS = 500; // project convention, measured max 312
+// source: project error-message convention and measured maximum above.
+export const ERROR_MESSAGE_CHARS = 500;
 export const MAX_PIPELINE_ERRORS = Math.floor(
   MAX_RESPONSE_CHARS / 4 / ERROR_MESSAGE_CHARS,
 ); // 50

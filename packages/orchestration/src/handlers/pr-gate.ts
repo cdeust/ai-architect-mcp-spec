@@ -26,12 +26,13 @@
  * (implementation.ts, testing.ts, review.ts) — that pattern is exactly what
  * this gate must NOT do, because the whole point of a mandatory gate is
  * that it cannot be bypassed by a state field happening to already be set.
- * A call to this handler with no matching `user_answer` ALWAYS emits
- * `ask_user` — there is no state under which it silently proceeds.
+ * The handler asks on entry and retries the first two unmatched answers.
+ * On the third it warns, takes "No", and advances to finalize.
  *
  * source: design-phases-3-5.md §3, §4, §6 PR 5.
  */
 
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import { type PipelineState } from "../types/state.js";
 import { initialPostSpecs, type PostSpecsState } from "../types/state/post-specs-state.js";
@@ -61,69 +62,56 @@ function buildGateSummary(postSpecs: PostSpecsState): string {
   return [verdictLine, gatesLine, filesLine, branchLine].join("\n");
 }
 
-/**
- * precondition:  `result` is the user_answer for PR_GATE_QUESTION_ID.
- * postcondition: returns true iff the selected option's label (or freeform
- *                text) mentions "push"; false otherwise — including on an
- *                unrecognized/empty answer, which fails CLOSED to the
- *                zero-risk "No" path rather than silently pushing (mirrors
- *                implementation-gate.ts's decisionFromAnswer fail-closed
- *                convention).
- */
-function wantsPush(
-  result: Extract<import("../types/actions.js").ActionResult, { kind: "user_answer" }>,
-): boolean {
-  const chosen = (result.selected[0] ?? result.freeform ?? "").toLowerCase();
-  return chosen.includes("push");
+const PUSH_LABEL = "Push + open PR";
+
+function prQuestion(postSpecs: PostSpecsState) {
+  return {
+    kind: "ask_user" as const,
+    question_id: PR_GATE_QUESTION_ID,
+    header: "Push the branch and open a pull request?",
+    description: `${buildGateSummary(postSpecs)}\n\nA pull request is opened for human review — it is never self-merged.`,
+    options: [
+      {
+        label: PUSH_LABEL,
+        description: "Push the branch and open a pull request for human review.",
+      },
+      {
+        label: "No",
+        description: "Stop here. No branch is pushed and no PR is opened.",
+      },
+    ],
+    multi_select: false,
+  };
 }
 
 export const handlePrGate: StepHandler = ({ state, result }) => {
   const postSpecs = ensurePostSpecs(state);
 
+  const question = prQuestion(postSpecs);
   if (result?.kind === "user_answer" && result.question_id === PR_GATE_QUESTION_ID) {
-    if (wantsPush(result)) {
+    return answerOptionQuestion({ ...state, post_specs: postSpecs }, question, question.options, result, (answered, label) => {
+      if (label === PUSH_LABEL) {
+        return {
+          state: { ...answered, current_step: "pr_creation", post_specs: postSpecs },
+          action: {
+            kind: "emit_message",
+            message: "Push approved. Opening a pull request.",
+          },
+        };
+      }
       return {
-        state: { ...state, current_step: "pr_creation", post_specs: postSpecs },
+        state: {
+          ...answered,
+          current_step: "finalize",
+          post_specs: { ...postSpecs, pr: { pushed: false, url: null } },
+        },
         action: {
           kind: "emit_message",
-          message: "Push approved. Opening a pull request.",
+          message: "Push declined. Proceeding to finalize without a PR.",
         },
       };
-    }
-    return {
-      state: {
-        ...state,
-        current_step: "finalize",
-        post_specs: { ...postSpecs, pr: { pushed: false, url: null } },
-      },
-      action: {
-        kind: "emit_message",
-        message: "Push declined. Proceeding to finalize without a PR.",
-      },
-    };
+    }, "No");
   }
 
-  // No idempotency shortcut here — see module doc's "Non-bypass" section.
-  // This ask_user fires unconditionally whenever the step is (re-)entered
-  // without a matching answer already in hand.
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: {
-      kind: "ask_user",
-      question_id: PR_GATE_QUESTION_ID,
-      header: "Push the branch and open a pull request?",
-      description: `${buildGateSummary(postSpecs)}\n\nA pull request is opened for human review — it is never self-merged.`,
-      options: [
-        {
-          label: "Push + open PR",
-          description: "Push the branch and open a pull request for human review.",
-        },
-        {
-          label: "No",
-          description: "Stop here. No branch is pushed and no PR is opened.",
-        },
-      ],
-      multi_select: false,
-    },
-  };
+  return { state: { ...state, post_specs: postSpecs }, action: question };
 };
