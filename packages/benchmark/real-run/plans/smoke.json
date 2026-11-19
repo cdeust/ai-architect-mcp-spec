@@ -1,0 +1,21 @@
+{
+  "description": "build a simple feature for OAuth login",
+  "prd_context": "feature",
+  "call_timeout_ms": 180000,
+  "limits": { "max_invocations": 30, "max_cost_usd": 1, "max_steps": 120 },
+  "answers": {},
+  "policies": {
+    "smoke": {
+      "judge": { "model": "haiku", "effort": "low" },
+      "draft": { "model": "haiku", "effort": "low" },
+      "review": { "model": "haiku", "effort": "low" },
+      "implement": { "model": "haiku", "effort": "low" },
+      "test": { "model": "haiku", "effort": "low" },
+      "pr": { "model": "haiku", "effort": "low" },
+      "probe": { "model": "haiku", "effort": "low" }
+    }
+  },
+  "arms": [
+    { "name": "smoke", "request_size": "tiny", "policy": "smoke", "mode": "sequential" }
+  ]
+}

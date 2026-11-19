@@ -3,6 +3,10 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SpawnSubagentsActionSchema } from "@prd-gen/orchestration";
+import { loadArms } from "../real-run/plan-file.js";
+import { runBench } from "../real-run/run-bench.js";
+import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
 import { expect, it } from "vitest";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
@@ -56,4 +60,23 @@ it("writes five dry-run records and the comparison without an installed model CL
   } finally {
     await rm(out, { recursive: true, force: true });
   }
+});
+
+it("loads a bounded smoke arm with Haiku at low effort for every reducer purpose", async () => {
+  const arms = await loadArms(join(cwd, "real-run/plans/smoke.json"));
+  expect(arms).toHaveLength(1);
+  const { plan } = arms[0];
+  expect(plan).toMatchObject({
+    prd_context: "feature",
+    request_size: "tiny",
+    mode: "sequential",
+    limits: { max_invocations: 30, max_cost_usd: 1, max_steps: 120 },
+    call_timeout_ms: 180000,
+  });
+  for (const purpose of SpawnSubagentsActionSchema.shape.purpose.options) {
+    expect(plan.policy).toHaveProperty(purpose, { model: "haiku", effort: "low" });
+  }
+  const dry = await runBench(plan, { invoke: cannedInvoke, answer: cannedAnswer, record: () => {}, clock: Date.now });
+  expect(dry.terminal.kind).toBe("done");
+  expect(dry.rows).toHaveLength(12);
 });
