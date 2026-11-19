@@ -110,7 +110,7 @@ Every response from `start_pipeline` and `submit_action_result` has this shape:
 }
 ```
 
-`AskUserQuestion` returns the chosen option's `label` string directly. Place that string in `selected[0]`. If the user typed a freeform answer, place it in `freeform` and leave `selected` empty.
+`AskUserQuestion` returns the chosen option's `label` string directly. Place that string in `selected[0]`. If the user typed a freeform answer, place it in `freeform` and leave `selected` empty. For a decision question, the reducer trims whitespace, collapses whitespace runs and ignores case when comparing the answer to the offered labels. If the whole answer matches none of them, present the repeated question and its options to the user.
 
 ---
 
