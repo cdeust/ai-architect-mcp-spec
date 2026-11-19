@@ -110,7 +110,13 @@ async function main() {
     // The plan contract expresses effective dollars to six places, rounded down.
     const max_cost_usd = available.times(1e6).floor().div(1e6).toNumber();
     if (max_cost_usd <= 0) {
-      const message = `${arm.name}: skipped by the plan cap (effective limit ${Math.max(0, max_cost_usd)} USD).`;
+      let reason = "the plan cap is exhausted";
+      if (configured.isZero()) reason = "the configured arm limit is zero";
+      else if (available.gt(0)) {
+        const limitingBudget = available === configured ? "configured arm limit" : "remaining plan budget";
+        reason = `the ${limitingBudget} is below 0.000001 USD`;
+      }
+      const message = `${arm.name}: skipped because ${reason} (effective limit 0 USD).`;
       skipped.push(message);
       console.error(message);
       process.exitCode = 1;

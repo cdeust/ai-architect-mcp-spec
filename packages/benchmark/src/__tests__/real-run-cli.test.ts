@@ -260,7 +260,7 @@ it("checks the summed reported spend between arms in execution order and uses fr
     expect(await readFile(join(out, "contents"), "utf8")).toBe("");
     expect(await readdir(out)).not.toContain("a");
     const summary = await readFile(join(out, "summary.md"), "utf8");
-    for (const name of ["b", "a"]) expect(summary).toContain(`${name}: skipped by the plan cap`);
+    for (const name of ["b", "a"]) expect(summary).toContain(`${name}: skipped because the plan cap is exhausted`);
     expect(summary).toContain("Arm execution order: c");
     for (const missing of ["max_unmetered_calls", "plan_max_cost_usd"]) {
       const invalid = structuredClone(plan);
@@ -350,6 +350,21 @@ it("journals a failed workspace removal and runs the next arm", async () => {
   } finally {
     const kept = await readFile(marker, "utf8").catch(() => "");
     if (kept) await chmod(join(kept.trim(), "locked"), 0o700);
+    await rm(out, { recursive: true, force: true });
+  }
+});
+it("reports a configured zero arm limit while the plan still has budget", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-zero-arm-"));
+  try {
+    const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
+    plan.arms[0].limits = { max_cost_usd: 0 };
+    await writeFile(join(out, "plan.json"), JSON.stringify(plan));
+    const result = cli("--dry-run", "--plan", join(out, "plan.json"), "--out", out);
+    const reason = "smoke: skipped because the configured arm limit is zero";
+    expect(result.stderr).toContain(reason);
+    expect(await readFile(join(out, "summary.md"), "utf8")).toContain(reason);
+    expect(await readdir(out)).not.toContain("smoke");
+  } finally {
     await rm(out, { recursive: true, force: true });
   }
 });
