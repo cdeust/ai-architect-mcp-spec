@@ -82,18 +82,21 @@ function readResult(stdout: string, stderr: string, failure?: string) {
   return { ...result, error: error.join(": ") || undefined };
 }
 
-function groupKiller(child: ChildProcessWithoutNullStreams) {
+function groupKiller(child: ChildProcessWithoutNullStreams, row: Row) {
   let killed = false;
   return () => {
     if (killed || child.pid === undefined) return;
     killed = true;
     try {
       // The leader can be reaped before inherited pipes close. Probe for surviving
-      // group members before sending a fatal signal to the former group ID.
+      // group members before signalling. PID reuse cannot be excluded, but for
+      // a complete result we signal immediately after leader exit, leaving a negligible window.
       if (child.exitCode !== null || child.signalCode !== null) process.kill(-child.pid, 0);
       process.kill(-child.pid, "SIGKILL");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        (row.notes ??= []).push(`Process group cleanup failed: ${String(error)}`);
+      }
     }
   };
 }
@@ -111,12 +114,7 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      try {
-        kill();
-      } catch (error) {
-        reject(error);
-        return;
-      }
+      kill();
       if (result instanceof Error) reject(result);
       else resolve(result);
     }
@@ -167,7 +165,7 @@ export function makeClaudeInvoker(timeoutMs: number, directory: string, program 
           CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
         },
       });
-      const kill = groupKiller(child);
+      const kill = groupKiller(child, row);
       if (track) {
         track(row, kill, cleanup);
         tracked = true;

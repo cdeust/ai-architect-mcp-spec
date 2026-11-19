@@ -43,6 +43,7 @@ export interface Ports {
   clock(): number;
 }
 export interface Row {
+  notes?: string[];
   batch_id: string;
   invocation_id: string;
   purpose: Purpose;

@@ -67,9 +67,10 @@ it.each(["complete", "incomplete", "billed error"])("handles %s output when a de
   }
 });
 
-it("does not send SIGKILL to a vanished process group after exit", async () => {
+it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe returns %s", async code => {
   const dir = await mkdtemp(join(tmpdir(), "bench-group-"));
   const kill = vi.spyOn(process, "kill");
+  if (code === "EPERM") kill.mockImplementation(() => { throw Object.assign(new Error("EPERM"), { code }); });
   try {
     const program = join(dir, "stand-in");
     const fixture = fileURLToPath(new URL("./fixtures/claude-cli-result.json", import.meta.url));
@@ -77,7 +78,8 @@ it("does not send SIGKILL to a vanished process group after exit", async () => {
     const [{ plan }] = await loadArms(fileURLToPath(new URL("../../real-run/plans/smoke.json", import.meta.url)));
     plan.limits.max_invocations = 1;
     const record = await runBench(plan, { invoke: makeClaudeInvoker(1500, dir, program), record: () => {}, clock: Date.now });
-    expect(record.rows[0].error).toBeNull();
+    expect(record.rows[0]).toMatchObject({ error: null, usage: { input_tokens: 2 } });
+    if (code === "EPERM") expect(record.rows[0].notes).toEqual([expect.stringContaining("EPERM")]);
     const pid = Number(await readFile(program + ".pid", "utf8"));
     expect(kill).not.toHaveBeenCalledWith(-pid, "SIGKILL");
   } finally {
