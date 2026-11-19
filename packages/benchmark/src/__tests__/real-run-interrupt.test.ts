@@ -6,11 +6,11 @@ import { expect, it, vi } from "vitest";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
 import { cannedInvoke } from "../real-run/canned-ports.js";
-import { harness, tempDirectory } from "./real-run-cli-harness.js";
+import { harness, posixTest, tempDirectory } from "./real-run-cli-harness.js";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
 
-it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
+posixTest.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
   const out = await tempDirectory("bench-signal-");
   const marker = join(out, "pids");
   const standIn = join(out, "claude");
@@ -79,7 +79,7 @@ async function parallelStandIn(file: string, out: string, onBatch = [
   return { batch, start };
 }
 
-it("journals the entire interrupted parallel batch when one workspace cannot be removed", async () => {
+posixTest("journals the entire interrupted parallel batch when one workspace cannot be removed", async () => {
   const out = await tempDirectory("bench-parallel-exit-");
   const dir = join(out, "parallel");
   let run: Promise<unknown> | undefined;
@@ -110,7 +110,7 @@ it("journals the entire interrupted parallel batch when one workspace cannot be 
   }
 });
 
-it("drains a failed parallel batch before removing any process handler", async () => {
+posixTest("drains a failed parallel batch before removing any process handler", async () => {
   const out = await tempDirectory("bench-journal-failure-");
   const journal = join(out, "parallel/rows.jsonl");
   const marker = join(out, "ready");

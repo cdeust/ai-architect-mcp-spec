@@ -41,6 +41,7 @@ it.each([true, false])("pins the entire report preamble, dry=%s", dry => {
     "Later arms can read the prompt cache earlier arms wrote.", "",
     "Token columns sum reported usage. USD sums reported costs. Unmetered counts calls without a reported cost.",
     "Unmetered calls count as zero toward arm dollar limits and the plan cap. Each arm checks max_unmetered_calls after each call or parallel batch.", "",
+    "Reducer quality columns are diagnostics. Inspect sections.json before assessing whether a PRD is usable.", "",
     "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) | Sections | Total section characters | Minimum section characters |",
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|---:|---:|---:|",
   ]);

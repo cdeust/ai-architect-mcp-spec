@@ -3,13 +3,13 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
-import { tempDirectory } from "./real-run-cli-harness.js";
+import { expect } from "vitest";
+import { posixTest, tempDirectory } from "./real-run-cli-harness.js";
 
 const cli = fileURLToPath(new URL("../../dist/src/real-run/cli.js", import.meta.url));
 const plan = fileURLToPath(new URL("../../real-run/plans/smoke.json", import.meta.url));
 
-it.each(["SIGTERM", "SIGHUP", "SIGQUIT"] as const)("compiled CLI handles %s sent only to its PID", async signal => {
+posixTest.each(["SIGTERM", "SIGHUP", "SIGQUIT"] as const)("compiled CLI handles %s sent only to its PID", async signal => {
   expect(existsSync(cli), `Run pnpm build before this test. Missing ${cli}`).toBe(true);
   const out = await tempDirectory("bench-compiled-");
   const marker = join(out, "pids");

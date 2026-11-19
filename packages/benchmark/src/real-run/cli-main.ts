@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { all, create, type BigNumber } from "mathjs";
+import type { BigNumber } from "mathjs";
 import { parseArgs } from "node:util";
 import type { appendFileSync, lstatSync, rmSync } from "node:fs";
 import type { mkdir, writeFile } from "node:fs/promises";
@@ -7,11 +7,12 @@ import { runBench } from "./run-bench.js";
 import type { loadArms } from "./plan-file.js";
 import { cannedInvoke } from "./canned-ports.js";
 import type { makeClaudeInvoker } from "./claude-cli-invoker.js";
-import { effectiveDollars } from "./cli-budget.js";
+import { effectiveDollars, reportedDollars } from "./cli-budget.js";
 import { expectedModels, summaryHeader, summaryRow, unmeteredPolicy } from "./report.js";
 import type { Row, RunPlan, Totals } from "./types.js";
 
 export interface CliIO {
+  platform: NodeJS.Platform;
   loadArms: typeof loadArms;
   mkdir: typeof mkdir;
   writeFile: typeof writeFile;
@@ -54,7 +55,7 @@ function writeJson(io: CliIO, path: string, value: unknown) {
 
 class Interrupted extends Error {}
 
-function trackCalls(io: CliIO) {
+function trackCalls(io: CliIO, dry: boolean) {
   const active = new Map<Row, { kill(): void; cleanup(): void; journal: string }>();
   let interruption = "CLI exit";
   let exited = false;
@@ -63,26 +64,27 @@ function trackCalls(io: CliIO) {
     handlers.set(event, handler);
     io.once(event, handler);
   }
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
-    once(signal, () => {
-      interruption = signal;
-      io.exit(1);
+  if (!dry) {
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
+      once(signal, () => {
+        interruption = signal;
+        io.exit(1);
+      });
+    }
+    once("exit", () => {
+      if (!active.size) return;
+      exited = true;
+      io.exitCode(1);
+      killActive();
+      for (const [row, { journal }] of active) {
+        row.error = `Interrupted by ${interruption}`;
+        appendRow(journal, row);
+      }
     });
   }
   function killActive() {
     for (const call of active.values()) call.kill();
   }
-  once("exit", () => {
-    if (!active.size) return;
-    exited = true;
-    io.exitCode(1);
-    killActive();
-    for (const [row, { journal }] of active) {
-      row.error = `Interrupted by ${interruption}`;
-      appendRow(journal, row);
-    }
-  });
-
   function appendRow(journal: string, row: Row) {
     active.get(row)?.cleanup();
     active.delete(row);
@@ -132,7 +134,7 @@ async function announce(out: string, arms: Arm[], io: CliIO) {
     .filter(name => io.stat(join(out, name), { throwIfNoEntry: false }));
   if (existing.length) throw new Error(`Output already exists in ${out}: ${existing.join(", ")}`);
   const planCap = arms[0].plan.plan_max_cost_usd;
-  const combined = arms.reduce((sum, arm) => sum + arm.plan.limits.max_cost_usd, 0);
+  const combined = arms.reduce((sum, arm) => sum.plus(String(arm.plan.limits.max_cost_usd)), reportedDollars(0));
   const caps = arms.map(arm => arm.plan.limits.max_cost_usd);
   const calculation = caps.every(cap => cap === caps[0]) ? `${caps.length} × ${caps[0]}` : caps.join(" + ");
   io.stdout(`Reported-spend limits: ${calculation} = ${combined} USD across arms. Plan cap ${planCap} USD. Worst case for reported spend: plan cap plus at most one in-flight batch or call.`);
@@ -147,13 +149,6 @@ function skipReason(configured: BigNumber, available: BigNumber) {
   return `the ${limitingBudget} is below 0.000001 USD`;
 }
 
-function decimalBudget() {
-  // Subtract decimal reports exactly even when a small charge follows a large cap.
-  // One digit for every decimal position from Number.MAX_VALUE to Number.MIN_VALUE.
-  const precision = Math.floor(Math.log10(Number.MAX_VALUE)) - Math.floor(Math.log10(Number.MIN_VALUE)) + 1;
-  return create(all, { precision }).bignumber;
-}
-
 async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
   const planCap = arms[0].plan.plan_max_cost_usd;
   const summary = summaryHeader(dry);
@@ -161,12 +156,11 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
   const skipped: string[] = [];
   const warnings: string[] = [];
   const kept: string[] = [];
-  const bignumber = decimalBudget();
-  let remaining = bignumber(String(planCap));
+  let remaining = reportedDollars(planCap);
   let status = 0;
   let baseline: Totals | undefined;
   for (const arm of arms) {
-    const configured = bignumber(String(arm.plan.limits.max_cost_usd));
+    const configured = reportedDollars(arm.plan.limits.max_cost_usd);
     const available = remaining.lt(configured) ? remaining : configured;
     const max_cost_usd = effectiveDollars(available);
     if (max_cost_usd <= 0) {
@@ -185,13 +179,13 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
     }
     baseline ??= record.totals;
     const content = record.section_content;
-    if ((content.min_characters ?? Infinity) < 200 || content.has_duplicates) {
-      warnings.push(`${arm.name}: the reducer's quality columns can rate empty output as perfect; judge quality from sections.json`);
+    if (content.min_characters === 0 || content.has_duplicates) {
+      warnings.push(`${arm.name}: the exported sections include empty or repeated content.`);
     }
     summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") status = 1;
     if (remaining.isNegative()) {
-      const reportedSpend = bignumber(String(planCap)).minus(remaining);
+      const reportedSpend = reportedDollars(planCap).minus(remaining);
       const message = `Plan stopped at ${reportedSpend} reported USD (plan_max_cost_usd ${planCap}).`;
       summary.push("", message);
       ctx.io.stderr(message);
@@ -207,9 +201,13 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
 }
 
 export async function runCli(argv: string[], env: NodeJS.ProcessEnv, io: CliIO): Promise<number> {
-  const tracker = trackCalls(io);
+  let tracker: ReturnType<typeof trackCalls> | undefined;
   try {
     const { dry, plan, out } = options(argv);
+    if (!dry && io.platform !== "darwin" && io.platform !== "linux") {
+      throw new Error("Live runs require macOS or Linux; use --dry-run on this host.");
+    }
+    tracker = trackCalls(io, dry);
     const arms = await io.loadArms(plan);
     await announce(out, arms, io);
     return await execute(out, dry, arms, { tracker, env, io });
@@ -217,6 +215,6 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv, io: CliIO):
     if (!(error instanceof Interrupted)) io.stderr(error instanceof Error ? error.message : String(error));
     return 1;
   } finally {
-    tracker.dispose();
+    tracker?.dispose();
   }
 }

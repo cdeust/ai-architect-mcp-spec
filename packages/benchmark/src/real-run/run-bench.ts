@@ -1,4 +1,5 @@
-import { addCost, finishRecord } from "./run-record.js";
+import { addCost, reportedDollars, type CostTally } from "./cli-budget.js";
+import { finishRecord } from "./run-record.js";
 import { makeCannedDispatcher, newPipelineState, step, type ActionResult, type SpawnSubagentsAction } from "@prd-gen/orchestration";
 import type { Invocation, Ports, Row, RunPlan, RunRecord, Settings, Stopped } from "./types.js";
 
@@ -43,17 +44,15 @@ function stopped(reason: Stopped["reason"]): Stopped {
   return { kind: "stopped", reason };
 }
 
-interface Measurements {
+interface Measurements extends CostTally {
   rows: Row[];
-  cost_usd: number;
-  unmetered_calls: number;
 }
 
 function limitExceeded(measurements: Measurements, limits: RunPlan["limits"]) {
   if (measurements.unmetered_calls > limits.max_unmetered_calls) {
     return stopped("max_unmetered_calls");
   }
-  if (measurements.cost_usd > limits.max_cost_usd) {
+  if (measurements.cost_usd.gt(String(limits.max_cost_usd))) {
     return stopped("max_cost_usd");
   }
 }
@@ -123,7 +122,7 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
   const start = ports.clock();
   let state = initialState(plan);
   const canned = makeCannedDispatcher();
-  const measurements: Measurements = { rows: [], cost_usd: 0, unmetered_calls: 0 };
+  const measurements: Measurements = { rows: [], cost_usd: reportedDollars(0), unmetered_calls: 0 };
   const { rows } = measurements;
   let result: ActionResult | undefined;
   let steps = 0;

@@ -139,6 +139,23 @@ it("includes the call crossing the cost limit and allows exact equality", async 
   expect(record.totals).toMatchObject({ invocations: 2, cost_usd: 2 });
 });
 
+it.each(["sequential", "parallel"] as const)("uses decimal reported spend in %s mode", async (mode) => {
+  for (const extra of [0, 0.01]) {
+    const costs = [0.1, 0.2, extra];
+    const record = await runBench({ ...plan, mode, limits: { ...plan.limits, max_cost_usd: 0.3 } }, {
+      ...ports,
+      invoke: async inv => {
+        const cost_usd = costs.shift() ?? 0;
+        const result = await cannedInvoke(inv);
+        return { ...result, usage: { ...result.usage, cost_usd } };
+      },
+    });
+    expect(record.totals.cost_usd).toBe(extra === 0 ? 0.3 : 0.31);
+    if (extra === 0) expect(record.terminal.kind).toBe("done");
+    else expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
+  }
+});
+
 it("records a completed call before a later host failure", async () => {
   const saved: string[] = [];
   const aborted = runBench(plan, {

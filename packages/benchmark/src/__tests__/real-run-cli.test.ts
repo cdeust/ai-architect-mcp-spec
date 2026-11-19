@@ -6,9 +6,9 @@ import { SpawnSubagentsActionSchema } from "@prd-gen/orchestration";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
 import { cannedInvoke } from "../real-run/canned-ports.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
-import { localCli, tempDirectory } from "./real-run-cli-harness.js";
+import { harness, localCli, posixTest, tempDirectory } from "./real-run-cli-harness.js";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
 function cli(...args: string[]) {
@@ -30,10 +30,31 @@ it("requires explicit cost acceptance before opening a live plan", async () => {
   expect(result.stdout).toBe("");
 });
 
+it("refuses a native Windows live run before reading the plan or acquiring resources", async () => {
+  const loadArms = vi.fn();
+  const invoker = vi.fn();
+  const once = vi.fn();
+  const result = await harness({}, { platform: "win32", loadArms, invoker, once }).run(
+    "--i-accept-model-cost", "--plan", "absent.json", "--out", "out",
+  );
+  expect(result).toEqual({
+    status: 1, stdout: "", stderr: "Live runs require macOS or Linux; use --dry-run on this host.",
+  });
+  expect(loadArms).not.toHaveBeenCalled();
+  expect(invoker).not.toHaveBeenCalled();
+  expect(once).not.toHaveBeenCalled();
+});
+
 it("writes five dry-run records and the comparison without an installed model CLI", async () => {
   const out = await tempDirectory("real-run-test-");
   try {
-    const result = await localCli({}, "--dry-run", "--plan", "real-run/plans/pilot.json", "--out", out);
+    const once = vi.fn();
+    const invoker = vi.fn();
+    const result = await harness({}, { platform: "win32", once, invoker }).run(
+      "--dry-run", "--plan", "real-run/plans/pilot.json", "--out", out,
+    );
+    expect(once).not.toHaveBeenCalled();
+    expect(invoker).not.toHaveBeenCalled();
     expect(result.status, result.stderr).toBe(0);
     const arms = ["standard-as-emitted", "tiny-as-emitted", "standard-tiered", "tiny-tiered", "standard-tiered-parallel"];
     expect((await readdir(out)).sort()).toEqual([...arms, "summary.md"].sort());
@@ -47,9 +68,7 @@ it("writes five dry-run records and the comparison without an installed model CL
     expect(summary).toContain("Reported models");
     expect(summary).toContain("Later arms can read the prompt cache earlier arms wrote.");
     expect(summary).toContain(`Arm execution order: ${arms.join(" → ")}`);
-    const warning = "the reducer's quality columns can rate empty output as perfect; judge quality from sections.json";
-    const footer = summary.slice(summary.lastIndexOf("|") + 1);
-    expect(footer.split("\n").filter(line => line.includes(warning))).toEqual(arms.map(arm => `${arm}: ${warning}`));
+    expect(summary).toContain("Reducer quality columns are diagnostics. Inspect sections.json");
     expect(summary).toContain("| canned |");
     for (const arm of arms) {
       const count = arm.startsWith("tiny") ? 12 : 27;
@@ -126,7 +145,7 @@ it("requires plan limits, merges per-arm overrides, and journals a stopped CLI r
   }
 });
 
-it("journals a metered stand-in response through the CLI before the cost stop", async () => {
+posixTest("journals a metered stand-in response through the CLI before the cost stop", async () => {
   const out = await tempDirectory("bench-stand-in-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
@@ -176,7 +195,7 @@ it.each([["tiny-as-emitted"], ["summary.md"], ["tiny-as-emitted", "summary.md"]]
   },
 );
 
-it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", async () => {
+posixTest("journals mixed-model billing and bounded stderr from an unsuccessful CLI", async () => {
   const out = await tempDirectory("bench-cli-error-");
   try {
     const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
@@ -204,7 +223,7 @@ it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", a
   }
 });
 
-it("checks the summed reported spend between arms in execution order and uses fresh call directories", async () => {
+posixTest("checks the summed reported spend between arms in execution order and uses fresh call directories", async () => {
   const out = await tempDirectory("bench-plan-cap-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
@@ -243,7 +262,7 @@ it("checks the summed reported spend between arms in execution order and uses fr
   }
 });
 
-it.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget after two $%s calls", async (cost, remainder) => {
+posixTest.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget after two $%s calls", async (cost, remainder) => {
   const out = await tempDirectory("bench-remainder-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
@@ -272,7 +291,7 @@ it.each([[0.9, 0.2], [0.90000005, 0.199999]])("floors the remaining plan budget 
   }
 });
 
-it("journals a timeout and removes its call directory", async () => {
+posixTest("journals a timeout and removes its call directory", async () => {
   const out = await tempDirectory("bench-cli-timeout-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
@@ -289,7 +308,7 @@ it("journals a timeout and removes its call directory", async () => {
     await rm(out, { recursive: true, force: true });
   }
 });
-it("journals a failed workspace removal and runs the next arm", async () => {
+posixTest("journals a failed workspace removal and runs the next arm", async () => {
   const out = await tempDirectory("bench-kept-");
   const marker = join(out, "locked");
   try {
@@ -341,7 +360,7 @@ it("reports a configured zero arm limit while the plan still has budget", async 
     await rm(out, { recursive: true, force: true });
   }
 });
-it("keeps the numeric limit below the decimal remainder when adjacent numbers are dollars apart", async () => {
+posixTest("keeps the numeric limit below the decimal remainder when adjacent numbers are dollars apart", async () => {
   const out = await tempDirectory("bench-large-cap-");
   try {
     const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));

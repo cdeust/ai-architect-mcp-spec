@@ -6,10 +6,10 @@ import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
 import { loadArms } from "../real-run/plan-file.js";
 
 it("binds process operations and supplies production adapters", () => {
-  const proc = { once: vi.fn(), off: vi.fn(), exit: vi.fn(), exitCode: 0 };
+  const proc = { once: vi.fn(), off: vi.fn(), exit: vi.fn(), exitCode: 0, platform: "win32" as const };
   const io = productionIo(proc);
   expect(io).toMatchObject({ append: appendFileSync, rm: rmSync, stat: lstatSync, mkdir,
-    writeFile, loadArms, invoker: makeClaudeInvoker, stdout: console.log, stderr: console.error });
+    writeFile, loadArms, invoker: makeClaudeInvoker, stdout: console.log, stderr: console.error, platform: "win32" });
   const handler = vi.fn();
   io.once("SIGTERM", handler);
   io.off("exit", handler);

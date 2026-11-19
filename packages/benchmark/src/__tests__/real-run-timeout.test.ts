@@ -1,13 +1,13 @@
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tempDirectory } from "./real-run-cli-harness.js";
+import { posixTest, tempDirectory } from "./real-run-cli-harness.js";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, vi } from "vitest";
 import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
 import { fileURLToPath } from "node:url";
 
-it("kills a hanging executable and records the timeout on its invocation", async () => {
+posixTest("kills a hanging executable and records the timeout on its invocation", async () => {
   const dir = await tempDirectory("bench-timeout-");
   try {
     const program = join(dir, "stand-in");
@@ -38,7 +38,7 @@ it("kills a hanging executable and records the timeout on its invocation", async
   }
 });
 
-it.each(["complete", "incomplete", "billed error"])("handles %s output when a descendant holds stdout after exit", async output => {
+posixTest.each(["complete", "incomplete", "billed error"])("handles %s output when a descendant holds stdout after exit", async output => {
   const dir = await tempDirectory("bench-inherited-pipe-");
   try {
     const program = join(dir, "stand-in");
@@ -73,7 +73,7 @@ it.each(["complete", "incomplete", "billed error"])("handles %s output when a de
   }
 });
 
-it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe returns %s", async code => {
+posixTest.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe returns %s", async code => {
   const dir = await tempDirectory("bench-group-");
   const kill = vi.spyOn(process, "kill");
   if (code === "EPERM") kill.mockImplementation(() => { throw Object.assign(new Error("EPERM"), { code }); });
@@ -94,7 +94,7 @@ it.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe return
   }
 });
 
-it("passes the prompt and isolated environment to the executable in its call directory", async () => {
+posixTest("passes the prompt and isolated environment to the executable in its call directory", async () => {
   const dir = await tempDirectory("bench-stdin-");
   try {
     const program = join(dir, "stand-in");

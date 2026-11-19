@@ -1,34 +1,29 @@
 import type { PipelineState } from "@prd-gen/orchestration";
+import { addCost, reportedDollars } from "./cli-budget.js";
 import type { Row, RunRecord, Totals } from "./types.js";
-
-export function addCost(total: Pick<Totals, "cost_usd" | "unmetered_calls">, usage: Row["usage"]) {
-  if (usage?.cost_usd == null) total.unmetered_calls++;
-  else total.cost_usd += usage.cost_usd;
-}
 
 export const measurementScope = "Each live call is a bare claude -p session with no tools. The reducer's requested agent type and isolation are recorded but not applied. Host session cost is not measured.";
 
 function totals(rows: Row[]): Totals {
-  const result: Totals = {
+  const result: Omit<Totals, "cost_usd" | "unmetered_calls"> = {
     invocations: rows.length,
     errors: 0,
-    unmetered_calls: 0,
     input_tokens: 0,
     output_tokens: 0,
     cache_read_tokens: 0,
     cache_creation_tokens: 0,
     duration_ms: 0,
-    cost_usd: 0,
   };
+  const costs = { cost_usd: reportedDollars(0), unmetered_calls: 0 };
   for (const { usage, error } of rows) {
     if (error !== null) result.errors++;
-    addCost(result, usage);
+    addCost(costs, usage);
     if (!usage) continue;
     for (const key of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "duration_ms"] as const) {
       result[key] += usage[key] ?? 0;
     }
   }
-  return result;
+  return { ...result, cost_usd: costs.cost_usd.toNumber(), unmetered_calls: costs.unmetered_calls };
 }
 
 function quality(terminal: RunRecord["terminal"]): RunRecord["quality"] {
