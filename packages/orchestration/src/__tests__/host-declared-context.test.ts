@@ -115,7 +115,7 @@ describe("the kind of PRD of a run (#119)", () => {
     if (out.action.kind !== "ask_user") return;
     // The protocol allows four options: the first four kinds.
     expect(out.action.options?.map((o) => o.label)).toEqual(["proposal", "feature", "bug", "incident"]);
-    expect(out.action.description).toMatch(/couldn't infer the PRD type/);
+    expect(out.action.description).toContain("Showing 4 of 8 kinds. You can also type any allowed kind: proposal, feature, bug, incident, poc, mvp, release, cicd.");
   });
 
   function answer(result: { selected: string[]; freeform?: string }, question_id = "prd_context") {
@@ -129,14 +129,20 @@ describe("the kind of PRD of a run (#119)", () => {
     const picked = answer({ selected: ["bug"] });
     expect(picked.state.prd_context).toBe("bug");
     expect(picked.messages.map((m) => m.text)).toEqual(["PRD context: Bug Fix"]);
-    expect(answer({ selected: [], freeform: "  Incident " }).state.prd_context).toBe("incident");
+    // A kind the four options do not list is typed.
+    expect(answer({ selected: [], freeform: "  Release " }).state.prd_context).toBe("release");
+    for (const kind of ["poc", "mvp", "release", "cicd"]) {
+      const label = `  ${kind.toUpperCase()}  `;
+      expect(answer({ selected: [label] }).state.prd_context).toBe(kind);
+      expect(answer({ selected: [], freeform: label }).state.prd_context).toBe(kind);
+    }
   });
 
-  it("repeats the offered choices for unknown and unlisted kinds", () => {
-    for (const result of [{ selected: ["epic"] }, { selected: ["release"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
+  it("repeats the offered choices for unknown kinds", () => {
+    for (const result of [{ selected: ["epic"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
       const out = answer(result);
       expect(out.state.prd_context).toBeNull();
-      expectOptionRetry(out.action, step({ state: atContextDetection("something unclassifiable") }).action);
+      expectOptionRetry(out.action, step({ state: atContextDetection("something unclassifiable") }).action, "proposal, feature, bug, incident, poc, mvp, release, cicd");
     }
   });
 
