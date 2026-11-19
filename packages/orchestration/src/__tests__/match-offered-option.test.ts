@@ -12,3 +12,7 @@ it("returns the canonical offered label and gives the first selection precedence
 it.each(["first", "not first option", "", undefined])("requires a whole option for %s", (freeform) => {
   expect(matchOfferedOption(options, { selected: [], freeform })).toBeUndefined();
 });
+
+it("requires an answer even if an option has an empty label", () => {
+  expect(matchOfferedOption([{ label: "" }], { selected: [] })).toBeUndefined();
+});

@@ -45,6 +45,7 @@
  * "verification_policy"; e2e run run_mrlqa0aj_u2rh15 (2026-07-15).
  */
 
+import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import { type PipelineState } from "../types/state.js";
 import { initialPostSpecs, type PostSpecsState } from "../types/state/post-specs-state.js";
@@ -52,6 +53,7 @@ import { IMPLEMENTATION_GATE_QUESTION_ID } from "./protocol-ids.js";
 import { buildVerificationReportFile, VERIFICATION_REPORT_FILENAME } from "./verification-report.js";
 import {
   buildPolicyGateQuestion,
+  GATE_OPTION_PRD_ONLY,
   evaluatePolicy,
   resolveVerificationPolicy,
   type PolicyVerdict,
@@ -80,25 +82,6 @@ function recordReportWrite(state: PipelineState, result: import("../types/action
     return { ...state, written_files: [...state.written_files, result.path] };
   }
   return state;
-}
-
-/**
- * precondition:  `result` is the user_answer for IMPLEMENTATION_GATE_QUESTION_ID.
- * postcondition: returns "implement" iff the selected option's label (or
- *                freeform text) mentions "implement" OR "override" — the
- *                latter covers the "blocked"-status option label ("Override
- *                policy (explicit)"), which deliberately never contains the
- *                word "implement" (task requirement: never a bare
- *                "Implement" option while blocked). "prd_only" otherwise —
- *                including on an unrecognized/empty answer, which fails
- *                CLOSED to the zero-risk PRD-only path rather than silently
- *                spawning an engineer.
- */
-function decisionFromAnswer(
-  result: Extract<import("../types/actions.js").ActionResult, { kind: "user_answer" }>,
-): "implement" | "prd_only" {
-  const chosen = (result.selected[0] ?? result.freeform ?? "").toLowerCase();
-  return chosen.includes("implement") || chosen.includes("override") ? "implement" : "prd_only";
 }
 
 function writeReportAction(state: PipelineState): { kind: "write_file"; path: string; content: string } | null {
@@ -130,7 +113,7 @@ function advance(state: PipelineState, postSpecs: PostSpecsState) {
 }
 
 /**
- * precondition:  `result` is the user_answer for IMPLEMENTATION_GATE_QUESTION_ID.
+ * precondition:  the answer matched an option offered for this policy verdict.
  * postcondition: computes the decision + any derogation record, then either
  *                (a) returns the post-decision report write (non-"pass"
  *                verdicts only, single write) so the recorded decision is
@@ -141,9 +124,8 @@ function handleGateAnswer(
   state: PipelineState,
   postSpecs: PostSpecsState,
   policyVerdict: PolicyVerdict,
-  result: Extract<import("../types/actions.js").ActionResult, { kind: "user_answer" }>,
+  decision: "implement" | "prd_only",
 ) {
-  const decision = decisionFromAnswer(result);
   const requiresDerogationRecord = decision === "implement" && policyVerdict.status !== "pass";
   const newPostSpecs: PostSpecsState = {
     ...postSpecs,
@@ -198,15 +180,21 @@ export const handleImplementationGate: StepHandler = ({ state, result }) => {
     }
   }
 
+  const question = buildPolicyGateQuestion(policyVerdict);
   // (C) Gate answer arrived.
   if (result?.kind === "user_answer" && result.question_id === IMPLEMENTATION_GATE_QUESTION_ID) {
-    return handleGateAnswer(stateAfterReportWrite, postSpecs, policyVerdict, result);
+    const label = matchOfferedOption(question.options, result);
+    if (label === undefined) {
+      return { state: { ...stateAfterReportWrite, post_specs: postSpecs }, action: retryOptionQuestion(question) };
+    }
+    const decision = label === GATE_OPTION_PRD_ONLY ? "prd_only" : "implement";
+    return handleGateAnswer(stateAfterReportWrite, postSpecs, policyVerdict, decision);
   }
 
   // (D) Report already written (or none could be derived) and no answer yet
   // — ask, shaped by the policy verdict.
   return {
     state: { ...stateAfterReportWrite, post_specs: postSpecs },
-    action: buildPolicyGateQuestion(policyVerdict),
+    action: question,
   };
 };

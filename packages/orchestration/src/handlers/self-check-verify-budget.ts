@@ -19,7 +19,6 @@
  */
 
 import type { JudgeRequest } from "@prd-gen/core";
-import type { ActionResult } from "../types/actions.js";
 import type { VerifyBudgetConfig } from "../types/state.js";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
 
@@ -189,8 +188,6 @@ export const VERIFY_BUDGET_OPTION_SAMPLE = "Reduced sample";
 export const VERIFY_BUDGET_OPTION_FULL = "Full fleet";
 export const VERIFY_BUDGET_OPTION_SKIP = "Skip verification";
 
-export type VerifyBudgetDecision = "sample" | "full" | "skip";
-
 /**
  * Build the `ask_user` action offered when the reduced judge-request count
  * still exceeds `config.invocation_cap`.
@@ -229,22 +226,4 @@ export function buildBudgetGateQuestion(
     ],
     multi_select: false,
   };
-}
-
-/**
- * precondition:  `result` is the user_answer for VERIFY_BUDGET_QUESTION_ID.
- * postcondition: returns "sample" | "full" | "skip" matching the selected
- *                option's label (or freeform text), case-insensitive
- *                substring match; fails CLOSED to "sample" on an
- *                unrecognized/empty answer — the cheapest path that still
- *                runs verification, rather than silently either exceeding
- *                budget (full) or skipping verification (skip) on ambiguity.
- */
-export function verifyBudgetDecisionFromAnswer(
-  result: Extract<ActionResult, { kind: "user_answer" }>,
-): VerifyBudgetDecision {
-  const chosen = (result.selected[0] ?? result.freeform ?? "").toLowerCase();
-  if (chosen.includes("full")) return "full";
-  if (chosen.includes("skip")) return "skip";
-  return "sample";
 }

@@ -494,3 +494,14 @@ it.each(["not full", "don't skip", "full", "skip", "", undefined, "unknown"])(
     expect(out.state.verification_plan).toBeNull();
   },
 );
+
+it("accepts the complete typed skip label only when the budget question is offered", () => {
+  const result: ActionResult = {
+    kind: "user_answer", question_id: VERIFY_BUDGET_QUESTION_ID, selected: [], freeform: " SKIP   verification ",
+  };
+  const gated = step({ state: selfCheckState(22, true) });
+  const skipped = step({ state: gated.state, result });
+  expect(skipped.state.pending_completion?.verification?.claims_evaluated).toBe(0);
+  const underCap = step({ state: selfCheckState(2, true), result });
+  expect(underCap.action).toMatchObject({ kind: "spawn_subagents", batch_id: VERIFY_BATCH_ID });
+});

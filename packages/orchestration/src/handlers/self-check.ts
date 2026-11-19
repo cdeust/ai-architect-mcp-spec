@@ -19,6 +19,7 @@
  * handlers/finalize.ts, the sole step that reaches `complete`.
  */
 
+import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, DoneOutcome, NextAction } from "../types/actions.js";
 import {
@@ -46,7 +47,8 @@ import {
   reduceJudgeRequests,
   sampleWithinCap,
   buildBudgetGateQuestion,
-  verifyBudgetDecisionFromAnswer,
+  VERIFY_BUDGET_OPTION_SKIP,
+  VERIFY_BUDGET_OPTION_SAMPLE,
   assignJudgeModels,
 } from "./self-check-verify-budget.js";
 import { handlePrdValidation } from "./self-check-prd-validation.js";
@@ -341,20 +343,18 @@ function handleSelfCheckPhaseA(
     return finalize(state, mechanicalVerdicts, totalSubjectiveClaims);
   }
 
-  if (result?.kind === "user_answer" && result.question_id === VERIFY_BUDGET_QUESTION_ID) {
-    const decision = verifyBudgetDecisionFromAnswer(result);
-    if (decision === "skip") {
-      return finalize(state, mechanicalVerdicts, totalSubjectiveClaims);
-    }
-    const finalRequests =
-      decision === "sample" ? sampleWithinCap(reduced, config.invocation_cap) : reduced;
-    return dispatchVerify(state, finalRequests, config, decision === "sample");
-  }
-
   if (reduced.length > config.invocation_cap) {
-    return { state, action: buildBudgetGateQuestion(reduced.length, config) };
+    const question = buildBudgetGateQuestion(reduced.length, config);
+    if (result?.kind !== "user_answer" || result.question_id !== VERIFY_BUDGET_QUESTION_ID) {
+      return { state, action: question };
+    }
+    const label = matchOfferedOption(question.options, result);
+    if (label === undefined) return { state, action: retryOptionQuestion(question) };
+    if (label === VERIFY_BUDGET_OPTION_SKIP) return finalize(state, mechanicalVerdicts, totalSubjectiveClaims);
+    if (label === VERIFY_BUDGET_OPTION_SAMPLE) {
+      return dispatchVerify(state, sampleWithinCap(reduced, config.invocation_cap), config, true);
+    }
   }
-
   return dispatchVerify(state, reduced, config, false);
 }
 
