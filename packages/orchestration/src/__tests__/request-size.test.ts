@@ -109,27 +109,39 @@ describe("clarification bounds of a size (#119)", () => {
         selected: [],
         freeform: `answer ${round}`,
       },
-    }).action;
+    });
   }
 
   it("offers proceed after the 4th answer of a tiny feature run, with the bounds of the fast path", () => {
-    const action = answerRound("feature", "tiny", 4);
+    const { action } = answerRound("feature", "tiny", 4);
     expect(action.kind).toBe("ask_user");
     if (action.kind !== "ask_user") return;
     expect(action.options?.map((o) => o.label)).toEqual(["proceed", "continue"]);
     expect(action.description).toBe("Min for this run: 4. Max: 5. 'proceed' to generate the PRD, 'continue' for more questions.");
   });
 
+  it("reports four completed rounds when the user proceeds", () => {
+    const { state } = answerRound("feature", "tiny", 4);
+    const out = step({ state, result: { kind: "user_answer", question_id: "clarification_continue", selected: ["proceed"] } });
+    expect(out.messages).toContainEqual({ level: "info", text: "Clarification complete (4 rounds)." });
+  });
+
+  it("requests round five when the user continues after four answers", () => {
+    const { state } = answerRound("feature", "tiny", 4);
+    const out = step({ state, result: { kind: "user_answer", question_id: "clarification_continue", selected: ["continue"] } });
+    expect(out.action).toMatchObject({ kind: "spawn_subagents", batch_id: "clarification_compose_5" });
+  });
+
   it("asks a 4th question after the 3rd answer of a tiny run", () => {
-    expect(answerRound("feature", "tiny", 3).kind).toBe("spawn_subagents");
+    expect(answerRound("feature", "tiny", 3).action.kind).toBe("spawn_subagents");
   });
 
   it("still asks a 5th question after the 4th answer of a standard feature run", () => {
-    expect(answerRound("feature", "standard", 4).kind).toBe("spawn_subagents");
+    expect(answerRound("feature", "standard", 4).action.kind).toBe("spawn_subagents");
   });
 
   it("still asks a 5th question after the 4th answer of an incident declared tiny", () => {
-    expect(answerRound("incident", "tiny", 4).kind).toBe("spawn_subagents");
+    expect(answerRound("incident", "tiny", 4).action.kind).toBe("spawn_subagents");
   });
 
   it("tells the question composer the maximum of the size", () => {
