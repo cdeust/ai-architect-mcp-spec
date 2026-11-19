@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { MAX_PIPELINE_ERRORS, newPipelineState, PipelineStateSchema, step } from "../index.js";
+import { ClarificationTurnSchema, MAX_PIPELINE_ERRORS, newPipelineState, PipelineStateSchema, step } from "../index.js";
 
 const seed = {
   ...newPipelineState({ run_id: "bounds", feature_description: "x", prd_context: "feature" }),
@@ -8,6 +8,14 @@ const seed = {
 const normal = { question: "Who approves?", options: [" Owner ", "Team"], rationale: " Name the reviewer. " };
 const atLimit = "a".repeat(1000);
 const huge = "UNTRUSTED".padEnd(5 * 1024 * 1024, "x");
+
+it.each(["", " \t\n "])("rejects a blank option %j when reading a saved turn", label => {
+  const turn = ClarificationTurnSchema.safeParse({
+    round: 1, asked_at: "then", question: "Which?", options: ["Owner", label],
+  });
+  expect(turn.success).toBe(false);
+  if (!turn.success) expect(turn.error.issues[0].path).toEqual(["options", 1]);
+});
 
 function submit(raw_text: string | undefined, state = seed, error?: string) {
   return step({ state, result: {

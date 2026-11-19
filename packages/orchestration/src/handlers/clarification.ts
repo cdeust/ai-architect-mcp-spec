@@ -290,7 +290,7 @@ export const handleClarification: StepHandler = ({ state, result }) => {
   // A legacy checkpoint can be awaiting a compose result after the user chose
   // continue. Infer a pending decision only when it receives a user answer.
   const continuationPending = state.clarification_continue_pending ?? (
-    hasUserAnswer && state.clarifications.length >= bounds.min && state.clarifications.at(-1)?.answer !== undefined
+    hasUserAnswer && state.clarifications.at(-1)?.answer !== undefined && state.clarifications.length >= bounds.min
   );
   if (continuationPending) {
     return hasUserAnswer

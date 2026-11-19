@@ -57,6 +57,29 @@ describe("the file of a run (#121)", () => {
     expect(files.read(RUN)).toEqual({ kind: "found", run: { state: FIRST.state, action: null } });
   });
 
+  const question = {
+    kind: "ask_user", question_id: "clarification_answer", header: "Which detail?",
+    description: "Choose a detail.", options: null, multi_select: false,
+  } as const;
+  const continuation = { ...question, question_id: "clarification_continue" };
+  it.each([
+    ["old pending continuation", "clarification", continuation, undefined, true],
+    ["old pending clarification answer", "clarification", question, undefined, false],
+    ["old non-question action", "clarification", FIRST.action, undefined, false],
+    ["old missing action", "clarification", null, undefined, undefined],
+    ["explicit false", "clarification", continuation, false, false],
+    ["explicit true", "clarification", question, true, true],
+    ["another step", FIRST.state.current_step, continuation, undefined, undefined],
+  ] as const)("restores the continuation marker for %s", (_, current_step, action, marker, expected) => {
+    const state = { ...FIRST.state, current_step, clarification_continue_pending: marker };
+    files.write(state, action);
+    expect(files.read(RUN)).toEqual({
+      kind: "found", run: { state: { ...state, clarification_continue_pending: expected }, action },
+    });
+    const path = files.pathOf(RUN)!;
+    expect(JSON.parse(readFileSync(path, "utf8")).state.clarification_continue_pending).toBe(marker);
+  });
+
   it.skipIf(process.platform === "win32")("keeps the directory and the file to their owner", () => {
     files.write(FIRST.state, FIRST.action);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
