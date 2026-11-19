@@ -69,11 +69,14 @@ function trackCalls(io: CliIO) {
       io.exit(1);
     });
   }
+  function killActive() {
+    for (const call of active.values()) call.kill();
+  }
   once("exit", () => {
     if (!active.size) return;
     exited = true;
     io.exitCode(1);
-    for (const call of active.values()) call.kill();
+    killActive();
     for (const [row, { journal }] of active) {
       row.error = `Interrupted by ${interruption}`;
       appendRow(journal, row);
@@ -82,12 +85,12 @@ function trackCalls(io: CliIO) {
 
   function appendRow(journal: string, row: Row) {
     active.get(row)?.cleanup();
-    io.append(journal, JSON.stringify(row) + "\n", { flush: true });
     active.delete(row);
+    io.append(journal, JSON.stringify(row) + "\n", { flush: true });
   }
 
   return {
-    active,
+    active, killActive,
     record(journal: string, row: Row) {
       // A host may finish pending promises after its exit callback returns.
       // The callback already flushed all active rows synchronously.
@@ -115,6 +118,7 @@ async function runArm(dir: string, plan: RunPlan, configured_limits: RunPlan["li
     invoke: dry ? cannedInvoke : ctx.io.invoker(plan.call_timeout_ms, dir, "claude", (row, kill, cleanup) => {
       ctx.tracker.active.set(row, { kill, cleanup, journal });
     }, ctx.env, ctx.io.rm),
+    abortBatch: ctx.tracker.killActive,
     record: row => ctx.tracker.record(journal, row),
   });
   await writeJson(ctx.io, join(dir, "record.json"), { dry_run: dry, arm_order_so_far: armOrder, plan, configured_limits, effective_limits: plan.limits, ...record });

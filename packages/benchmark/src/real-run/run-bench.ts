@@ -83,8 +83,14 @@ async function batch(
     if (action.invocations.length > remaining) {
       return stopped("max_invocations");
     }
-    const calls = await Promise.all(action.invocations.map(run));
-    calls.forEach(collect);
+    const pending = action.invocations.map(run);
+    try {
+      (await Promise.all(pending)).forEach(collect);
+    } catch (error) {
+      ports.abortBatch?.();
+      await Promise.allSettled(pending);
+      throw error;
+    }
     const stop = limitExceeded(measurements, plan.limits);
     if (stop) {
       return stop;

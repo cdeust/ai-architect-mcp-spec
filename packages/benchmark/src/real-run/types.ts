@@ -39,6 +39,7 @@ export interface Usage {
 }
 export interface Ports {
   invoke(invocation: Invocation, settings: Settings, row: Row): Promise<{ text: string; usage: Usage | null; error?: string }>;
+  abortBatch?(): void;
   record(row: Row): void | Promise<void>;
   clock(): number;
 }
