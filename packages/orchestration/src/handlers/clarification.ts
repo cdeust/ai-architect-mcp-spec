@@ -285,30 +285,28 @@ export const handleClarification: StepHandler = ({ state, result }) => {
 
   const bounds = computeBounds(state);
   const expectedRound = state.clarifications.length + 1;
+  const hasUserAnswer = result?.kind === "user_answer";
 
-  if (result?.kind === "user_answer") {
-    // For a legacy checkpoint, an answered round at or above the minimum may
-    // already have offered continuation. Require an explicit decision there.
-    const continuationPending = state.clarification_continue_pending ?? (
-      state.clarifications.length >= bounds.min && state.clarifications[state.clarifications.length - 1]!.answer !== undefined
-    );
-    if (continuationPending) {
-      return handleProceedOrContinue(state, result, bounds);
-    }
-    // The host answered a question that was never pending, so this consumes no
-    // unmatched-answer attempt. Replay the open question or fall through to compose.
-    if (result.question_id === QUESTION_ID_CONTINUE) {
-      const lastTurn = state.clarifications.at(-1);
-      if (lastTurn && lastTurn.answer === undefined) {
-        return { state, action: askComposedQuestion(lastTurn) };
-      }
+  // A legacy checkpoint can be awaiting a compose result after the user chose
+  // continue. Infer a pending decision only when it receives a user answer.
+  const continuationPending = state.clarification_continue_pending ?? (
+    hasUserAnswer && state.clarifications.length >= bounds.min && state.clarifications.at(-1)?.answer !== undefined
+  );
+  if (continuationPending) {
+    return hasUserAnswer
+      ? handleProceedOrContinue(state, result, bounds)
+      : { state, action: continueQuestion(state.clarifications.length, bounds) };
+  }
+
+  if (hasUserAnswer && result.question_id === QUESTION_ID_CONTINUE) {
+    // The answer was unsolicited. Replay the open question without spending an attempt.
+    const lastTurn = state.clarifications.at(-1);
+    if (lastTurn && lastTurn.answer === undefined) {
+      return { state, action: askComposedQuestion(lastTurn) };
     }
   }
 
-  if (
-    result?.kind === "user_answer" &&
-    result.question_id === QUESTION_ID_ANSWER
-  ) {
+  if (hasUserAnswer && result.question_id === QUESTION_ID_ANSWER) {
     // recordAnswerAndDispatch returns null iff the answer cannot be matched
     // to a pending unanswered turn (duplicate answer or no question yet).
     // Falling through re-composes a question — correct stall recovery.

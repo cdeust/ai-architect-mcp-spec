@@ -75,3 +75,33 @@ describe.each([true, undefined])("pending continuation with marker %s", (marker)
     }
   });
 });
+
+it.each(["stale compose batch", "next compose batch", "no result on resume"] as const)(
+  "reissues the pending continuation after %s", (scenario) => {
+    const issued = step({ state: question.state, result: dispatch(question.action) });
+    const saved = PipelineStateSchema.parse(issued.state);
+    const next = decision(saved, "continue").action;
+    const results = {
+      "stale compose batch": dispatch(ninth.action),
+      "next compose batch": dispatch(next),
+      "no result on resume": undefined,
+    };
+    expect(issued.action).toMatchObject({ kind: "ask_user", question_id: "clarification_continue" });
+    expect(saved.unmatched_answers).toEqual({ other: 1 });
+
+    const out = step({ state: saved, result: results[scenario] });
+    expect(out.action).toEqual(issued.action);
+    expect(out.messages).toEqual([]);
+    expect(out.state.clarification_continue_pending).toBe(true);
+    expect(out.state.clarifications).toEqual(saved.clarifications);
+    expect(out.state.unmatched_answers).toEqual(saved.unmatched_answers);
+    expect(decision(out.state, "continue").action).toEqual(next);
+  });
+
+it("accepts the expected compose batch from a markerless legacy checkpoint", () => {
+  const saved = PipelineStateSchema.parse(ninth.state);
+  delete saved.clarification_continue_pending;
+  const out = step({ state: saved, result: dispatch(ninth.action) });
+  expect(out.action).toMatchObject({ kind: "ask_user", question_id: "clarification_answer" });
+  expect(out.state.clarifications).toHaveLength(turns.length + 1);
+});

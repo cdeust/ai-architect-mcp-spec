@@ -298,17 +298,23 @@ it("recovers continuation from a legacy checkpoint only after an eligible turn w
   }
 });
 
-it("follows the question actually emitted when resuming clarification without an answer", () => {
+it("resumes the pending continuation before composing another clarification", () => {
   const clarifications = Array.from({ length: 8 }, (_, i) => ({
     round: i + 1, asked_at: "now", question: "Detail?", answer: i < 7 ? "given" : undefined,
   }));
   const result = { kind: "user_answer" as const, question_id: "clarification_answer", selected: ["new detail"] };
   const pending = step({ state: { ...clarify, clarifications }, result });
   const resumed = step({ state: pending.state });
-  expect(resumed.action).toMatchObject({ kind: "spawn_subagents", batch_id: "clarification_compose_9" });
-  expect(step({ state: resumed.state, result }).action).toEqual(resumed.action);
-  const composed = makeCannedDispatcher()(resumed.action);
-  const next = step({ state: pending.state, result: composed });
+  expect(resumed.action).toEqual(pending.action);
+  const stale = step({ state: resumed.state, result });
+  expect(stale.action).toMatchObject({ kind: "ask_user", question_id: "clarification_continue" });
+  expect(stale.state.unmatched_answers).toEqual({ clarification_continue: 1 });
+  const continued = step({ state: stale.state, result: {
+    kind: "user_answer", question_id: "clarification_continue", selected: ["continue"],
+  } });
+  expect(continued.action).toMatchObject({ kind: "spawn_subagents", batch_id: "clarification_compose_9" });
+  const composed = makeCannedDispatcher()(continued.action);
+  const next = step({ state: continued.state, result: composed });
   expect(next.action).toMatchObject({ kind: "ask_user", question_id: "clarification_answer" });
   const recorded = step({ state: next.state, result });
   expect(recorded.state.clarifications[8]?.answer).toBe("new detail");
