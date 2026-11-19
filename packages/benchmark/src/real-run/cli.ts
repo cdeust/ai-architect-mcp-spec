@@ -7,7 +7,7 @@ import { loadArms } from "./plan-file.js";
 import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
 import { makeClaudeInvoker } from "./claude-cli-invoker.js";
 import { expectedModels, summaryHeader, summaryRow } from "./report.js";
-import type { Ports, RunPlan, Totals } from "./types.js";
+import type { Ports, Row, RunPlan, Totals } from "./types.js";
 
 function options() {
   const { values } = parseArgs({ options: {
@@ -39,14 +39,38 @@ function writeJson(path: string, value: unknown) {
   return writeFile(path, JSON.stringify(value, null, 2) + "\n");
 }
 
+const active = new Map<Row, { kill(): void; journal: string }>();
+let interruption = "CLI exit";
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    interruption = signal;
+    process.exit(1);
+  });
+}
+process.once("exit", () => {
+  if (!active.size) return;
+  process.exitCode = 1;
+  for (const call of active.values()) call.kill();
+  for (const [row, { journal }] of active) {
+    appendRow(journal, { ...row, error: `Interrupted by ${interruption}` });
+  }
+});
+
+function appendRow(journal: string, row: Row) {
+  appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true });
+}
+
 async function runArm(dir: string, plan: RunPlan, dry: boolean) {
   await mkdir(dir, { recursive: true });
   const journal = join(dir, "rows.jsonl");
   await writeFile(journal, "", { flag: "wx" });
   const record = await runBench(plan, {
     ...cannedPorts,
-    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms),
-    record: row => appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true }),
+    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms, "claude", (row, kill) => {
+      active.set(row, { kill, journal });
+      return () => active.delete(row);
+    }),
+    record: row => appendRow(journal, row),
   });
   await writeJson(join(dir, "record.json"), { dry_run: dry, plan, ...record });
   await writeJson(join(dir, "sections.json"), record.sections);

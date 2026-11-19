@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,6 +132,40 @@ it("journals a metered stand-in response through the compiled CLI before the cos
     expect(summary).toContain("| 3777 | 1.00× |");
     expect(summary).toContain("| claude-haiku-5-5 |");
   } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+it("journals the interrupted invocation and kills its group on SIGTERM to the CLI alone", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-signal-"));
+  const marker = join(out, "pids");
+  const standIn = join(out, "claude");
+  let pids: number[] = [];
+  await writeFile(standIn, '#!/bin/sh\n/bin/sleep 20 &\necho "$$ $!" > "$MARKER"\nwait\n', { mode: 0o700 });
+  const cliProcess = spawn(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+    "--plan", "real-run/plans/smoke.json", "--out", out], { cwd, env: { PATH: out, MARKER: marker } });
+  const exited = new Promise(resolve => cliProcess.once("exit", (code, signal) => resolve(code ?? signal)));
+  try {
+    await expect.poll(async () => {
+      const content = await readFile(marker, "utf8").catch(() => "");
+      pids = content.trim().split(" ").map(Number);
+      return pids.length;
+    }, { timeout: 3000 }).toBe(2);
+    cliProcess.kill("SIGTERM");
+    expect(await exited).toEqual(expect.any(Number));
+    expect(cliProcess.exitCode).not.toBe(0);
+    const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
+    expect(row).toMatchObject({ purpose: "probe", usage: null, error: expect.stringContaining("SIGTERM") });
+    for (const pid of pids) await expect.poll(() => {
+      try { process.kill(pid, 0); return false; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+    }).toBe(true);
+  } finally {
+    cliProcess.kill("SIGKILL");
+    for (const pid of pids.filter(pid => pid > 0)) {
+      try { process.kill(pid, "SIGKILL"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
     await rm(out, { recursive: true, force: true });
   }
 });

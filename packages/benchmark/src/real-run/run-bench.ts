@@ -16,7 +16,7 @@ async function measure(inv: Invocation, batch_id: string, plan: RunPlan, ports: 
     used, usage: null, error: null,
   };
   try {
-    const result = await ports.invoke(inv, used);
+    const result = await ports.invoke(inv, used, row);
     row.usage = result.usage;
     row.error = result.error ?? null;
     const response = row.error === null ? { raw_text: result.text } : { error: row.error };

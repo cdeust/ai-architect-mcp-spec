@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import type { Ports, Settings } from "./types.js";
+import type { Ports, Row, Settings } from "./types.js";
 
 // source: the recorded Haiku result in __tests__/fixtures/claude-cli-result.json.
 const tokens = z.number().int().nonnegative();
@@ -50,14 +50,21 @@ function killGroup(pid: number) {
   }
 }
 
-export function makeClaudeInvoker(timeoutMs: number, program = "claude"): Ports["invoke"] {
-  return (inv, settings) => new Promise((resolve, reject) => {
+type TrackCall = (row: Row, kill: () => void) => () => void;
+
+export function makeClaudeInvoker(timeoutMs: number, program = "claude", track?: TrackCall): Ports["invoke"] {
+  return (inv, settings, row) => new Promise((resolve, reject) => {
     const child = spawn(program, claudeArgs(settings), { detached: true, stdio: ["pipe", "pipe", "ignore"] });
+    const kill = () => {
+      if (child.pid !== undefined) killGroup(child.pid);
+    };
+    const release = track?.(row, kill);
     let stdout = "";
     let failure: string | undefined;
     const timer = setTimeout(() => {
       failure = `Claude CLI timed out after ${timeoutMs} ms`;
-      if (child.pid !== undefined) killGroup(child.pid);
+      kill();
+      release?.();
       reject(new Error(failure));
     }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", chunk => {
@@ -69,6 +76,7 @@ export function makeClaudeInvoker(timeoutMs: number, program = "claude"): Ports[
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      release?.();
       if (code !== 0) failure ??= `Claude CLI exited with ${signal ?? code}`;
       try {
         resolve(readResult(stdout, failure));
