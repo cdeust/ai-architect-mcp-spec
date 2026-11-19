@@ -1,4 +1,4 @@
-import type { RunRecord } from "./types.js";
+import type { RunRecord, Totals } from "./types.js";
 
 export function expectedModels(record: RunRecord): string {
   const counts = new Map([["session", 0]]);
@@ -16,11 +16,27 @@ function reportedModels(record: RunRecord): string {
   return [...models].join(", ") || "—";
 }
 
-export function summaryRow(name: string, record: RunRecord) {
+function totalTokens(totals: Totals): number {
+  return totals.input_tokens + totals.output_tokens + totals.cache_read_tokens + totals.cache_creation_tokens;
+}
+
+function ratio(value: number | null, baseline: number | null): string {
+  if (value === null || baseline === null || baseline === 0) return "—";
+  return `${(value / baseline).toFixed(2)}×`;
+}
+
+export function summaryRow(name: string, record: RunRecord, baseline: Totals): string {
   const { totals, quality } = record;
-  const distribution = Object.entries(quality.distribution ?? {}).map(([k, v]) => `${k} ${v}`).join(", ");
-  const cells = [name, totals.input_tokens, totals.output_tokens, totals.cache_read_tokens, totals.cache_creation_tokens,
-    totals.cost_usd ?? "unknown", record.wall_time_ms.toFixed(1), totals.invocations, totals.errors, totals.unmetered_calls,
-    quality.outcome?.status ?? record.terminal.kind, quality.hard_output_score ?? "—", distribution || "—", reportedModels(record)];
+  const distribution = Object.entries(quality.distribution ?? {})
+    .map(([label, count]) => `${label} ${count}`).join(", ");
+  const tokenRatio = totals.unmetered_calls || baseline.unmetered_calls
+    ? "—" : ratio(totalTokens(totals), totalTokens(baseline));
+  const cells = [
+    name, totals.input_tokens, totals.output_tokens, totals.cache_read_tokens, totals.cache_creation_tokens,
+    totalTokens(totals), tokenRatio, totals.cost_usd ?? "unknown", ratio(totals.cost_usd, baseline.cost_usd),
+    record.wall_time_ms.toFixed(1), totals.invocations, totals.errors, totals.unmetered_calls,
+    quality.outcome?.status ?? record.terminal.kind, quality.hard_output_score ?? "—", distribution || "—",
+    reportedModels(record),
+  ];
   return `| ${cells.join(" | ")} |`;
 }

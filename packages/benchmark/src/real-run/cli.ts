@@ -7,7 +7,7 @@ import { loadArms } from "./plan-file.js";
 import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
 import { makeClaudeInvoker } from "./claude-cli-invoker.js";
 import { expectedModels, summaryRow } from "./report.js";
-import type { Row } from "./types.js";
+import type { Row, Totals } from "./types.js";
 
 async function main() {
   const { values } = parseArgs({ options: { plan: { type: "string" }, out: { type: "string" },
@@ -26,8 +26,9 @@ async function main() {
   }
   const summary = [dry ? "# Dry run (canned responses)" : "# Model run",
     "", "Token columns sum metered calls. A call without metering makes the total cost unknown.", "",
-    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | USD | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models |",
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|"];
+    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|"];
+  let baseline: Totals | undefined;
   for (const arm of estimates) {
     const dir = join(values.out, arm.name);
     await mkdir(dir, { recursive: true });
@@ -40,7 +41,8 @@ async function main() {
     });
     await writeFile(join(dir, "record.json"), JSON.stringify({ dry_run: dry, plan: arm.plan, ...record }, null, 2) + "\n");
     await writeFile(join(dir, "sections.json"), JSON.stringify(record.sections, null, 2) + "\n");
-    summary.push(summaryRow(arm.name, record));
+    baseline ??= record.totals;
+    summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
   }
   await writeFile(join(values.out, "summary.md"), summary.join("\n") + "\n");

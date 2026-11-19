@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
+import { summaryRow } from "../real-run/report.js";
 import { runBench } from "../real-run/run-bench.js";
 import type { Ports, RunPlan } from "../real-run/types.js";
 
@@ -147,4 +148,13 @@ it("records a completed call before a later host failure", async () => {
   });
   await expect(aborted).rejects.toThrow("host interrupted");
   expect(saved).toEqual(["probe"]);
+});
+
+it("compares all four token counters and spend to the first arm", async () => {
+  const { run } = await timedRun("sequential");
+  const baseline = { ...run.totals, input_tokens: 84, output_tokens: 0,
+    cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 12 };
+  expect(summaryRow("second", run, baseline)).toContain("| 168 | 2.00× | 3 | 0.25× |");
+  expect(summaryRow("second", run, { ...baseline, input_tokens: 0, cost_usd: null }))
+    .toContain("| 168 | — | 3 | — |");
 });
