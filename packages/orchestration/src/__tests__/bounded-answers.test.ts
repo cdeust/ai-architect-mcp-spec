@@ -7,27 +7,30 @@ const base = newPipelineState({ run_id: "wrong-host", feature_description: "x", 
 const completion = { summary: "PRD ready", artifacts: [] };
 const clarify: PipelineState = { ...base, current_step: "clarification" };
 const cases = [
-  { id: "prd_context", state: { ...base, current_step: "context_detection", prd_context: null, feature_description: "bug" }, label: "release" },
-  { id: "clarification_continue", state: clarify, label: "proceed" },
-  { id: "pr_gate", state: { ...base, current_step: "pr_gate", pending_completion: completion }, label: "Push + open PR", fallback: "No" },
-  { id: "implementation_gate", state: { ...base, current_step: "implementation_gate", pending_completion: completion }, label: "Implement", fallback: "PRD only" },
-  { id: "self_check_verify_budget", state: selfCheckState(22, true), label: "Full fleet", fallback: "Reduced sample" },
-] satisfies Array<{ id: string; state: PipelineState; label: string; fallback?: string }>;
+  { id: "prd_context", state: { ...base, current_step: "context_detection", prd_context: null, feature_description: "bug" }, other: "feature", label: "release" },
+  { id: "clarification_continue", state: clarify, other: "continue", label: "proceed" },
+  { id: "pr_gate", state: { ...base, current_step: "pr_gate", pending_completion: completion }, other: "No", label: "Push + open PR", fallback: "No" },
+  { id: "implementation_gate", state: { ...base, current_step: "implementation_gate", pending_completion: completion }, other: "PRD only", label: "Implement", fallback: "PRD only" },
+  { id: "self_check_verify_budget", state: selfCheckState(22, true), other: "Reduced sample", label: "Full fleet", fallback: "Reduced sample" },
+] satisfies Array<{ id: string; state: PipelineState; label: string; other: string; fallback?: string }>;
 
-describe.each(cases)("bounded $id", ({ id, state, label, fallback }) => {
+describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
   function submit(saved: PipelineState, selected: string[], freeform?: string) {
     return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, freeform } });
   }
 
-  it("counts contradictory answers across saved states and resolves the third", () => {
+  it.each(["conflicting fields", "multiple selections"])("counts %s across saved states and resolves the third", (shape) => {
+    // Exercise different labels, duplicate labels and an extra non-option on successive attempts.
+    const answers = shape === "multiple selections" ? [[label, other], [label, label], [label, "unknown"]] : [[label], [label], []];
+    const freeform = shape === "conflicting fields" ? "do not approve" : undefined;
     let saved: PipelineState = state;
     for (const count of [1, 2]) {
-      const out = submit(saved, [label], "do not approve");
+      const out = submit(saved, answers[count - 1]!, freeform);
       expect(out.action).toMatchObject({ kind: "ask_user", question_id: id });
       expect(out.state.unmatched_answers).toEqual({ [id]: count });
       saved = PipelineStateSchema.parse(JSON.parse(JSON.stringify(out.state)));
     }
-    const out = submit(saved, [], "wrong");
+    const out = submit(saved, answers[2]!, freeform);
     if (!fallback) {
       expect(out.state.unmatched_answers).toEqual({ [id]: 3 });
       expect(out.action).toEqual({ kind: "failed", step: state.current_step, reason: `${id}: 3 unmatched answers.` });
@@ -38,6 +41,16 @@ describe.each(cases)("bounded $id", ({ id, state, label, fallback }) => {
     if (id === "pr_gate") expect(out.state.post_specs?.pr).toEqual({ pushed: false, url: null });
     if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("prd_only");
     if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(true);
+  });
+
+  it.each(["", " \t "])("accepts a single label alongside %j", (blank) => {
+    const out = submit(state, [label, blank]);
+    expect(out.state.unmatched_answers).toEqual({});
+    if (id === "pr_gate") expect(out.state.current_step).toBe("pr_creation");
+    if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("implement");
+    if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(false);
+    if (id === "clarification_continue") expect(out.state.proceed_signal).toBe(true);
+    if (id === "prd_context") expect(out.state.prd_context).toBe("release");
   });
 
   it("leaves the input counters intact after a valid answer", () => {

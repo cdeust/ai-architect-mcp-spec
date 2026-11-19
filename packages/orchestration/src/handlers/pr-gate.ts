@@ -26,8 +26,8 @@
  * (implementation.ts, testing.ts, review.ts) — that pattern is exactly what
  * this gate must NOT do, because the whole point of a mandatory gate is
  * that it cannot be bypassed by a state field happening to already be set.
- * A call to this handler with no matching `user_answer` ALWAYS emits
- * `ask_user` — there is no state under which it silently proceeds.
+ * The handler asks on entry and retries the first two unmatched answers.
+ * On the third it warns, takes "No", and advances to finalize.
  *
  * source: design-phases-3-5.md §3, §4, §6 PR 5.
  */

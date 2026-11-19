@@ -6,7 +6,7 @@ type Option<Label extends string> = { label: Label };
 type Answer = { selected: readonly string[]; freeform?: string };
 
 function normalize(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
+  return text.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /** Return the original accepted label, including choices the host can only expose as text. */
@@ -14,7 +14,10 @@ export function matchOfferedOption<Label extends string>(
   options: readonly Option<Label>[],
   answer: Answer,
 ): Label | undefined {
-  const selected = normalize(answer.selected[0] ?? "");
+  const selections = answer.selected.map(normalize).filter(Boolean);
+  // These questions set multi_select: false. Even repeated labels exceed the single allowed selection.
+  if (selections.length > 1) return undefined;
+  const [selected] = selections;
   const typed = normalize(answer.freeform ?? "");
   if (selected && typed && selected !== typed) return undefined;
   const chosen = selected || typed;
