@@ -17,7 +17,7 @@ const cases = [
 
 describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
   function submit(saved: PipelineState, selected: string[], freeform?: string) {
-    return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, freeform } });
+    return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, ...(freeform === undefined ? {} : { freeform }) } });
   }
 
   it.each(["conflicting fields", "multiple selections"])("counts %s across saved states and resolves the third", (shape) => {

@@ -14,6 +14,8 @@ export function matchOfferedOption<Label extends string>(
   options: readonly Option<Label>[],
   answer: Answer,
 ): Label | undefined {
+  if ("freeform" in answer && typeof answer.freeform !== "string") return undefined;
+  if (answer.selected.some(value => typeof value !== "string")) return undefined;
   const selections = answer.selected.map(normalize).filter(Boolean);
   // These questions set multi_select: false. Even repeated labels exceed the single allowed selection.
   if (selections.length > 1) return undefined;
