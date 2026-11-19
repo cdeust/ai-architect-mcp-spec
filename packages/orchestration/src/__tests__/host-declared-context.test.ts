@@ -7,6 +7,7 @@
  * which one it was.
  */
 
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
 import { newPipelineState, step } from "../index.js";
 import type { PipelineState } from "../index.js";
@@ -114,7 +115,7 @@ describe("the kind of PRD of a run (#119)", () => {
     if (out.action.kind !== "ask_user") return;
     // The protocol allows four options: the first four kinds.
     expect(out.action.options?.map((o) => o.label)).toEqual(["proposal", "feature", "bug", "incident"]);
-    expect(out.action.description).toMatch(/couldn't infer the PRD type/);
+    expect(out.action.description).toContain("Showing 4 of 8 kinds. You can also type any allowed kind: proposal, feature, bug, incident, poc, mvp, release, cicd.");
   });
 
   function answer(result: { selected: string[]; freeform?: string }, question_id = "prd_context") {
@@ -130,15 +131,18 @@ describe("the kind of PRD of a run (#119)", () => {
     expect(picked.messages.map((m) => m.text)).toEqual(["PRD context: Bug Fix"]);
     // A kind the four options do not list is typed.
     expect(answer({ selected: [], freeform: "  Release " }).state.prd_context).toBe("release");
+    for (const kind of ["poc", "mvp", "release", "cicd"]) {
+      const label = `  ${kind.toUpperCase()}  `;
+      expect(answer({ selected: [label] }).state.prd_context).toBe(kind);
+      expect(answer({ selected: [], freeform: label }).state.prd_context).toBe(kind);
+    }
   });
 
-  it("fails on an answer that names no kind, and says which", () => {
+  it("repeats the offered choices for unknown kinds", () => {
     for (const result of [{ selected: ["epic"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
       const out = answer(result);
       expect(out.state.prd_context).toBeNull();
-      expect(out.action).toMatchObject({ kind: "failed", step: "context_detection" });
-      if (out.action.kind !== "failed") return;
-      expect(out.action.reason).toBe(`Invalid PRD context choice: ${result.selected[0] ?? result.freeform ?? ""}`);
+      expectOptionRetry(out.action, step({ state: atContextDetection("something unclassifiable") }).action, "proposal, feature, bug, incident, poc, mvp, release, cicd");
     }
   });
 

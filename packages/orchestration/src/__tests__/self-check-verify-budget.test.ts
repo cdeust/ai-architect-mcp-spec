@@ -19,14 +19,14 @@
  * judge invocations under the session model in one spawn_subagents batch.
  */
 
+import { selfCheckState } from "./verify-budget-fixture.js";
 import { claimIdsInJudgePrompt } from "@prd-gen/verification";
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, it, expect } from "vitest";
 import {
-  newPipelineState,
   step,
   type ActionResult,
   type PipelineState,
-  type SectionStatus,
 } from "../index.js";
 import { VERIFY_BUDGET_QUESTION_ID } from "../handlers/protocol-ids.js";
 import {
@@ -42,71 +42,6 @@ import type { JudgeRequest } from "@prd-gen/core";
 const VERIFY_BATCH_ID = "self_check_verify";
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
-
-function section(
-  section_type: SectionStatus["section_type"],
-  content: string,
-): SectionStatus {
-  return {
-    section_type,
-    status: "passed",
-    attempt: 1,
-    violation_count: 0,
-    last_violations: [],
-    content,
-    attempt_log: [],
-  };
-}
-
-/** N synthetic FR-### requirement lines — one fr_traceability claim each. */
-function requirementsContent(n: number): string {
-  const lines = Array.from(
-    { length: n },
-    (_, i) => `- FR-${(i + 1).toString().padStart(3, "0")}: The system does thing number ${i + 1}.`,
-  );
-  return ["## requirements", "", ...lines].join("\n");
-}
-
-/**
- * Exactly ONE architecture claim — matches ONLY ARCH_PATTERNS' "hexagonal"
- * entry. (A phrase like "ports and adapters" would ALSO match the
- * ports-and-adapters pattern, yielding two architecture claims instead of
- * one — avoided here so fr_count/architecture-claim arithmetic in the tests
- * below stays exact.)
- */
-const TECHNICAL_SPEC_CONTENT = [
-  "## technical_specification",
-  "",
-  "We use a hexagonal design with a clear boundary around the domain core.",
-].join("\n");
-
-/**
- * Build a self_check-entry PipelineState with `fr_count` FR requirement
- * claims plus (optionally) exactly one architecture claim.
- */
-function selfCheckState(
-  fr_count: number,
-  includeArchitecture: boolean,
-  overrides: Partial<PipelineState> = {},
-): PipelineState {
-  const base = newPipelineState({
-    run_id: `self-check-budget-test-${fr_count}-${includeArchitecture}`,
-    feature_description: "budget gate test",
-    skip_preflight: true,
-  });
-  const sections: SectionStatus[] = [
-    section("requirements", requirementsContent(fr_count)),
-  ];
-  if (includeArchitecture) {
-    sections.push(section("technical_specification", TECHNICAL_SPEC_CONTENT));
-  }
-  return {
-    ...base,
-    current_step: "self_check",
-    sections,
-    ...overrides,
-  };
-}
 
 function dispatchAction(state: PipelineState, result?: ActionResult) {
   return step({ state, result });
@@ -483,4 +418,24 @@ describe("self-check judge-panel budget gate — sampling determinism & host-ski
     expect(verification!.distribution.INCONCLUSIVE).toBe(2);
     expect(verification!.distribution.FAIL).toBe(0);
   });
+});
+
+it.each(["not full", "don't skip", "full", "skip", "", undefined, "unknown"])(
+  "repeats the budget question without dispatching for %s", (freeform) => {
+    const issued = step({ state: selfCheckState(22, true) });
+    const out = step({ state: issued.state, result: { kind: "user_answer", question_id: VERIFY_BUDGET_QUESTION_ID, selected: [], freeform } });
+    expectOptionRetry(out.action, issued.action);
+    expect(out.state.verification_plan).toBeNull();
+  },
+);
+
+it("accepts the complete typed skip label only when the budget question is offered", () => {
+  const result: ActionResult = {
+    kind: "user_answer", question_id: VERIFY_BUDGET_QUESTION_ID, selected: [], freeform: " SKIP   verification ",
+  };
+  const gated = step({ state: selfCheckState(22, true) });
+  const skipped = step({ state: gated.state, result });
+  expect(skipped.state.pending_completion?.verification?.claims_evaluated).toBe(0);
+  const underCap = step({ state: selfCheckState(2, true), result });
+  expect(underCap.action).toMatchObject({ kind: "spawn_subagents", batch_id: VERIFY_BATCH_ID });
 });

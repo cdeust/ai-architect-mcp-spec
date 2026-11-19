@@ -194,7 +194,7 @@ export function evaluatePolicy(
   };
 }
 
-/** ask_user option labels — shared between the gate builder and the answer parser (implementation-gate.ts). */
+/** ask_user option labels — shared between the gate builder and the decision table (implementation-gate.ts). */
 export const GATE_OPTION_PRD_ONLY = "PRD only";
 export const GATE_OPTION_IMPLEMENT = "Implement";
 export const GATE_OPTION_IMPLEMENT_ANYWAY = "Implement anyway (dérogation explicite)";
@@ -203,25 +203,28 @@ export const GATE_OPTION_OVERRIDE_POLICY = "Override policy (explicit)";
 const OPTION_PRD_ONLY_PASS = {
   label: GATE_OPTION_PRD_ONLY,
   description: "Stop here. No code changes — today's default behavior.",
-};
-const OPTION_PRD_ONLY_FLAGGED = { label: GATE_OPTION_PRD_ONLY, description: "Stop here. No code changes." };
+} as const;
+const OPTION_PRD_ONLY_FLAGGED = { label: GATE_OPTION_PRD_ONLY, description: "Stop here. No code changes." } as const;
 const OPTION_IMPLEMENT = {
   label: GATE_OPTION_IMPLEMENT,
   description: "Spawn an engineer to implement, test, review, and (after a further gate) open a PR.",
-};
+} as const;
 const OPTION_IMPLEMENT_ANYWAY = {
   label: GATE_OPTION_IMPLEMENT_ANYWAY,
   description: "Explicit derogation: implement despite the policy finding above.",
-};
+} as const;
 const OPTION_OVERRIDE_POLICY = {
   label: GATE_OPTION_OVERRIDE_POLICY,
   description: "Explicit override: implement despite the block above.",
-};
+} as const;
+
+type PolicyOption = typeof OPTION_PRD_ONLY_PASS | typeof OPTION_PRD_ONLY_FLAGGED | typeof OPTION_IMPLEMENT
+  | typeof OPTION_IMPLEMENT_ANYWAY | typeof OPTION_OVERRIDE_POLICY;
 
 interface GateQuestionShape {
   readonly header: string;
   readonly description: string;
-  readonly options: [{ label: string; description: string }, { label: string; description: string }];
+  readonly options: [PolicyOption, PolicyOption];
 }
 
 /**

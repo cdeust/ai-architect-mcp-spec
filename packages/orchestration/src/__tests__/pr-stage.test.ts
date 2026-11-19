@@ -28,6 +28,7 @@
  * source: design-phases-3-5.md §3, §4, §6, PR 5.
  */
 
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
 import {
   makeCannedDispatcher,
@@ -192,17 +193,21 @@ describe("pr_gate — non-bypass (never skipped by idempotency)", () => {
     expect(out.action.question_id).toBe(PR_GATE_QUESTION_ID);
   });
 
-  it("an unrecognized/empty answer fails CLOSED to 'No' (does not push)", () => {
-    const issued = step({ state: stateAtPrGate() });
+  it.each(["do not push", "don't push", "no push please", "push", "", undefined, "unknown"])(
+    "re-asks without recording a PR decision for %s", (freeform) => {
+      const issued = step({ state: stateAtPrGate() });
+      const out = step({ state: issued.state, result: { kind: "user_answer", question_id: PR_GATE_QUESTION_ID, selected: [], freeform } });
+      expectOptionRetry(out.action, issued.action);
+      expect(out.state.post_specs).toEqual(issued.state.post_specs);
+    },
+  );
 
-    const out = step({
-      state: issued.state,
-      result: { kind: "user_answer", question_id: PR_GATE_QUESTION_ID, selected: [] },
-    });
-
-    expect(out.state.current_step).toBe("finalize");
-    expect(out.state.post_specs?.pr).toEqual({ pushed: false, url: null });
-  });
+  it.each([[" PUSH   + OPEN PR ", "pr_creation"], ["No", "finalize"]])(
+    "routes the typed label %s to %s", (freeform, next) => {
+      const out = step({ state: stateAtPrGate(), result: { kind: "user_answer", question_id: PR_GATE_QUESTION_ID, selected: [], freeform } });
+      expect(out.state.current_step).toBe(next);
+    },
+  );
 });
 
 // ─── pr_creation ────────────────────────────────────────────────────────────

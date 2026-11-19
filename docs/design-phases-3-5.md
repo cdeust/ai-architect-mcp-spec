@@ -15,8 +15,8 @@ human gate), and reuses the pipeline's only execution primitives (`call_pipeline
 ... self_check (unchanged: PRD-vs-graph validate, multi-judge) ...
         │  finalize() now STOPS at a payload, not remember/done
         ▼
-  implementation_gate  ──ask_user("proceed?")── "prd_only" ──────────┐
-        │ "proceed"                                                  │
+  implementation_gate  ──ask_user────────────── "PRD only" ──────────┐
+        │ "Implement" (or the offered explicit policy exception)     │
         ▼                                                            │
   pre_impl_grounding   (Phase 3 PRE: get_impact × N affected symbols)│
         ▼                                                            │
@@ -31,8 +31,8 @@ human gate), and reuses the pipeline's only execution primitives (`call_pipeline
         │ PASS or cap exhausted (degrade)                            │
         │◄─────────────────────┘                                    │
         ▼                                                            │
-  pr_gate               ──ask_user("push + open PR?")── "no" ────────┤
-        │ "yes"                                                      │
+  pr_gate               ──ask_user───────────────────── "No" ────────┤
+        │ "Push + open PR"                                           │
         ▼                                                            │
   pr_creation            spawn_subagents(branch push + gh pr create) │
         ▼                                                            │

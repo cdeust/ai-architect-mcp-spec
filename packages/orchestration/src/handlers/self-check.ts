@@ -19,24 +19,21 @@
  * handlers/finalize.ts, the sole step that reaches `complete`.
  */
 
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
-import type { ActionResult, DoneOutcome, NextAction } from "../types/actions.js";
+import type { ActionResult, DoneOutcome } from "../types/actions.js";
 import {
   appendError,
   type PipelineState,
-  type VerifyBudgetConfig,
 } from "../types/state.js";
 import { validateDocument } from "@prd-gen/validation";
 import {
   planDocumentVerification,
-  buildBatchedJudgePrompt,
   buildMechanicalVerdicts,
 } from "@prd-gen/verification";
 import {
-  agentSubagentType,
   isBlockingViolation,
   type Claim,
-  type JudgeRequest,
   type JudgeVerdict,
 } from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
@@ -46,22 +43,21 @@ import {
   reduceJudgeRequests,
   sampleWithinCap,
   buildBudgetGateQuestion,
-  verifyBudgetDecisionFromAnswer,
-  assignJudgeModels,
+  VERIFY_BUDGET_OPTION_SKIP,
+  VERIFY_BUDGET_OPTION_SAMPLE,
 } from "./self-check-verify-budget.js";
 import { handlePrdValidation } from "./self-check-prd-validation.js";
 import { withDocumentScore } from "./self-check-quality-score.js";
 import { concludeWithObservations } from "./self-check-observations.js";
 import {
   buildJudgeIndex,
-  groupJudgeIndex,
   parseVerdicts,
   computeMechanicalVerdicts,
   countSubjectiveClaims,
   truncateJudgeVerdictRationale,
 } from "./self-check-verdicts.js";
 
-const VERIFY_BATCH_ID = "self_check_verify";
+import { dispatchVerify, VERIFY_BATCH_ID } from "./self-check-dispatch.js";
 
 /**
  * postcondition: the sections whose claims self-check judges — every section
@@ -79,45 +75,6 @@ function gatherSections(state: PipelineState) {
   return prdSections(state.sections)
     .filter((s) => s.content && s.status !== "failed")
     .map((s) => ({ type: s.section_type, content: s.content! }));
-}
-
-/**
- * precondition:  `requests` is the FINAL request set — already reduced
- *                (reduceJudgeRequests) and, if the budget gate fired,
- *                sampled or explicitly overridden. This function performs
- *                no further filtering.
- * postcondition: one spawn_subagents invocation per (judge, model) batch of
- *                buildJudgeIndex, in order of first appearance: the judge
- *                sees all its claims in one prompt that embeds the PRD once
- *                (issue #119). Each invocation carries `model`/`effort` —
- *                `model` comes from assignJudgeModels (architecture claims
- *                cycle through `config.diversity_models`; every other claim
- *                dispatches under `config.diversity_models[0]`) — no judge
- *                invocation is dispatched under the session model by default
- *                (source: measured e2e run run_mrlqa0aj_u2rh15; see
- *                self-check-verify-budget.ts module doc).
- */
-function buildVerifyAction(
-  requests: readonly JudgeRequest[],
-  config: VerifyBudgetConfig,
-): NextAction {
-  return {
-    kind: "spawn_subagents",
-    purpose: "judge",
-    batch_id: VERIFY_BATCH_ID,
-    invocations: groupJudgeIndex(buildJudgeIndex(requests, config)).map((group) => {
-      const built = buildBatchedJudgePrompt(group.map((e) => e.request));
-      return {
-        invocation_id: group[0].invocation_id,
-        subagent_type: agentSubagentType(group[0].request.judge),
-        description: built.description,
-        prompt: built.prompt,
-        isolation: "none" as const,
-        model: group[0].model,
-        effort: config.judge_effort,
-      };
-    }),
-  };
 }
 
 /**
@@ -258,35 +215,6 @@ function finalize(
 }
 
 /**
- * Assemble the snapshot + spawn_subagents action for a final invocation set.
- *
- * precondition:  `requests` is non-empty and already reduced/sampled.
- * postcondition: verification_plan.claim_ids/judges are parallel arrays,
- *                index-aligned with the final request set (invariant enforced
- *                by VerificationPlanSnapshotSchema's refine); several requests
- *                share one invocation when buildJudgeIndex batches them.
- */
-function dispatchVerify(
-  state: PipelineState,
-  requests: readonly JudgeRequest[],
-  config: VerifyBudgetConfig,
-  sampled: boolean,
-) {
-  return {
-    state: {
-      ...state,
-      verification_plan: {
-        batch_id: VERIFY_BATCH_ID,
-        claim_ids: requests.map((r) => r.claim.claim_id),
-        judges: requests.map((r) => r.judge),
-        sampled,
-      },
-    },
-    action: buildVerifyAction(requests, config),
-  };
-}
-
-/**
  * Phase A — plan the multi-judge batch and dispatch it, subject to the
  * judge-panel budget (self-check-verify-budget.ts). If there's nothing to
  * verify (no claim-rich sections, or extractor produces zero claims),
@@ -341,20 +269,19 @@ function handleSelfCheckPhaseA(
     return finalize(state, mechanicalVerdicts, totalSubjectiveClaims);
   }
 
-  if (result?.kind === "user_answer" && result.question_id === VERIFY_BUDGET_QUESTION_ID) {
-    const decision = verifyBudgetDecisionFromAnswer(result);
-    if (decision === "skip") {
-      return finalize(state, mechanicalVerdicts, totalSubjectiveClaims);
-    }
-    const finalRequests =
-      decision === "sample" ? sampleWithinCap(reduced, config.invocation_cap) : reduced;
-    return dispatchVerify(state, finalRequests, config, decision === "sample");
-  }
-
   if (reduced.length > config.invocation_cap) {
-    return { state, action: buildBudgetGateQuestion(reduced.length, config) };
+    const question = buildBudgetGateQuestion(reduced.length, config);
+    if (result?.kind !== "user_answer" || result.question_id !== VERIFY_BUDGET_QUESTION_ID) {
+      return { state, action: question };
+    }
+    return answerOptionQuestion(state, question, question.options, result, (answered, label) => {
+      if (label === VERIFY_BUDGET_OPTION_SKIP) return finalize(answered, mechanicalVerdicts, totalSubjectiveClaims);
+      if (label === VERIFY_BUDGET_OPTION_SAMPLE) {
+        return dispatchVerify(answered, sampleWithinCap(reduced, config.invocation_cap), config, true);
+      }
+      return dispatchVerify(answered, reduced, config, false);
+    }, VERIFY_BUDGET_OPTION_SAMPLE);
   }
-
   return dispatchVerify(state, reduced, config, false);
 }
 

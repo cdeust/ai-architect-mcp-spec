@@ -1,3 +1,4 @@
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
@@ -137,24 +138,44 @@ function computeBounds(state: PipelineState): RoundBounds {
   return { min, max };
 }
 
+const PROCEED_LABEL = "proceed";
+const CONTINUE_LABEL = "continue";
+
+function continueQuestion(completed: number, bounds: RoundBounds) {
+  return {
+    kind: "ask_user" as const,
+    question_id: QUESTION_ID_CONTINUE,
+    header: `Asked ${completed} questions. Proceed?`,
+    description: `Min for this run: ${bounds.min}. Max: ${bounds.max}. '${PROCEED_LABEL}' to generate the PRD, '${CONTINUE_LABEL}' for more questions.`,
+    options: [
+      { label: PROCEED_LABEL, description: "Generate the PRD now" },
+      { label: CONTINUE_LABEL, description: "Ask another question" },
+    ],
+    multi_select: false,
+  };
+}
+
 function handleProceedOrContinue(
   state: PipelineState,
   result: Extract<ActionResult, { kind: "user_answer" }>,
+  bounds: RoundBounds,
 ): { state: PipelineState; action: HandlerAction } {
-  const choice = (result.freeform ?? result.selected[0] ?? "").toLowerCase();
-  if (choice.includes("proceed") || choice === "yes") {
+  const question = continueQuestion(state.clarifications.length, bounds);
+  return answerOptionQuestion(state, question, question.options, result, (answered, choice) => {
+    if (choice === PROCEED_LABEL) {
+      return {
+        state: { ...answered, proceed_signal: true, current_step: "budget" },
+        action: {
+          kind: "emit_message",
+          message: `Clarification complete (${state.clarifications.length} rounds).`,
+        },
+      };
+    }
     return {
-      state: { ...state, proceed_signal: true, current_step: "budget" },
-      action: {
-        kind: "emit_message",
-        message: `Clarification complete (${state.clarifications.length} rounds).`,
-      },
+      state: answered,
+      action: composeAction(answered, state.clarifications.length + 1),
     };
-  }
-  return {
-    state,
-    action: composeAction(state, state.clarifications.length + 1),
-  };
+  });
 }
 
 function recordAnswerAndDispatch(
@@ -197,17 +218,7 @@ function recordAnswerAndDispatch(
 
   return {
     state: { ...state, clarifications },
-    action: {
-      kind: "ask_user",
-      question_id: QUESTION_ID_CONTINUE,
-      header: `Asked ${completed} questions. Proceed?`,
-      description: `Min for this run: ${bounds.min}. Max: ${bounds.max}. 'proceed' to generate the PRD, 'continue' for more questions.`,
-      options: [
-        { label: "proceed", description: "Generate the PRD now" },
-        { label: "continue", description: "Ask another question" },
-      ],
-      multi_select: false,
-    },
+    action: continueQuestion(completed, bounds),
   };
 }
 
@@ -265,7 +276,7 @@ export const handleClarification: StepHandler = ({ state, result }) => {
     result?.kind === "user_answer" &&
     result.question_id === QUESTION_ID_CONTINUE
   ) {
-    return handleProceedOrContinue(state, result);
+    return handleProceedOrContinue(state, result, bounds);
   }
 
   if (

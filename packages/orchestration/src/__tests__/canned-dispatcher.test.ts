@@ -51,6 +51,18 @@ describe("makeCannedDispatcher routing", () => {
     expect(out.selected).toEqual(["proceed"]);
   });
 
+  it("selects PRD only when the implementation gate offers no options", () => {
+    const implement = makeCannedDispatcher({ implementation_gate_answer: "Implement" });
+    expect(implement({
+      kind: "ask_user",
+      question_id: "implementation_gate",
+      header: "Implement?",
+      description: "",
+      options: null,
+      multi_select: false,
+    })).toEqual({ kind: "user_answer", question_id: "implementation_gate", selected: ["PRD only"] });
+  });
+
   it("ask_user without options uses the freeform_answer label", () => {
     const action: NextAction = {
       kind: "ask_user",

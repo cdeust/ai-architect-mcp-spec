@@ -1,6 +1,6 @@
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import {
-  PRDContextSchema,
   PRD_CONTEXT_CONFIGS,
   CAPABILITIES,
   REQUEST_SIZE_CONFIGS,
@@ -100,21 +100,10 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
     return settle(state, state.prd_context, declaredOrAnswered);
   }
 
-  // User just answered our question. A typed answer is read as the user
-  // wrote it but for its case and the spaces around it.
-  if (result?.kind === "user_answer" && result.question_id === QUESTION_ID) {
-    const choice = result.selected[0] ?? result.freeform ?? "";
-    const parsed = PRDContextSchema.safeParse(choice.trim().toLowerCase());
-    if (!parsed.success || !allowed.includes(parsed.data)) {
-      return refuse(`Invalid PRD context choice: ${choice}`, state);
-    }
-    return settle(state, parsed.data, declaredOrAnswered);
-  }
-
-  // Try to detect from feature_description.
-  const detected = detectFromText(state.feature_description);
-  if (detected && allowed.includes(detected)) {
-    return settle(state, detected, detectedFromWords, true);
+  const answer = result?.kind === "user_answer" && result.question_id === QUESTION_ID ? result : undefined;
+  if (!answer) {
+    const detected = detectFromText(state.feature_description);
+    if (detected && allowed.includes(detected)) return settle(state, detected, detectedFromWords, true);
   }
 
   // Ask user — restricted to tier-allowed options.
@@ -123,20 +112,24 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
     description: PRD_CONTEXT_CONFIGS[ctx].description,
   }));
 
-  return {
-    state,
-    action: {
-      kind: "ask_user",
-      question_id: QUESTION_ID,
-      header: "Which kind of PRD?",
-      description:
-        "I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them.",
-      // source: protocol constraint. AskUserActionSchema.options enforces
-      // .max(4) at the schema level (types/actions.ts). Slicing here ensures
-      // a tier with >4 allowed contexts doesn't fail Zod parsing on the
-      // emitted action. Cross-audit code-reviewer H6 (Phase 3+4, 2026-04).
-      options: options.slice(0, 4),
-      multi_select: false,
-    },
+  const displayed = options.slice(0, 4);
+  const hint = displayed.length < allowed.length
+    ? ` Showing ${displayed.length} of ${allowed.length} kinds. You can also type any allowed kind: ${allowed.join(", ")}.`
+    : "";
+  const question = {
+    kind: "ask_user" as const,
+    question_id: QUESTION_ID,
+    header: "Which kind of PRD?",
+    description:
+      "I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them." + hint,
+    // source: protocol constraint. AskUserActionSchema.options enforces
+    // .max(4) at the schema level (types/actions.ts). Slicing here ensures
+    // a tier with >4 allowed contexts doesn't fail Zod parsing on the
+    // emitted action. Cross-audit code-reviewer H6 (Phase 3+4, 2026-04).
+    options: displayed,
+    multi_select: false,
   };
+  if (!answer) return { state, action: question };
+  return answerOptionQuestion(state, question, options, answer,
+    (answered, context) => settle(answered, context, declaredOrAnswered));
 };
