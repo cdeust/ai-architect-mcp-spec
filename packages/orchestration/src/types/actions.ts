@@ -320,7 +320,8 @@ export type NextAction = z.infer<typeof NextActionSchema>;
 export const UserAnswerSchema = z.object({
   kind: z.literal("user_answer"),
   question_id: z.string(),
-  selected: z.array(z.string()).default([]),
+  // source: AskUserActionSchema offers at most four options. Allow a fourfold margin for host input.
+  selected: z.array(z.string()).max(16).default([]),
   freeform: z.string().optional(),
 });
 export type UserAnswer = z.infer<typeof UserAnswerSchema>;
