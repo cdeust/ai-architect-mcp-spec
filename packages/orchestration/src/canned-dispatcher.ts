@@ -25,6 +25,9 @@
  *   });
  */
 
+import {
+  GATE_OPTION_IMPLEMENT, GATE_OPTION_IMPLEMENT_ANYWAY, GATE_OPTION_OVERRIDE_POLICY, GATE_OPTION_PRD_ONLY,
+} from "./handlers/verification-policy.js";
 import type { ActionResult, NextAction } from "./types/actions.js";
 import {
   QUESTION_ID_CONTINUE as CLARIFICATION_CONTINUE_QID,
@@ -79,6 +82,8 @@ export interface CannedDispatcherOptions {
    * "Implement" to drive the post-specs loop's pre_impl_grounding dead-end
    * path in a full smoke run.
    */
+  /** Exercise a flagged implementation path only when a test explicitly requests a policy override. */
+  readonly override_policy?: boolean;
   readonly implementation_gate_answer?: "PRD only" | "Implement";
   /**
    * Per-attempt verdict producer for the `review` step (PR 4b). Default:
@@ -167,16 +172,14 @@ export function makeCannedDispatcher(
       };
     }
     if (action.question_id === IMPLEMENTATION_GATE_QUESTION_ID) {
-      // Explicit, not relying on options[0]: PRD-only is the zero-regression
-      // default for every pre-existing smoke/KPI baseline (design-phases-3-5.md
-      // §5, PR 3b acceptance criterion). Callers that want to exercise the
-      // "implement" branch in a full smoke run pass
-      // implementation_gate_answer: "Implement" instead of hand-crafting a
-      // one-off ActionResult.
+      const approved = action.options?.find(({ label }) =>
+        label === GATE_OPTION_IMPLEMENT ||
+        (opts.override_policy && (label === GATE_OPTION_IMPLEMENT_ANYWAY || label === GATE_OPTION_OVERRIDE_POLICY)),
+      );
       return {
         kind: "user_answer",
         question_id: action.question_id,
-        selected: [implementation_gate_answer],
+        selected: [implementation_gate_answer === GATE_OPTION_IMPLEMENT && approved ? approved.label : GATE_OPTION_PRD_ONLY],
       };
     }
     if (action.question_id === PR_GATE_QUESTION_ID) {

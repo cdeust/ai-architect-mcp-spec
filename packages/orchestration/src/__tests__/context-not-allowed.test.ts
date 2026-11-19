@@ -27,7 +27,7 @@ describe("a kind of PRD that is not allowed", () => {
     expect(out.action).toEqual({ kind: "failed", reason: "PRD context not allowed: bug", step: "context_detection" });
   });
 
-  it("is refused when the user answers it", () => {
+  it("re-asks with the allowed kind when the user answers with a disallowed kind", () => {
     const out = step({
       state: atContextDetection("something unclassifiable"),
       result: { kind: "user_answer", question_id: "prd_context", selected: ["bug"] },
@@ -40,6 +40,7 @@ describe("a kind of PRD that is not allowed", () => {
     expect(out.state.prd_context).toBeNull();
     expect(out.action.kind).toBe("ask_user");
     if (out.action.kind !== "ask_user") return;
+    expect(out.action.description).toBe("I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them.");
     expect(out.action.options?.map((o) => o.label)).toEqual(["feature"]);
   });
 

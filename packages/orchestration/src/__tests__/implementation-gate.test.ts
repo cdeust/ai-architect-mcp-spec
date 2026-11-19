@@ -101,8 +101,12 @@ describe("implementation_gate — Implement branch", () => {
   });
 });
 
-describe.each([stateAtGate, stateAtGateWithJudgeVerdicts, stateAtGateWithUnsampledRatio])(
-  "implementation answer at %s", (seed) => {
+describe.each([
+  { verdict: "pass", seed: stateAtGate },
+  { verdict: "blocked", seed: stateAtGateWithJudgeVerdicts },
+  { verdict: "needs_attention", seed: stateAtGateWithUnsampledRatio },
+])(
+  "implementation answer at $verdict", ({ seed }) => {
     it.each(["do not implement", "don't override", "don't override the policy", "", undefined, "unknown"])(
       "re-asks for %s and records no decision or derogation", (freeform) => {
         const issued = step({ state: seed() });

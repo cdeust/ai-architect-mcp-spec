@@ -29,9 +29,11 @@ describe.each(cases)("bounded $id", ({ id, state, label, fallback }) => {
     }
     const out = submit(saved, [], "wrong");
     if (!fallback) {
+      expect(out.state.unmatched_answers).toEqual({ [id]: 3 });
       expect(out.action).toEqual({ kind: "failed", step: state.current_step, reason: `${id}: 3 unmatched answers.` });
       return;
     }
+    expect(out.state.unmatched_answers).toEqual({});
     expect(out.messages).toContainEqual({ level: "warn", text: `${id}: 3 unmatched answers. Using "${fallback}".` });
     if (id === "pr_gate") expect(out.state.post_specs?.pr).toEqual({ pushed: false, url: null });
     if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("prd_only");
@@ -130,4 +132,24 @@ it("clears prior attempts when the user chooses another clarification round", ()
   });
   expect(out.action).toMatchObject({ kind: "spawn_subagents", purpose: "draft" });
   expect(out.state.unmatched_answers).toEqual({});
+});
+
+it.each([
+  [null, "prd_context", "context_detection"],
+  ["feature", "clarification_continue", "clarification"],
+] as const)("terminates from the first step with declared kind %s and an always-wrong host", (prd_context, question, failedStep) => {
+  const dispatch = makeCannedDispatcher();
+  let out = step({ state: newPipelineState({ run_id: "wrong-from-start", feature_description: "x", prd_context }) });
+  let attempts = 0;
+  while (out.action.kind !== "failed" && out.action.kind !== "done") {
+    let result = dispatch(out.action);
+    if (out.action.kind === "ask_user") {
+      if (out.action.question_id === question) attempts++;
+      expect(attempts).toBeLessThanOrEqual(3);
+      result = { kind: "user_answer", question_id: out.action.question_id, selected: ["wrong"] };
+    }
+    out = step({ state: out.state, result });
+  }
+  expect(attempts).toBe(3);
+  expect(out.action).toEqual({ kind: "failed", step: failedStep, reason: `${question}: 3 unmatched answers.` });
 });
