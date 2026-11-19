@@ -34,10 +34,11 @@ the prompt was written before the contract, and the repository's own standards a
    `claude[bot]` that ends with `Verdict: approve` or `Verdict: block`. The resolver merges
    a pull request whose last verdict covers its head, reads approve, and whose required
    checks are green. No agent merges by hand or enables auto-merge.
-2. **Three reviews per branch.** The budget counts review runs by branch name, so every
-   push to an open pull request spends one. Push once per verdict, with every blocker of
-   that verdict fixed, and never while a `PR Review` run is in progress on the pull
-   request: the review would land on a commit that is no longer the head.
+2. **Three reviews per branch.** A push to a pull request ready for review triggers review
+   admission. The budget counts successful workflow runs for that pull request and branch
+   whose review action step succeeded. Push once per verdict, with every blocker of that
+   verdict fixed, and never while a `PR Review` run is in progress on the pull request:
+   the review would land on a commit that is no longer the head.
 3. **Budget spent without an approve on the head: a new branch.** Push the same commits to
    `<branch>-r<N>`, open a pull request with the same title and body plus a "Continuation"
    section naming the old one, leave one "Continued in #n" line on the old one, close it.
@@ -55,8 +56,10 @@ the prompt was written before the contract, and the repository's own standards a
 6. **No comment after an approve.** No reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
-7. **Owner decisions are left alone:** a pull request on the branch
-   `ci/budget-counts-contract-reviews`, anything labelled `hold` or `do-not-merge`, a draft.
+7. **Owner decisions are left alone.** Leave a pull request on the branch
+   `ci/budget-counts-contract-reviews` and anything labelled `hold` or `do-not-merge` alone.
+   Routines leave drafts alone. A session may push to its own draft and mark it ready
+   under rule 10. Leave another session's draft alone.
 8. **The work is verified before the pull request exists** (Cortex ADR-1132). Before
    opening a pull request, and before each push to one, run the `unit` and `regression`
    commands of `ci.json` on a clean copy of the commit, a worktree under
@@ -79,6 +82,33 @@ the prompt was written before the contract, and the repository's own standards a
    it; what fails without the key, a validator that requires it or a reader that refuses
    its absence, comes with the key or after it; a key the validator requires leaves
    `ci.json` after the validator stopped requiring it.
+10. **Work in small batches, in a draft.** Open a draft pull request as soon as the first
+    gated commit exists, and push each gated batch to it. Routines leave drafts alone
+    (rule 7), and draft pushes spend none of rule 2's three reviews because the review
+    jobs skip drafts ([budget job](../.github/workflows/claude-review.yml#L28),
+    [review job](../.github/workflows/claude-review.yml#L67)). In
+    [PR #374](https://github.com/cdeust/ai-architect-mcp-spec/pull/374) (2026-11-19),
+    the autopilot pushed its own fix (`42423f2`) while the session's commits were still
+    local, so the branch diverged. Owner decision of 19 November 2026: sessions
+    work in small batches.
+    Mark the pull request ready only after a reviewer other than its author has read its
+    current head and its body carries the counts of rule 8. For a batch pushed from a local
+    machine, require a passed delivery-gate verdict on that head's tree. For a hosted
+    session with no local verdict, require a successful Pipeline run on the current head
+    with the contract, unit and regression jobs passing. Marking it ready starts the review
+    ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
+    For every push from a local machine, the delivery gate's pre-push hook requires a
+    passed verdict on the tip. Make each batch worth a gate run, such as one pass or one slice,
+    and keep commits local between gate runs only for the length of that work.
+    Run `git fetch` before working on the branch and before every push. Read and
+    integrate commits pushed by another author, including the autopilot, before pushing.
+    If the local and remote tips of the working branch diverge, merge the fetched working
+    branch tip, resolve conflicts and run the full delivery gate on the resulting tree before
+    a local push. A conflict with `main` follows rule 4. Never force a push. Once the pull
+    request is ready, keep local commits ahead of its remote head
+    for at most one gate run, except while a `PR Review` run is in progress (rule 2).
+    Under rule 5, a draft with a running check is in flight. This is this repository's
+    addition to the `cdeust/Cortex` contract, and the same rule is owed there.
 
 ## The delivery gate
 
