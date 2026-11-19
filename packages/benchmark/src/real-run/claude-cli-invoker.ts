@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { z } from "zod";
 import type { Ports, Row, Settings } from "./types.js";
@@ -151,8 +151,16 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
 
 export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall): Ports["invoke"] {
   return async (inv, settings, row) => {
-    const cwd = mkdtempSync(join(directory, "call-"));
-    const cleanup = () => rmSync(cwd, { recursive: true, force: true });
+    const cwd = mkdtempSync(resolve(directory, "call-"));
+    const cleanup = () => {
+      try {
+        rmSync(cwd, { recursive: true, force: true });
+      } catch (error) {
+        row.workspace_kept = true;
+        row.workspace_path = cwd;
+        row.workspace_removal_error = String(error);
+      }
+    };
     let tracked = false;
     try {
       const child = spawn(program, claudeArgs(settings), {

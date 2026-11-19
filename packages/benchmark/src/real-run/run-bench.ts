@@ -21,6 +21,7 @@ async function measure(inv: Invocation, batch_id: string, plan: RunPlan, ports: 
       effort: inv.effort ?? null,
     },
     used,
+    workspace_kept: false,
     usage: null,
     error: null,
   };

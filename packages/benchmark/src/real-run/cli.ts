@@ -57,10 +57,9 @@ process.once("exit", () => {
 });
 
 function appendRow(journal: string, row: Row) {
+  active.get(row)?.cleanup();
   appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true });
-  const call = active.get(row);
   active.delete(row);
-  call?.cleanup();
 }
 
 async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string[]) {
@@ -97,6 +96,7 @@ async function main() {
   const summary = summaryHeader(dry);
   const armOrder: string[] = [];
   const skipped: string[] = [];
+  const kept: string[] = [];
   let reportedSpend = 0;
   let baseline: Totals | undefined;
   for (const arm of arms) {
@@ -111,6 +111,9 @@ async function main() {
     const effectivePlan = { ...arm.plan, limits: { ...arm.plan.limits, max_cost_usd } };
     armOrder.push(arm.name);
     const record = await runArm(join(out, arm.name), effectivePlan, dry, armOrder);
+    for (const row of record.rows) {
+      if (row.workspace_kept && row.workspace_path) kept.push(row.workspace_path);
+    }
     reportedSpend += record.totals.cost_usd;
     baseline ??= record.totals;
     summary.push(summaryRow(arm.name, record, baseline));
@@ -122,6 +125,7 @@ async function main() {
       process.exitCode = 1;
     }
   }
+  if (kept.length) summary.push("", "Kept workspaces", "", ...kept.map(path => `- ${path}`));
   if (skipped.length) summary.push("", ...skipped);
   summary.push("", `Arm execution order: ${armOrder.join(" → ")}`);
   await writeFile(join(out, "summary.md"), summary.join("\n") + "\n", { flag: "wx" });

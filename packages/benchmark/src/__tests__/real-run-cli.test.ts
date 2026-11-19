@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -312,6 +312,40 @@ it("journals a timeout and removes its call directory", async () => {
     expect(JSON.parse(await readFile(join(dir, "rows.jsonl"), "utf8")).error).toBe("Claude CLI timed out after 200 ms");
     expect((await readdir(dir)).filter(name => name.startsWith("call-"))).toEqual([]);
   } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+it("journals a failed workspace removal and runs the next arm", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-kept-"));
+  const marker = join(out, "locked");
+  try {
+    const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
+    plan.arms = ["first", "second"].map(name => ({ ...plan.arms[0], name, limits: { max_invocations: 1 } }));
+    const file = join(out, "plan.json");
+    await writeFile(file, JSON.stringify(plan));
+    await writeFile(join(out, "claude"), [
+      "#!/bin/sh", '/bin/cat >/dev/null', 'if [ ! -f "$MARKER" ]; then',
+      '  /bin/mkdir locked && echo x > locked/file && /bin/chmod 000 locked',
+      '  pwd > "$MARKER"', 'fi', 'exec /bin/cat "$FIXTURE"',
+    ].join("\n"), { mode: 0o700 });
+    const fixture = join(cwd, "src/__tests__/fixtures/claude-cli-result.json");
+    const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", file, "--out", out], { cwd, encoding: "utf8", env: { PATH: out, MARKER: marker, FIXTURE: fixture } });
+    const kept = (await readFile(marker, "utf8")).trim();
+    for (const name of ["first", "second"]) {
+      const dir = join(out, name);
+      const row = JSON.parse(await readFile(join(dir, "rows.jsonl"), "utf8"));
+      expect(row).toMatchObject({ error: null, workspace_kept: name === "first" });
+      if (name === "first") expect(row.workspace_removal_error).toMatch(/EACCES|EPERM|ENOTEMPTY/);
+      const record = JSON.parse(await readFile(join(dir, "record.json"), "utf8"));
+      expect(record.rows).toEqual([row]);
+      expect(JSON.parse(await readFile(join(dir, "sections.json"), "utf8"))).toEqual(record.sections);
+    }
+    expect(result.status).toBe(1); // Both arms stop at one invocation.
+    expect(await readFile(join(out, "summary.md"), "utf8")).toContain(kept);
+  } finally {
+    const kept = await readFile(marker, "utf8").catch(() => "");
+    if (kept) await chmod(join(kept.trim(), "locked"), 0o700);
     await rm(out, { recursive: true, force: true });
   }
 });

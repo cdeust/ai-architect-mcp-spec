@@ -43,6 +43,9 @@ export interface Ports {
   clock(): number;
 }
 export interface Row {
+  workspace_kept: boolean;
+  workspace_path?: string;
+  workspace_removal_error?: string;
   notes?: string[];
   batch_id: string;
   invocation_id: string;
