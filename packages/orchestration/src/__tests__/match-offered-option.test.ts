@@ -3,8 +3,11 @@ import { matchOfferedOption } from "../handlers/match-offered-option.js";
 
 const options = [{ label: "First   Option" }, { label: "No" }];
 
-it("returns the canonical offered label and gives the first selection precedence", () => {
-  expect(matchOfferedOption(options, { selected: [" first\tOPTION ", "No"], freeform: " FIRST Option " })).toBe("First   Option");
+it("returns the canonical offered label and rejects more than one nonblank selection", () => {
+  expect(matchOfferedOption(options, { selected: [" first\tOPTION "], freeform: " FIRST Option " })).toBe("First   Option");
+  expect(matchOfferedOption(options, { selected: [" first\tOPTION ", "No"], freeform: " FIRST Option " })).toBeUndefined();
+  expect(matchOfferedOption(options, { selected: ["No", "No"] })).toBeUndefined();
+  expect(matchOfferedOption(options, { selected: ["No", "  "] })).toBe("No");
   expect(matchOfferedOption(options, { selected: [], freeform: " NO " })).toBe("No");
   expect(matchOfferedOption(options, { selected: ["unknown", "No"], freeform: "No" })).toBeUndefined();
 });

@@ -9,12 +9,17 @@ function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** Return the original accepted label, including choices the host can only expose as text. */
+/**
+ * Return the original accepted label, including choices the host can only expose as text.
+ * More than one nonblank selection is a contradictory answer and matches nothing.
+ */
 export function matchOfferedOption<Label extends string>(
   options: readonly Option<Label>[],
   answer: Answer,
 ): Label | undefined {
-  const selected = normalize(answer.selected[0] ?? "");
+  const picks = answer.selected.map(normalize).filter(Boolean);
+  if (picks.length > 1) return undefined;
+  const selected = picks[0] ?? "";
   const typed = normalize(answer.freeform ?? "");
   if (selected && typed && selected !== typed) return undefined;
   const chosen = selected || typed;

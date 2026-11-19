@@ -19,6 +19,13 @@ describe.each(cases)("bounded $id", ({ id, state, label, fallback }) => {
     return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, freeform } });
   }
 
+  it("does not approve when a second selection accompanies the accepted label", () => {
+    const out = submit(state, [label, fallback ?? label]);
+    expect(out.action).toMatchObject({ kind: "ask_user", question_id: id });
+    expect(out.state.unmatched_answers).toEqual({ [id]: 1 });
+    expect(out.state.current_step).toBe(state.current_step);
+  });
+
   it("counts contradictory answers across saved states and resolves the third", () => {
     let saved: PipelineState = state;
     for (const count of [1, 2]) {
