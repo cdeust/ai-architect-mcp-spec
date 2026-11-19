@@ -3,7 +3,7 @@ import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
 import { runBench } from "../real-run/run-bench.js";
 import type { Ports, RunPlan } from "../real-run/types.js";
 
-const plan: RunPlan = { limits: { max_invocations: 80, max_cost_usd: 25, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
+const plan: RunPlan = { call_timeout_ms: 600000, limits: { max_invocations: 80, max_cost_usd: 25, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
   request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {} };
 const ports: Ports = { record: () => {}, clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
 

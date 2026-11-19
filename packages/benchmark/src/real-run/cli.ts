@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
 import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
-import { claudeInvoke } from "./claude-cli-invoker.js";
+import { makeClaudeInvoker } from "./claude-cli-invoker.js";
 import type { Row, RunRecord } from "./types.js";
 
 function summaryRow(name: string, record: RunRecord) {
@@ -42,7 +42,7 @@ async function main() {
     await writeFile(journal, "", { flag: "wx" });
     const record = await runBench(arm.plan, {
       ...ports,
-      invoke: dry ? cannedInvoke : claudeInvoke,
+      invoke: dry ? cannedInvoke : makeClaudeInvoker(arm.plan.call_timeout_ms),
       record: (row: Row) => appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true }),
     });
     await writeFile(join(dir, "record.json"), JSON.stringify({ dry_run: dry, plan: arm.plan, ...record }, null, 2) + "\n");

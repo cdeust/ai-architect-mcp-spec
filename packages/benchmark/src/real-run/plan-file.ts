@@ -13,6 +13,8 @@ const limitsSchema = z.strictObject({
 });
 const planFile = z.strictObject({
   limits: limitsSchema,
+  // source: Node timers accept delays up to a signed 32-bit integer in milliseconds.
+  call_timeout_ms: z.int32().positive(),
   description: z.string().min(1),
   prd_context: PRDContextSchema,
   answers: z.record(z.string(), UserAnswerSchema.pick({ selected: true, freeform: true })),
@@ -27,13 +29,13 @@ const planFile = z.strictObject({
 });
 
 export async function loadArms(file: string): Promise<{ name: string; plan: RunPlan }[]> {
-  const { description, prd_context, answers, policies, arms, limits } = planFile.parse(JSON.parse(await readFile(file, "utf8")));
+  const { description, prd_context, answers, policies, arms, limits, call_timeout_ms } = planFile.parse(JSON.parse(await readFile(file, "utf8")));
   const names = new Set<string>();
   return arms.map(({ name, request_size, mode, policy: key, limits: override }) => {
     if (names.has(name.toLowerCase())) throw new Error(`Duplicate arm: ${name}`);
     names.add(name.toLowerCase());
     if (key !== "as-emitted" && !Object.hasOwn(policies, key)) throw new Error(`Unknown policy: ${key}`);
     const policy = key === "as-emitted" ? key : policies[key];
-    return { name, plan: { description, prd_context, answers, request_size, mode, policy, limits: { ...limits, ...override } } };
+    return { name, plan: { description, prd_context, answers, request_size, mode, policy, call_timeout_ms, limits: { ...limits, ...override } } };
   });
 }

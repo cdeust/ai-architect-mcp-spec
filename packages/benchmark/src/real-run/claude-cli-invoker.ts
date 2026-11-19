@@ -33,21 +33,40 @@ export function claudeArgs(settings: Settings): string[] {
   return [...args, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--setting-sources", ""];
 }
 
-export const claudeInvoke: Ports["invoke"] = (inv, settings) => new Promise((resolve, reject) => {
-  const child = spawn("claude", claudeArgs(settings), { stdio: ["pipe", "pipe", "ignore"] });
-  let stdout = "";
-  let writeError: Error | undefined;
-  child.stdout.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
-  child.on("error", reject);
-  child.stdin.on("error", error => { writeError = error; });
-  child.on("close", (code, signal) => {
-    const failure = code !== 0 ? `Claude CLI exited with ${signal ?? code}` : writeError?.message;
-    try {
-      const result = parseClaudeResult(stdout);
-      resolve({ ...result, error: failure ?? result.error });
-    } catch {
-      reject(new Error(failure ?? "Claude CLI returned invalid or incomplete JSON"));
-    }
+function readResult(stdout: string, failure?: string) {
+  try {
+    const result = parseClaudeResult(stdout);
+    return { ...result, error: failure ?? result.error };
+  } catch {
+    throw new Error(failure ?? "Claude CLI returned invalid or incomplete JSON");
+  }
+}
+
+export function makeClaudeInvoker(timeoutMs: number, program = "claude"): Ports["invoke"] {
+  return (inv, settings) => new Promise((resolve, reject) => {
+    const child = spawn(program, claudeArgs(settings), { stdio: ["pipe", "pipe", "ignore"] });
+    let stdout = "";
+    let failure: string | undefined;
+    const timer = setTimeout(() => {
+      failure = `Claude CLI timed out after ${timeoutMs} ms`;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8").on("data", chunk => {
+      stdout += chunk;
+    });
+    child.on("error", reject);
+    child.stdin.on("error", error => {
+      failure ??= error.message;
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (code !== 0) failure ??= `Claude CLI exited with ${signal ?? code}`;
+      try {
+        resolve(readResult(stdout, failure));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(inv.prompt);
   });
-  child.stdin.end(inv.prompt);
-});
+}

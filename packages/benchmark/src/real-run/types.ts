@@ -18,6 +18,7 @@ export interface Stopped {
 }
 export interface RunPlan {
   limits: Limits;
+  call_timeout_ms: number;
   description: string;
   prd_context: PRDContext;
   request_size: RequestSize;
