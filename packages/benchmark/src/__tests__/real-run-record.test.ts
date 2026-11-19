@@ -11,7 +11,8 @@ it.each([
   const terminal = { kind: "done" as const, summary: String(summary), artifacts: [] };
   const state = newPipelineState({ run_id: "record", feature_description: "scope" });
   const section = { section_type: "overview", status: "pending", attempt: 1, violation_count: 2 } as const;
-  state.sections = [section, { ...section, content: "" }, { ...section, content: "draft" }];
+  const stored = { ...section, last_violations: [], attempt_log: [] };
+  state.sections = [stored, { ...stored, content: "" }, { ...stored, content: "draft" }];
   const record = finishRecord(state, terminal, [], 3, 1, 12);
   expect(record).toEqual({
     measurement_scope: measurementScope, terminal, rows: [], batches: 1, steps: 3, wall_time_ms: 12,
