@@ -1,7 +1,7 @@
 import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
-import type { PipelineState } from "../types/state.js";
+import type { ClarificationTurn, PipelineState } from "../types/state.js";
 import {
   CAPABILITIES,
   clarificationRangeFor,
@@ -43,14 +43,6 @@ function composeBatchId(round: number): string {
 }
 const composeInvocationId = clarificationComposeInvocationId;
 
-interface PendingTurnInternal {
-  round: number;
-  question: string;
-  options: readonly string[] | null;
-  rationale: string;
-  asked_at: string;
-}
-
 function isComposeResult(
   result: ActionResult | undefined,
   round: number,
@@ -61,7 +53,7 @@ function isComposeResult(
   );
 }
 
-function tryParseGeneratedQuestion(rawText: string): GeneratedQuestion | null {
+function tryParseGeneratedQuestion(rawText: string) {
   try {
     const obj = extractJsonObject(rawText) as Partial<GeneratedQuestion>;
     if (typeof obj.question !== "string" || !obj.question.trim()) return null;
@@ -110,7 +102,7 @@ function composeAction(state: PipelineState, round: number): HandlerAction {
   };
 }
 
-function askComposedQuestion(turn: PendingTurnInternal): HandlerAction {
+function askComposedQuestion(turn: ClarificationTurn): HandlerAction {
   const optionsForUser =
     turn.options && turn.options.length >= 2 && turn.options.length <= 4
       ? turn.options.map((o) => ({ label: o }))
@@ -236,7 +228,7 @@ function handleComposedQuestion(
     ? tryParseGeneratedQuestion(response.raw_text)
     : null;
 
-  const turn: PendingTurnInternal = generated
+  const turn: ClarificationTurn = generated
     ? {
         round: expectedRound,
         question: generated.question,
@@ -280,8 +272,16 @@ export const handleClarification: StepHandler = ({ state, result }) => {
     const continuationPending = state.clarification_continue_pending ?? (
       state.clarifications.length >= bounds.min && state.clarifications[state.clarifications.length - 1]!.answer !== undefined
     );
-    if (continuationPending || result.question_id === QUESTION_ID_CONTINUE) {
+    if (continuationPending) {
       return handleProceedOrContinue(state, result, bounds);
+    }
+    // The host answered a question that was never pending, so this consumes no
+    // unmatched-answer attempt. Replay the open question or fall through to compose.
+    if (result.question_id === QUESTION_ID_CONTINUE) {
+      const lastTurn = state.clarifications.at(-1);
+      if (lastTurn && lastTurn.answer === undefined) {
+        return { state, action: askComposedQuestion(lastTurn) };
+      }
     }
   }
 
@@ -305,16 +305,9 @@ export const handleClarification: StepHandler = ({ state, result }) => {
 
 function appendTurnAndAsk(
   state: PipelineState,
-  turn: PendingTurnInternal,
+  turn: ClarificationTurn,
 ): { state: PipelineState; action: HandlerAction } {
-  const clarifications = [
-    ...state.clarifications,
-    {
-      round: turn.round,
-      question: turn.question,
-      asked_at: turn.asked_at,
-    },
-  ];
+  const clarifications = [...state.clarifications, turn];
   return {
     state: { ...state, clarifications, clarification_continue_pending: false },
     action: askComposedQuestion(turn),

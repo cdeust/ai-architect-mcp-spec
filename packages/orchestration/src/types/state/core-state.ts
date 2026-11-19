@@ -51,6 +51,8 @@ export type ReliabilityObservationRecord = z.infer<typeof ReliabilityObservation
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
   question: z.string(),
+  options: z.array(z.string()).nullable().optional(),
+  rationale: z.string().optional(),
   answer: z.string().optional(),
   asked_at: z.string(),
   answered_at: z.string().optional(),

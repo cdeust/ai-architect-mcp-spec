@@ -7,9 +7,13 @@ import { buildPolicyGateQuestion } from "../handlers/verification-policy.js";
 const base = newPipelineState({ run_id: "wrong-host", feature_description: "x", prd_context: "feature" });
 const completion = { summary: "PRD ready", artifacts: [] };
 const clarify: PipelineState = { ...base, current_step: "clarification" };
+const answeredRounds = Array.from({ length: 8 }, (_, i) => ({
+  round: i + 1, asked_at: "now", question: "Detail?", answer: "given",
+}));
+const offered = { ...clarify, clarifications: answeredRounds, clarification_continue_pending: true };
 const cases = [
   { id: "prd_context", state: { ...base, current_step: "context_detection", prd_context: null, feature_description: "bug" }, other: "feature", label: "release" },
-  { id: "clarification_continue", state: clarify, other: "continue", label: "proceed" },
+  { id: "clarification_continue", state: offered, other: "continue", label: "proceed" },
   { id: "pr_gate", state: { ...base, current_step: "pr_gate", pending_completion: completion }, other: "No", label: "Push + open PR", fallback: "No" },
   { id: "implementation_gate", state: { ...base, current_step: "implementation_gate", pending_completion: completion }, other: "PRD only", label: "Implement", fallback: "PRD only" },
   { id: "self_check_verify_budget", state: selfCheckState(22, true), other: "Reduced sample", label: "Full fleet", fallback: "Reduced sample" },
@@ -106,12 +110,12 @@ it.each([
 });
 
 it.each(["yes", "do not proceed", "", undefined, "unknown"])("repeats the full clarification question for %j", (freeform) => {
-  const out = step({ state: clarify, result: { kind: "user_answer", question_id: "clarification_continue", selected: [], freeform } });
+  const out = step({ state: offered, result: { kind: "user_answer", question_id: "clarification_continue", selected: [], freeform } });
   expect(out.state.proceed_signal).toBe(false);
   expect(out.action).toEqual({
     kind: "ask_user",
     question_id: "clarification_continue",
-    header: "Asked 0 questions. Proceed?",
+    header: "Asked 8 questions. Proceed?",
     description: "Min for this run: 8. Max: 10. 'proceed' to generate the PRD, 'continue' for more questions.\n\nYour answer was not one of the options. Choose one of: proceed, continue.",
     options: [
       { label: "proceed", description: "Generate the PRD now" },
@@ -159,7 +163,7 @@ it("ignores a budget answer to a different question", () => {
 
 it("clears prior attempts when the user chooses another clarification round", () => {
   const out = step({
-    state: { ...clarify, unmatched_answers: { clarification_continue: 2 } },
+    state: { ...offered, unmatched_answers: { clarification_continue: 2 } },
     result: { kind: "user_answer", question_id: "clarification_continue", selected: ["continue"] },
   });
   expect(out.action).toMatchObject({ kind: "spawn_subagents", purpose: "draft" });
