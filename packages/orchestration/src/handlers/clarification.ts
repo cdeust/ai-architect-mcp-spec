@@ -1,3 +1,4 @@
+import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
@@ -137,12 +138,32 @@ function computeBounds(state: PipelineState): RoundBounds {
   return { min, max };
 }
 
+const PROCEED_LABEL = "proceed";
+const CONTINUE_LABEL = "continue";
+
+function continueQuestion(completed: number, bounds: RoundBounds) {
+  return {
+    kind: "ask_user" as const,
+    question_id: QUESTION_ID_CONTINUE,
+    header: `Asked ${completed} questions. Proceed?`,
+    description: `Min for this run: ${bounds.min}. Max: ${bounds.max}. '${PROCEED_LABEL}' to generate the PRD, '${CONTINUE_LABEL}' for more questions.`,
+    options: [
+      { label: PROCEED_LABEL, description: "Generate the PRD now" },
+      { label: CONTINUE_LABEL, description: "Ask another question" },
+    ],
+    multi_select: false,
+  };
+}
+
 function handleProceedOrContinue(
   state: PipelineState,
   result: Extract<ActionResult, { kind: "user_answer" }>,
+  bounds: RoundBounds,
 ): { state: PipelineState; action: HandlerAction } {
-  const choice = (result.freeform ?? result.selected[0] ?? "").toLowerCase();
-  if (choice.includes("proceed") || choice === "yes") {
+  const question = continueQuestion(state.clarifications.length, bounds);
+  const choice = matchOfferedOption(question.options, result);
+  if (choice === undefined) return { state, action: retryOptionQuestion(question) };
+  if (choice === PROCEED_LABEL) {
     return {
       state: { ...state, proceed_signal: true, current_step: "budget" },
       action: {
@@ -197,17 +218,7 @@ function recordAnswerAndDispatch(
 
   return {
     state: { ...state, clarifications },
-    action: {
-      kind: "ask_user",
-      question_id: QUESTION_ID_CONTINUE,
-      header: `Asked ${completed} questions. Proceed?`,
-      description: `Min for this run: ${bounds.min}. Max: ${bounds.max}. 'proceed' to generate the PRD, 'continue' for more questions.`,
-      options: [
-        { label: "proceed", description: "Generate the PRD now" },
-        { label: "continue", description: "Ask another question" },
-      ],
-      multi_select: false,
-    },
+    action: continueQuestion(completed, bounds),
   };
 }
 
@@ -265,7 +276,7 @@ export const handleClarification: StepHandler = ({ state, result }) => {
     result?.kind === "user_answer" &&
     result.question_id === QUESTION_ID_CONTINUE
   ) {
-    return handleProceedOrContinue(state, result);
+    return handleProceedOrContinue(state, result, bounds);
   }
 
   if (

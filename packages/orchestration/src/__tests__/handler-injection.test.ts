@@ -916,6 +916,15 @@ describe("clarification proceed branch", () => {
   });
 });
 
+it("uses the selected continue label when the freeform field also says proceed", () => {
+  const state = newPipelineState({ run_id: "continue", feature_description: "x", prd_context: "feature" });
+  const out = stepOnce({ ...state, current_step: "clarification" }, {
+    kind: "user_answer", question_id: "clarification_continue", selected: ["continue"], freeform: "proceed",
+  });
+  expect(out.state.proceed_signal).toBe(false);
+  expect(out.action).toMatchObject({ kind: "spawn_subagents", purpose: "draft" });
+});
+
 it.each(["do not proceed", "yes", "", undefined, "unknown"])(
   "repeats the clarification decision for %s", (freeform) => {
     const state = newPipelineState({ run_id: "retry", feature_description: "x", prd_context: "feature" });
