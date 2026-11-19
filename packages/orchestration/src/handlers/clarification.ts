@@ -188,7 +188,7 @@ function recordAnswerAndDispatch(
 
   const updatedTurn = {
     ...lastTurn,
-    answer: result.freeform ?? result.selected.join(", "),
+    answer: result.freeform?.trim() || result.selected.join(", "),
     answered_at: new Date().toISOString(),
   };
   const clarifications = [...state.clarifications.slice(0, -1), updatedTurn];
