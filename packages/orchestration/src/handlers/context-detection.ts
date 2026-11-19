@@ -1,4 +1,4 @@
-import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import {
   PRD_CONTEXT_CONFIGS,
@@ -130,7 +130,6 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
     multi_select: false,
   };
   if (!answer) return { state, action: question };
-  const context = matchOfferedOption(options, answer);
-  if (context === undefined) return { state, action: retryOptionQuestion(question, options) };
-  return settle(state, context, declaredOrAnswered);
+  return answerOptionQuestion(state, question, options, answer,
+    (answered, context) => settle(answered, context, declaredOrAnswered));
 };

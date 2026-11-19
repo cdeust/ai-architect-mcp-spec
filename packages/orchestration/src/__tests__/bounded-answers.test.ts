@@ -122,3 +122,12 @@ it("ignores a budget answer to a different question", () => {
   expect(out.action).toEqual(step({ state }).action);
   expect(out.state.verification_plan).toBeNull();
 });
+
+it("clears prior attempts when the user chooses another clarification round", () => {
+  const out = step({
+    state: { ...clarify, unmatched_answers: { clarification_continue: 2 } },
+    result: { kind: "user_answer", question_id: "clarification_continue", selected: ["continue"] },
+  });
+  expect(out.action).toMatchObject({ kind: "spawn_subagents", purpose: "draft" });
+  expect(out.state.unmatched_answers).toEqual({});
+});

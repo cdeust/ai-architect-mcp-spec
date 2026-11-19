@@ -1,4 +1,4 @@
-import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
@@ -161,21 +161,21 @@ function handleProceedOrContinue(
   bounds: RoundBounds,
 ): { state: PipelineState; action: HandlerAction } {
   const question = continueQuestion(state.clarifications.length, bounds);
-  const choice = matchOfferedOption(question.options, result);
-  if (choice === undefined) return { state, action: retryOptionQuestion(question) };
-  if (choice === PROCEED_LABEL) {
+  return answerOptionQuestion(state, question, question.options, result, (answered, choice) => {
+    if (choice === PROCEED_LABEL) {
+      return {
+        state: { ...answered, proceed_signal: true, current_step: "budget" },
+        action: {
+          kind: "emit_message",
+          message: `Clarification complete (${state.clarifications.length} rounds).`,
+        },
+      };
+    }
     return {
-      state: { ...state, proceed_signal: true, current_step: "budget" },
-      action: {
-        kind: "emit_message",
-        message: `Clarification complete (${state.clarifications.length} rounds).`,
-      },
+      state: answered,
+      action: composeAction(answered, state.clarifications.length + 1),
     };
-  }
-  return {
-    state,
-    action: composeAction(state, state.clarifications.length + 1),
-  };
+  });
 }
 
 function recordAnswerAndDispatch(

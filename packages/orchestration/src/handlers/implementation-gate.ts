@@ -45,7 +45,7 @@
  * "verification_policy"; e2e run run_mrlqa0aj_u2rh15 (2026-07-15).
  */
 
-import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import { type PipelineState } from "../types/state.js";
 import { initialPostSpecs, type PostSpecsState } from "../types/state/post-specs-state.js";
@@ -53,11 +53,21 @@ import { IMPLEMENTATION_GATE_QUESTION_ID } from "./protocol-ids.js";
 import { buildVerificationReportFile, VERIFICATION_REPORT_FILENAME } from "./verification-report.js";
 import {
   buildPolicyGateQuestion,
+  GATE_OPTION_IMPLEMENT,
+  GATE_OPTION_IMPLEMENT_ANYWAY,
+  GATE_OPTION_OVERRIDE_POLICY,
   GATE_OPTION_PRD_ONLY,
   evaluatePolicy,
   resolveVerificationPolicy,
   type PolicyVerdict,
 } from "./verification-policy.js";
+
+const GATE_DECISIONS = {
+  [GATE_OPTION_PRD_ONLY]: "prd_only",
+  [GATE_OPTION_IMPLEMENT]: "implement",
+  [GATE_OPTION_IMPLEMENT_ANYWAY]: "implement",
+  [GATE_OPTION_OVERRIDE_POLICY]: "implement",
+} as const;
 
 function ensurePostSpecs(state: PipelineState): PostSpecsState {
   return state.post_specs ?? initialPostSpecs();
@@ -183,12 +193,9 @@ export const handleImplementationGate: StepHandler = ({ state, result }) => {
   const question = buildPolicyGateQuestion(policyVerdict);
   // (C) Gate answer arrived.
   if (result?.kind === "user_answer" && result.question_id === IMPLEMENTATION_GATE_QUESTION_ID) {
-    const label = matchOfferedOption(question.options, result);
-    if (label === undefined) {
-      return { state: { ...stateAfterReportWrite, post_specs: postSpecs }, action: retryOptionQuestion(question) };
-    }
-    const decision = label === GATE_OPTION_PRD_ONLY ? "prd_only" : "implement";
-    return handleGateAnswer(stateAfterReportWrite, postSpecs, policyVerdict, decision);
+    return answerOptionQuestion({ ...stateAfterReportWrite, post_specs: postSpecs }, question, question.options, result,
+      (answered, label) => handleGateAnswer(answered, postSpecs, policyVerdict, GATE_DECISIONS[label]),
+      GATE_OPTION_PRD_ONLY);
   }
 
   // (D) Report already written (or none could be derived) and no answer yet

@@ -58,6 +58,8 @@ export const ClarificationTurnSchema = z.object({
 export type ClarificationTurn = z.infer<typeof ClarificationTurnSchema>;
 
 export const PipelineStateSchema = z.object({
+  /** Unmatched decision answers by question ID, persisted across host round trips. */
+  unmatched_answers: z.record(z.string(), z.number().int().nonnegative()).default({}),
   run_id: z.string(),
   current_step: PipelineStepSchema,
   prd_context: PRDContextSchema.nullable(),

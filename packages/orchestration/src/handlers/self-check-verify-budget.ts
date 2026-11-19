@@ -183,7 +183,7 @@ export function assignJudgeModels(
   });
 }
 
-/** ask_user option labels — shared between the gate builder and the answer parser. */
+/** ask_user option labels — shared between the gate builder and decision routing. */
 export const VERIFY_BUDGET_OPTION_SAMPLE = "Reduced sample";
 export const VERIFY_BUDGET_OPTION_FULL = "Full fleet";
 export const VERIFY_BUDGET_OPTION_SKIP = "Skip verification";

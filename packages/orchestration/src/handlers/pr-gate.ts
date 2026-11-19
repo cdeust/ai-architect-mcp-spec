@@ -32,7 +32,7 @@
  * source: design-phases-3-5.md §3, §4, §6 PR 5.
  */
 
-import { matchOfferedOption, retryOptionQuestion } from "./match-offered-option.js";
+import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
 import { type PipelineState } from "../types/state.js";
 import { initialPostSpecs, type PostSpecsState } from "../types/state/post-specs-state.js";
@@ -89,28 +89,28 @@ export const handlePrGate: StepHandler = ({ state, result }) => {
 
   const question = prQuestion(postSpecs);
   if (result?.kind === "user_answer" && result.question_id === PR_GATE_QUESTION_ID) {
-    const label = matchOfferedOption(question.options, result);
-    if (label === undefined) return { state: { ...state, post_specs: postSpecs }, action: retryOptionQuestion(question) };
-    if (label === PUSH_LABEL) {
+    return answerOptionQuestion({ ...state, post_specs: postSpecs }, question, question.options, result, (answered, label) => {
+      if (label === PUSH_LABEL) {
+        return {
+          state: { ...answered, current_step: "pr_creation", post_specs: postSpecs },
+          action: {
+            kind: "emit_message",
+            message: "Push approved. Opening a pull request.",
+          },
+        };
+      }
       return {
-        state: { ...state, current_step: "pr_creation", post_specs: postSpecs },
+        state: {
+          ...answered,
+          current_step: "finalize",
+          post_specs: { ...postSpecs, pr: { pushed: false, url: null } },
+        },
         action: {
           kind: "emit_message",
-          message: "Push approved. Opening a pull request.",
+          message: "Push declined. Proceeding to finalize without a PR.",
         },
       };
-    }
-    return {
-      state: {
-        ...state,
-        current_step: "finalize",
-        post_specs: { ...postSpecs, pr: { pushed: false, url: null } },
-      },
-      action: {
-        kind: "emit_message",
-        message: "Push declined. Proceeding to finalize without a PR.",
-      },
-    };
+    }, "No");
   }
 
   return { state: { ...state, post_specs: postSpecs }, action: question };
