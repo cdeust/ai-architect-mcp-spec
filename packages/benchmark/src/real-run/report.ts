@@ -43,10 +43,12 @@ export function summaryRow(name: string, record: RunRecord, baseline: Totals): s
   return `| ${cells.join(" | ")} |`;
 }
 
+export const unmeteredPolicy = "Unmetered calls count as zero toward arm dollar limits and the plan cap. Each arm checks max_unmetered_calls after each call or parallel batch.";
+
 export function summaryHeader(dry: boolean): string[] {
   return [dry ? "# Dry run (canned responses)" : "# Model run",
     "", measurementScope, "", "Later arms can read the prompt cache earlier arms wrote.", "",
-    "Token columns sum reported usage. USD sums reported costs. Unmetered counts calls without a reported cost.", "",
+    "Token columns sum reported usage. USD sums reported costs. Unmetered counts calls without a reported cost.", unmeteredPolicy, "",
     "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) |",
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|"];
 }

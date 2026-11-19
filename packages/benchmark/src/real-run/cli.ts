@@ -6,7 +6,7 @@ import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
 import { cannedInvoke } from "./canned-ports.js";
 import { makeClaudeInvoker } from "./claude-cli-invoker.js";
-import { expectedModels, summaryHeader, summaryRow } from "./report.js";
+import { expectedModels, summaryHeader, summaryRow, unmeteredPolicy } from "./report.js";
 import type { Ports, Row, RunPlan, Totals } from "./types.js";
 
 function options() {
@@ -87,16 +87,27 @@ async function main() {
   const combined = arms.reduce((sum, arm) => sum + arm.plan.limits.max_cost_usd, 0);
   const caps = arms.map(arm => arm.plan.limits.max_cost_usd);
   const calculation = caps.every(cap => cap === caps[0]) ? `${caps.length} × ${caps[0]}` : caps.join(" + ");
-  console.log(`Reported-spend limits: ${calculation} = ${combined} USD across arms. Plan cap ${planCap} USD. A call or batch can cross an arm limit. The plan cap is checked between arms.`);
+  console.log(`Reported-spend limits: ${calculation} = ${combined} USD across arms. Plan cap ${planCap} USD. Worst case for reported spend: plan cap plus at most one in-flight batch or call.`);
+  console.log(unmeteredPolicy);
   for (const arm of arms) await printEstimate(arm.name, arm.plan);
 
   const summary = summaryHeader(dry);
   const armOrder: string[] = [];
+  const skipped: string[] = [];
   let reportedSpend = 0;
   let baseline: Totals | undefined;
   for (const arm of arms) {
+    const max_cost_usd = Math.min(arm.plan.limits.max_cost_usd, planCap - reportedSpend);
+    if (max_cost_usd <= 0) {
+      const message = `${arm.name}: skipped by the plan cap (effective limit ${Math.max(0, max_cost_usd)} USD).`;
+      skipped.push(message);
+      console.error(message);
+      process.exitCode = 1;
+      continue;
+    }
+    const effectivePlan = { ...arm.plan, limits: { ...arm.plan.limits, max_cost_usd } };
     armOrder.push(arm.name);
-    const record = await runArm(join(out, arm.name), arm.plan, dry, armOrder);
+    const record = await runArm(join(out, arm.name), effectivePlan, dry, armOrder);
     reportedSpend += record.totals.cost_usd;
     baseline ??= record.totals;
     summary.push(summaryRow(arm.name, record, baseline));
@@ -106,9 +117,9 @@ async function main() {
       summary.push("", message);
       console.error(message);
       process.exitCode = 1;
-      break;
     }
   }
+  if (skipped.length) summary.push("", ...skipped);
   summary.push("", `Arm execution order: ${armOrder.join(" → ")}`);
   await writeFile(join(out, "summary.md"), summary.join("\n") + "\n", { flag: "wx" });
 }
