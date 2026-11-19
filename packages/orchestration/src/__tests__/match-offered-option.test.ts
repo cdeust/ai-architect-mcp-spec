@@ -10,6 +10,13 @@ it("returns the canonical offered label and refuses multiple selections even whe
   expect(matchOfferedOption(options, { selected: ["unknown", "No"], freeform: "No" })).toBeUndefined();
 });
 
+it.each([
+  { selected: ["No", "No"], expected: undefined },
+  { selected: ["No", "  "], expected: "No" },
+])("matches $selected as $expected", ({ selected, expected }) => {
+  expect(matchOfferedOption(options, { selected })).toBe(expected);
+});
+
 it.each(["first", "not first option", "", undefined])("requires a whole option for %s", (freeform) => {
   expect(matchOfferedOption(options, { selected: [], freeform })).toBeUndefined();
 });

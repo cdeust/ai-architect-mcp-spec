@@ -21,7 +21,7 @@ const cases = [
 
 describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
   function submit(saved: PipelineState, selected: string[], freeform?: string) {
-    return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, ...(freeform === undefined ? {} : { freeform }) } });
+    return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, freeform } });
   }
 
   it.each(["string", "null"])("counts a %s selected field as an unmatched answer", (shape) => {
@@ -59,7 +59,7 @@ describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
     if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(true);
   });
 
-  it.each(["", " \t "])("accepts a single label alongside %j", (blank) => {
+  it.each(["", " \t "])("accepts a single label alongside %j with explicit undefined freeform", (blank) => {
     const out = submit(state, [label, blank]);
     expect(out.state.unmatched_answers).toEqual({});
     if (id === "pr_gate") expect(out.state.current_step).toBe("pr_creation");
@@ -73,6 +73,7 @@ describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
     const input = { ...state, unmatched_answers: { [id]: 2, other: 1 } };
     const out = submit(input, [label]);
     expect(out.state.unmatched_answers).toEqual({ other: 1 });
+    expect(out.messages.filter(message => message.level === "warn")).toEqual([]);
     expect(input.unmatched_answers).toEqual({ [id]: 2, other: 1 });
   });
 

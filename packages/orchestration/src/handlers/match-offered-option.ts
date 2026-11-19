@@ -14,7 +14,7 @@ export function matchOfferedOption<Label extends string>(
   options: readonly Option<Label>[],
   answer: Answer,
 ): Label | undefined {
-  if ("freeform" in answer && typeof answer.freeform !== "string") return undefined;
+  if (answer.freeform !== undefined && typeof answer.freeform !== "string") return undefined;
   if (!Array.isArray(answer.selected)) return undefined;
   if (answer.selected.some(value => typeof value !== "string")) return undefined;
   const selections = answer.selected.map(normalize).filter(Boolean);

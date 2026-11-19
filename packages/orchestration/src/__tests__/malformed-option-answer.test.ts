@@ -3,7 +3,7 @@ import { newPipelineState, step, type ActionResult } from "../index.js";
 import { expectOptionRetry } from "./expect-option-retry.js";
 
 describe.each(["selected", "freeform"])("malformed %s", (field) => {
-  it.each([null, undefined, 42, {}])("counts %j even alongside a valid label", (value) => {
+  it.each(field === "selected" ? [null, undefined, 42, {}] : [null, 42, {}])("counts %j even alongside a valid label", (value) => {
     const state = { ...newPipelineState({ run_id: "invalid-field", feature_description: "x" }), current_step: "pr_gate" as const };
     const original = step({ state }).action;
     const fields = field === "selected"
