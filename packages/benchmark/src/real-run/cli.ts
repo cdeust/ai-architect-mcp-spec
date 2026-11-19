@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, lstatSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -61,7 +61,7 @@ function appendRow(journal: string, row: Row) {
 }
 
 async function runArm(dir: string, plan: RunPlan, dry: boolean) {
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir);
   const journal = join(dir, "rows.jsonl");
   await writeFile(journal, "", { flag: "wx" });
   const record = await runBench(plan, {
@@ -80,6 +80,10 @@ async function runArm(dir: string, plan: RunPlan, dry: boolean) {
 async function main() {
   const { dry, plan, out } = options();
   const arms = await loadArms(plan);
+  await mkdir(out, { recursive: true });
+  const existing = ["summary.md", ...arms.map(arm => arm.name)]
+    .filter(name => lstatSync(join(out, name), { throwIfNoEntry: false }));
+  if (existing.length) throw new Error(`Output already exists in ${out}: ${existing.join(", ")}`);
   for (const arm of arms) await printEstimate(arm.name, arm.plan);
 
   const summary = summaryHeader(dry);
@@ -90,7 +94,7 @@ async function main() {
     summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
   }
-  await writeFile(join(out, "summary.md"), summary.join("\n") + "\n");
+  await writeFile(join(out, "summary.md"), summary.join("\n") + "\n", { flag: "wx" });
 }
 
 main().catch((error: unknown) => {

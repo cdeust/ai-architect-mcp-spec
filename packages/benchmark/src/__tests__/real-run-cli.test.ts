@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,3 +169,23 @@ it("journals the interrupted invocation and kills its group on SIGTERM to the CL
     await rm(out, { recursive: true, force: true });
   }
 });
+
+it.each([["tiny-as-emitted"], ["summary.md"], ["tiny-as-emitted", "summary.md"]])(
+  "refuses existing outputs before the first arm (%s)", async (...names) => {
+    const out = await mkdtemp(join(tmpdir(), "bench-conflict-"));
+    try {
+      for (const name of names) {
+        if (name === "summary.md") await writeFile(join(out, name), "original");
+        else await mkdir(join(out, name));
+      }
+      const result = cli("--dry-run", "--plan", "real-run/plans/pilot.json", "--out", out);
+      expect(result.status).toBe(1);
+      for (const name of names) expect(result.stderr).toContain(name);
+      expect(await readdir(out)).toEqual([...names].sort());
+      expect(result.stdout).toBe("");
+      if (names.includes("summary.md")) expect(await readFile(join(out, "summary.md"), "utf8")).toBe("original");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  },
+);
