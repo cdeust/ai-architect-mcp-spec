@@ -1,6 +1,7 @@
 {
+  "plan_max_cost_usd": 15,
   "call_timeout_ms": 600000,
-  "limits": { "max_invocations": 80, "max_cost_usd": 25, "max_unmetered_calls": 2, "max_steps": 200 },
+  "limits": { "max_invocations": 60, "max_cost_usd": 6, "max_unmetered_calls": 2, "max_steps": 200 },
   "description": "build a simple feature for OAuth login",
   "prd_context": "feature",
   "answers": {
@@ -16,6 +17,6 @@
     { "name": "tiny-as-emitted", "request_size": "tiny", "policy": "as-emitted", "mode": "sequential" },
     { "name": "standard-tiered", "request_size": "standard", "policy": "tiered", "mode": "sequential" },
     { "name": "tiny-tiered", "request_size": "tiny", "policy": "tiered", "mode": "sequential" },
-    { "name": "tiny-tiered-parallel", "request_size": "tiny", "policy": "tiered", "mode": "parallel" }
+    { "name": "standard-tiered-parallel", "request_size": "standard", "policy": "tiered", "mode": "parallel" }
   ]
 }

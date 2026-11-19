@@ -11,7 +11,7 @@ async function measure(inv: Invocation, batch_id: string, plan: RunPlan, ports: 
   const used = settingsFor(inv, plan.policy);
   const row: Row = {
     batch_id, invocation_id: inv.invocation_id, purpose: inv.purpose,
-    agent_type: inv.subagent_type, prompt_characters: Array.from(inv.prompt).length,
+    agent_type: inv.subagent_type, isolation: inv.isolation, prompt_characters: Array.from(inv.prompt).length,
     requested: { model: inv.model ?? null, effort: inv.effort ?? null },
     used, usage: null, error: null,
   };
@@ -60,22 +60,34 @@ async function batch(
     addCost(measurements, call.row.usage);
   }
   function limitExceeded() {
-    if (measurements.unmetered_calls > plan.limits.max_unmetered_calls) return stopped("max_unmetered_calls");
-    if (measurements.cost_usd > max_cost_usd) return stopped("max_cost_usd");
+    if (measurements.unmetered_calls > plan.limits.max_unmetered_calls) {
+      return stopped("max_unmetered_calls");
+    }
+    if (measurements.cost_usd > max_cost_usd) {
+      return stopped("max_cost_usd");
+    }
   }
 
   if (plan.mode === "parallel") {
-    if (action.invocations.length > remaining) return stopped("max_invocations");
+    if (action.invocations.length > remaining) {
+      return stopped("max_invocations");
+    }
     const calls = await Promise.all(action.invocations.map(run));
     calls.forEach(collect);
     const stop = limitExceeded();
-    if (stop) return stop;
+    if (stop) {
+      return stop;
+    }
   } else {
     for (const inv of action.invocations) {
-      if (rows.length >= max_invocations) return stopped("max_invocations");
+      if (rows.length >= max_invocations) {
+        return stopped("max_invocations");
+      }
       collect(await run(inv));
       const stop = limitExceeded();
-      if (stop) return stop;
+      if (stop) {
+        return stop;
+      }
     }
   }
   return { kind: "subagent_batch_result", batch_id: action.batch_id, responses };
@@ -105,11 +117,15 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
       terminal = action;
       break;
     }
-    if (steps === plan.limits.max_steps) break;
+    if (steps === plan.limits.max_steps) {
+      break;
+    }
     if (action.kind === "spawn_subagents") {
       const before = rows.length;
       const measured = await batch(action, plan, ports, measurements);
-      if (rows.length > before) batches++;
+      if (rows.length > before) {
+        batches++;
+      }
       if (measured.kind === "stopped") {
         terminal = measured;
         break;
@@ -121,7 +137,9 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
         break;
       }
       result = { ...plan.answers[action.question_id], kind: "user_answer", question_id: action.question_id };
-    } else result = canned(action);
+    } else {
+      result = canned(action);
+    }
   }
   return finishRecord(state, terminal, rows, steps, batches, ports.clock() - start);
 }

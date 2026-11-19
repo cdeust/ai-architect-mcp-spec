@@ -47,6 +47,7 @@ export interface Row {
   invocation_id: string;
   purpose: Purpose;
   agent_type: string;
+  isolation: Invocation["isolation"];
   prompt_characters: number;
   requested: { model: string | null; effort: string | null };
   used: Settings;
@@ -65,6 +66,7 @@ export interface Totals {
   cost_usd: number;
 }
 export interface RunRecord {
+  measurement_scope: string;
   rows: Row[];
   sections: (Pick<SectionStatus, "section_type" | "status" | "attempt" | "violation_count"> & {
     content: string | null;

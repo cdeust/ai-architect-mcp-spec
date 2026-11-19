@@ -28,12 +28,14 @@ it("writes five dry-run records and the comparison without an installed model CL
   try {
     const result = cli("--dry-run", "--plan", "real-run/plans/pilot.json", "--out", out);
     expect(result.status, result.stderr).toBe(0);
-    const arms = ["standard-as-emitted", "tiny-as-emitted", "standard-tiered", "tiny-tiered", "tiny-tiered-parallel"];
+    const arms = ["standard-as-emitted", "tiny-as-emitted", "standard-tiered", "tiny-tiered", "standard-tiered-parallel"];
     expect((await readdir(out)).sort()).toEqual([...arms, "summary.md"].sort());
     const summary = await readFile(join(out, "summary.md"), "utf8");
     expect(result.stdout).toMatch(/standard-as-emitted:[^\n]*\n  Expected by model: session=20, haiku=6, sonnet=1/);
     expect(result.stdout).toMatch(/standard-tiered:[^\n]*\n  Expected by model: session=0, haiku=6, sonnet=21/);
     expect(summary).toContain("Reported models");
+    expect(summary).toContain("Later arms can read the prompt cache earlier arms wrote.");
+    expect(summary).toContain(`Arm execution order: ${arms.join(" → ")}`);
     expect(summary).toContain("| canned |");
     for (const arm of arms) {
       const count = arm.startsWith("tiny") ? 12 : 27;
@@ -41,6 +43,10 @@ it("writes five dry-run records and the comparison without an installed model CL
       const record = JSON.parse(await readFile(join(out, arm, "record.json"), "utf8"));
       expect(record).toMatchObject({ dry_run: true, totals: { invocations: count, cost_usd: 0, errors: 0 },
         quality: { hard_output_score: 0.85, outcome: { status: "needs_attention" } } });
+      expect(record.measurement_scope).toContain("Host session cost is not measured");
+      expect(summary).toContain(record.measurement_scope);
+      expect(record.arm_order_so_far).toEqual(arms.slice(0, arms.indexOf(arm) + 1));
+      expect(record.rows[0]).toMatchObject({ isolation: "none", agent_type: expect.any(String) });
       const sections = JSON.parse(await readFile(join(out, arm, "sections.json"), "utf8"));
       expect(sections).toEqual(record.sections);
       expect(sections).toContainEqual({
@@ -86,7 +92,7 @@ it("requires plan limits, merges per-arm overrides, and journals a stopped CLI r
   try {
     const file = join(out, "plan.json");
     const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
-    expect(pilot.limits).toEqual({ max_invocations: 80, max_cost_usd: 25, max_unmetered_calls: 2, max_steps: 200 });
+    expect(pilot.limits).toEqual({ max_invocations: 60, max_cost_usd: 6, max_unmetered_calls: 2, max_steps: 200 });
     expect(pilot.call_timeout_ms).toBe(600000);
     pilot.arms = [{ ...pilot.arms[0], limits: { max_invocations: 1 } }];
     await writeFile(file, JSON.stringify({ ...pilot, limits: undefined }));
@@ -136,14 +142,17 @@ it("journals a metered stand-in response through the compiled CLI before the cos
   }
 });
 
-it("journals the interrupted invocation and kills its group on SIGTERM to the CLI alone", async () => {
+it.each(["SIGINT", "SIGTERM", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
   const out = await mkdtemp(join(tmpdir(), "bench-signal-"));
   const marker = join(out, "pids");
   const standIn = join(out, "claude");
   let pids: number[] = [];
   await writeFile(standIn, '#!/bin/sh\n/bin/sleep 20 &\necho "$$ $!" > "$MARKER"\nwait\n', { mode: 0o700 });
-  const cliProcess = spawn(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
-    "--plan", "real-run/plans/smoke.json", "--out", out], { cwd, env: { PATH: out, MARKER: marker } });
+  const preload = join(out, "exit.cjs");
+  await writeFile(preload, 'setInterval(() => { if (require("node:fs").existsSync(process.env.EXIT_FILE)) process.exit(0); }, 10).unref();');
+  const flags = signal === "exit" ? ["--require", preload] : [];
+  const cliProcess = spawn(process.execPath, [...flags, "dist/src/real-run/cli.js", "--i-accept-model-cost",
+    "--plan", "real-run/plans/smoke.json", "--out", out], { cwd, env: { PATH: out, MARKER: marker, EXIT_FILE: join(out, "exit-now") } });
   const exited = new Promise(resolve => cliProcess.once("exit", (code, signal) => resolve(code ?? signal)));
   try {
     await expect.poll(async () => {
@@ -151,11 +160,12 @@ it("journals the interrupted invocation and kills its group on SIGTERM to the CL
       pids = content.trim().split(" ").map(Number);
       return pids.length;
     }, { timeout: 3000 }).toBe(2);
-    cliProcess.kill("SIGTERM");
+    if (signal === "exit") await writeFile(join(out, "exit-now"), "");
+    else cliProcess.kill(signal);
     expect(await exited).toEqual(expect.any(Number));
     expect(cliProcess.exitCode).not.toBe(0);
     const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
-    expect(row).toMatchObject({ purpose: "probe", usage: null, error: expect.stringContaining("SIGTERM") });
+    expect(row).toMatchObject({ purpose: "probe", usage: null, error: expect.stringContaining(signal) });
     for (const pid of pids) await expect.poll(() => {
       try { process.kill(pid, 0); return false; }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
@@ -212,6 +222,45 @@ it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", a
     expect(row.usage.cost_usd).toBe(fixture.total_cost_usd);
     const summary = await readFile(join(out, "summary.md"), "utf8");
     expect(summary).toContain(`${row.batch_id}/${row.invocation_id}`);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+it("checks the summed reported spend between arms in execution order and uses fresh call directories", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-plan-cap-"));
+  try {
+    const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
+    plan.arms = ["a", "b", "c"].map(name => ({ ...plan.arms[0], name }));
+    plan.order = "reversed";
+    plan.plan_max_cost_usd = 0.5;
+    const file = join(out, "plan.json");
+    await writeFile(file, JSON.stringify(plan));
+    const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
+    fixture.is_error = true;
+    fixture.total_cost_usd = 0.5;
+    await writeFile(join(out, "response"), JSON.stringify(fixture));
+    const script = ['#!/bin/sh', 'pwd >> "$DATA/cwds"', '/bin/ls -A >> "$DATA/contents"', '/bin/cat "$DATA/response"'].join("\n");
+    await writeFile(join(out, "claude"), script, { mode: 0o700 });
+    const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", file, "--out", out], { cwd, encoding: "utf8", env: { PATH: out, DATA: out } });
+    expect(result.status).toBe(1);
+    expect(result.stdout.split("\n")[0]).toContain("3 × 1 = 3 USD across arms. Plan cap 0.5 USD");
+    const dirs = (await readFile(join(out, "cwds"), "utf8")).trim().split("\n");
+    expect(dirs).toHaveLength(2);
+    expect(dirs[0]).toMatch(/\/c\/call-[^/]+$/);
+    expect(dirs[1]).toMatch(/\/b\/call-[^/]+$/);
+    expect(await readFile(join(out, "contents"), "utf8")).toBe("");
+    expect(await readdir(out)).not.toContain("a");
+    const summary = await readFile(join(out, "summary.md"), "utf8");
+    expect(summary).toContain("Plan stopped at 1 reported USD (plan_max_cost_usd 0.5)");
+    expect(summary).toContain("Arm execution order: c → b");
+    for (const missing of ["max_unmetered_calls", "plan_max_cost_usd"]) {
+      const invalid = structuredClone(plan);
+      delete (missing === "max_unmetered_calls" ? invalid.limits : invalid)[missing];
+      await writeFile(file, JSON.stringify(invalid));
+      await expect(loadArms(file)).rejects.toThrow(missing);
+    }
   } finally {
     await rm(out, { recursive: true, force: true });
   }

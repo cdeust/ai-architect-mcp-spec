@@ -6,6 +6,8 @@ export function addCost(total: Pick<Totals, "cost_usd" | "unmetered_calls">, usa
   else total.cost_usd += usage.cost_usd;
 }
 
+export const measurementScope = "Each live call is a bare claude -p session with no tools. The reducer's requested agent type and isolation are recorded but not applied. Host session cost is not measured.";
+
 function totals(rows: Row[]): Totals {
   const result: Totals = {
     invocations: rows.length,
@@ -56,6 +58,7 @@ export function finishRecord(
   wall_time_ms: number,
 ): RunRecord {
   return {
+    measurement_scope: measurementScope,
     terminal, rows, batches, steps,
     sections: state.sections.map(({ section_type, status, attempt, violation_count, content }) => ({
       section_type, status, attempt, violation_count, content: content ?? null,

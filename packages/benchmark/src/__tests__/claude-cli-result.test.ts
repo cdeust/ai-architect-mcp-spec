@@ -14,7 +14,7 @@ it("reads the recorded Haiku accounting fields", () => {
 it("distinguishes missing cost, reported failures and invalid output", () => {
   const r = JSON.parse(fixture);
   delete r.total_cost_usd;
-  expect(parseClaudeResult(JSON.stringify(r)).usage.cost_usd).toBeNull();
+  expect(parseClaudeResult(JSON.stringify(r)).usage?.cost_usd).toBeNull();
   r.is_error = true;
   expect(parseClaudeResult(JSON.stringify(r))).toMatchObject({ error: expect.any(String), usage: { input_tokens: 2 } });
   r.is_error = false;

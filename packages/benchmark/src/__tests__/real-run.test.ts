@@ -45,7 +45,7 @@ async function timedRun(mode: RunPlan["mode"]) {
       const first = active === 0;
       peak = Math.max(peak, ++active);
       if (inv.purpose === "draft") expect(used).toEqual({ model: "sonnet", effort: "medium" });
-      const { text, usage } = await cannedInvoke(inv, used);
+      const { text, usage } = await cannedInvoke(inv);
       // Finish the first concurrent call last to exercise submission order.
       if (first && active > 1) await Promise.resolve();
       now = Math.max(now, start + 1);
@@ -88,17 +88,17 @@ it("passes a registered clarification answer into the section prompt", async () 
   const freeform = "Only the pilot tenant can log in.";
   const prompts: string[] = [];
   await runBench({ ...plan, answers: { clarification_answer: { selected: [], freeform } } }, {
-    ...ports, invoke: async (inv, settings) => {
+    ...ports, invoke: async inv => {
       prompts.push(inv.prompt);
-      return cannedInvoke(inv, settings);
+      return cannedInvoke(inv);
     },
   });
   expect(prompts.some(prompt => prompt.includes(freeform))).toBe(true);
 });
 
 it("keeps billed usage when a provider reports failure", async () => {
-  const record = await runBench(plan, { ...ports, invoke: async (inv, settings) => {
-    const result = await cannedInvoke(inv, settings);
+  const record = await runBench(plan, { ...ports, invoke: async inv => {
+    const result = await cannedInvoke(inv);
     return { ...result, error: "provider failed", usage: { ...result.usage, cost_usd: 0.25 } };
   } });
   expect(record.terminal.kind).toBe("failed");
@@ -121,7 +121,7 @@ it("admits individual calls sequentially and entire batches in parallel", async 
     let calls = 0;
     const record = await runBench({ ...plan, mode, limits }, { ...ports, invoke: (...args) => {
       calls++;
-      return cannedInvoke(...args);
+      return cannedInvoke(args[0]);
     } });
     expect(record.terminal).toEqual({ kind: "stopped", reason: "max_invocations" });
     expect(calls).toBe(mode === "parallel" ? index : index + 1);
@@ -132,7 +132,7 @@ it("admits individual calls sequentially and entire batches in parallel", async 
 it("includes the call crossing the cost limit and allows exact equality", async () => {
   const limits = { ...plan.limits, max_cost_usd: 1 };
   const record = await runBench({ ...plan, limits }, { ...ports, invoke: async (...args) => {
-    const result = await cannedInvoke(...args);
+    const result = await cannedInvoke(args[0]);
     return { ...result, usage: { ...result.usage, cost_usd: 1 } };
   } });
   expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
@@ -169,7 +169,7 @@ it("accounts for all in-flight calls when a parallel batch crosses the cost limi
   const record = await runBench({ ...plan, mode: "parallel", limits: { ...plan.limits, max_cost_usd: 0 } }, {
     ...ports,
     invoke: async (...args) => {
-      const result = await cannedInvoke(...args);
+      const result = await cannedInvoke(args[0]);
       const cost_usd = args[0].invocation_id === grouped?.invocation_id ? 1 : 0;
       return { ...result, usage: { ...result.usage, cost_usd } };
     },
@@ -187,7 +187,7 @@ it.each([
   let calls = 0;
   const record = await runBench({ ...plan, limits: { ...plan.limits, max_cost_usd: 1, max_unmetered_calls: allowed } }, {
     ...ports, invoke: async (...args) => {
-      const result = await cannedInvoke(...args);
+      const result = await cannedInvoke(args[0]);
       return { ...result, usage: { ...result.usage, cost_usd: costs[calls++] ?? null } };
     },
   });
@@ -206,9 +206,9 @@ it("submits the pilot's shared answer despite different model-generated options"
   const arms = await loadArms(fileURLToPath(new URL("../../real-run/plans/pilot.json", import.meta.url)));
   for (const { name, plan: arm } of arms.slice(0, 2)) {
     const prompts: string[] = [];
-    const record = await runBench(arm, { ...ports, invoke: async (inv, settings, row) => {
+    const record = await runBench(arm, { ...ports, invoke: async inv => {
       prompts.push(inv.prompt);
-      const result = await cannedInvoke(inv, settings, row);
+      const result = await cannedInvoke(inv);
       return inv.description.startsWith("Compose clarification")
         ? { ...result, text: JSON.stringify({ question: "Identity provider?", options: [name, "other"] }) } : result;
     } });

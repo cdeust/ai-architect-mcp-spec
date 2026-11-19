@@ -1,6 +1,7 @@
 {
   "description": "build a simple feature for OAuth login",
   "prd_context": "feature",
+  "plan_max_cost_usd": 2,
   "call_timeout_ms": 180000,
   "limits": { "max_invocations": 30, "max_cost_usd": 1, "max_unmetered_calls": 0, "max_steps": 120 },
   "answers": {

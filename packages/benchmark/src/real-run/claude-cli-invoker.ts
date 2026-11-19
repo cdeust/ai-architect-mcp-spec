@@ -1,3 +1,5 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { Ports, Row, Settings } from "./types.js";
@@ -47,8 +49,12 @@ export function parseClaudeResult(stdout: string) {
 
 export function claudeArgs(settings: Settings): string[] {
   const args = ["-p", "--output-format", "json"];
-  if (settings.model !== "session") args.push("--model", settings.model);
-  if (settings.effort !== "session") args.push("--effort", settings.effort);
+  if (settings.model !== "session") {
+    args.push("--model", settings.model);
+  }
+  if (settings.effort !== "session") {
+    args.push("--effort", settings.effort);
+  }
   return [...args, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--setting-sources", ""];
 }
 
@@ -63,7 +69,9 @@ function readResult(stdout: string, stderr: string, failure?: string) {
     throw new Error([failure, "Claude CLI returned invalid or incomplete JSON", stderr].filter(Boolean).join(": "));
   }
   const error = [result.error, failure].filter(Boolean);
-  if (error.length && stderr) error.push(stderr);
+  if (error.length && stderr) {
+    error.push(stderr);
+  }
   return { ...result, error: error.join(": ") || undefined };
 }
 
@@ -71,17 +79,27 @@ function killGroup(pid: number) {
   try {
     process.kill(-pid, "SIGKILL");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+      throw error;
+    }
   }
 }
 
 type TrackCall = (row: Row, kill: () => void) => () => void;
 
-export function makeClaudeInvoker(timeoutMs: number, program = "claude", track?: TrackCall): Ports["invoke"] {
+export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall): Ports["invoke"] {
   return (inv, settings, row) => new Promise((resolve, reject) => {
-    const child = spawn(program, claudeArgs(settings), { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const cwd = mkdtempSync(join(directory, "call-"));
+    const child = spawn(program, claudeArgs(settings), {
+      cwd, detached: true, stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
+    });
+    let killed = false;
     const kill = () => {
-      if (child.pid !== undefined) killGroup(child.pid);
+      if (!killed && child.pid !== undefined) {
+        killed = true;
+        killGroup(child.pid);
+      }
     };
     const release = track?.(row, kill);
     let stdout = "";
@@ -105,8 +123,11 @@ export function makeClaudeInvoker(timeoutMs: number, program = "claude", track?:
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      kill();
       release?.();
-      if (code !== 0) failure ??= `Claude CLI exited with ${signal ?? code}`;
+      if (code !== 0) {
+        failure ??= `Claude CLI exited with ${signal ?? code}`;
+      }
       try {
         resolve(readResult(stdout, stderr.trim(), failure));
       } catch (error) {

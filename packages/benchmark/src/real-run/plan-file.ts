@@ -13,6 +13,8 @@ const limitsSchema = z.strictObject({
   max_steps: z.int().nonnegative(),
 });
 const planFile = z.strictObject({
+  order: z.enum(["as-listed", "reversed"]).default("as-listed"),
+  plan_max_cost_usd: z.number().nonnegative(),
   limits: limitsSchema,
   // source: Node timers accept delays up to a signed 32-bit integer in milliseconds.
   call_timeout_ms: z.int32().positive(),
@@ -29,16 +31,19 @@ const planFile = z.strictObject({
   })).nonempty(),
 });
 
-export async function loadArms(file: string): Promise<{ name: string; plan: RunPlan }[]> {
+type ArmPlan = RunPlan & Pick<z.infer<typeof planFile>, "plan_max_cost_usd" | "order">;
+
+export async function loadArms(file: string): Promise<{ name: string; plan: ArmPlan }[]> {
   const json = await readFile(file, "utf8");
   const { policies, arms, limits, ...shared } = planFile.parse(JSON.parse(json));
   const names = new Set<string>();
+  if (shared.order === "reversed") arms.reverse();
   return arms.map(({ name, request_size, mode, policy: key, limits: override }) => {
     if (names.has(name.toLowerCase())) throw new Error(`Duplicate arm: ${name}`);
     names.add(name.toLowerCase());
     if (key !== "as-emitted" && !Object.hasOwn(policies, key)) throw new Error(`Unknown policy: ${key}`);
     const policy = key === "as-emitted" ? key : policies[key];
-    const plan = { ...shared, request_size, mode, policy, limits: { ...limits, ...override } } satisfies RunPlan;
+    const plan: ArmPlan = { ...shared, request_size, mode, policy, limits: { ...limits, ...override } };
     return { name, plan };
   });
 }

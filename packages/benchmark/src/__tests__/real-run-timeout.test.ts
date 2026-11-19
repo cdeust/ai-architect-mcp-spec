@@ -16,7 +16,7 @@ it("kills a hanging executable and records the timeout on its invocation", async
     const [{ plan }] = await loadArms(pilot);
     const started = performance.now();
     const record = await runBench(plan, {
-      invoke: makeClaudeInvoker(1500, program),
+      invoke: makeClaudeInvoker(1500, dir, program),
       record: () => {},
       clock: Date.now,
     });

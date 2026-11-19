@@ -59,19 +59,19 @@ function appendRow(journal: string, row: Row) {
   appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true });
 }
 
-async function runArm(dir: string, plan: RunPlan, dry: boolean) {
+async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string[]) {
   await mkdir(dir);
   const journal = join(dir, "rows.jsonl");
   await writeFile(journal, "", { flag: "wx" });
   const record = await runBench(plan, {
     ...cannedPorts,
-    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms, "claude", (row, kill) => {
+    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms, dir, "claude", (row, kill) => {
       active.set(row, { kill, journal });
       return () => active.delete(row);
     }),
     record: row => appendRow(journal, row),
   });
-  await writeJson(join(dir, "record.json"), { dry_run: dry, plan, ...record });
+  await writeJson(join(dir, "record.json"), { dry_run: dry, arm_order_so_far: armOrder, plan, ...record });
   await writeJson(join(dir, "sections.json"), record.sections);
   return record;
 }
@@ -83,16 +83,33 @@ async function main() {
   const existing = ["summary.md", ...arms.map(arm => arm.name)]
     .filter(name => lstatSync(join(out, name), { throwIfNoEntry: false }));
   if (existing.length) throw new Error(`Output already exists in ${out}: ${existing.join(", ")}`);
+  const planCap = arms[0].plan.plan_max_cost_usd;
+  const combined = arms.reduce((sum, arm) => sum + arm.plan.limits.max_cost_usd, 0);
+  const caps = arms.map(arm => arm.plan.limits.max_cost_usd);
+  const calculation = caps.every(cap => cap === caps[0]) ? `${caps.length} × ${caps[0]}` : caps.join(" + ");
+  console.log(`Reported-spend limits: ${calculation} = ${combined} USD across arms. Plan cap ${planCap} USD. A call or batch can cross an arm limit. The plan cap is checked between arms.`);
   for (const arm of arms) await printEstimate(arm.name, arm.plan);
 
   const summary = summaryHeader(dry);
+  const armOrder: string[] = [];
+  let reportedSpend = 0;
   let baseline: Totals | undefined;
   for (const arm of arms) {
-    const record = await runArm(join(out, arm.name), arm.plan, dry);
+    armOrder.push(arm.name);
+    const record = await runArm(join(out, arm.name), arm.plan, dry, armOrder);
+    reportedSpend += record.totals.cost_usd;
     baseline ??= record.totals;
     summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
+    if (reportedSpend > planCap) {
+      const message = `Plan stopped at ${reportedSpend} reported USD (plan_max_cost_usd ${planCap}).`;
+      summary.push("", message);
+      console.error(message);
+      process.exitCode = 1;
+      break;
+    }
   }
+  summary.push("", `Arm execution order: ${armOrder.join(" → ")}`);
   await writeFile(join(out, "summary.md"), summary.join("\n") + "\n", { flag: "wx" });
 }
 
