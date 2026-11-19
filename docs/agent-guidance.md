@@ -34,10 +34,11 @@ the prompt was written before the contract, and the repository's own standards a
    `claude[bot]` that ends with `Verdict: approve` or `Verdict: block`. The resolver merges
    a pull request whose last verdict covers its head, reads approve, and whose required
    checks are green. No agent merges by hand or enables auto-merge.
-2. **Three reviews per branch.** The budget counts review runs by branch name, so every
-   push to a pull request ready for review spends one. Push once per verdict, with every
-   blocker of that verdict fixed, and never while a `PR Review` run is in progress on the
-   pull request: the review would land on a commit that is no longer the head.
+2. **Three reviews per branch.** A push to a pull request ready for review triggers review
+   admission. The budget counts successful workflow runs for that pull request and branch
+   whose review action step succeeded. Push once per verdict, with every blocker of that
+   verdict fixed, and never while a `PR Review` run is in progress on the pull request:
+   the review would land on a commit that is no longer the head.
 3. **Budget spent without an approve on the head: a new branch.** Push the same commits to
    `<branch>-r<N>`, open a pull request with the same title and body plus a "Continuation"
    section naming the old one, leave one "Continued in #n" line on the old one, close it.
@@ -88,16 +89,21 @@ the prompt was written before the contract, and the repository's own standards a
     the autopilot pushed its own fix (`42423f2`) while the session's commits were still
     local, so the branch diverged. Owner decision of 19 November 2026: sessions
     work in small batches.
-    Mark the pull request ready only after the gate passes on its head, a reviewer other
-    than its author has read it, and its body carries the counts of rule 8. Marking it
-    ready starts the review ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
+    Mark the pull request ready only after a reviewer other than its author has read its
+    current head and its body carries the counts of rule 8. For a batch pushed from a local
+    machine, require a passed delivery-gate verdict on that head's tree. For a hosted
+    session with no local verdict, require a successful Pipeline run on the current head
+    with the contract, unit and regression jobs passing. Marking it ready starts the review
+    ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
     For every push from a local machine, the delivery gate's pre-push hook requires a
     passed verdict on the tip. Make each batch worth a gate run, such as one pass or one slice,
     and keep commits local between gate runs only for the length of that work.
     Run `git fetch` before working on the branch and before every push. Read and
     integrate commits pushed by another author, including the autopilot, before pushing.
-    If they conflict, use a merge commit and follow rule 4's conflict procedure. Never force
-    a push. Once the pull request is ready, keep local commits ahead of its remote head
+    If the local and remote tips of the working branch diverge, merge the fetched working
+    branch tip, resolve conflicts and run the full delivery gate on the resulting tree before
+    a local push. A conflict with `main` follows rule 4. Never force a push. Once the pull
+    request is ready, keep local commits ahead of its remote head
     for at most one gate run, except while a `PR Review` run is in progress (rule 2).
     Under rule 5, a draft with a running check is in flight. This is this repository's
     addition to the `cdeust/Cortex` contract, and the same rule is owed there.
