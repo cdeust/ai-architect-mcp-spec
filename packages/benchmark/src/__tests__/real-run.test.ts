@@ -204,6 +204,8 @@ it("stops at an unregistered question and names its id", async () => {
 
 it("submits the pilot's shared answer despite different model-generated options", async () => {
   const arms = await loadArms(fileURLToPath(new URL("../../real-run/plans/pilot.json", import.meta.url)));
+  const shared = arms[0].plan.answers.clarification_answer?.freeform;
+  expect(shared).toContain("OAuth 2.0 authorization code flow with PKCE");
   for (const { name, plan: arm } of arms.slice(0, 2)) {
     const prompts: string[] = [];
     const record = await runBench(arm, { ...ports, invoke: async inv => {
@@ -213,6 +215,15 @@ it("submits the pilot's shared answer despite different model-generated options"
         ? { ...result, text: JSON.stringify({ question: "Identity provider?", options: [name, "other"] }) } : result;
     } });
     expect(record.terminal.kind).toBe("done");
-    expect(prompts.some(prompt => prompt.includes("OAuth 2.0 authorization code flow with PKCE"))).toBe(true);
+    const answers = prompts.flatMap(prompt => [...prompt.matchAll(/^Q: Identity provider\?\nA: (.+)$/gm)].map(match => match[1]));
+    expect(new Set(answers)).toEqual(new Set([shared]));
   }
+});
+
+it("stops before reducer recovery when the first failed call is unmetered and none are allowed", async () => {
+  const record = await runBench({ ...plan, limits: { ...plan.limits, max_unmetered_calls: 0 } }, {
+    ...ports, invoke: async () => { throw new Error("timed out"); },
+  });
+  expect(record.terminal).toEqual({ kind: "stopped", reason: "max_unmetered_calls" });
+  expect(record.totals).toMatchObject({ invocations: 1, errors: 1, unmetered_calls: 1, cost_usd: 0 });
 });

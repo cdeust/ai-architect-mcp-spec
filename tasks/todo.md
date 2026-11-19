@@ -42,3 +42,17 @@ Réf. preuve : session-optimizer/prd-output/run_mrlq/10-verification-report.md +
 
 ## Gates
 - [ ] build tsc clean, suite complète verte (≥631 tests), pas de --no-verify, commits conventionnels sur fix/e2e-gaps, pas de push sans OK user.
+
+## Real-run third pass
+
+- [x] Reproduce and fix spend, timeout, interruption, overwrite and answer handling.
+- [x] Verify CLI envelopes, measurement scope, arm order and plan budget.
+- [x] Run build, lint, benchmark tests and both offline plans.
+
+### Offline review results
+
+Build and lint passed. The benchmark suite passed 381 tests across 37 files. Each blocker had a failing local regression before its fix. A stand-in held stdout open in a descendant through the invoker deadline. Compiled CLI tests covered SIGTERM and SIGINT to the CLI PID and process exit during a call.
+
+Both canned plans exited 0. Smoke completed 12 invocations. Pilot completed 27, 12, 27, 12 and 27 in listed order. All six arm records had terminal `done`, quality `needs_attention`, and zero errors and reported USD. Standard's only multi-call batch contained six calls, versus two for tiny. The registered questions were `clarification_answer`, `clarification_continue` and `implementation_gate`.
+
+The owner's earlier live smoke completed 11 calls with cost reported for all 11. This pass used no network or model. Provider error and mixed-model accounting were verified with synthetic envelopes. Actual billing, cache savings and model quality were outside the offline check.
