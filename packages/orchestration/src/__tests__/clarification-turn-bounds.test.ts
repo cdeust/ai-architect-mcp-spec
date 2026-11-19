@@ -5,11 +5,11 @@ const seed = {
   ...newPipelineState({ run_id: "bounds", feature_description: "x", prd_context: "feature" }),
   current_step: "clarification" as const,
 };
-const normal = { question: " Who approves? ", options: [" Owner ", "Team"], rationale: " Name the reviewer. " };
+const normal = { question: "Who approves?", options: [" Owner ", "Team"], rationale: " Name the reviewer. " };
 const atLimit = "a".repeat(1000);
 const huge = "UNTRUSTED".padEnd(5 * 1024 * 1024, "x");
 
-function submit(raw_text: string, state = seed, error?: string) {
+function submit(raw_text: string | undefined, state = seed, error?: string) {
   return step({ state, result: {
     kind: "subagent_batch_result", batch_id: "clarification_compose_1", responses: [{
       invocation_id: "clarification_compose_inv_1", raw_text, error,
@@ -47,7 +47,7 @@ it.each(["question", "options[1]", "rationale"])("accepts the exact %s ceiling u
 });
 
 it.each(["question", "options[1]", "rationale"])("rejects %s one character over", field => {
-  const value = "UNTRUSTED".padEnd(1001, " ");
+  const value = "UNTRUSTED".padEnd(1001, "x");
   const fields = field === "options[1]" ? { options: ["first", value] } : { [field]: value };
   expectRejected(compose({ ...normal, ...fields }), `${field} has 1001 UTF-16 code units (maximum 1000)`);
 });
@@ -61,12 +61,12 @@ it.each([0, 1, 5, 100_000])("rejects an entire list of %i options", count => {
 });
 
 it.each([
-  [{ question: "  " }, "question is blank (2 UTF-16 code units)"],
+  [{ question: "  " }, "question is blank (0 UTF-16 code units)"],
   [{ question: false }, "question must be a string"],
   [{ options: ["a", "  "] }, "options[1] is blank (2 UTF-16 code units)"],
   [{ options: ["a", false] }, "options[1] must be a string"],
   [{ options: "ab" }, "options must be an array or null"],
-  [{ rationale: null }, "rationale must be a string"],
+  [{ rationale: false }, "rationale must be a string or null"],
 ] as const)("rejects malformed fields %j", (fields, detail) => {
   expectRejected(compose({ ...normal, ...fields }), detail);
 });
@@ -79,7 +79,7 @@ it.each([2, 4])("keeps all %i options", count => {
   expect(issued.action).toMatchObject({ options: options.map(label => ({ label })) });
 });
 
-it.each([{}, { options: null }])("accepts freeform %j with omitted rationale", fields => {
+it.each([{}, { options: null }, { rationale: null }])("accepts freeform %j with absent or null rationale", fields => {
   const issued = compose({ question: "Which?", ...fields });
   expect(issued.state.errors).toEqual([]);
   expect(issued.state.clarifications[0]).toMatchObject({ question: "Which?", options: null, rationale: "" });
@@ -88,6 +88,21 @@ it.each([{}, { options: null }])("accepts freeform %j with omitted rationale", f
 
 it("records unreadable compose text without echoing it or the upstream error", () => {
   expectRejected(submit("UNTRUSTED", seed, huge), "no parseable question object (9 UTF-16 code units)");
+});
+
+it("trims question padding before checking the ceiling, storing the turn and emitting its header", () => {
+  const question = "q".repeat(999);
+  const issued = compose({ ...normal, question: ` ${question} ` });
+  expect(issued.state.errors).toEqual([]);
+  expect(issued.state.clarifications.map(turn => turn.question)).toEqual([question]);
+  expect(issued.action).toMatchObject({ header: "Round 1: " + question });
+});
+
+it("records the upstream diagnostic only in the error history when compose returns no text", () => {
+  const diagnostic = "worker unavailable";
+  const issued = submit(undefined, seed, diagnostic);
+  expectRejected(issued, diagnostic);
+  expect(JSON.stringify(issued).split(diagnostic)).toHaveLength(2);
 });
 
 it("keeps a contextual fallback exactly at the ceiling", () => {
@@ -109,10 +124,12 @@ it("uses a complete generic fallback when the feature would overflow its questio
   expect(issued.state.errors).toEqual(["Clarification compose: no parseable question object (0 UTF-16 code units)"]);
 });
 
-it("evicts the oldest error and kind and increments the existing dropped count", () => {
+it("bounds a 5 MiB upstream diagnostic and evicts the oldest error and kind", () => {
   const errors = Array.from({ length: MAX_PIPELINE_ERRORS }, (_, i) => `prior ${i}`);
-  const issued = submit("{}", { ...seed, errors, error_kinds: errors.map(() => "structural"), errors_dropped: 7 });
-  expect(issued.state.errors).toEqual([...errors.filter((_, i) => i > 0), "Clarification compose: question must be a string"]);
+  const issued = submit(undefined, { ...seed, errors, error_kinds: errors.map(() => "structural"), errors_dropped: 7 }, huge);
+  const message = "Clarification compose: UNTRUSTED".padEnd(500, "x");
+  expect(issued.state.errors).toEqual([...errors.filter((_, i) => i > 0), message]);
+  expect(JSON.stringify({ ...issued, state: { ...issued.state, errors: [] } })).not.toContain("UNTRUSTED");
   expect(issued.state.error_kinds).toEqual([...Array(MAX_PIPELINE_ERRORS - 1).fill("structural"), "upstream_failure"]);
   expect(issued.state.errors_dropped).toBe(8);
 });

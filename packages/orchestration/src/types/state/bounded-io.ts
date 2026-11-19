@@ -60,7 +60,8 @@ export const MAX_CLARIFICATION_TURNS = Math.floor(
  * never silent loss (Phase 1c rule). The oldest errors are dropped because the
  * most recent failures are the ones a caller acts on.
  */
-const ERROR_MESSAGE_CHARS = 500; // project convention, measured max 312
+// source: project error-message convention and measured maximum above.
+export const ERROR_MESSAGE_CHARS = 500;
 export const MAX_PIPELINE_ERRORS = Math.floor(
   MAX_RESPONSE_CHARS / 4 / ERROR_MESSAGE_CHARS,
 ); // 50

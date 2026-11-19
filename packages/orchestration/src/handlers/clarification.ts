@@ -1,5 +1,5 @@
 import { answerOptionQuestion } from "./match-offered-option.js";
-import { CLARIFICATION_TURN_CHARS } from "../types/state/bounded-io.js";
+import { CLARIFICATION_TURN_CHARS, ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
 import type { StepHandler } from "../runner.js";
 import { ASK_USER_MIN_OPTIONS, ASK_USER_MAX_OPTIONS, type ActionResult, type HandlerAction } from "../types/actions.js";
 import { appendError, type ClarificationTurn, type PipelineState } from "../types/state.js";
@@ -84,13 +84,15 @@ function tryParseGeneratedQuestion(rawText: string): Pick<ClarificationTurn, "qu
   } catch {
     return { error: `no parseable question object (${rawText.length} UTF-16 code units)` };
   }
-  const { question, rationale = "" } = obj;
-  if (typeof question !== "string") return { error: "question must be a string" };
+  if (typeof obj.question !== "string") return { error: "question must be a string" };
+  const question = obj.question.trim();
   const questionError = textViolation("question", question, true);
   if (questionError) return { error: questionError };
   const options = parseOptions(obj.options);
   if (options && "error" in options) return options;
-  if (typeof rationale !== "string") return { error: "rationale must be a string" };
+  // As with options, a missing or null rationale means the model omitted it.
+  const rationale = obj.rationale ?? "";
+  if (typeof rationale !== "string") return { error: "rationale must be a string or null" };
   const rationaleError = textViolation("rationale", rationale, false);
   if (rationaleError) return { error: rationaleError };
   return { question, options, rationale };
@@ -248,11 +250,14 @@ function handleComposedQuestion(
   const response = result.responses.find(
     (r) => r.invocation_id === composeInvocationId(expectedRound),
   );
-  const generated = tryParseGeneratedQuestion(response?.raw_text ?? "");
+  const prefix = "Clarification compose: ";
+  const generated = !response?.raw_text && response?.error
+    ? { error: response.error.slice(0, ERROR_MESSAGE_CHARS - prefix.length) }
+    : tryParseGeneratedQuestion(response?.raw_text ?? "");
   if ("error" in generated) {
     const contextual = `What is the most important detail about "${state.feature_description}" that should drive this PRD?`;
     return appendTurnAndAsk(
-      appendError(state, `Clarification compose: ${generated.error}`, "upstream_failure"),
+      appendError(state, prefix + generated.error, "upstream_failure"),
       {
         round: expectedRound,
         question: contextual.length <= CLARIFICATION_TURN_CHARS
