@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail the review run when it posted no verdict the resolver can read (#361).
+"""Fail the review run when no verdict of it that the resolver can read is found (#361).
 
 Meant to run in claude-review.yml right after the `PR Review` step, from the
 trusted default-branch checkout; the step that calls it is a follow-up (#361),
@@ -17,7 +17,9 @@ run to succeed and its `PR Review` step to succeed. It exits non-zero
 otherwise; once the step is wired, such a run concludes as a failure,
 ci_review_budget.py (successful runs only) does not count it, and the next
 push is admitted as the same round. Any API or protocol error also exits
-non-zero.
+non-zero. A verdict that links another reviewed run of the same head, which
+the resolver would read, does not pass this run: #361 asks for a comment that
+links this run (note 3 of review 1 of #366).
 
 A verdict the API does not list yet, or a `gh api` call that fails or times
 out, would fail a run that did post its verdict, and the resolver would then
@@ -161,7 +163,7 @@ def main() -> int:
             f"{REVIEWER} links run {run_id} with a 'Verdict: approve' or "
             f"'Verdict: block' line after {READ_ATTEMPTS} reads"
             + (f", {failed} of which failed (gh api)" if failed else "")
-            + ". A run without a verdict fails so that the "
+            + ". A run whose verdict is not found fails so that the "
             "review budget does not count it (#361)."
         )
         return 1

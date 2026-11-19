@@ -1,4 +1,4 @@
-"""ci_review_verdict.py fails a review run that posted no verdict (#361).
+"""ci_review_verdict.py fails a review run whose verdict is not found (#361).
 
 Source: scripts/ci_review_verdict.py. The parity tests run the resolver of
 pipeline-post-merge.yml on the same comments: the script must accept exactly
@@ -373,11 +373,14 @@ class ReadVerdictTests(unittest.TestCase):
         self.assertEqual((found, calls, sleeps), ("approve", 1, []))
 
     def test_a_verdict_listed_late_is_found_on_a_later_read(self):
-        late = [[comment(PROGRESS_ONLY, link=False)], [], [review()]]
+        # Note 2 of review 1 of #366: the replies follow READ_ATTEMPTS.
+        progress = [comment(PROGRESS_ONLY, link=False)]
+        late = [progress] + [[]] * (verdict.READ_ATTEMPTS - 2) + [[review()]]
         found, calls, sleeps = self.run_reads(late)
         self.assertEqual(found, "approve")
         self.assertEqual(calls, verdict.READ_ATTEMPTS)
-        self.assertEqual(sleeps, [verdict.READ_RETRY_SECONDS] * 2)
+        retries = verdict.READ_ATTEMPTS - 1
+        self.assertEqual(sleeps, [verdict.READ_RETRY_SECONDS] * retries)
 
     def test_a_failed_or_slow_call_is_read_again(self):
         for error in (
@@ -407,17 +410,23 @@ class ReadVerdictTests(unittest.TestCase):
     def test_a_failed_read_between_two_empty_reads_is_counted_once(self):
         # Note 3 of review 1 of #364: a count taken from the attempt number
         # (`failed = attempt`) reads READ_ATTEMPTS - 1 here.
-        # Note 3 of review 1 of #365: the reads follow READ_ATTEMPTS, so the
-        # test does not assume three.
+        # Note 3 of review 1 of #365: the reads follow READ_ATTEMPTS.
+        # Note 2 of review 1 of #366: that mutant reads 1 when READ_ATTEMPTS is
+        # 2, and there is no empty read before the failure, so the test sets
+        # READ_ATTEMPTS itself instead of relying on the shipped value.
         error = subprocess.CalledProcessError(1, "gh")
-        reads = [[]] * (verdict.READ_ATTEMPTS - 2) + [error, []]
-        found, calls, _ = self.run_reads(reads)
-        self.assertEqual((found, calls, self.failed), (None, verdict.READ_ATTEMPTS, 1))
+        for attempts in (3, 5):
+            with self.subTest(attempts=attempts), unittest.mock.patch.object(
+                verdict, "READ_ATTEMPTS", attempts
+            ):
+                reads = [[]] * (attempts - 2) + [error, []]
+                found, calls, _ = self.run_reads(reads)
+                self.assertEqual((found, calls, self.failed), (None, attempts, 1))
 
     def test_the_last_failure_is_raised(self):
         error = subprocess.CalledProcessError(1, "gh")
         with self.assertRaises(subprocess.CalledProcessError):
-            self.run_reads([[], [], error])
+            self.run_reads([[]] * (verdict.READ_ATTEMPTS - 1) + [error])
 
     def test_a_protocol_error_is_not_read_again(self):
         with self.assertRaises(verdict.VerdictError):
