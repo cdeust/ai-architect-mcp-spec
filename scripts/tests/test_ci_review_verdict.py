@@ -138,7 +138,8 @@ class VerdictOfRunTests(unittest.TestCase):
 
 
 class ResolverParityTests(unittest.TestCase):
-    """The script fails a run exactly when the resolver finds no verdict in it."""
+    """With this run as the only reviewed run of the head, the script reads
+    exactly the verdict the resolver reads; the one gap is pinned below."""
 
     def resolver(self):
         text = (ROOT / ".github/workflows/pipeline-post-merge.yml").read_text()
