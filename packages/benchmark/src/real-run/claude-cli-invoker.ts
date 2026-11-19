@@ -42,14 +42,23 @@ function readResult(stdout: string, failure?: string) {
   }
 }
 
+function killGroup(pid: number) {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 export function makeClaudeInvoker(timeoutMs: number, program = "claude"): Ports["invoke"] {
   return (inv, settings) => new Promise((resolve, reject) => {
-    const child = spawn(program, claudeArgs(settings), { stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(program, claudeArgs(settings), { detached: true, stdio: ["pipe", "pipe", "ignore"] });
     let stdout = "";
     let failure: string | undefined;
     const timer = setTimeout(() => {
       failure = `Claude CLI timed out after ${timeoutMs} ms`;
-      child.kill("SIGKILL");
+      if (child.pid !== undefined) killGroup(child.pid);
+      reject(new Error(failure));
     }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", chunk => {
       stdout += chunk;
