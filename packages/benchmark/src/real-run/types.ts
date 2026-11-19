@@ -7,7 +7,17 @@ export interface Settings {
   model: string;
   effort: NonNullable<Invocation["effort"]> | "session";
 }
+export interface Limits {
+  max_invocations: number;
+  max_cost_usd: number;
+  max_steps: number;
+}
+export interface Stopped {
+  kind: "stopped";
+  reason: keyof Limits;
+}
 export interface RunPlan {
+  limits: Limits;
   description: string;
   prd_context: PRDContext;
   request_size: RequestSize;
@@ -58,7 +68,7 @@ export interface RunRecord {
   batches: number;
   steps: number;
   wall_time_ms: number;
-  terminal: DoneAction | FailedAction;
+  terminal: DoneAction | FailedAction | Stopped;
   quality: {
     outcome: DoneAction["outcome"] | null;
     hard_output_score: number | null;

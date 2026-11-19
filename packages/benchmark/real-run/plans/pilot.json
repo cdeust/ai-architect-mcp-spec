@@ -1,4 +1,5 @@
 {
+  "limits": { "max_invocations": 80, "max_cost_usd": 25, "max_steps": 200 },
   "description": "build a simple feature for OAuth login",
   "prd_context": "feature",
   "answers": {},

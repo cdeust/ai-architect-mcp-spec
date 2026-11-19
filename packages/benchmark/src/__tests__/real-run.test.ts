@@ -3,7 +3,7 @@ import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
 import { runBench } from "../real-run/run-bench.js";
 import type { Ports, RunPlan } from "../real-run/types.js";
 
-const plan: RunPlan = { description: "build a simple feature for OAuth login", prd_context: "feature",
+const plan: RunPlan = { limits: { max_invocations: 80, max_cost_usd: 25, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
   request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {} };
 const ports: Ports = { clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
 
@@ -95,4 +95,38 @@ it("keeps billed usage when a provider reports failure", async () => {
   } });
   expect(record.terminal.kind).toBe("failed");
   expect(record.totals).toMatchObject({ errors: 1, unmetered_calls: 0, cost_usd: 0.25 });
+});
+
+it("stops at the step cap and preserves the calls already measured", async () => {
+  const record = await runBench({ ...plan, limits: { ...plan.limits, max_steps: 1 } }, ports);
+  expect(record.terminal).toEqual({ kind: "stopped", reason: "max_steps" });
+  expect(record.steps).toBe(1);
+  expect(record.rows).toHaveLength(0);
+});
+
+it("admits individual calls sequentially and entire batches in parallel", async () => {
+  const full = await runBench(plan, ports);
+  const index = full.rows.findIndex((row, i) => row.batch_id === full.rows[i + 1]?.batch_id);
+  expect(index).toBeGreaterThanOrEqual(0);
+  const limits = { ...plan.limits, max_invocations: index + 1 };
+  for (const mode of ["parallel", "sequential"] as const) {
+    let calls = 0;
+    const record = await runBench({ ...plan, mode, limits }, { ...ports, invoke: (...args) => {
+      calls++;
+      return cannedInvoke(...args);
+    } });
+    expect(record.terminal).toEqual({ kind: "stopped", reason: "max_invocations" });
+    expect(calls).toBe(mode === "parallel" ? index : index + 1);
+    expect(record.rows).toEqual(full.rows.slice(0, calls));
+  }
+});
+
+it("includes the call crossing the cost limit and allows exact equality", async () => {
+  const limits = { ...plan.limits, max_cost_usd: 1 };
+  const record = await runBench({ ...plan, limits }, { ...ports, invoke: async (...args) => {
+    const result = await cannedInvoke(...args);
+    return { ...result, usage: { ...result.usage, cost_usd: 1 } };
+  } });
+  expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
+  expect(record.totals).toMatchObject({ invocations: 2, cost_usd: 2 });
 });

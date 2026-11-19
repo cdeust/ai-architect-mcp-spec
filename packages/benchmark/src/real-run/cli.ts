@@ -40,7 +40,7 @@ async function main() {
     const record = dry ? arm.record : await runBench(arm.plan, { ...ports, invoke: claudeInvoke });
     await writeFile(join(dir, "record.json"), JSON.stringify({ dry_run: dry, plan: arm.plan, ...record }, null, 2) + "\n");
     summary.push(summaryRow(arm.name, record));
-    if (record.totals.errors || record.terminal.kind === "failed") process.exitCode = 1;
+    if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
   }
   await writeFile(join(values.out, "summary.md"), summary.join("\n") + "\n");
 }
