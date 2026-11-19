@@ -40,3 +40,10 @@ export function summaryRow(name: string, record: RunRecord, baseline: Totals): s
   ];
   return `| ${cells.join(" | ")} |`;
 }
+
+export function summaryHeader(dry: boolean): string[] {
+  return [dry ? "# Dry run (canned responses)" : "# Model run",
+    "", "Token columns sum metered calls. A call without metering makes the total cost unknown.", "",
+    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|"];
+}
