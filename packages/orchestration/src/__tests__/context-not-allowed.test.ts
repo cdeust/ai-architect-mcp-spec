@@ -32,7 +32,7 @@ describe("a kind of PRD that is not allowed", () => {
       state: atContextDetection("something unclassifiable"),
       result: { kind: "user_answer", question_id: "prd_context", selected: ["bug"] },
     });
-    expect(out.action).toEqual({ kind: "failed", reason: "Invalid PRD context choice: bug", step: "context_detection" });
+    expect(out.action).toMatchObject({ kind: "ask_user", options: [{ label: "feature" }], description: expect.stringContaining("not one of the options") });
   });
 
   it("is not taken from the words of the description: the allowed kinds are asked", () => {

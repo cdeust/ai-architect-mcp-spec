@@ -11,12 +11,12 @@
  *      design-phases-3-5.md §5, PR 3b).
  *   3. Answering "Implement" advances to `pre_impl_grounding`, then coalesces
  *      through to `implementation` (PR 4a wiring).
- *   4. An unrecognized/empty answer fails CLOSED to "prd_only" rather than
- *      silently spawning an engineer.
+ *   4. An unrecognized or empty answer repeats the policy-shaped question.
  *
  * source: design-phases-3-5.md §2.2, §3 "implementation_gate".
  */
 
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
 import { newPipelineState, step, type PipelineState } from "../index.js";
 
@@ -101,21 +101,30 @@ describe("implementation_gate — Implement branch", () => {
   });
 });
 
-describe("implementation_gate — unrecognized answer fails closed", () => {
-  it("freeform text with neither label falls back to prd_only", () => {
-    const out = step({
-      state: stateAtGate(),
-      result: {
-        kind: "user_answer",
-        question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-        selected: [],
-        freeform: "maybe later",
+describe.each([stateAtGate, stateAtGateWithJudgeVerdicts, stateAtGateWithUnsampledRatio])(
+  "implementation answer at %s", (seed) => {
+    it.each(["do not implement", "don't override", "don't override the policy", "", undefined, "unknown"])(
+      "re-asks for %s and records no decision or derogation", (freeform) => {
+        const issued = step({ state: seed() });
+        const out = step({ state: issued.state, result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [], freeform } });
+        expectOptionRetry(out.action, issued.action);
+        expect(out.state.post_specs?.decision).toBe("pending");
+        expect(out.state.post_specs?.policy_derogation).toBeNull();
       },
+    );
+    it("accepts the typed decline label", () => {
+      const issued = step({ state: seed() });
+      const out = step({ state: issued.state, result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [], freeform: " PRD   ONLY " } });
+      expect(out.state.post_specs?.decision).toBe("prd_only");
     });
+  },
+);
 
-    expect(out.state.post_specs?.decision).toBe("prd_only");
-    expect(out.state.current_step).toBe("finalize");
-  });
+it("re-asks for a bare Implement when the policy is blocked", () => {
+  const issued = step({ state: stateAtGateWithJudgeVerdicts() });
+  const out = step({ state: issued.state, result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: ["Implement"] } });
+  expectOptionRetry(out.action, issued.action);
+  expect(out.state.post_specs?.policy_derogation).toBeNull();
 });
 
 /**

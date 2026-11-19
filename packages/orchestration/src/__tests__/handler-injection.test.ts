@@ -916,8 +916,23 @@ describe("clarification proceed branch", () => {
   });
 });
 
+it.each(["do not proceed", "yes", "", undefined, "unknown"])(
+  "repeats the clarification decision for %s", (freeform) => {
+    const state = newPipelineState({ run_id: "retry", feature_description: "x", prd_context: "feature" });
+    const out = stepOnce({ ...state, current_step: "clarification" }, {
+      kind: "user_answer", question_id: "clarification_continue", selected: [], freeform,
+    });
+    expect(out.state.proceed_signal).toBe(false);
+    expect(out.action).toMatchObject({
+      kind: "ask_user", question_id: "clarification_continue",
+      options: [{ label: "proceed" }, { label: "continue" }],
+      description: expect.stringMatching(/not one of the options.*proceed.*continue/i),
+    });
+  },
+);
+
 describe("context_detection", () => {
-  it("emits failed when user submits an invalid PRD context", () => {
+  it("repeats the question when the user submits an invalid PRD context", () => {
     const seed = newPipelineState({
       run_id: "inj_invalid_prd_context",
       feature_description: "this description has no trigger words at all",
@@ -933,11 +948,7 @@ describe("context_detection", () => {
       selected: ["not_a_real_context_kind"],
     });
 
-    expect(out.action.kind).toBe("failed");
-    if (out.action.kind === "failed") {
-      expect(out.action.step).toBe("context_detection");
-      expect(out.action.reason.toLowerCase()).toContain("invalid");
-    }
+    expect(out.action).toMatchObject({ kind: "ask_user", question_id: "prd_context", description: expect.stringContaining("not one of the options") });
   });
 });
 

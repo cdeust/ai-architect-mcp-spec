@@ -20,6 +20,7 @@
  */
 
 import { claimIdsInJudgePrompt } from "@prd-gen/verification";
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, it, expect } from "vitest";
 import {
   newPipelineState,
@@ -484,3 +485,12 @@ describe("self-check judge-panel budget gate — sampling determinism & host-ski
     expect(verification!.distribution.FAIL).toBe(0);
   });
 });
+
+it.each(["not full", "don't skip", "full", "skip", "", undefined, "unknown"])(
+  "repeats the budget question without dispatching for %s", (freeform) => {
+    const issued = step({ state: selfCheckState(22, true) });
+    const out = step({ state: issued.state, result: { kind: "user_answer", question_id: VERIFY_BUDGET_QUESTION_ID, selected: [], freeform } });
+    expectOptionRetry(out.action, issued.action);
+    expect(out.state.verification_plan).toBeNull();
+  },
+);

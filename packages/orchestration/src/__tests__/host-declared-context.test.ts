@@ -7,6 +7,7 @@
  * which one it was.
  */
 
+import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
 import { newPipelineState, step } from "../index.js";
 import type { PipelineState } from "../index.js";
@@ -128,17 +129,14 @@ describe("the kind of PRD of a run (#119)", () => {
     const picked = answer({ selected: ["bug"] });
     expect(picked.state.prd_context).toBe("bug");
     expect(picked.messages.map((m) => m.text)).toEqual(["PRD context: Bug Fix"]);
-    // A kind the four options do not list is typed.
-    expect(answer({ selected: [], freeform: "  Release " }).state.prd_context).toBe("release");
+    expect(answer({ selected: [], freeform: "  Incident " }).state.prd_context).toBe("incident");
   });
 
-  it("fails on an answer that names no kind, and says which", () => {
-    for (const result of [{ selected: ["epic"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
+  it("repeats the offered choices for unknown and unlisted kinds", () => {
+    for (const result of [{ selected: ["epic"] }, { selected: ["release"] }, { selected: [], freeform: "tiny" }, { selected: [] }]) {
       const out = answer(result);
       expect(out.state.prd_context).toBeNull();
-      expect(out.action).toMatchObject({ kind: "failed", step: "context_detection" });
-      if (out.action.kind !== "failed") return;
-      expect(out.action.reason).toBe(`Invalid PRD context choice: ${result.selected[0] ?? result.freeform ?? ""}`);
+      expectOptionRetry(out.action, step({ state: atContextDetection("something unclassifiable") }).action);
     }
   });
 
