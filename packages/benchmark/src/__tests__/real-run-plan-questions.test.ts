@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { API } from "typescript/unstable/sync";
 import { isBinaryExpression, isPropertyAccessExpression, isPropertyAssignment, isShorthandPropertyAssignment, SyntaxKind, type Node } from "typescript/unstable/ast";
 import { expect, it } from "vitest";
-import { verifyBudgetDecisionFromAnswer } from "../../../orchestration/src/handlers/self-check-verify-budget.js";
+import { step } from "@prd-gen/orchestration";
+import { selfCheckState } from "../../../orchestration/src/__tests__/verify-budget-fixture.js";
 import { loadArms } from "../real-run/plan-file.js";
 
 const handlers = fileURLToPath(new URL("../../../orchestration/src/handlers/", import.meta.url));
@@ -59,16 +60,20 @@ function emittedQuestionIds(root = orchestration) {
 it.each(["pilot", "smoke"])("%s arms register all reachable handler questions", async name => {
   const arms = await loadArms(fileURLToPath(new URL(`../../real-run/plans/${name}.json`, import.meta.url)));
   const emitted = emittedQuestionIds();
-  expect(emitted).toContain("self_check_verify_budget");
+  const question_id = "self_check_verify_budget";
+  expect(emitted).toContain(question_id);
+  const pending = step({ state: selfCheckState(28, true) });
+  expect(pending.action).toMatchObject({ kind: "ask_user", question_id });
   for (const { plan } of arms) {
     for (const [id, reason] of unreachable) expect(plan.answers, reason).not.toHaveProperty(id);
     for (const id of emitted) {
       if (!unreachable.has(id)) expect(plan.answers, id).toHaveProperty(id);
     }
-    const question_id = "self_check_verify_budget";
     const answer = plan.answers[question_id];
     expect(answer).toEqual({ selected: ["Reduced sample"] });
-    expect(verifyBudgetDecisionFromAnswer({ kind: "user_answer", question_id, ...answer })).toBe("sample");
+    const next = step({ state: pending.state, result: { kind: "user_answer", question_id, ...answer } });
+    expect(next.action).toMatchObject({ kind: "spawn_subagents", purpose: "judge" });
+    expect(next.state.verification_plan?.sampled).toBe(true);
   }
 });
 it("finds literal, local, imported, shorthand and assigned question IDs across the source tree", async () => {
