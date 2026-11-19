@@ -40,6 +40,13 @@ describe.each(cases)("bounded $id", ({ id, state, label, fallback }) => {
     if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(true);
   });
 
+  it("leaves the input counters intact after a valid answer", () => {
+    const input = { ...state, unmatched_answers: { [id]: 2, other: 1 } };
+    const out = submit(input, [label]);
+    expect(out.state.unmatched_answers).toEqual({ other: 1 });
+    expect(input.unmatched_answers).toEqual({ [id]: 2, other: 1 });
+  });
+
   it("accepts agreeing labels and resets only this question", () => {
     const out = submit({ ...state, unmatched_answers: { [id]: 2, other: 1 } }, [label], label.toUpperCase());
     expect(out.state.unmatched_answers).toEqual({ other: 1 });

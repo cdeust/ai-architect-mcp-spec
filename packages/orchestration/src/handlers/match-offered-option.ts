@@ -32,16 +32,17 @@ export function answerOptionQuestion<Label extends string>(
   fallback?: NoInfer<Label>,
 ): ReturnType<StepHandler> {
   const id = question.question_id;
-  const counts = { ...state.unmatched_answers };
+  function clearedState(): PipelineState {
+    const { [id]: _cleared, ...remaining } = state.unmatched_answers;
+    return { ...state, unmatched_answers: remaining };
+  }
   const label = matchOfferedOption(accepted, answer);
   if (label !== undefined) {
-    delete counts[id];
-    return route({ ...state, unmatched_answers: counts }, label);
+    return route(clearedState(), label);
   }
 
-  const count = (counts[id] ?? 0) + 1;
-  counts[id] = count;
-  const saved = { ...state, unmatched_answers: counts };
+  const count = (state.unmatched_answers[id] ?? 0) + 1;
+  const saved = { ...state, unmatched_answers: { ...state.unmatched_answers, [id]: count } };
   if (count < 3) {
     const labels = accepted.map((option) => option.label).join(", ");
     const description = `${question.description}\n\nYour answer was not one of the options. Choose one of: ${labels}.`;
@@ -52,6 +53,5 @@ export function answerOptionQuestion<Label extends string>(
   if (fallback === undefined) {
     return { state: saved, action: { kind: "failed", step: state.current_step, reason } };
   }
-  delete counts[id];
-  return { ...route(saved, fallback), warning: `${reason} Using "${fallback}".` };
+  return { ...route(clearedState(), fallback), warning: `${reason} Using "${fallback}".` };
 }
