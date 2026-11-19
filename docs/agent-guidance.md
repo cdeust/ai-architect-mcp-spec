@@ -86,8 +86,8 @@ the prompt was written before the contract, and the repository's own standards a
     [review job](../.github/workflows/claude-review.yml#L67)). In
     [PR #374](https://github.com/cdeust/ai-architect-mcp-spec/pull/374) (2026-11-19),
     the autopilot pushed its own fix (`42423f2`) while the session's commits were still
-    local, so the branch diverged. The owner chose small batches on 2026-11-19
-    ("Oui c'est préférable de faire par petits lots").
+    local, so the branch diverged. Owner decision of 19 November 2026: sessions
+    work in small batches.
     Mark the pull request ready only after the gate passes on its head, a reviewer other
     than its author has read it, and its body carries the counts of rule 8. Marking it
     ready starts the review ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
