@@ -1,8 +1,11 @@
 """ci_review_verdict.py fails a review run whose verdict is not found (#361).
 
 Source: scripts/ci_review_verdict.py. The parity tests run the resolver of
-pipeline-post-merge.yml on the same comments: the script must accept exactly
-the verdicts the resolver can read.
+pipeline-post-merge.yml on the same comments, with this run as the only
+reviewed run of the head: there the script must read exactly the verdict the
+resolver reads. With another reviewed run of the same head, the resolver also
+reads that run's verdict and the script does not, as #361 asks for a comment
+that links this run; a test pins that gap.
 """
 
 from __future__ import annotations
@@ -146,7 +149,7 @@ class ResolverParityTests(unittest.TestCase):
         exec(compile(textwrap.dedent(source), "trusted_resolver", "exec"), namespace)
         return namespace
 
-    def resolver_reads_a_verdict(self, rows):
+    def resolver_reads_a_verdict(self, rows, runs=(RUN,)):
         ns = self.resolver()
         gh_rows = [
             {
@@ -160,7 +163,10 @@ class ResolverParityTests(unittest.TestCase):
         class Api:
             def records(self, path, key=None):
                 if "claude-review.yml/runs" in path:
-                    return [{"id": RUN, "head_sha": HEAD, "conclusion": "success"}]
+                    return [
+                        {"id": run, "head_sha": HEAD, "conclusion": "success"}
+                        for run in runs
+                    ]
                 if path.endswith("/jobs"):
                     step = {"name": "PR Review", "conclusion": "success"}
                     return [{"name": "Claude review", "steps": [step]}]
@@ -233,6 +239,15 @@ class ResolverParityTests(unittest.TestCase):
                     verdict.verdict_of_run(rows, RUN),
                     self.resolver_reads_a_verdict(rows),
                 )
+
+
+    def test_a_verdict_of_another_reviewed_run_of_the_head_passes_only_the_resolver(
+        self,
+    ):
+        # Review of #370, note 2: the one case where the two differ.
+        rows = [review(run_id=RUN - 1)]
+        self.assertEqual(self.resolver_reads_a_verdict(rows, (RUN - 1, RUN)), "approve")
+        self.assertIsNone(verdict.verdict_of_run(rows, RUN))
 
 
 class CommentsTests(unittest.TestCase):
@@ -401,11 +416,17 @@ class ReadVerdictTests(unittest.TestCase):
     def test_failed_reads_before_an_empty_last_read_are_counted(self):
         # Note 2 of review 1 of #363: every read but the last fails, the last
         # lists nothing.
+        # Review of #370, note 3: at READ_ATTEMPTS 2 one read fails, so a count
+        # fixed at one (`failed = 1`) would pass; the test sets 3 and 5 itself.
         error = subprocess.CalledProcessError(1, "gh")
-        reads = [error] * (verdict.READ_ATTEMPTS - 1) + [[]]
-        found, calls, _ = self.run_reads(reads)
-        expected = (None, verdict.READ_ATTEMPTS, verdict.READ_ATTEMPTS - 1)
-        self.assertEqual((found, calls, self.failed), expected)
+        for attempts in (3, 5):
+            with self.subTest(attempts=attempts), unittest.mock.patch.object(
+                verdict, "READ_ATTEMPTS", attempts
+            ):
+                reads = [error] * (attempts - 1) + [[]]
+                found, calls, _ = self.run_reads(reads)
+                expected = (None, attempts, attempts - 1)
+                self.assertEqual((found, calls, self.failed), expected)
 
     def test_a_failed_read_between_two_empty_reads_is_counted_once(self):
         # Note 3 of review 1 of #364: a count taken from the attempt number
