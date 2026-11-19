@@ -1,7 +1,7 @@
 import { appendFileSync, lstatSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { all, create } from "mathjs";
+import { all, create, type BigNumber } from "mathjs";
 import { parseArgs } from "node:util";
 import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
@@ -79,6 +79,19 @@ async function runArm(dir: string, plan: RunPlan, configured_limits: RunPlan["li
   return record;
 }
 
+function effectiveDollars(available: BigNumber): number {
+  if (available.lte(0)) return 0;
+  const rounded = available.times(1e6).floor().div(1e6);
+  const dollars = rounded.toNumber();
+  if (rounded.gte(String(dollars))) return dollars;
+  // When a microdollar is narrower than the spacing between JSON numbers,
+  // converting to Number can round back up. Use the preceding positive binary64.
+  const value = new Float64Array([dollars]);
+  const bits = new BigUint64Array(value.buffer);
+  bits[0] -= 1n;
+  return value[0];
+}
+
 async function main() {
   const { dry, plan, out } = options();
   const arms = await loadArms(plan);
@@ -107,8 +120,7 @@ async function main() {
   for (const arm of arms) {
     const configured = bignumber(String(arm.plan.limits.max_cost_usd));
     const available = remaining.lt(configured) ? remaining : configured;
-    // The plan contract expresses effective dollars to six places, rounded down.
-    const max_cost_usd = available.times(1e6).floor().div(1e6).toNumber();
+    const max_cost_usd = effectiveDollars(available);
     if (max_cost_usd <= 0) {
       let reason = "the plan cap is exhausted";
       if (configured.isZero()) reason = "the configured arm limit is zero";

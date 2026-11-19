@@ -415,3 +415,22 @@ it("journals the entire interrupted parallel batch when one workspace cannot be 
     await rm(out, { recursive: true, force: true });
   }
 });
+it("keeps the numeric limit below the decimal remainder when adjacent numbers are dollars apart", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-large-cap-"));
+  try {
+    const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
+    plan.plan_max_cost_usd = 1e16;
+    plan.limits = { ...plan.limits, max_cost_usd: 1e16, max_invocations: 1 };
+    plan.arms = ["first", "second"].map(name => ({ ...plan.arms[0], name }));
+    await writeFile(join(out, "plan.json"), JSON.stringify(plan));
+    const fixture = join(cwd, "src/__tests__/fixtures/claude-cli-result.json");
+    await writeFile(join(out, "claude"), '#!/bin/sh\n/bin/cat >/dev/null\nexec /bin/cat "$FIXTURE"\n', { mode: 0o700 });
+    const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", join(out, "plan.json"), "--out", out], { cwd, env: { PATH: out, FIXTURE: fixture } });
+    expect(result.status).toBe(1);
+    const second = JSON.parse(await readFile(join(out, "second/record.json"), "utf8"));
+    expect(second.effective_limits.max_cost_usd).toBe(9999999999999998);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
