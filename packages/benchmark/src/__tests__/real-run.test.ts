@@ -4,7 +4,7 @@ import { summaryRow } from "../real-run/report.js";
 import { runBench } from "../real-run/run-bench.js";
 import type { Ports, RunPlan } from "../real-run/types.js";
 
-const plan: RunPlan = { call_timeout_ms: 600000, limits: { max_invocations: 80, max_cost_usd: 25, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
+const plan: RunPlan = { call_timeout_ms: 600000, limits: { max_invocations: 80, max_cost_usd: 25, max_unmetered_calls: 2, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
   request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {} };
 const ports: Ports = { record: () => {}, clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
 
@@ -73,7 +73,7 @@ it("overlaps only calls of a parallel batch and attributes the same spend in eit
 it("retains an unmetered probe failure and the reducer's terminal decision", async () => {
   const record = await runBench(plan, { ...ports, invoke: async () => { throw new Error("invalid response"); } });
   expect(record.rows[0]).toMatchObject({ usage: null, error: "invalid response" });
-  expect(record.totals).toMatchObject({ invocations: 1, errors: 1, unmetered_calls: 1, cost_usd: null });
+  expect(record.totals).toMatchObject({ invocations: 1, errors: 1, unmetered_calls: 1, cost_usd: 0 });
   expect(record.terminal.kind).toBe("failed");
   expect(record.quality).toEqual({ outcome: null, distribution: null, hard_output_score: null });
 });
@@ -155,7 +155,7 @@ it("compares all four token counters and spend to the first arm", async () => {
   const baseline = { ...run.totals, input_tokens: 84, output_tokens: 0,
     cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 12 };
   expect(summaryRow("second", run, baseline)).toContain("| 168 | 2.00× | 3 | 0.25× |");
-  expect(summaryRow("second", run, { ...baseline, input_tokens: 0, cost_usd: null }))
+  expect(summaryRow("second", run, { ...baseline, input_tokens: 0, cost_usd: 0 }))
     .toContain("| 168 | — | 3 | — |");
 });
 
@@ -175,4 +175,20 @@ it("accounts for all in-flight calls when a parallel batch crosses the cost limi
   const last = full.rows.map(row => row.batch_id).lastIndexOf(grouped!.batch_id);
   expect(record.rows.map(row => row.invocation_id)).toEqual(full.rows.slice(0, last + 1).map(row => row.invocation_id));
   expect(record.totals.cost_usd).toBe(1);
+});
+
+it.each([
+  { costs: [null, null], allowed: 1, reason: "max_unmetered_calls", spend: 0, unknown: 2 },
+  { costs: [null, 2], allowed: 1, reason: "max_cost_usd", spend: 2, unknown: 1 },
+])("accounts for reported spend and missing costs: $reason", async ({ costs, allowed, reason, spend, unknown }) => {
+  let calls = 0;
+  const record = await runBench({ ...plan, limits: { ...plan.limits, max_cost_usd: 1, max_unmetered_calls: allowed } }, {
+    ...ports, invoke: async (...args) => {
+      const result = await cannedInvoke(...args);
+      return { ...result, usage: { ...result.usage, cost_usd: costs[calls++] ?? null } };
+    },
+  });
+  expect(calls).toBe(2);
+  expect(record.terminal).toEqual({ kind: "stopped", reason });
+  expect(record.totals).toMatchObject({ cost_usd: spend, unmetered_calls: unknown });
 });

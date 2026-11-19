@@ -9,6 +9,7 @@ const table = z.partialRecord(SpawnSubagentsActionSchema.shape.purpose, settings
 const limitsSchema = z.strictObject({
   max_invocations: z.int().nonnegative(),
   max_cost_usd: z.number().nonnegative(),
+  max_unmetered_calls: z.int().nonnegative(),
   max_steps: z.int().nonnegative(),
 });
 const planFile = z.strictObject({

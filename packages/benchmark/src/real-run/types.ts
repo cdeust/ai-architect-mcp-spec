@@ -10,6 +10,7 @@ export interface Settings {
 export interface Limits {
   max_invocations: number;
   max_cost_usd: number;
+  max_unmetered_calls: number;
   max_steps: number;
 }
 export interface Stopped {
@@ -61,7 +62,7 @@ export interface Totals {
   cache_read_tokens: number;
   cache_creation_tokens: number;
   duration_ms: number;
-  cost_usd: number | null;
+  cost_usd: number;
 }
 export interface RunRecord {
   rows: Row[];

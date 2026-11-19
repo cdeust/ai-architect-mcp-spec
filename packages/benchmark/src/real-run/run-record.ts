@@ -1,6 +1,11 @@
 import type { PipelineState } from "@prd-gen/orchestration";
 import type { Row, RunRecord, Totals } from "./types.js";
 
+export function addCost(total: Pick<Totals, "cost_usd" | "unmetered_calls">, usage: Row["usage"]) {
+  if (usage?.cost_usd == null) total.unmetered_calls++;
+  else total.cost_usd += usage.cost_usd;
+}
+
 function totals(rows: Row[]): Totals {
   const result: Totals = {
     invocations: rows.length,
@@ -15,12 +20,8 @@ function totals(rows: Row[]): Totals {
   };
   for (const { usage, error } of rows) {
     if (error !== null) result.errors++;
-    if (usage?.cost_usd == null) result.cost_usd = null;
-    else if (result.cost_usd !== null) result.cost_usd += usage.cost_usd;
-    if (!usage) {
-      result.unmetered_calls++;
-      continue;
-    }
+    addCost(result, usage);
+    if (!usage) continue;
     for (const key of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "duration_ms"] as const) {
       result[key] += usage[key];
     }

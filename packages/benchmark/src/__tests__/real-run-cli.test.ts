@@ -86,7 +86,7 @@ it("requires plan limits, merges per-arm overrides, and journals a stopped CLI r
   try {
     const file = join(out, "plan.json");
     const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
-    expect(pilot.limits).toEqual({ max_invocations: 80, max_cost_usd: 25, max_steps: 200 });
+    expect(pilot.limits).toEqual({ max_invocations: 80, max_cost_usd: 25, max_unmetered_calls: 2, max_steps: 200 });
     expect(pilot.call_timeout_ms).toBe(600000);
     pilot.arms = [{ ...pilot.arms[0], limits: { max_invocations: 1 } }];
     await writeFile(file, JSON.stringify({ ...pilot, limits: undefined }));

@@ -1,4 +1,4 @@
-import { finishRecord } from "./run-record.js";
+import { addCost, finishRecord } from "./run-record.js";
 import { makeCannedDispatcher, newPipelineState, step, type ActionResult, type SpawnSubagentsAction } from "@prd-gen/orchestration";
 import type { Invocation, Ports, Row, RunPlan, RunRecord, Settings, Stopped } from "./types.js";
 
@@ -35,7 +35,8 @@ function stopped(reason: Stopped["reason"]): Stopped {
 
 interface Measurements {
   rows: Row[];
-  spend: number;
+  cost_usd: number;
+  unmetered_calls: number;
 }
 
 async function batch(
@@ -56,20 +57,27 @@ async function batch(
   function collect(call: Awaited<ReturnType<typeof run>>) {
     rows.push(call.row);
     responses.push(call.response);
-    measurements.spend += call.row.usage?.cost_usd ?? 0;
+    addCost(measurements, call.row.usage);
   }
+  function limitExceeded() {
+    if (measurements.unmetered_calls > plan.limits.max_unmetered_calls) return stopped("max_unmetered_calls");
+    if (measurements.cost_usd > max_cost_usd) return stopped("max_cost_usd");
+  }
+
   if (plan.mode === "parallel") {
     if (action.invocations.length > remaining) return stopped("max_invocations");
     const calls = await Promise.all(action.invocations.map(run));
     calls.forEach(collect);
+    const stop = limitExceeded();
+    if (stop) return stop;
   } else {
     for (const inv of action.invocations) {
       if (rows.length >= max_invocations) return stopped("max_invocations");
       collect(await run(inv));
-      if (measurements.spend > max_cost_usd) return stopped("max_cost_usd");
+      const stop = limitExceeded();
+      if (stop) return stop;
     }
   }
-  if (measurements.spend > max_cost_usd) return stopped("max_cost_usd");
   return { kind: "subagent_batch_result", batch_id: action.batch_id, responses };
 }
 
@@ -82,7 +90,7 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
     request_size: plan.request_size,
   });
   const canned = makeCannedDispatcher();
-  const measurements: Measurements = { rows: [], spend: 0 };
+  const measurements: Measurements = { rows: [], cost_usd: 0, unmetered_calls: 0 };
   const { rows } = measurements;
   let result: ActionResult | undefined;
   let steps = 0;
