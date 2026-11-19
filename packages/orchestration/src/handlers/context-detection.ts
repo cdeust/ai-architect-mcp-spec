@@ -112,21 +112,25 @@ export const handleContextDetection: StepHandler = ({ state, result }) => {
     description: PRD_CONTEXT_CONFIGS[ctx].description,
   }));
 
+  const displayed = options.slice(0, 4);
+  const hint = displayed.length < allowed.length
+    ? ` Showing ${displayed.length} of ${allowed.length} kinds. You can also type any allowed kind: ${allowed.join(", ")}.`
+    : "";
   const question = {
     kind: "ask_user" as const,
     question_id: QUESTION_ID,
     header: "Which kind of PRD?",
     description:
-      "I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them.",
+      "I couldn't infer the PRD type from your request. Pick the closest match: it sets what the PRD covers, and its clarification depth and sections unless the declared request size sets them." + hint,
     // source: protocol constraint. AskUserActionSchema.options enforces
     // .max(4) at the schema level (types/actions.ts). Slicing here ensures
     // a tier with >4 allowed contexts doesn't fail Zod parsing on the
     // emitted action. Cross-audit code-reviewer H6 (Phase 3+4, 2026-04).
-    options: options.slice(0, 4),
+    options: displayed,
     multi_select: false,
   };
   if (!answer) return { state, action: question };
-  const context = matchOfferedOption(question.options, answer);
-  if (context === undefined) return { state, action: retryOptionQuestion(question) };
+  const context = matchOfferedOption(options, answer);
+  if (context === undefined) return { state, action: retryOptionQuestion(question, options) };
   return settle(state, context, declaredOrAnswered);
 };
