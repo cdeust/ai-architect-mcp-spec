@@ -1,69 +1,107 @@
-import { describe, expect, it } from "vitest";
-import { newPipelineState, PipelineStateSchema, step } from "../index.js";
+import { expect, it } from "vitest";
+import { MAX_PIPELINE_ERRORS, newPipelineState, PipelineStateSchema, step } from "../index.js";
 
 const seed = {
   ...newPipelineState({ run_id: "bounds", feature_description: "x", prd_context: "feature" }),
   current_step: "clarification" as const,
 };
-const normal = { question: "Who approves?", options: [" Owner ", "Team"], rationale: " Name the reviewer. " };
-const atLimit = "a".repeat(999) + "z";
-const huge = "x".repeat(5 * 1024 * 1024);
+const normal = { question: " Who approves? ", options: [" Owner ", "Team"], rationale: " Name the reviewer. " };
+const atLimit = "a".repeat(1000);
+const huge = "UNTRUSTED".padEnd(5 * 1024 * 1024, "x");
 
-function compose(fields: object, error?: string) {
-  return step({ state: seed, result: {
+function submit(raw_text: string, state = seed, error?: string) {
+  return step({ state, result: {
     kind: "subagent_batch_result", batch_id: "clarification_compose_1", responses: [{
-      invocation_id: "clarification_compose_inv_1", raw_text: JSON.stringify(fields), error,
+      invocation_id: "clarification_compose_inv_1", raw_text, error,
     }],
   } });
 }
 
-describe.each(["compose", "checkpoint"])("%s clarification bounds", (source) => {
-  function read(fields: object) {
-    if (source === "compose") {
-      const issued = compose(fields);
-      const turn = issued.state.clarifications[0]!;
-      expect(turn.options?.length ?? 0).toBeLessThanOrEqual(4);
-      expect(issued.action).toMatchObject({
-        kind: "ask_user", options: turn.options?.map(label => ({ label })) ?? null,
-        header: "Round 1: " + turn.question, description: turn.rationale,
-      });
-      return turn;
-    }
-    return PipelineStateSchema.parse({ ...seed, clarifications: [{
-      round: 1, asked_at: "now", ...fields,
-    }] }).clarifications[0]!;
-  }
+function compose(fields: object) {
+  return submit(JSON.stringify(fields));
+}
 
-  it.each([
-    ["100,000 options", Array(100_000).fill("label")],
-    ["five options", ["a", "b", "c", "d", "e"]],
-    ["one option", ["only"]],
-    ["four including a blank", ["a", "b", "c", " \t"]],
-    ["blank after clipping", [" ".repeat(1000) + "x", "other"]],
-    ["malformed entry", ["a", 2]],
-    ["non-array", "ab"],
-  ])("uses freeform for %s", (_, options) => {
-    expect(read({ ...normal, options }).options === null).toBe(true);
-  });
+const fallback = 'What is the most important detail about "x" that should drive this PRD?';
+const explanation = "Subagent did not return a parseable question; using fallback.";
 
-  it.each([2, 3, 4])("retains %i options in order", count => {
-    const options = [" a ", "b", "c", "d"].slice(0, count);
-    expect(read({ ...normal, options }).options).toEqual(options);
+function expectRejected(issued: ReturnType<typeof compose>, detail: string) {
+  expect(issued.state.errors).toEqual([`Clarification compose: ${detail}`]);
+  expect(issued.state.error_kinds).toEqual(["upstream_failure"]);
+  expect(issued.state.clarifications).toEqual([{
+    round: 1, asked_at: expect.any(String), question: fallback, options: null, rationale: explanation,
+  }]);
+  expect(issued.action).toMatchObject({
+    kind: "ask_user", header: "Round 1: " + fallback, description: explanation, options: null,
   });
+  expect(JSON.stringify(issued).includes("UNTRUSTED")).toBe(false);
+}
 
-  it.each(["question", "rationale"] as const)("caps %s exactly", field => {
-    for (const input of [atLimit, atLimit + "!"]) {
-      expect(read({ ...normal, [field]: input })[field] === input.slice(0, 1000)).toBe(true);
-    }
+it.each(["question", "options[1]", "rationale"])("accepts the exact %s ceiling unchanged", field => {
+  const fields = field === "options[1]" ? { ...normal, options: ["first", atLimit] } : { ...normal, [field]: atLimit };
+  const issued = compose(fields);
+  expect(issued.state.errors).toEqual([]);
+  expect(PipelineStateSchema.parse(issued.state).clarifications[0]).toMatchObject(fields);
+  expect(issued.action).toMatchObject({
+    header: "Round 1: " + fields.question, description: fields.rationale, options: fields.options.map(label => ({ label })),
   });
+});
 
-  it.each(["question", "rationale"] as const)("clips a 5 MiB %s", field => {
-    expect(read({ ...normal, [field]: huge })[field] === "x".repeat(1000)).toBe(true);
-  });
+it.each(["question", "options[1]", "rationale"])("rejects %s one character over", field => {
+  const value = "UNTRUSTED".padEnd(1001, " ");
+  const fields = field === "options[1]" ? { options: ["first", value] } : { [field]: value };
+  expectRejected(compose({ ...normal, ...fields }), `${field} has 1001 UTF-16 code units (maximum 1000)`);
+});
 
-  it("caps each option label exactly", () => {
-    expect(read({ ...normal, options: [atLimit, atLimit + "!"] }).options).toEqual([atLimit, atLimit]);
-  });
+it.each(["rationale", "question"])("rejects a 5 MiB %s", field => {
+  expectRejected(compose({ ...normal, [field]: huge }), `${field} has ${huge.length} UTF-16 code units (maximum 1000)`);
+});
+
+it.each([0, 1, 5, 100_000])("rejects an entire list of %i options", count => {
+  expectRejected(compose({ ...normal, options: Array(count).fill("UNTRUSTED") }), `options has ${count} entries (expected 2 to 4)`);
+});
+
+it.each([
+  [{ question: "  " }, "question is blank (2 UTF-16 code units)"],
+  [{ question: false }, "question must be a string"],
+  [{ options: ["a", "  "] }, "options[1] is blank (2 UTF-16 code units)"],
+  [{ options: ["a", false] }, "options[1] must be a string"],
+  [{ options: "ab" }, "options must be an array or null"],
+  [{ rationale: null }, "rationale must be a string"],
+] as const)("rejects malformed fields %j", (fields, detail) => {
+  expectRejected(compose({ ...normal, ...fields }), detail);
+});
+
+it.each([2, 4])("keeps all %i options", count => {
+  const options = Array.from({ length: count }, (_, i) => ` choice ${i} `);
+  const issued = compose({ ...normal, options });
+  expect(issued.state.errors).toEqual([]);
+  expect(PipelineStateSchema.parse(issued.state).clarifications[0]?.options).toEqual(options);
+  expect(issued.action).toMatchObject({ options: options.map(label => ({ label })) });
+});
+
+it.each([{}, { options: null }])("accepts freeform %j with omitted rationale", fields => {
+  const issued = compose({ question: "Which?", ...fields });
+  expect(issued.state.errors).toEqual([]);
+  expect(issued.state.clarifications[0]).toMatchObject({ question: "Which?", options: null, rationale: "" });
+  expect(issued.action).toMatchObject({ options: null, description: "Answer freeform if no options listed." });
+});
+
+it("records unreadable compose text without echoing it or the upstream error", () => {
+  expectRejected(submit("UNTRUSTED", seed, huge), "no parseable question object (9 UTF-16 code units)");
+});
+
+it("uses a complete generic fallback when the feature would overflow its question", () => {
+  const issued = submit("", { ...seed, feature_description: huge });
+  expect(issued.state.clarifications[0]?.question).toBe("What is the most important detail that should drive this PRD?");
+  expect(issued.state.errors).toEqual(["Clarification compose: no parseable question object (0 UTF-16 code units)"]);
+});
+
+it("evicts the oldest error and kind and increments the existing dropped count", () => {
+  const errors = Array.from({ length: MAX_PIPELINE_ERRORS }, (_, i) => `prior ${i}`);
+  const issued = submit("{}", { ...seed, errors, error_kinds: errors.map(() => "structural"), errors_dropped: 7 });
+  expect(issued.state.errors).toEqual([...errors.filter((_, i) => i > 0), "Clarification compose: question must be a string"]);
+  expect(issued.state.error_kinds).toEqual([...Array(MAX_PIPELINE_ERRORS - 1).fill("structural"), "upstream_failure"]);
+  expect(issued.state.errors_dropped).toBe(8);
 });
 
 it("preserves a normal composed turn and replays its exact serialized action", () => {
@@ -75,23 +113,4 @@ it("preserves a normal composed turn and replays its exact serialized action", (
     kind: "user_answer", question_id: "clarification_continue", selected: ["proceed"],
   } });
   expect(JSON.stringify(replay.action)).toBe(JSON.stringify(issued.action));
-});
-
-it("caps the fallback question for an oversized compose error or feature description", () => {
-  const failed = compose({}, huge);
-  expect(failed.state.clarifications[0]!.question.length).toBe(1000);
-  const fallback = step({ state: { ...seed, feature_description: huge }, result: {
-    kind: "subagent_batch_result", batch_id: "clarification_compose_1", responses: [],
-  } });
-  expect(fallback.state.clarifications[0]!.question).toBe(('What is the most important detail about "' + huge).slice(0, 1000));
-});
-
-it("trims the composed question and uses the default description for a non-string rationale", () => {
-  const issued = compose({ question: "  Who approves? \n", rationale: 42 });
-  expect(issued.state.clarifications[0]).toMatchObject({
-    question: "Who approves?", options: null, rationale: "",
-  });
-  expect(issued.action).toMatchObject({
-    header: "Round 1: Who approves?", description: "Answer freeform if no options listed.",
-  });
 });
