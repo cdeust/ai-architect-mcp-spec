@@ -368,3 +368,50 @@ it("reports a configured zero arm limit while the plan still has budget", async 
     await rm(out, { recursive: true, force: true });
   }
 });
+it("journals the entire interrupted parallel batch when one workspace cannot be removed", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-parallel-exit-"));
+  const dir = join(out, "parallel");
+  let cliProcess: ReturnType<typeof spawn> | undefined;
+  try {
+    const file = join(out, "plan.json");
+    const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
+    pilot.arms = [{ ...pilot.arms[0], name: "parallel", mode: "parallel" }];
+    await writeFile(file, JSON.stringify(pilot));
+    const [{ plan }] = await loadArms(file);
+    const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
+    let calls = 0;
+    const canned = await runBench(plan, { clock: Date.now, record: () => {}, invoke: async inv => {
+      const index = calls++;
+      const result = await cannedInvoke(inv);
+      await writeFile(join(out, "reply-" + index), JSON.stringify({ ...fixture, result: result.text }));
+      return result;
+    } });
+    const start = canned.rows.findIndex((row, i) => row.batch_id === canned.rows[i + 1]?.batch_id);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const batch = canned.rows.filter(row => row.batch_id === canned.rows[start].batch_id);
+    await writeFile(join(out, "claude"), [
+      "#!/bin/sh", "/bin/cat >/dev/null", 'count=$(/usr/bin/wc -l < "$OUT/parallel/rows.jsonl")',
+      'if [ "$count" -lt "$START" ]; then exec /bin/cat "$OUT/reply-$((count))"; fi',
+      'if /bin/mkdir "$OUT/claimed" 2>/dev/null; then',
+      '  /bin/mkdir locked && echo x > locked/file && /bin/chmod 000 locked',
+      '  pwd > "$OUT/kept"', 'fi', 'pwd >> "$OUT/ready"', 'exec /bin/sleep 10',
+    ].join("\n"), { mode: 0o700 });
+    cliProcess = spawn(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", file, "--out", out], { cwd, env: { PATH: out, OUT: out, START: String(start) } });
+    const exited = new Promise(resolve => cliProcess!.once("exit", resolve));
+    await expect.poll(async () => (await readFile(join(out, "ready"), "utf8").catch(() => "")).trim().split("\n").length,
+      { timeout: 4000 }).toBe(batch.length);
+    cliProcess.kill("SIGTERM");
+    expect(await exited).toBe(1);
+    const rows = (await readFile(join(dir, "rows.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    const interrupted = rows.filter(row => row.error === "Interrupted by SIGTERM");
+    expect(interrupted.map(row => row.invocation_id).sort()).toEqual(batch.map(row => row.invocation_id).sort());
+    expect(interrupted.filter(row => row.workspace_kept)).toHaveLength(1);
+    expect(interrupted.find(row => row.workspace_kept).workspace_removal_error).toMatch(/EACCES|EPERM|ENOTEMPTY/);
+  } finally {
+    cliProcess?.kill("SIGTERM");
+    const kept = await readFile(join(out, "kept"), "utf8").catch(() => "");
+    if (kept) await chmod(join(kept.trim(), "locked"), 0o700);
+    await rm(out, { recursive: true, force: true });
+  }
+});
