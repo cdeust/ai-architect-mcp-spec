@@ -39,6 +39,7 @@ export function summaryRow(name: string, record: RunRecord, baseline: Totals): s
     record.terminal.kind === "stopped" ? `stopped (${record.terminal.reason})` : quality.outcome?.status ?? record.terminal.kind, quality.hard_output_score ?? "—", distribution || "—",
     reportedModels(record),
     record.rows.filter(row => row.usage?.per_model).map(row => `${row.batch_id}/${row.invocation_id}`).join(", ") || "—",
+    record.section_content.count, record.section_content.total_characters, record.section_content.min_characters ?? "—",
   ];
   return `| ${cells.join(" | ")} |`;
 }
@@ -49,6 +50,6 @@ export function summaryHeader(dry: boolean): string[] {
   return [dry ? "# Dry run (canned responses)" : "# Model run",
     "", measurementScope, "", "Later arms can read the prompt cache earlier arms wrote.", "",
     "Token columns sum reported usage. USD sums reported costs. Unmetered counts calls without a reported cost.", unmeteredPolicy, "",
-    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) |",
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|"];
+    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) | Sections | Total section characters | Minimum section characters |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|---:|---:|---:|"];
 }

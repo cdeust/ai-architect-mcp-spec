@@ -57,7 +57,15 @@ export function finishRecord(
   batches: number,
   wall_time_ms: number,
 ): RunRecord {
+  const contents = state.sections.map(section => section.content ?? "");
+  const lengths = contents.map(content => Array.from(content).length);
   return {
+    section_content: {
+      count: lengths.length,
+      total_characters: lengths.reduce((total, length) => total + length, 0),
+      min_characters: lengths.length ? Math.min(...lengths) : null,
+      has_duplicates: new Set(contents).size !== contents.length,
+    },
     measurement_scope: measurementScope,
     terminal, rows, batches, steps,
     sections: state.sections.map(({ section_type, status, attempt, violation_count, content }) => ({

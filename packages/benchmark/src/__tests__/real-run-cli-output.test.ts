@@ -10,6 +10,8 @@ import { harness } from "./real-run-cli-harness.js";
 
 const smoke = readFileSync(new URL("../../real-run/plans/smoke.json", import.meta.url), "utf8");
 
+const qualityWarning = "smoke: the reducer's quality columns can rate empty output as perfect; judge quality from sections.json";
+
 function cli(invoke: Ports["invoke"], cap = 2) {
   const plan = JSON.parse(smoke);
   plan.limits.max_cost_usd = cap;
@@ -28,12 +30,12 @@ function cli(invoke: Ports["invoke"], cap = 2) {
   return { run, write, footer };
 }
 
-it("creates an empty exclusive journal and an exclusive summary with no optional sections", async () => {
+it("creates an empty exclusive journal and an exclusive summary with the canned arm warning", async () => {
   const host = cli(cannedInvoke);
   expect((await host.run()).status).toBe(0);
   expect(host.write).toHaveBeenCalledWith(join("out", "smoke", "rows.jsonl"), "", { flag: "wx" });
   expect(host.write).toHaveBeenCalledWith(join("out", "summary.md"), expect.any(String), { flag: "wx" });
-  expect(host.footer()).toBe("\n\nArm execution order: smoke\n");
+  expect(host.footer()).toBe(`\n\n${qualityWarning}\n\nArm execution order: smoke\n`);
 });
 
 it("lists only retained paths and writes the exact workspace footer", async () => {
@@ -45,7 +47,7 @@ it("lists only retained paths and writes the exact workspace footer", async () =
     return cannedInvoke(inv);
   });
   expect((await host.run()).status).toBe(0);
-  expect(host.footer()).toBe("\n\nKept workspaces\n\n- /call/1\n\nArm execution order: smoke\n");
+  expect(host.footer()).toBe(`\n\n${qualityWarning}\n\nKept workspaces\n\n- /call/1\n\nArm execution order: smoke\n`);
 });
 
 it("writes the summary after a call without usage", async () => {
@@ -71,4 +73,35 @@ it("detects overspend by the smallest charge against a large plan cap", async ()
 
 it("clamps a negative balance to zero available dollars", () => {
   expect(effectiveDollars(bignumber("-0.5"))).toBe(0);
+});
+
+it.each([
+  ["ok", true], ["short distinct", true], ["long identical", true], ["normal", false],
+] as const)("reports section measurements and the appropriate warning for %s output", async (kind, warns) => {
+  let draft = 0;
+  const host = cli(async inv => {
+    const result = await cannedInvoke(inv);
+    if (kind === "ok") return { ...result, text: "ok" };
+    if (inv.purpose !== "draft") return result;
+    const index = draft++;
+    const length = kind === "short distinct" ? 199 : 200 + index % 2;
+    const text = kind === "long identical" ? "a".repeat(200) : String.fromCodePoint(0x1f600 + index).repeat(length);
+    return { ...result, text };
+  });
+  expect((await host.run()).status).toBe(0);
+  const record = JSON.parse(String(host.write.mock.calls.find(([path]) => path === join("out", "smoke", "record.json"))?.[1]));
+  const lengths = record.sections.map((s: {content: string}) => [...s.content].length);
+  const count = lengths.length;
+  expect(count).toBeGreaterThan(1);
+  const minimum = Math.min(...lengths);
+  const total = lengths.reduce((a: number, b: number) => a + b, 0);
+  expect(record.section_content).toMatchObject({ count, total_characters: total, min_characters: minimum });
+  if (kind === "normal") expect(minimum).toBe(200);
+  if (kind === "ok") {
+    expect(record.quality).toMatchObject({ outcome: { status: "passed" }, hard_output_score: 1 });
+    expect(minimum).toBe(2);
+  }
+  const summary = String(host.write.mock.calls.find(([path]) => path === join("out", "summary.md"))?.[1]);
+  expect(summary.split("\n").find(line => line.startsWith("| smoke |"))).toContain(`| ${count} | ${total} | ${minimum} |`);
+  expect(host.footer().split("\n").includes(qualityWarning)).toBe(warns);
 });

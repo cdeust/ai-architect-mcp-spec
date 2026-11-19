@@ -159,6 +159,7 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
   const summary = summaryHeader(dry);
   const armOrder: string[] = [];
   const skipped: string[] = [];
+  const warnings: string[] = [];
   const kept: string[] = [];
   const bignumber = decimalBudget();
   let remaining = bignumber(String(planCap));
@@ -183,6 +184,10 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
       if (row.workspace_kept && row.workspace_path) kept.push(row.workspace_path);
     }
     baseline ??= record.totals;
+    const content = record.section_content;
+    if ((content.min_characters ?? Infinity) < 200 || content.has_duplicates) {
+      warnings.push(`${arm.name}: the reducer's quality columns can rate empty output as perfect; judge quality from sections.json`);
+    }
     summary.push(summaryRow(arm.name, record, baseline));
     if (record.totals.errors || record.terminal.kind !== "done") status = 1;
     if (remaining.isNegative()) {
@@ -193,6 +198,7 @@ async function execute(out: string, dry: boolean, arms: Arm[], ctx: Context) {
       status = 1;
     }
   }
+  for (const warning of warnings) summary.push("", warning);
   if (kept.length) summary.push("", "Kept workspaces", "", ...kept.map(path => `- ${path}`));
   if (skipped.length) summary.push("", ...skipped);
   summary.push("", `Arm execution order: ${armOrder.join(" → ")}`);

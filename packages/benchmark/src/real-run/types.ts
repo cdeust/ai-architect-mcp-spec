@@ -74,6 +74,7 @@ export interface Totals {
 export interface RunRecord {
   measurement_scope: string;
   rows: Row[];
+  section_content: { count: number; total_characters: number; min_characters: number | null; has_duplicates: boolean };
   sections: (Pick<SectionStatus, "section_type" | "status" | "attempt" | "violation_count"> & {
     content: string | null;
   })[];

@@ -47,6 +47,9 @@ it("writes five dry-run records and the comparison without an installed model CL
     expect(summary).toContain("Reported models");
     expect(summary).toContain("Later arms can read the prompt cache earlier arms wrote.");
     expect(summary).toContain(`Arm execution order: ${arms.join(" → ")}`);
+    const warning = "the reducer's quality columns can rate empty output as perfect; judge quality from sections.json";
+    const footer = summary.slice(summary.lastIndexOf("|") + 1);
+    expect(footer.split("\n").filter(line => line.includes(warning))).toEqual(arms.map(arm => `${arm}: ${warning}`));
     expect(summary).toContain("| canned |");
     for (const arm of arms) {
       const count = arm.startsWith("tiny") ? 12 : 27;

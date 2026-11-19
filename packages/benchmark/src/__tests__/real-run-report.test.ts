@@ -13,6 +13,7 @@ function call(id: string, model: string, reported: string, mixed: boolean): Row 
     usage: { ...totals, model_reported: reported, ...(mixed && { per_model: {} }) } };
 }
 const record: RunRecord = {
+  section_content: { count: 0, total_characters: 0, min_characters: null, has_duplicates: false },
   measurement_scope: "", rows: [call("i", "a", "one, two", true), call("j", "a", "two, three", true),
     call("k", "session", "", false)], sections: [], totals, per_purpose: {}, batches: 1, steps: 1, wall_time_ms: 1.26,
   terminal: { kind: "stopped", reason: "max_steps" }, quality: { outcome: null, hard_output_score: 0, distribution: null },
@@ -21,7 +22,7 @@ const record: RunRecord = {
 it("prints every column and rounds time, cost and token ratios independently", () => {
   expect(expectedModels(record)).toBe("session=1, a=2");
   expect(summaryRow("arm", record, baseline)).toBe(
-    "| arm | 1 | 2 | 3 | 4 | 10 | 0.83× | 0.33 | 0.17× | 1.3 | 3 | 1 | 0 | stopped (max_steps) | 0 | — | one, two, three | batch/i, batch/j |");
+    "| arm | 1 | 2 | 3 | 4 | 10 | 0.83× | 0.33 | 0.17× | 1.3 | 3 | 1 | 0 | stopped (max_steps) | 0 | — | one, two, three | batch/i, batch/j | 0 | 0 | — |");
 });
 
 it.each(["current", "baseline", "zero baseline"])("prints unavailable cells for %s", source => {
@@ -30,7 +31,7 @@ it.each(["current", "baseline", "zero baseline"])("prints unavailable cells for 
   const current = { ...totals, unmetered_calls: Number(source === "current") };
   const row = summaryRow("arm", { ...record, rows: [], totals: current,
     quality: { outcome: null, hard_output_score: null, distribution: null } }, first);
-  expect(row).toBe(`| arm | 1 | 2 | 3 | 4 | 10 | — | 0.33 | — | 1.3 | 3 | 1 | ${current.unmetered_calls} | stopped (max_steps) | — | — | — | — |`);
+  expect(row).toBe(`| arm | 1 | 2 | 3 | 4 | 10 | — | 0.33 | — | 1.3 | 3 | 1 | ${current.unmetered_calls} | stopped (max_steps) | — | — | — | — | 0 | 0 | — |`);
 });
 
 it.each([true, false])("pins the entire report preamble, dry=%s", dry => {
@@ -40,8 +41,8 @@ it.each([true, false])("pins the entire report preamble, dry=%s", dry => {
     "Later arms can read the prompt cache earlier arms wrote.", "",
     "Token columns sum reported usage. USD sums reported costs. Unmetered counts calls without a reported cost.",
     "Unmetered calls count as zero toward arm dollar limits and the plan cap. Each arm checks max_unmetered_calls after each call or parallel batch.", "",
-    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) |",
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|",
+    "| Arm | Tokens in | Tokens out | Cache read | Cache creation | Total tokens | Tokens / first | Reported USD | USD / first | Wall ms | Calls | Errors | Unmetered | Outcome | Hard-output score | Verification | Reported models | Mixed-model rows (batch/invocation) | Sections | Total section characters | Minimum section characters |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|---:|---:|---:|",
   ]);
 });
 
