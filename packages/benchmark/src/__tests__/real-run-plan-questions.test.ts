@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { API } from "typescript/unstable/sync";
 import { isBinaryExpression, isPropertyAccessExpression, isPropertyAssignment, isShorthandPropertyAssignment, SyntaxKind, type Node } from "typescript/unstable/ast";
 import { expect, it } from "vitest";
+import { verifyBudgetDecisionFromAnswer } from "../../../orchestration/src/handlers/self-check-verify-budget.js";
 import { loadArms } from "../real-run/plan-file.js";
 
 const handlers = fileURLToPath(new URL("../../../orchestration/src/handlers/", import.meta.url));
@@ -64,7 +65,10 @@ it.each(["pilot", "smoke"])("%s arms register all reachable handler questions", 
     for (const id of emitted) {
       if (!unreachable.has(id)) expect(plan.answers, id).toHaveProperty(id);
     }
-    expect(plan.answers.self_check_verify_budget).toEqual({ selected: ["Reduced sample"] });
+    const question_id = "self_check_verify_budget";
+    const answer = plan.answers[question_id];
+    expect(answer).toEqual({ selected: ["Reduced sample"] });
+    expect(verifyBudgetDecisionFromAnswer({ kind: "user_answer", question_id, ...answer })).toBe("sample");
   }
 });
 it("finds literal, local, imported, shorthand and assigned question IDs across the source tree", async () => {
