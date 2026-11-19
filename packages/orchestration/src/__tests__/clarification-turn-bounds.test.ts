@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ClarificationTurnSchema, MAX_PIPELINE_ERRORS, newPipelineState, PipelineStateSchema, step } from "../index.js";
+import { AskUserActionSchema, ClarificationTurnSchema, MAX_PIPELINE_ERRORS, newPipelineState, PipelineStateSchema, step } from "../index.js";
 
 const seed = {
   ...newPipelineState({ run_id: "bounds", feature_description: "x", prd_context: "feature" }),
@@ -16,6 +16,17 @@ it.each(["", " \t\n "])("rejects a blank option %j when reading a saved turn", l
   expect(turn.success).toBe(false);
   if (!turn.success) expect(turn.error.issues[0].path).toEqual(["options", 1]);
 });
+
+it.each([[1, false], [2, true], [4, true], [5, false], [null, true]] as const)(
+  "validates an ask_user action with options count %s", (count, valid) => {
+    const action = AskUserActionSchema.safeParse({
+      kind: "ask_user", question_id: "clarification_answer", header: "Which?", description: "Choose a detail.",
+      options: count === null ? null : Array.from({ length: count }, (_, i) => ({ label: `Option ${i + 1}` })),
+    });
+    expect(action.success).toBe(valid);
+    if (!action.success) expect(action.error.issues[0].path).toEqual(["options"]);
+  },
+);
 
 function submit(raw_text: string | undefined, state = seed, error?: string) {
   return step({ state, result: {

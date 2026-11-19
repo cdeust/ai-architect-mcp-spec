@@ -219,6 +219,7 @@ function parseRunFile(runId: string, text: string): RunFileRead {
   // Older clarification checkpoints kept the pending action but no marker.
   // The saved action distinguishes a decision from a compose already authorized.
   if (state.data.current_step === "clarification" && state.data.clarification_continue_pending === undefined) {
+    // Stryker disable next-line ConditionalExpression: equivalent: validated non-question actions have no question_id, so the ID comparison already returns false.
     state.data.clarification_continue_pending = action.data.kind === "ask_user"
       && action.data.question_id === CLARIFICATION_CONTINUE_QUESTION_ID;
   }
