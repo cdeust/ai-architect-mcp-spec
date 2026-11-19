@@ -40,7 +40,7 @@ function writeJson(path: string, value: unknown) {
 
 const active = new Map<Row, { kill(): void; journal: string }>();
 let interruption = "CLI exit";
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
   process.once(signal, () => {
     interruption = signal;
     process.exit(1);

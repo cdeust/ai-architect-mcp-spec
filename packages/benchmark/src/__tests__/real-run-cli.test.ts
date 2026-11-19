@@ -142,7 +142,7 @@ it("journals a metered stand-in response through the compiled CLI before the cos
   }
 });
 
-it.each(["SIGINT", "SIGTERM", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
+it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals the interrupted invocation and kills its group on %s", async signal => {
   const out = await mkdtemp(join(tmpdir(), "bench-signal-"));
   const marker = join(out, "pids");
   const standIn = join(out, "claude");
@@ -165,7 +165,7 @@ it.each(["SIGINT", "SIGTERM", "exit"] as const)("journals the interrupted invoca
     expect(await exited).toEqual(expect.any(Number));
     expect(cliProcess.exitCode).not.toBe(0);
     const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
-    expect(row).toMatchObject({ purpose: "probe", usage: null, error: expect.stringContaining(signal) });
+    expect(row).toMatchObject({ purpose: "probe", usage: null, error: `Interrupted by ${signal === "exit" ? "CLI exit" : signal}` });
     for (const pid of pids) await expect.poll(() => {
       try { process.kill(pid, 0); return false; }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
