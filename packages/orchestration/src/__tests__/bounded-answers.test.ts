@@ -107,6 +107,17 @@ it.each(["yes", "do not proceed", "", undefined, "unknown"])("repeats the full c
   });
 });
 
+it.each([
+  ["Push + open PR", "Push approved. Opening a pull request."],
+  ["No", "Push declined. Proceeding to finalize without a PR."],
+])("reports the PR gate decision for %s", (choice, text) => {
+  const out = step({
+    state: { ...base, current_step: "pr_gate", pending_completion: completion },
+    result: { kind: "user_answer", question_id: "pr_gate", selected: [choice] },
+  });
+  expect(out.messages).toContainEqual({ level: "info", text });
+});
+
 it("repeats the full PR question on conflicting push instructions", () => {
   const out = step({
     state: { ...base, current_step: "pr_gate" },
