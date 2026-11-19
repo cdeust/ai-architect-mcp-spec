@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
-import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
+import { cannedInvoke } from "./canned-ports.js";
 import { makeClaudeInvoker } from "./claude-cli-invoker.js";
 import { expectedModels, summaryHeader, summaryRow } from "./report.js";
 import type { Ports, Row, RunPlan, Totals } from "./types.js";
@@ -24,7 +24,6 @@ function options() {
 
 const cannedPorts: Ports = {
   clock: () => performance.now(),
-  answer: cannedAnswer,
   invoke: cannedInvoke,
   record: () => {},
 };

@@ -116,8 +116,11 @@ export async function runBench(plan: RunPlan, ports: Ports): Promise<RunRecord> 
       }
       result = measured;
     } else if (action.kind === "ask_user") {
-      const answer = Object.hasOwn(plan.answers, action.question_id) && plan.answers[action.question_id];
-      result = answer ? { ...answer, kind: "user_answer", question_id: action.question_id } : ports.answer(action);
+      if (!Object.hasOwn(plan.answers, action.question_id)) {
+        terminal = stopped(`unregistered question: ${action.question_id}`);
+        break;
+      }
+      result = { ...plan.answers[action.question_id], kind: "user_answer", question_id: action.question_id };
     } else result = canned(action);
   }
   return finishRecord(state, terminal, rows, steps, batches, ports.clock() - start);

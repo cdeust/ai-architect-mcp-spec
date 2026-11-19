@@ -2,7 +2,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { cannedAnswer } from "../real-run/canned-ports.js";
 import { makeClaudeInvoker } from "../real-run/claude-cli-invoker.js";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
@@ -18,7 +17,6 @@ it("kills a hanging executable and records the timeout on its invocation", async
     const started = performance.now();
     const record = await runBench(plan, {
       invoke: makeClaudeInvoker(1500, program),
-      answer: cannedAnswer,
       record: () => {},
       clock: Date.now,
     });

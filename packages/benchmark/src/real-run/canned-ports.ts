@@ -2,11 +2,6 @@ import { makeCannedDispatcher } from "@prd-gen/orchestration";
 import type { Ports } from "./types.js";
 
 const dispatch = makeCannedDispatcher();
-export const cannedAnswer: Ports["answer"] = question => {
-  const result = dispatch(question);
-  if (result?.kind !== "user_answer") throw new Error("Expected a canned answer");
-  return result;
-};
 
 export const cannedInvoke: Ports["invoke"] = async inv => {
   const result = dispatch({ kind: "spawn_subagents", batch_id: "dry-run", purpose: inv.purpose, invocations: [inv] });

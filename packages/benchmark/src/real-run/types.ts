@@ -1,5 +1,5 @@
 import type { PRDContext, RequestSize } from "@prd-gen/core";
-import type { AskUserAction, DoneAction, FailedAction, SectionStatus, SpawnSubagentsAction, UserAnswer } from "@prd-gen/orchestration";
+import type { DoneAction, FailedAction, SectionStatus, SpawnSubagentsAction, UserAnswer } from "@prd-gen/orchestration";
 
 export type Purpose = SpawnSubagentsAction["purpose"];
 export type Invocation = SpawnSubagentsAction["invocations"][number] & { purpose: Purpose };
@@ -15,7 +15,7 @@ export interface Limits {
 }
 export interface Stopped {
   kind: "stopped";
-  reason: keyof Limits;
+  reason: keyof Limits | `unregistered question: ${string}`;
 }
 export interface RunPlan {
   limits: Limits;
@@ -40,7 +40,6 @@ export interface Ports {
   invoke(invocation: Invocation, settings: Settings, row: Row): Promise<{ text: string; usage: Usage; error?: string }>;
   record(row: Row): void | Promise<void>;
   clock(): number;
-  answer(question: AskUserAction): UserAnswer;
 }
 export interface Row {
   batch_id: string;

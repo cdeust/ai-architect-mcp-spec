@@ -1,12 +1,18 @@
+import { loadArms } from "../real-run/plan-file.js";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
+import { cannedInvoke } from "../real-run/canned-ports.js";
 import { summaryRow } from "../real-run/report.js";
 import { runBench } from "../real-run/run-bench.js";
 import type { Ports, RunPlan } from "../real-run/types.js";
 
 const plan: RunPlan = { call_timeout_ms: 600000, limits: { max_invocations: 80, max_cost_usd: 25, max_unmetered_calls: 2, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
-  request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {} };
-const ports: Ports = { record: () => {}, clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
+  request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {
+    "clarification_answer": { "selected": [], "freeform": "Use OAuth 2.0 authorization code flow with PKCE against one identity provider, Google; sessions last 24 hours; no social account linking; web only." },
+    "clarification_continue": { "selected": ["proceed"] },
+    "implementation_gate": { "selected": ["PRD only"] }
+  } };
+const ports: Ports = { record: () => {}, clock: () => 0, invoke: cannedInvoke };
 
 it.each([["tiny", 12], ["standard", 27]] as const)("drives the %s seed to done", async (request_size, count) => {
   const record = await runBench({ ...plan, request_size }, ports);
@@ -82,10 +88,7 @@ it("passes a registered clarification answer into the section prompt", async () 
   const freeform = "Only the pilot tenant can log in.";
   const prompts: string[] = [];
   await runBench({ ...plan, answers: { clarification_answer: { selected: [], freeform } } }, {
-    ...ports, answer: question => {
-      expect(question.question_id).not.toBe("clarification_answer");
-      return cannedAnswer(question);
-    }, invoke: async (inv, settings) => {
+    ...ports, invoke: async (inv, settings) => {
       prompts.push(inv.prompt);
       return cannedInvoke(inv, settings);
     },
@@ -142,9 +145,9 @@ it("records a completed call before a later host failure", async () => {
     ...ports,
     record: async row => {
       await Promise.resolve();
+      if (saved.length === 2) throw new Error("host interrupted");
       saved.push(row.purpose);
     },
-    answer: () => { throw new Error("host interrupted"); },
   });
   await expect(aborted).rejects.toThrow("host interrupted");
   expect(saved).toEqual(["probe", "draft"]);
@@ -191,4 +194,25 @@ it.each([
   expect(calls).toBe(2);
   expect(record.terminal).toEqual({ kind: "stopped", reason });
   expect(record.totals).toMatchObject({ cost_usd: spend, unmetered_calls: unknown });
+});
+
+it("stops at an unregistered question and names its id", async () => {
+  const record = await runBench({ ...plan, answers: {} }, ports);
+  expect(record.terminal).toEqual({ kind: "stopped", reason: "unregistered question: clarification_answer" });
+  expect(record.rows.map(row => row.purpose)).toEqual(["probe", "draft"]);
+});
+
+it("submits the pilot's shared answer despite different model-generated options", async () => {
+  const arms = await loadArms(fileURLToPath(new URL("../../real-run/plans/pilot.json", import.meta.url)));
+  for (const { name, plan: arm } of arms.slice(0, 2)) {
+    const prompts: string[] = [];
+    const record = await runBench(arm, { ...ports, invoke: async (inv, settings, row) => {
+      prompts.push(inv.prompt);
+      const result = await cannedInvoke(inv, settings, row);
+      return inv.description.startsWith("Compose clarification")
+        ? { ...result, text: JSON.stringify({ question: "Identity provider?", options: [name, "other"] }) } : result;
+    } });
+    expect(record.terminal.kind).toBe("done");
+    expect(prompts.some(prompt => prompt.includes("OAuth 2.0 authorization code flow with PKCE"))).toBe(true);
+  }
 });

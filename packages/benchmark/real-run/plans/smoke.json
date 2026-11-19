@@ -3,7 +3,11 @@
   "prd_context": "feature",
   "call_timeout_ms": 180000,
   "limits": { "max_invocations": 30, "max_cost_usd": 1, "max_unmetered_calls": 0, "max_steps": 120 },
-  "answers": {},
+  "answers": {
+    "clarification_answer": { "selected": [], "freeform": "Use OAuth 2.0 authorization code flow with PKCE against one identity provider, Google; sessions last 24 hours; no social account linking; web only." },
+    "clarification_continue": { "selected": ["proceed"] },
+    "implementation_gate": { "selected": ["PRD only"] }
+  },
   "policies": {
     "smoke": {
       "judge": { "model": "haiku", "effort": "low" },

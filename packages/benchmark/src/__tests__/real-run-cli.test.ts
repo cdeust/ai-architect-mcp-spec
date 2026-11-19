@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SpawnSubagentsActionSchema } from "@prd-gen/orchestration";
 import { loadArms } from "../real-run/plan-file.js";
 import { runBench } from "../real-run/run-bench.js";
-import { cannedAnswer, cannedInvoke } from "../real-run/canned-ports.js";
+import { cannedInvoke } from "../real-run/canned-ports.js";
 import { expect, it } from "vitest";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
@@ -76,7 +76,7 @@ it("loads a bounded smoke arm with Haiku at low effort for every reducer purpose
   for (const purpose of SpawnSubagentsActionSchema.shape.purpose.options) {
     expect(plan.policy).toHaveProperty(purpose, { model: "haiku", effort: "low" });
   }
-  const dry = await runBench(plan, { invoke: cannedInvoke, answer: cannedAnswer, record: () => {}, clock: Date.now });
+  const dry = await runBench(plan, { invoke: cannedInvoke, record: () => {}, clock: Date.now });
   expect(dry.terminal.kind).toBe("done");
   expect(dry.rows).toHaveLength(12);
 });
