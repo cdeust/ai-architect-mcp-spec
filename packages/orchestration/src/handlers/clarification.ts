@@ -300,7 +300,7 @@ export const handleClarification: StepHandler = ({ state, result }) => {
     return handleComposedQuestion(state, result, expectedRound);
   }
 
-  return { state, action: composeAction(state, expectedRound) };
+  return { state: { ...state, clarification_continue_pending: false }, action: composeAction(state, expectedRound) };
 };
 
 function appendTurnAndAsk(
@@ -316,7 +316,7 @@ function appendTurnAndAsk(
     },
   ];
   return {
-    state: { ...state, clarifications },
+    state: { ...state, clarifications, clarification_continue_pending: false },
     action: askComposedQuestion(turn),
   };
 }
