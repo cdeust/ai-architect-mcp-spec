@@ -110,7 +110,7 @@ Every response from `start_pipeline` and `submit_action_result` has this shape:
 }
 ```
 
-`AskUserQuestion` returns the chosen option's `label` string directly. Place that string in `selected[0]`. If the user typed a freeform answer, place it in `freeform` and leave `selected` empty. For a decision question, the reducer trims whitespace, collapses whitespace runs and ignores case when comparing the answer to the offered labels. For PRD context the description also lists allowed kinds beyond the four buttons. If nonblank fields disagree or no accepted label matches, present the retry. On the third unmatched answer, display the reported fallback or failure.
+`AskUserQuestion` returns the chosen option's `label` string directly. Place that string in `selected[0]`. If the user typed a freeform answer, place it in `freeform` and leave `selected` empty. For a decision question, the reducer trims whitespace, collapses whitespace runs and ignores case when comparing the answer to the offered labels. For PRD context the description also lists allowed kinds beyond the four buttons. If nonblank fields disagree or no accepted label matches, present the retry. Display any reported fallback or failure. After three unmatched answers to the PRD-context question or the clarification-continue question, the reducer emits `failed` naming the question and the count. The host is expected to stop the run. If it keeps answering, each further unmatched answer increments the count and emits `failed` again, and a valid answer continues the run.
 
 ---
 

@@ -142,9 +142,9 @@ it("clears prior attempts when the user chooses another clarification round", ()
 });
 
 it.each([
-  [null, "prd_context", "context_detection"],
-  ["feature", "clarification_continue", "clarification"],
-] as const)("terminates from the first step with declared kind %s and an always-wrong host", (prd_context, question, failedStep) => {
+  [null, "prd_context", "context_detection", "release", "input_analysis"],
+  ["feature", "clarification_continue", "clarification", "proceed", "budget"],
+] as const)("emits repeated failures then accepts a valid answer for %s context", (prd_context, question, failedStep, valid, nextStep) => {
   const dispatch = makeCannedDispatcher();
   let out = step({ state: newPipelineState({ run_id: "wrong-from-start", feature_description: "x", prd_context }) });
   let attempts = 0;
@@ -159,4 +159,15 @@ it.each([
   }
   expect(attempts).toBe(3);
   expect(out.action).toEqual({ kind: "failed", step: failedStep, reason: `${question}: 3 unmatched answers.` });
+  expect(out.state.current_step).toBe(failedStep);
+  const answer = { kind: "user_answer" as const, question_id: question, selected: ["wrong"] };
+  const fourth = step({ state: out.state, result: answer });
+  expect(fourth.state.current_step).toBe(failedStep);
+  expect(fourth.state.unmatched_answers[question]).toBe(4);
+  expect(fourth.action).toEqual({ kind: "failed", step: failedStep, reason: `${question}: 4 unmatched answers.` });
+
+  const continued = step({ state: fourth.state, result: { ...answer, selected: [valid] } });
+  expect(continued.action.kind).not.toBe("failed");
+  expect(continued.state.current_step).toBe(nextStep);
+  expect(continued.state.unmatched_answers).toEqual({});
 });
