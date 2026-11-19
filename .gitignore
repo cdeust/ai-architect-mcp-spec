@@ -48,6 +48,7 @@ coverage/
 # Transient lock of the plugin launcher (bin/ensure-deps.mjs), removed when the install ends.
 mcp-server/.prd-gen-deps.lock
 
-# Python bytecode (a run of the scripts without `-B` writes it beside them)
+# Python bytecode (Python caches each imported module under a `__pycache__/` folder
+# beside its source, unless it runs with `-B`)
 __pycache__/
 *.py[cod]

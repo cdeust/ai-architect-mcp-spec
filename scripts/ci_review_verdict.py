@@ -106,6 +106,10 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
     is paired with its `updated_at`, and the greatest pair wins: the resolver's
     `max(verdicts)`, so of two comments updated at the same instant `block`
     wins over `approve` there and here (note 1 of review 1 of #362).
+    `updated_at` is read as the resolver reads it, `comment["updated_at"]`,
+    without a default: the `--jq` filter always emits the key, and a null value
+    gives the same verdict, or the same TypeError, here as there (note 2 of
+    review 1 of #372).
     """
     link = re.compile(re.escape(f"/actions/runs/{run_id}") + r"(?!\d)")
     found: list[tuple[str, str]] = []
@@ -117,7 +121,7 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
             continue
         verdicts = VERDICT.findall(body)
         if verdicts:
-            found.append((row.get("updated_at") or "", verdicts[-1]))
+            found.append((row["updated_at"], verdicts[-1]))
     return max(found)[1] if found else None
 
 
