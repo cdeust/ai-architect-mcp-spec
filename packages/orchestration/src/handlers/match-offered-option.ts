@@ -6,20 +6,21 @@ type Option<Label extends string> = { label: Label };
 type Answer = { selected: readonly string[]; freeform?: string };
 
 function normalize(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
+  return text.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/**
- * Return the original accepted label, including choices the host can only expose as text.
- * More than one nonblank selection is a contradictory answer and matches nothing.
- */
+/** Return the original accepted label, including choices the host can only expose as text. */
 export function matchOfferedOption<Label extends string>(
   options: readonly Option<Label>[],
   answer: Answer,
 ): Label | undefined {
-  const picks = answer.selected.map(normalize).filter(Boolean);
-  if (picks.length > 1) return undefined;
-  const selected = picks[0] ?? "";
+  if ("freeform" in answer && typeof answer.freeform !== "string") return undefined;
+  if (!Array.isArray(answer.selected)) return undefined;
+  if (answer.selected.some(value => typeof value !== "string")) return undefined;
+  const selections = answer.selected.map(normalize).filter(Boolean);
+  // These questions set multi_select: false. Even repeated labels exceed the single allowed selection.
+  if (selections.length > 1) return undefined;
+  const [selected] = selections;
   const typed = normalize(answer.freeform ?? "");
   if (selected && typed && selected !== typed) return undefined;
   const chosen = selected || typed;
@@ -32,7 +33,7 @@ export function answerOptionQuestion<Label extends string>(
   state: PipelineState,
   question: AskUserAction,
   accepted: readonly Option<Label>[],
-  answer: Answer,
+  answer: Answer & { question_id: string },
   route: (state: PipelineState, label: Label) => ReturnType<StepHandler>,
   fallback?: NoInfer<Label>,
 ): ReturnType<StepHandler> {
@@ -41,7 +42,7 @@ export function answerOptionQuestion<Label extends string>(
     const { [id]: _cleared, ...remaining } = state.unmatched_answers;
     return { ...state, unmatched_answers: remaining };
   }
-  const label = matchOfferedOption(accepted, answer);
+  const label = answer.question_id === id ? matchOfferedOption(accepted, answer) : undefined;
   if (label !== undefined) {
     return route(clearedState(), label);
   }

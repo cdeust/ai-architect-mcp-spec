@@ -1,16 +1,14 @@
 import { answerOptionQuestion } from "./match-offered-option.js";
+import { CLARIFICATION_TURN_CHARS } from "../types/state/bounded-io.js";
 import type { StepHandler } from "../runner.js";
-import type { ActionResult, HandlerAction } from "../types/actions.js";
-import type { PipelineState } from "../types/state.js";
+import { ASK_USER_MIN_OPTIONS, ASK_USER_MAX_OPTIONS, type ActionResult, type HandlerAction } from "../types/actions.js";
+import { appendError, type ClarificationTurn, type PipelineState } from "../types/state.js";
 import {
   CAPABILITIES,
   clarificationRangeFor,
   extractJsonObject,
 } from "@prd-gen/core";
-import {
-  buildClarificationPrompt,
-  type GeneratedQuestion,
-} from "@prd-gen/meta-prompting";
+import { buildClarificationPrompt } from "@prd-gen/meta-prompting";
 
 /**
  * Clarification loop (SKILL.md Rule 1).
@@ -43,14 +41,6 @@ function composeBatchId(round: number): string {
 }
 const composeInvocationId = clarificationComposeInvocationId;
 
-interface PendingTurnInternal {
-  round: number;
-  question: string;
-  options: readonly string[] | null;
-  rationale: string;
-  asked_at: string;
-}
-
 function isComposeResult(
   result: ActionResult | undefined,
   round: number,
@@ -61,20 +51,49 @@ function isComposeResult(
   );
 }
 
-function tryParseGeneratedQuestion(rawText: string): GeneratedQuestion | null {
-  try {
-    const obj = extractJsonObject(rawText) as Partial<GeneratedQuestion>;
-    if (typeof obj.question !== "string" || !obj.question.trim()) return null;
-    const options =
-      Array.isArray(obj.options) && obj.options.every((o) => typeof o === "string")
-        ? obj.options
-        : null;
-    const rationale =
-      typeof obj.rationale === "string" ? obj.rationale : "";
-    return { question: obj.question.trim(), options, rationale };
-  } catch {
-    return null;
+function textViolation(field: string, value: string, requireNonblank: boolean): string | null {
+  if (value.length > CLARIFICATION_TURN_CHARS) {
+    return `${field} has ${value.length} UTF-16 code units (maximum ${CLARIFICATION_TURN_CHARS})`;
   }
+  if (requireNonblank && !value.trim()) return `${field} is blank (${value.length} UTF-16 code units)`;
+  return null;
+}
+
+function parseOptions(value: unknown): string[] | null | { error: string } {
+  if (value == null) return null;
+  if (!Array.isArray(value)) return { error: "options must be an array or null" };
+  if (value.length < ASK_USER_MIN_OPTIONS || value.length > ASK_USER_MAX_OPTIONS) {
+    return { error: `options has ${value.length} entries (expected ${ASK_USER_MIN_OPTIONS} to ${ASK_USER_MAX_OPTIONS})` };
+  }
+  const labels: string[] = [];
+  for (const [index, label] of value.entries()) {
+    const field = `options[${index}]`;
+    if (typeof label !== "string") return { error: `${field} must be a string` };
+    const error = textViolation(field, label, true);
+    if (error) return { error };
+    labels.push(label);
+  }
+  return labels;
+}
+
+function tryParseGeneratedQuestion(rawText: string): Pick<ClarificationTurn, "question" | "options" | "rationale"> | { error: string } {
+  let obj: Record<string, unknown>;
+  try {
+    // extractJsonObject parses the balanced object starting at the opening brace.
+    obj = extractJsonObject(rawText) as Record<string, unknown>;
+  } catch {
+    return { error: `no parseable question object (${rawText.length} UTF-16 code units)` };
+  }
+  const { question, rationale = "" } = obj;
+  if (typeof question !== "string") return { error: "question must be a string" };
+  const questionError = textViolation("question", question, true);
+  if (questionError) return { error: questionError };
+  const options = parseOptions(obj.options);
+  if (options && "error" in options) return options;
+  if (typeof rationale !== "string") return { error: "rationale must be a string" };
+  const rationaleError = textViolation("rationale", rationale, false);
+  if (rationaleError) return { error: rationaleError };
+  return { question, options, rationale };
 }
 
 function composeAction(state: PipelineState, round: number): HandlerAction {
@@ -110,17 +129,13 @@ function composeAction(state: PipelineState, round: number): HandlerAction {
   };
 }
 
-function askComposedQuestion(turn: PendingTurnInternal): HandlerAction {
-  const optionsForUser =
-    turn.options && turn.options.length >= 2 && turn.options.length <= 4
-      ? turn.options.map((o) => ({ label: o }))
-      : null;
+function askComposedQuestion(turn: ClarificationTurn): HandlerAction {
   return {
     kind: "ask_user",
     question_id: QUESTION_ID_ANSWER,
     header: `Round ${turn.round}: ${turn.question}`,
     description: turn.rationale || "Answer freeform if no options listed.",
-    options: optionsForUser,
+    options: turn.options?.map(label => ({ label })) ?? null,
     multi_select: false,
   };
 }
@@ -164,7 +179,7 @@ function handleProceedOrContinue(
   return answerOptionQuestion(state, question, question.options, result, (answered, choice) => {
     if (choice === PROCEED_LABEL) {
       return {
-        state: { ...answered, proceed_signal: true, current_step: "budget" },
+        state: { ...answered, clarification_continue_pending: false, proceed_signal: true, current_step: "budget" },
         action: {
           kind: "emit_message",
           message: `Clarification complete (${state.clarifications.length} rounds).`,
@@ -172,7 +187,7 @@ function handleProceedOrContinue(
       };
     }
     return {
-      state: answered,
+      state: { ...answered, clarification_continue_pending: false },
       action: composeAction(answered, state.clarifications.length + 1),
     };
   });
@@ -188,10 +203,11 @@ function recordAnswerAndDispatch(
 
   const updatedTurn = {
     ...lastTurn,
-    answer: result.freeform ?? result.selected.join(", "),
+    answer: result.freeform?.trim() || result.selected.join(", "),
     answered_at: new Date().toISOString(),
   };
-  const clarifications = [...state.clarifications.slice(0, -1), updatedTurn];
+  const clarifications = [...state.clarifications];
+  clarifications[clarifications.length - 1] = updatedTurn;
   const completed = clarifications.length;
 
   if (completed >= bounds.max) {
@@ -216,8 +232,10 @@ function recordAnswerAndDispatch(
     };
   }
 
+  // Each round reuses this question ID but starts with its own retry budget.
+  const { [QUESTION_ID_CONTINUE]: _previousRound, ...unmatched_answers } = state.unmatched_answers;
   return {
-    state: { ...state, clarifications },
+    state: { ...state, clarifications, unmatched_answers, clarification_continue_pending: true },
     action: continueQuestion(completed, bounds),
   };
 }
@@ -230,31 +248,22 @@ function handleComposedQuestion(
   const response = result.responses.find(
     (r) => r.invocation_id === composeInvocationId(expectedRound),
   );
-  const generated = response?.raw_text
-    ? tryParseGeneratedQuestion(response.raw_text)
-    : null;
-
-  const turn: PendingTurnInternal = generated
-    ? {
+  const generated = tryParseGeneratedQuestion(response?.raw_text ?? "");
+  if ("error" in generated) {
+    const contextual = `What is the most important detail about "${state.feature_description}" that should drive this PRD?`;
+    return appendTurnAndAsk(
+      appendError(state, `Clarification compose: ${generated.error}`, "upstream_failure"),
+      {
         round: expectedRound,
-        question: generated.question,
-        options: generated.options,
-        rationale: generated.rationale,
-        asked_at: new Date().toISOString(),
-      }
-    : {
-        round: expectedRound,
-        question:
-          response?.error ??
-          `What is the most important detail about "${state.feature_description}" that should drive this PRD?`,
+        question: contextual.length <= CLARIFICATION_TURN_CHARS
+          ? contextual : "What is the most important detail that should drive this PRD?",
         options: null,
-        rationale: generated
-          ? ""
-          : "Subagent did not return a parseable question; using fallback.",
+        rationale: "Subagent did not return a parseable question; using fallback.",
         asked_at: new Date().toISOString(),
-      };
-
-  return appendTurnAndAsk(state, turn);
+      },
+    );
+  }
+  return appendTurnAndAsk(state, { round: expectedRound, ...generated, asked_at: new Date().toISOString() });
 }
 
 export const handleClarification: StepHandler = ({ state, result }) => {
@@ -272,11 +281,23 @@ export const handleClarification: StepHandler = ({ state, result }) => {
   const bounds = computeBounds(state);
   const expectedRound = state.clarifications.length + 1;
 
-  if (
-    result?.kind === "user_answer" &&
-    result.question_id === QUESTION_ID_CONTINUE
-  ) {
-    return handleProceedOrContinue(state, result, bounds);
+  if (result?.kind === "user_answer") {
+    // For a legacy checkpoint, an answered round at or above the minimum may
+    // already have offered continuation. Require an explicit decision there.
+    const continuationPending = state.clarification_continue_pending ?? (
+      state.clarifications.length >= bounds.min && state.clarifications[state.clarifications.length - 1]!.answer !== undefined
+    );
+    if (continuationPending) {
+      return handleProceedOrContinue(state, result, bounds);
+    }
+    // The host answered a question that was never pending, so this consumes no
+    // unmatched-answer attempt. Replay the open question or fall through to compose.
+    if (result.question_id === QUESTION_ID_CONTINUE) {
+      const lastTurn = state.clarifications.at(-1);
+      if (lastTurn && lastTurn.answer === undefined) {
+        return { state, action: askComposedQuestion(lastTurn) };
+      }
+    }
   }
 
   if (
@@ -294,23 +315,16 @@ export const handleClarification: StepHandler = ({ state, result }) => {
     return handleComposedQuestion(state, result, expectedRound);
   }
 
-  return { state, action: composeAction(state, expectedRound) };
+  return { state: { ...state, clarification_continue_pending: false }, action: composeAction(state, expectedRound) };
 };
 
 function appendTurnAndAsk(
   state: PipelineState,
-  turn: PendingTurnInternal,
+  turn: ClarificationTurn,
 ): { state: PipelineState; action: HandlerAction } {
-  const clarifications = [
-    ...state.clarifications,
-    {
-      round: turn.round,
-      question: turn.question,
-      asked_at: turn.asked_at,
-    },
-  ];
+  const clarifications = [...state.clarifications, turn];
   return {
-    state: { ...state, clarifications },
+    state: { ...state, clarifications, clarification_continue_pending: false },
     action: askComposedQuestion(turn),
   };
 }

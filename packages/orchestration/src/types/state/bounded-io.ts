@@ -37,7 +37,9 @@ export const MAX_RESPONSE_CHARS = 100_000;
  * reserved for clarifications so the other half covers the rest of the state
  * (sections, errors, grounding) when format:"full" is requested.
  */
-const CLARIFICATION_TURN_CHARS = 1_000; // measured 740, rounded up (see above)
+// source: measured 740, rounded up (see above). Reuse the turn estimate as
+// the per-field ceiling for composed text (1,000 UTF-16 code units per field).
+export const CLARIFICATION_TURN_CHARS = 1_000;
 export const MAX_CLARIFICATION_TURNS = Math.floor(
   MAX_RESPONSE_CHARS / 2 / CLARIFICATION_TURN_CHARS,
 ); // 50

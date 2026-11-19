@@ -151,4 +151,15 @@ describe("the kind of PRD of a run (#119)", () => {
     expect(out.state.prd_context).toBeNull();
     expect(out.action.kind).toBe("ask_user");
   });
+
+  it.each([
+    { name: "an answer to another question", result: { kind: "user_answer" as const, question_id: "clarification_answer", selected: ["feature"] } },
+    { name: "a file_written result", result: { kind: "file_written" as const, path: "prd.md", bytes: 0 } },
+    { name: "no result", result: undefined },
+  ])("detects the bug from the description with $name", ({ result }) => {
+    const out = step({ state: atContextDetection("fix the login bug"), result });
+    expect(out.state.prd_context).toBe("bug");
+    expect(out.state.current_step).toBe("input_analysis");
+    expect(out.messages[0]?.text).toBe("PRD context detected: Bug Fix (from trigger words)");
+  });
 });

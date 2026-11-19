@@ -101,6 +101,32 @@ describe("the file of a run (#121)", () => {
     }
   });
 
+  it.each([
+    ["options", ["a", "x".repeat(1001)]],
+    ["options", ["a"]],
+    ["options", ["a", "b", "c", "d", "e"]],
+    ["options", ["a", "  "]],
+    ["options", ["a", false]],
+    ["rationale", "x".repeat(1001)],
+  ])("reports invalid clarification %s and preserves the file", (field, value) => {
+    mkdirSync(dir);
+    const turn = { round: 1, asked_at: "now", question: "Which?", [String(field)]: value };
+    const text = JSON.stringify({ version: 1, state: { ...FIRST.state, clarifications: [turn] }, action: null });
+    const path = files.pathOf(RUN)!;
+    writeFileSync(path, text);
+    const read = files.read(RUN);
+    expect(read.kind).toBe("unreadable");
+    expect(read.kind === "unreadable" && read.reason).toMatch(new RegExp(`its state is not valid.*${field}`, "s"));
+    expect(readFileSync(path, "utf8")).toBe(text);
+  });
+
+  it("loads the complete question from a legacy checkpoint", () => {
+    const turn = { round: 1, asked_at: "now", question: "x".repeat(5000) };
+    const state = { ...FIRST.state, clarifications: [turn] };
+    files.write(state, null);
+    expect(files.read(RUN)).toEqual({ kind: "found", run: { state, action: null } });
+  });
+
   it("removes the file of a run, and does not mind one that is not there", () => {
     files.write(FIRST.state, FIRST.action);
     files.remove(RUN);
