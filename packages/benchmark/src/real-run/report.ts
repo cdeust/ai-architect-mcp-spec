@@ -21,8 +21,8 @@ function totalTokens(totals: Totals): number {
   return totals.input_tokens + totals.output_tokens + totals.cache_read_tokens + totals.cache_creation_tokens;
 }
 
-function ratio(value: number | null, baseline: number | null): string {
-  if (value === null || baseline === null || baseline === 0) return "—";
+function ratio(value: number, baseline: number): string {
+  if (baseline === 0) return "—";
   return `${(value / baseline).toFixed(2)}×`;
 }
 

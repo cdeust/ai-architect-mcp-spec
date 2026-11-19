@@ -35,7 +35,11 @@ type ArmPlan = RunPlan & Pick<z.infer<typeof planFile>, "plan_max_cost_usd" | "o
 
 export async function loadArms(file: string): Promise<{ name: string; plan: ArmPlan }[]> {
   const json = await readFile(file, "utf8");
-  const { policies, arms, limits, ...shared } = planFile.parse(JSON.parse(json));
+  return parsePlan(JSON.parse(json));
+}
+
+export function parsePlan(value: unknown) {
+  const { policies, arms, limits, ...shared } = planFile.parse(value);
   const names = new Set<string>();
   if (shared.order === "reversed") arms.reverse();
   return arms.map(({ name, request_size, mode, policy: key, limits: override }) => {
