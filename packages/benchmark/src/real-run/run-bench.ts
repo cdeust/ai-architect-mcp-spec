@@ -10,10 +10,19 @@ function settingsFor(inv: Invocation, policy: RunPlan["policy"]): Settings {
 async function measure(inv: Invocation, batch_id: string, plan: RunPlan, ports: Ports) {
   const used = settingsFor(inv, plan.policy);
   const row: Row = {
-    batch_id, invocation_id: inv.invocation_id, purpose: inv.purpose,
-    agent_type: inv.subagent_type, isolation: inv.isolation, prompt_characters: Array.from(inv.prompt).length,
-    requested: { model: inv.model ?? null, effort: inv.effort ?? null },
-    used, usage: null, error: null,
+    batch_id,
+    invocation_id: inv.invocation_id,
+    purpose: inv.purpose,
+    agent_type: inv.subagent_type,
+    isolation: inv.isolation,
+    prompt_characters: Array.from(inv.prompt).length,
+    requested: {
+      model: inv.model ?? null,
+      effort: inv.effort ?? null,
+    },
+    used,
+    usage: null,
+    error: null,
   };
   try {
     const result = await ports.invoke(inv, used, row);
