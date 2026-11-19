@@ -24,6 +24,17 @@ describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
     return step({ state: saved, result: { kind: "user_answer", question_id: id, selected, ...(freeform === undefined ? {} : { freeform }) } });
   }
 
+  it.each(["string", "null"])("counts a %s selected field as an unmatched answer", (shape) => {
+    const saved = { ...state, unmatched_answers: { [id]: 1, other: 2 } };
+    // Direct reducer callers can bypass the MCP input schema.
+    const malformed = (shape === "string" ? label : null) as unknown as string[];
+    const out = submit(saved, malformed, label);
+    expect(out.action).toEqual(submit(saved, ["unknown"]).action);
+    expect(out.action).toMatchObject({ kind: "ask_user", question_id: id });
+    expect(out.state.unmatched_answers).toEqual({ [id]: 2, other: 2 });
+    expect(out.messages).toEqual([]);
+  });
+
   it.each(["conflicting fields", "multiple selections"])("counts %s across saved states and resolves the third", (shape) => {
     // Exercise different labels, duplicate labels and an extra non-option on successive attempts.
     const answers = shape === "multiple selections" ? [[label, other], [label, label], [label, "unknown"]] : [[label], [label], []];
