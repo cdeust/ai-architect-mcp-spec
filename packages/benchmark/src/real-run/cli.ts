@@ -38,7 +38,7 @@ function writeJson(path: string, value: unknown) {
   return writeFile(path, JSON.stringify(value, null, 2) + "\n");
 }
 
-const active = new Map<Row, { kill(): void; journal: string }>();
+const active = new Map<Row, { kill(): void; cleanup(): void; journal: string }>();
 let interruption = "CLI exit";
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
   process.once(signal, () => {
@@ -51,12 +51,16 @@ process.once("exit", () => {
   process.exitCode = 1;
   for (const call of active.values()) call.kill();
   for (const [row, { journal }] of active) {
-    appendRow(journal, { ...row, error: `Interrupted by ${interruption}` });
+    row.error = `Interrupted by ${interruption}`;
+    appendRow(journal, row);
   }
 });
 
 function appendRow(journal: string, row: Row) {
   appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true });
+  const call = active.get(row);
+  active.delete(row);
+  call?.cleanup();
 }
 
 async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string[]) {
@@ -65,9 +69,8 @@ async function runArm(dir: string, plan: RunPlan, dry: boolean, armOrder: string
   await writeFile(journal, "", { flag: "wx" });
   const record = await runBench(plan, {
     ...cannedPorts,
-    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms, dir, "claude", (row, kill) => {
-      active.set(row, { kill, journal });
-      return () => active.delete(row);
+    invoke: dry ? cannedInvoke : makeClaudeInvoker(plan.call_timeout_ms, dir, "claude", (row, kill, cleanup) => {
+      active.set(row, { kill, cleanup, journal });
     }),
     record: row => appendRow(journal, row),
   });

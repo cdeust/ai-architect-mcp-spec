@@ -138,6 +138,7 @@ it("journals a metered stand-in response through the compiled CLI before the cos
     const record = JSON.parse(await readFile(join(dir, "record.json"), "utf8"));
     expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
     expect(record.rows).toEqual([row]);
+    expect((await readdir(dir)).filter(name => name.startsWith("call-"))).toEqual([]);
     const summary = await readFile(join(out, "summary.md"), "utf8");
     expect(summary).toContain("| 3777 | 1.00× |");
     expect(summary).toContain("| claude-haiku-5-5 |");
@@ -170,6 +171,7 @@ it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("journals t
     expect(cliProcess.exitCode).not.toBe(0);
     const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
     expect(row).toMatchObject({ purpose: "probe", usage: null, error: `Interrupted by ${signal === "exit" ? "CLI exit" : signal}` });
+    expect(await readdir(join(out, "smoke"))).toEqual(["rows.jsonl"]);
     for (const pid of pids) await expect.poll(() => {
       try { process.kill(pid, 0); return false; }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
@@ -220,6 +222,7 @@ it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", a
       "--plan", "real-run/plans/smoke.json", "--out", out], { cwd, env: { PATH: out, DATA: out } });
     expect(result.status).toBe(1);
     const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
+    expect((await readdir(join(out, "smoke"))).filter(name => name.startsWith("call-"))).toEqual([]);
     for (const message of ["error_during_execution", "provider message", "retry detail"]) expect(row.error).toContain(message);
     expect(row.error).not.toContain("end-marker");
     expect(row.usage.per_model.other).toEqual(fixture.modelUsage.other);
@@ -290,6 +293,24 @@ it("limits the second $1 arm to the remainder of a $2 plan", async () => {
     expect(second.rows).toHaveLength(1);
     expect(first.totals.cost_usd + second.totals.cost_usd).toBeLessThanOrEqual(2 + 0.9);
     expect(result.stdout.split("\n")[0]).toContain("plus at most one in-flight batch or call");
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+it("journals a timeout and removes its call directory", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-cli-timeout-"));
+  try {
+    const plan = JSON.parse(await readFile(join(cwd, "real-run/plans/smoke.json"), "utf8"));
+    const file = join(out, "plan.json");
+    await writeFile(file, JSON.stringify({ ...plan, call_timeout_ms: 200 }));
+    await writeFile(join(out, "claude"), "#!/bin/sh\nexec /bin/sleep 10\n", { mode: 0o700 });
+    const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", file, "--out", out], { cwd, env: { PATH: out } });
+    expect(result.status).toBe(1);
+    const dir = join(out, "smoke");
+    expect(JSON.parse(await readFile(join(dir, "rows.jsonl"), "utf8")).error).toBe("Claude CLI timed out after 200 ms");
+    expect((await readdir(dir)).filter(name => name.startsWith("call-"))).toEqual([]);
   } finally {
     await rm(out, { recursive: true, force: true });
   }

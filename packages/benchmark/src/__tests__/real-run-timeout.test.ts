@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -22,6 +22,7 @@ it("kills a hanging executable and records the timeout on its invocation", async
     });
     expect(record.rows[0]).toMatchObject({ error: "Claude CLI timed out after 1500 ms", usage: null });
     expect(performance.now() - started).toBeLessThan(2100);
+    expect((await readdir(dir)).filter(name => name.startsWith("call-"))).toEqual([]);
     const descendant = Number(await readFile(program + ".descendant", "utf8"));
     await expect.poll(() => {
       try { process.kill(descendant, 0); return false; }

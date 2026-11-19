@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { z } from "zod";
@@ -98,7 +98,7 @@ function groupKiller(child: ChildProcessWithoutNullStreams) {
   };
 }
 
-type TrackCall = (row: Row, kill: () => void) => () => void;
+type TrackCall = (row: Row, kill: () => void, cleanup: () => void) => void;
 
 function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number, kill: () => void) {
   return new Promise<ReturnType<typeof readResult>>((resolve, reject) => {
@@ -154,24 +154,29 @@ function collectOutput(child: ChildProcessWithoutNullStreams, timeoutMs: number,
 export function makeClaudeInvoker(timeoutMs: number, directory: string, program = "claude", track?: TrackCall): Ports["invoke"] {
   return async (inv, settings, row) => {
     const cwd = mkdtempSync(join(directory, "call-"));
-    const child = spawn(program, claudeArgs(settings), {
-      cwd,
-      detached: true,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-      },
-    });
-    const kill = groupKiller(child);
-    const release = track?.(row, kill);
+    const cleanup = () => rmSync(cwd, { recursive: true, force: true });
+    let tracked = false;
     try {
+      const child = spawn(program, claudeArgs(settings), {
+        cwd,
+        detached: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+        },
+      });
+      const kill = groupKiller(child);
+      if (track) {
+        track(row, kill, cleanup);
+        tracked = true;
+      }
       const result = collectOutput(child, timeoutMs, kill);
       child.stdin.end(inv.prompt);
       return await result;
     } finally {
-      release?.();
+      if (!tracked) cleanup();
     }
   };
 }
