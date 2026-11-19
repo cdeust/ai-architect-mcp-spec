@@ -27,7 +27,7 @@ function looksEpic(text: string): boolean {
 
 export const handleFeasibilityGate: StepHandler = ({ state, result }) => {
   if (result?.kind === "user_answer" && result.question_id === QUESTION_ID) {
-    const focus = [result.freeform, result.selected[0]].find((text) => text?.trim()) ?? state.feature_description;
+    const focus = result.freeform?.trim() || result.selected[0]?.trim() || state.feature_description;
     return {
       state: {
         ...state,

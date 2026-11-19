@@ -117,3 +117,13 @@ it.each(["", "  "])("ignores blank focus text %j", (freeform) => {
     expect(step({ state, result }).state.feature_description).toBe(selected[0] ?? "original scope");
   }
 });
+
+it.each([
+  { freeform: "  OAuth  login\n", selected: ["other scope"] },
+  { freeform: "  ", selected: ["\tOAuth  login  "] },
+])("trims the chosen focus before saving and reporting it", ({ freeform, selected }) => {
+  const result = { kind: "user_answer" as const, question_id: "feasibility_focus", selected, freeform };
+  const out = step({ state: stateAt("original scope"), result });
+  expect(out.state.feature_description).toBe("OAuth  login");
+  expect(out.action).toEqual({ kind: "emit_message", message: "Focused scope: OAuth  login" });
+});
