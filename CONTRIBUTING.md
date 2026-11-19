@@ -109,6 +109,9 @@ sent back rather than merged with a follow-up promise.
 
 ### The delivery gate
 
+Use [CI contract rule 10](docs/agent-guidance.md#ci-contract-for-agents-and-routines)
+for the draft pull request, batch pushes and the move to ready for review.
+
 `pnpm gate` judges a commit before it is pushed. It runs the checks listed
 in `delivery-gate.json` (build, the unit suite with coverage, perf, the
 Python suites of `scripts/tests`), then mutation testing of the
