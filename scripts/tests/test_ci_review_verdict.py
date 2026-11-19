@@ -250,6 +250,18 @@ class ResolverParityTests(unittest.TestCase):
         self.assertEqual(self.resolver_reads_a_verdict(rows, (RUN - 1, RUN)), "approve")
         self.assertIsNone(verdict.verdict_of_run(rows, RUN))
 
+    def test_a_null_updated_at_is_read_as_the_resolver_reads_it(self):
+        # Review of #372, note 2: `updated_at` has no default on either side,
+        # so a null one gives the same verdict, or the same error, in both.
+        lone = [review(updated=None)]
+        self.assertEqual(verdict.verdict_of_run(lone, RUN), "approve")
+        self.assertEqual(self.resolver_reads_a_verdict(lone), "approve")
+        pair = [review(updated=None), review("x\n\nVerdict: block")]
+        with self.assertRaises(TypeError):
+            verdict.verdict_of_run(pair, RUN)
+        with self.assertRaises(TypeError):
+            self.resolver_reads_a_verdict(pair)
+
 
 class CommentsTests(unittest.TestCase):
     def test_comments_are_read_one_json_object_per_line(self):
