@@ -189,3 +189,30 @@ it.each([["tiny-as-emitted"], ["summary.md"], ["tiny-as-emitted", "summary.md"]]
     }
   },
 );
+
+it("journals mixed-model billing and bounded stderr from an unsuccessful CLI", async () => {
+  const out = await mkdtemp(join(tmpdir(), "bench-cli-error-"));
+  try {
+    const fixture = JSON.parse(await readFile(join(cwd, "src/__tests__/fixtures/claude-cli-result.json"), "utf8"));
+    fixture.is_error = true;
+    fixture.subtype = "error_during_execution";
+    fixture.errors = ["provider message"];
+    delete fixture.result;
+    fixture.modelUsage.other = { inputTokens: 3, costUSD: 0.25 };
+    await writeFile(join(out, "response"), JSON.stringify(fixture));
+    await writeFile(join(out, "diagnostic"), "retry detail " + "x".repeat(12000) + "end-marker");
+    await writeFile(join(out, "claude"), '#!/bin/sh\n/bin/cat "$DATA/diagnostic" >&2\n/bin/cat "$DATA/response"\nexit 1\n', { mode: 0o700 });
+    const result = spawnSync(process.execPath, ["dist/src/real-run/cli.js", "--i-accept-model-cost",
+      "--plan", "real-run/plans/smoke.json", "--out", out], { cwd, env: { PATH: out, DATA: out } });
+    expect(result.status).toBe(1);
+    const row = JSON.parse(await readFile(join(out, "smoke/rows.jsonl"), "utf8"));
+    for (const message of ["error_during_execution", "provider message", "retry detail"]) expect(row.error).toContain(message);
+    expect(row.error).not.toContain("end-marker");
+    expect(row.usage.per_model.other).toEqual(fixture.modelUsage.other);
+    expect(row.usage.cost_usd).toBe(fixture.total_cost_usd);
+    const summary = await readFile(join(out, "summary.md"), "utf8");
+    expect(summary).toContain(`${row.batch_id}/${row.invocation_id}`);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});

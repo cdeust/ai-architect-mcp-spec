@@ -23,7 +23,7 @@ function totals(rows: Row[]): Totals {
     addCost(result, usage);
     if (!usage) continue;
     for (const key of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "duration_ms"] as const) {
-      result[key] += usage[key];
+      result[key] += usage[key] ?? 0;
     }
   }
   return result;

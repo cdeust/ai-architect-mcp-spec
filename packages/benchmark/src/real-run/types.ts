@@ -28,16 +28,17 @@ export interface RunPlan {
   answers: Record<string, Pick<UserAnswer, "selected" | "freeform">>;
 }
 export interface Usage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
   cost_usd: number | null;
-  duration_ms: number;
+  per_model?: Record<string, Partial<Record<"inputTokens" | "outputTokens" | "cacheReadInputTokens" | "cacheCreationInputTokens" | "costUSD", number>>>;
+  duration_ms: number | null;
   model_reported: string;
 }
 export interface Ports {
-  invoke(invocation: Invocation, settings: Settings, row: Row): Promise<{ text: string; usage: Usage; error?: string }>;
+  invoke(invocation: Invocation, settings: Settings, row: Row): Promise<{ text: string; usage: Usage | null; error?: string }>;
   record(row: Row): void | Promise<void>;
   clock(): number;
 }
