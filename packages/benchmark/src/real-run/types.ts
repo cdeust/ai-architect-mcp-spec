@@ -36,6 +36,7 @@ export interface Usage {
 }
 export interface Ports {
   invoke(invocation: Invocation, settings: Settings): Promise<{ text: string; usage: Usage; error?: string }>;
+  record(row: Row): void | Promise<void>;
   clock(): number;
   answer(question: AskUserAction): UserAnswer;
 }

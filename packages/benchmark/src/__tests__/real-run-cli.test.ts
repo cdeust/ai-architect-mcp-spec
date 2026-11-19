@@ -33,6 +33,9 @@ it("writes five dry-run records and the comparison without an installed model CL
       const record = JSON.parse(await readFile(join(out, arm, "record.json"), "utf8"));
       expect(record).toMatchObject({ dry_run: true, totals: { invocations: count, cost_usd: 0, errors: 0 },
         quality: { hard_output_score: 0.85, outcome: { status: "needs_attention" } } });
+      const journal = await readFile(join(out, arm, "rows.jsonl"), "utf8");
+      expect(journal.trimEnd().split("\n").map(line => JSON.parse(line))).toEqual(expect.arrayContaining(record.rows));
+      expect(journal.trimEnd().split("\n")).toHaveLength(count);
       const draft = record.rows.find((r: { purpose: string }) => r.purpose === "draft");
       expect(draft.used.model).toBe(arm.includes("tiered") ? "sonnet" : "session");
       expect(summary).toContain(`| ${arm} | 0 | 0 |`);

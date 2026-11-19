@@ -35,8 +35,11 @@ function stopped(reason: Stopped["reason"]): Stopped {
 async function batch(action: SpawnSubagentsAction, plan: RunPlan, ports: Ports, rows: Row[]): Promise<BatchResult | Stopped> {
   const { max_invocations, max_cost_usd } = plan.limits;
   const remaining = max_invocations - rows.length;
-  const run = (inv: SpawnSubagentsAction["invocations"][number]) =>
-    measure({ ...inv, purpose: action.purpose }, action.batch_id, plan, ports);
+  const run = async (inv: SpawnSubagentsAction["invocations"][number]) => {
+    const call = await measure({ ...inv, purpose: action.purpose }, action.batch_id, plan, ports);
+    await ports.record(call.row);
+    return call;
+  };
   let spend = rows.reduce((sum, row) => sum + (row.usage?.cost_usd ?? 0), 0);
   const responses: BatchResult["responses"] = [];
   function collect(call: Awaited<ReturnType<typeof run>>) {

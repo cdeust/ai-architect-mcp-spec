@@ -5,7 +5,7 @@ import type { Ports, RunPlan } from "../real-run/types.js";
 
 const plan: RunPlan = { limits: { max_invocations: 80, max_cost_usd: 25, max_steps: 200 }, description: "build a simple feature for OAuth login", prd_context: "feature",
   request_size: "tiny", policy: "as-emitted", mode: "sequential", answers: {} };
-const ports: Ports = { clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
+const ports: Ports = { record: () => {}, clock: () => 0, answer: cannedAnswer, invoke: cannedInvoke };
 
 it.each([["tiny", 12], ["standard", 27]] as const)("drives the %s seed to done", async (request_size, count) => {
   const record = await runBench({ ...plan, request_size }, ports);
@@ -29,8 +29,11 @@ async function timedRun(mode: RunPlan["mode"]) {
   let active = 0;
   let peak = 0;
   const completed: string[] = [];
+  const recorded: string[] = [];
   const run = await runBench({ ...plan, mode, policy: { draft: { model: "sonnet", effort: "medium" } } }, {
-    ...ports, clock: () => now, invoke: async (inv, used) => {
+    ...ports, record: row => {
+      recorded.push(row.invocation_id);
+    }, clock: () => now, invoke: async (inv, used) => {
       const start = now;
       const first = active === 0;
       peak = Math.max(peak, ++active);
@@ -45,7 +48,7 @@ async function timedRun(mode: RunPlan["mode"]) {
         cache_creation_tokens: 5, duration_ms: 1, cost_usd: 0.25 } };
     },
   });
-  return { run, peak, completed };
+  return { run, peak, completed, recorded };
 }
 
 it("overlaps only calls of a parallel batch and attributes the same spend in either mode", async () => {
@@ -54,6 +57,7 @@ it("overlaps only calls of a parallel batch and attributes the same spend in eit
   expect(sequential.peak).toBe(1);
   expect(parallel.peak).toBeGreaterThan(1);
   expect(sequential.completed).toEqual(sequential.run.rows.map(r => r.invocation_id));
+  expect(parallel.recorded).toEqual(parallel.completed);
   expect(parallel.completed).not.toEqual(sequential.completed);
   expect(parallel.run.rows).toEqual(sequential.run.rows);
   expect(parallel.run.wall_time_ms).toBe(parallel.run.batches);
@@ -129,4 +133,18 @@ it("includes the call crossing the cost limit and allows exact equality", async 
   } });
   expect(record.terminal).toEqual({ kind: "stopped", reason: "max_cost_usd" });
   expect(record.totals).toMatchObject({ invocations: 2, cost_usd: 2 });
+});
+
+it("records a completed call before a later host failure", async () => {
+  const saved: string[] = [];
+  const aborted = runBench(plan, {
+    ...ports,
+    record: async row => {
+      await Promise.resolve();
+      saved.push(row.purpose);
+    },
+    answer: () => { throw new Error("host interrupted"); },
+  });
+  await expect(aborted).rejects.toThrow("host interrupted");
+  expect(saved).toEqual(["probe"]);
 });

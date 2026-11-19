@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -5,7 +6,7 @@ import { runBench } from "./run-bench.js";
 import { loadArms } from "./plan-file.js";
 import { cannedAnswer, cannedInvoke } from "./canned-ports.js";
 import { claudeInvoke } from "./claude-cli-invoker.js";
-import type { RunRecord } from "./types.js";
+import type { Row, RunRecord } from "./types.js";
 
 function summaryRow(name: string, record: RunRecord) {
   const { totals, quality } = record;
@@ -23,7 +24,7 @@ async function main() {
   if (!dry && !values["i-accept-model-cost"]) throw new Error("Live runs require --i-accept-model-cost");
   if (!values.plan || !values.out) throw new Error("Expected --plan <file.json> --out <dir>");
   const arms = await loadArms(values.plan);
-  const ports = { clock: () => performance.now(), answer: cannedAnswer, invoke: cannedInvoke };
+  const ports = { record: () => {}, clock: () => performance.now(), answer: cannedAnswer, invoke: cannedInvoke };
   const estimates = [];
   for (const arm of arms) {
     const record = await runBench(arm.plan, ports);
@@ -37,7 +38,13 @@ async function main() {
   for (const arm of estimates) {
     const dir = join(values.out, arm.name);
     await mkdir(dir, { recursive: true });
-    const record = dry ? arm.record : await runBench(arm.plan, { ...ports, invoke: claudeInvoke });
+    const journal = join(dir, "rows.jsonl");
+    await writeFile(journal, "", { flag: "wx" });
+    const record = await runBench(arm.plan, {
+      ...ports,
+      invoke: dry ? cannedInvoke : claudeInvoke,
+      record: (row: Row) => appendFileSync(journal, JSON.stringify(row) + "\n", { flush: true }),
+    });
     await writeFile(join(dir, "record.json"), JSON.stringify({ dry_run: dry, plan: arm.plan, ...record }, null, 2) + "\n");
     summary.push(summaryRow(arm.name, record));
     if (record.totals.errors || record.terminal.kind !== "done") process.exitCode = 1;
