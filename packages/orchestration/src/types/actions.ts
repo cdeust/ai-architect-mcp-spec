@@ -28,6 +28,9 @@ import { VerdictSchema, JudgeVerdictSchema } from "@prd-gen/core";
 
 // ─── Action 1: ask_user ─────────────────────────────────────────────────────
 
+export const ASK_USER_MIN_OPTIONS = 2;
+export const ASK_USER_MAX_OPTIONS = 4;
+
 export const AskUserActionSchema = z.object({
   kind: z.literal("ask_user"),
   /** Identifies the question so the host can map answer → state */
@@ -41,8 +44,8 @@ export const AskUserActionSchema = z.object({
         description: z.string().optional(),
       }),
     )
-    .min(2)
-    .max(4)
+    .min(ASK_USER_MIN_OPTIONS)
+    .max(ASK_USER_MAX_OPTIONS)
     .nullable()
     .describe("Structured options for AskUserQuestion. Null = freeform answer."),
   multi_select: z.boolean().default(false),

@@ -1,17 +1,14 @@
 import { answerOptionQuestion } from "./match-offered-option.js";
-import { boundedClarificationOptions, boundedClarificationText } from "../types/state/bounded-io.js";
+import { CLARIFICATION_TURN_CHARS } from "../types/state/bounded-io.js";
 import type { StepHandler } from "../runner.js";
-import type { ActionResult, HandlerAction } from "../types/actions.js";
-import type { ClarificationTurn, PipelineState } from "../types/state.js";
+import { ASK_USER_MIN_OPTIONS, ASK_USER_MAX_OPTIONS, type ActionResult, type HandlerAction } from "../types/actions.js";
+import { appendError, type ClarificationTurn, type PipelineState } from "../types/state.js";
 import {
   CAPABILITIES,
   clarificationRangeFor,
   extractJsonObject,
 } from "@prd-gen/core";
-import {
-  buildClarificationPrompt,
-  type GeneratedQuestion,
-} from "@prd-gen/meta-prompting";
+import { buildClarificationPrompt } from "@prd-gen/meta-prompting";
 
 /**
  * Clarification loop (SKILL.md Rule 1).
@@ -54,18 +51,49 @@ function isComposeResult(
   );
 }
 
-function tryParseGeneratedQuestion(rawText: string) {
-  try {
-    const obj = extractJsonObject(rawText) as Partial<GeneratedQuestion>;
-    if (typeof obj.question !== "string" || !obj.question.trim()) return null;
-    return {
-      question: boundedClarificationText(obj.question.trim()),
-      options: boundedClarificationOptions(obj.options),
-      rationale: typeof obj.rationale === "string" ? boundedClarificationText(obj.rationale) : "",
-    };
-  } catch {
-    return null;
+function textViolation(field: string, value: string, requireNonblank: boolean): string | null {
+  if (value.length > CLARIFICATION_TURN_CHARS) {
+    return `${field} has ${value.length} UTF-16 code units (maximum ${CLARIFICATION_TURN_CHARS})`;
   }
+  if (requireNonblank && !value.trim()) return `${field} is blank (${value.length} UTF-16 code units)`;
+  return null;
+}
+
+function parseOptions(value: unknown): string[] | null | { error: string } {
+  if (value == null) return null;
+  if (!Array.isArray(value)) return { error: "options must be an array or null" };
+  if (value.length < ASK_USER_MIN_OPTIONS || value.length > ASK_USER_MAX_OPTIONS) {
+    return { error: `options has ${value.length} entries (expected ${ASK_USER_MIN_OPTIONS} to ${ASK_USER_MAX_OPTIONS})` };
+  }
+  const labels: string[] = [];
+  for (const [index, label] of value.entries()) {
+    const field = `options[${index}]`;
+    if (typeof label !== "string") return { error: `${field} must be a string` };
+    const error = textViolation(field, label, true);
+    if (error) return { error };
+    labels.push(label);
+  }
+  return labels;
+}
+
+function tryParseGeneratedQuestion(rawText: string): Pick<ClarificationTurn, "question" | "options" | "rationale"> | { error: string } {
+  let obj: Record<string, unknown>;
+  try {
+    // extractJsonObject parses the balanced object starting at the opening brace.
+    obj = extractJsonObject(rawText) as Record<string, unknown>;
+  } catch {
+    return { error: `no parseable question object (${rawText.length} UTF-16 code units)` };
+  }
+  const { question, rationale = "" } = obj;
+  if (typeof question !== "string") return { error: "question must be a string" };
+  const questionError = textViolation("question", question, true);
+  if (questionError) return { error: questionError };
+  const options = parseOptions(obj.options);
+  if (options && "error" in options) return options;
+  if (typeof rationale !== "string") return { error: "rationale must be a string" };
+  const rationaleError = textViolation("rationale", rationale, false);
+  if (rationaleError) return { error: rationaleError };
+  return { question, options, rationale };
 }
 
 function composeAction(state: PipelineState, round: number): HandlerAction {
@@ -102,16 +130,12 @@ function composeAction(state: PipelineState, round: number): HandlerAction {
 }
 
 function askComposedQuestion(turn: ClarificationTurn): HandlerAction {
-  const optionsForUser =
-    turn.options && turn.options.length >= 2 && turn.options.length <= 4
-      ? turn.options.map((o) => ({ label: o }))
-      : null;
   return {
     kind: "ask_user",
     question_id: QUESTION_ID_ANSWER,
     header: `Round ${turn.round}: ${turn.question}`,
     description: turn.rationale || "Answer freeform if no options listed.",
-    options: optionsForUser,
+    options: turn.options?.map(label => ({ label })) ?? null,
     multi_select: false,
   };
 }
@@ -182,7 +206,8 @@ function recordAnswerAndDispatch(
     answer: result.freeform?.trim() || result.selected.join(", "),
     answered_at: new Date().toISOString(),
   };
-  const clarifications = [...state.clarifications.slice(0, -1), updatedTurn];
+  const clarifications = [...state.clarifications];
+  clarifications[clarifications.length - 1] = updatedTurn;
   const completed = clarifications.length;
 
   if (completed >= bounds.max) {
@@ -223,32 +248,22 @@ function handleComposedQuestion(
   const response = result.responses.find(
     (r) => r.invocation_id === composeInvocationId(expectedRound),
   );
-  const generated = response?.raw_text
-    ? tryParseGeneratedQuestion(response.raw_text)
-    : null;
-
-  const turn: ClarificationTurn = generated
-    ? {
+  const generated = tryParseGeneratedQuestion(response?.raw_text ?? "");
+  if ("error" in generated) {
+    const contextual = `What is the most important detail about "${state.feature_description}" that should drive this PRD?`;
+    return appendTurnAndAsk(
+      appendError(state, `Clarification compose: ${generated.error}`, "upstream_failure"),
+      {
         round: expectedRound,
-        question: generated.question,
-        options: generated.options,
-        rationale: generated.rationale,
-        asked_at: new Date().toISOString(),
-      }
-    : {
-        round: expectedRound,
-        question: boundedClarificationText(
-          response?.error ??
-          `What is the most important detail about "${state.feature_description}" that should drive this PRD?`,
-        ),
+        question: contextual.length <= CLARIFICATION_TURN_CHARS
+          ? contextual : "What is the most important detail that should drive this PRD?",
         options: null,
-        rationale: generated
-          ? ""
-          : "Subagent did not return a parseable question; using fallback.",
+        rationale: "Subagent did not return a parseable question; using fallback.",
         asked_at: new Date().toISOString(),
-      };
-
-  return appendTurnAndAsk(state, turn);
+      },
+    );
+  }
+  return appendTurnAndAsk(state, { round: expectedRound, ...generated, asked_at: new Date().toISOString() });
 }
 
 export const handleClarification: StepHandler = ({ state, result }) => {

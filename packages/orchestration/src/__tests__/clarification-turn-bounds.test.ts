@@ -90,6 +90,19 @@ it("records unreadable compose text without echoing it or the upstream error", (
   expectRejected(submit("UNTRUSTED", seed, huge), "no parseable question object (9 UTF-16 code units)");
 });
 
+it("keeps a contextual fallback exactly at the ceiling", () => {
+  const description = "x".repeat(1000 - fallback.length + 1);
+  const issued = submit("", { ...seed, feature_description: description });
+  expect(issued.state.clarifications[0]?.question).toBe(fallback.replace('"x"', `"${description}"`));
+});
+
+it("records a missing matching invocation as zero characters", () => {
+  const issued = step({ state: seed, result: { kind: "subagent_batch_result", batch_id: "clarification_compose_1",
+    responses: [{ invocation_id: "other", raw_text: JSON.stringify(normal) }],
+  } });
+  expectRejected(issued, "no parseable question object (0 UTF-16 code units)");
+});
+
 it("uses a complete generic fallback when the feature would overflow its question", () => {
   const issued = submit("", { ...seed, feature_description: huge });
   expect(issued.state.clarifications[0]?.question).toBe("What is the most important detail that should drive this PRD?");
