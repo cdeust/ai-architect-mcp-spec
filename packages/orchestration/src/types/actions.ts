@@ -323,8 +323,9 @@ export type NextAction = z.infer<typeof NextActionSchema>;
 export const UserAnswerSchema = z.object({
   kind: z.literal("user_answer"),
   question_id: z.string(),
-  // source: AskUserActionSchema offers at most four options. Allow a fourfold margin for host input.
-  selected: z.array(z.string()).max(16).default([]),
+  // A selection cannot exceed the offered options. These questions are single-select:
+  // the matcher already rejects more than one nonblank entry.
+  selected: z.array(z.string()).max(ASK_USER_MAX_OPTIONS).default([]),
   freeform: z.string().optional(),
 });
 export type UserAnswer = z.infer<typeof UserAnswerSchema>;
