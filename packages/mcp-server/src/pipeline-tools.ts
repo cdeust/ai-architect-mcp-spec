@@ -444,7 +444,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
     "format:'grounding'); format:'grounding' returns the codebase_grounding (+ " +
     "prd_validation when it fits) blobs format:'full' sheds first; format:'validation' " +
     "returns prd_validation alone (the blob format:'grounding' sheds when the pair " +
-    "overshoots); format:'action' returns the last action emitted for this run with " +
+    "overshoots); format:'action' returns the last action (re-evaluating a pending implementation question) with " +
     "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
     "submit_action_result response's __bounded.applied records action.invocations[]." +
     "prompt: the prompts from that record's next_offset on are omitted stubs, and " +
@@ -498,7 +498,8 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         // action.invocations[].prompt. Paged by whole invocations under
         // MAX_RESPONSE_CHARS: the unpaged refetch measured ~112k chars in the
         // 2026-10-10 audit (#125). The action is the one kept with the state,
-        // in memory or in the run's file. source: page-action-response.ts.
+        // in memory or in the run's file. A pending implementation question
+        // can be upgraded to match the current gate policy. source: page-action-response.ts.
         const page = pageActionResponse(
           state.run_id,
           refreshImplementationGateQuestion(state, found.run.action),

@@ -202,7 +202,10 @@ it("reports quantity and publication contradictions through the MCP validator", 
   }
 }, 120_000);
 
-it("repairs the verdict of a pre-upgrade checkpoint through the PRD-only path", async () => {
+it.each([
+  { savedOption: "Implement", answer: "PRD only" },
+  { savedOption: "Implement anyway (dérogation explicite)", answer: "Override policy (explicit)" },
+])("updates the old $savedOption choice and accepts $answer", async ({ savedOption, answer }) => {
   const home = mkdtempSync(join(tmpdir(), "prd-gen-define-legacy-"));
   const run_id = "run_legacy_define";
   const formerReport = `prd-output/${run_id}/10-verification-report.md`;
@@ -225,7 +228,7 @@ it("repairs the verdict of a pre-upgrade checkpoint through the PRD-only path", 
   }, {
     kind: "ask_user", question_id: "implementation_gate", header: "Proceed to implementation?",
     description: "The PRD/specs are ready.", multi_select: false,
-    options: [{ label: "PRD only" }, { label: "Implement" }],
+    options: [{ label: "PRD only" }, { label: savedOption }],
   });
   let server: StdioServer | undefined;
   try {
@@ -237,7 +240,7 @@ it("repairs the verdict of a pre-upgrade checkpoint through the PRD-only path", 
       options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
     });
     const submit = (result: ActionResult) => call<Envelope>(server!, "submit_action_result", { run_id, result });
-    const choice = await submit({ kind: "user_answer", question_id: "implementation_gate", selected: ["PRD only"] });
+    const choice = await submit({ kind: "user_answer", question_id: "implementation_gate", selected: [answer] });
     const report = NextActionSchema.parse(choice.action);
     expect(report).toMatchObject({
       kind: "write_file",
@@ -246,6 +249,10 @@ it("repairs the verdict of a pre-upgrade checkpoint through the PRD-only path", 
     });
 
     const acknowledged = await submit({ kind: "file_written", path: formerReport, bytes: 1 });
+    if (answer === "Override policy (explicit)") {
+      expect(acknowledged.current_step).toBe("implementation");
+      return;
+    }
     const dispatch = makeCannedDispatcher();
     const next = NextActionSchema.parse(acknowledged.action);
     const done = next.kind === "done" ? next : NextActionSchema.parse((await submit(dispatch(next)!)).action);

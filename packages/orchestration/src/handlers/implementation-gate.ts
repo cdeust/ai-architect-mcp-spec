@@ -210,7 +210,7 @@ export const handleImplementationGate: StepHandler = ({ state, result }) => {
 export function refreshImplementationGateQuestion(state: PipelineState, action: NextAction | null): NextAction | null {
   if (state.current_step !== "implementation_gate" || action?.kind !== "ask_user" ||
       action.question_id !== IMPLEMENTATION_GATE_QUESTION_ID ||
-      !action.options?.some(({ label }) => label === GATE_OPTION_IMPLEMENT)) return action;
+      action.options?.some(({ label }) => label === GATE_OPTION_OVERRIDE_POLICY)) return action;
   const findings = defineFindings(state);
   return findings.length === 0 ? action : buildPolicyGateQuestion(evaluateRunPolicy(state, findings));
 }
