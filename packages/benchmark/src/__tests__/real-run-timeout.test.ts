@@ -45,6 +45,8 @@ posixTest.each(["complete", "incomplete", "billed error"])("handles %s output wh
     const fixture = new URL("./fixtures/claude-cli-result.json", import.meta.url);
     await writeFile(program, [
       "#!/bin/sh",
+      // Consume the prompt before exiting so this fixture exercises the inherited output pipe alone.
+      "/bin/cat >/dev/null",
       '/bin/sleep 10 &',
       'echo $! > "$0.descendant"',
       ...(output === "billed error" ? [
@@ -80,7 +82,7 @@ posixTest.each(["ESRCH", "EPERM"])("keeps the parsed result when the group probe
   try {
     const program = join(dir, "stand-in");
     const fixture = fileURLToPath(new URL("./fixtures/claude-cli-result.json", import.meta.url));
-    await writeFile(program, `#!/bin/sh\necho $$ > "$0.pid"\nexec /bin/cat "${fixture}"\n`, { mode: 0o700 });
+    await writeFile(program, `#!/bin/sh\n/bin/cat >/dev/null\necho $$ > "$0.pid"\nexec /bin/cat "${fixture}"\n`, { mode: 0o700 });
     const [{ plan }] = await loadArms(fileURLToPath(new URL("../../real-run/plans/smoke.json", import.meta.url)));
     plan.limits.max_invocations = 1;
     const record = await runBench(plan, { invoke: makeClaudeInvoker(1500, dir, program), record: () => {}, clock: Date.now });
