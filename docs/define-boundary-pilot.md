@@ -1,0 +1,15 @@
+# Define boundary pilot
+
+The host drives the stdio server built from the producer baseline `e6bdbbbce6b6e90941e59aabe6f38378c4168ee4`. The [delivery-command fixture](../packages/mcp-server/src/__tests__/fixtures/define-delivery-command.json) records the source of the design-derived intent, questions, answers and drafts. The [stdio test](../packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) substitutes local responses for external actions and writes the exported artifacts to an isolated directory.
+
+| Probe | Observed baseline |
+|---|---|
+| Delivery-command draft | MCP exposes clarification, section generation, file export, self-check and the implementation gate in that order. The host receives `01-prd.md` and `10-verification-report.md`. Self-check reports `needs_attention`. |
+| Restart at the gate | The same run ID returns the same saved decision prompt and full state after a server restart. The host stops at the prompt. |
+| Semantically empty draft | The same input with each draft set to `ok` yields no external self-check action, reports `passed` with a hard-output score of `1.00`, and reaches the implementation gate. |
+| Incompatible quantities in separate sections | The document verifier returns `contradictory_requirements` for one hour versus three hours. |
+| Incompatible publication decisions in separate sections | The document verifier does not emit `contradictory_requirements` for automatic publication versus stopping before publication with `--until ci`. |
+
+The test reaches the producer's implementation gate through MCP stdio. The architect-os Define consumer and its versioned input fixture still need to be exercised. The downstream step reader at architect-os revision `be492ac325aad604f073c7cb9613cda67b7952ce` reads `step.json` and `brief.md` after planning. Its contract is distinct from the Define handoff being characterized here.
+
+From the producer root, run `pnpm build` followed by `pnpm exec vitest run packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts`.

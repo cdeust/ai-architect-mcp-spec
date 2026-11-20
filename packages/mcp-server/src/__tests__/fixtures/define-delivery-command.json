@@ -1,0 +1,29 @@
+{
+  "producerBaseline": "e6bdbbbce6b6e90941e59aabe6f38378c4168ee4",
+  "launcher": "packages/mcp-server/dist/index.js built with pnpm build",
+  "design": {
+    "repository": "cdeust/architect-os",
+    "revision": "be492ac325aad604f073c7cb9613cda67b7952ce",
+    "path": "docs/design/orchestration-fable-5-2.md",
+    "section": "Étape 1, la commande de livraison : conception",
+    "downstreamStepReader": "packages/sandbox/src/step-tool.ts",
+    "answersOrigin": "Derived from the design for this test"
+  },
+  "request": {
+    "feature_description": "Specify npm run deliver -- <name> for a commit already prepared in the delivery worktree.",
+    "prd_context": "feature",
+    "request_size": "tiny"
+  },
+  "clarifications": [
+    { "question": "Which commit may the command deliver?", "answer": "Deliver only the exact commit accepted by the local gate and CI. Stop at the first failing phase." },
+    { "question": "How may the command update remote refs?", "answer": "Use fast-forward pushes without force. Read both destination refs again immediately before publication." },
+    { "question": "Where can a person stop and decide whether to publish?", "answer": "With --until ci, stop before publication and leave the publication decision to a person." },
+    { "question": "How does the command resume a partial delivery?", "answer": "On the same commit, recheck both destination refs and verify the ruleset result for any already-published ref before proceeding." }
+  ],
+  "drafts": {
+    "overview": "The delivery command verifies and publishes an already prepared commit. Its checks bind the exact commit to the results of the gate and CI.",
+    "requirements": "- FR-001: Publish only the commit accepted by the local gate and CI.\n- FR-002: Stop before publication with `--until ci`.\n- FR-003: Recheck both destination refs on resume and require a passing ruleset result for a ref that was already advanced.",
+    "acceptance_criteria": "- AC-001: Given a failing check, the command stops and publishes no commit (FR-001).\n- AC-002: Given `--until ci`, the command ends after CI before any publication (FR-002).\n- AC-003: Given a partially completed delivery with a failed ruleset result, resuming stops before the next update (FR-003).",
+    "testing": "Replay a gate failure, a successful `--until ci` stop, a ref change and a partial publication with a failed ruleset result using local stand-ins."
+  }
+}
