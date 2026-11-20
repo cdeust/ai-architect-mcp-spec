@@ -197,13 +197,12 @@ describe("buildSectionPrompt", () => {
     expect(out).toContain("Feature");
   });
 
-  it("includes the feature description", () => {
+  it("includes the feature description when no clarification history is supplied", () => {
     const out = buildSectionPrompt({
       section_type: "requirements",
       feature_description: "OAuth login for admin console",
       prd_context: "feature",
       recall_summary: "",
-      clarification_qa: [],
       prior_violations: [],
       attempt: 1,
     });
