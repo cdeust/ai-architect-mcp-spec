@@ -58900,6 +58900,57 @@ function readDefineHandoff(state, action) {
   return { handoff: parsed.data };
 }
 
+// packages/orchestration/dist/verified-plan.js
+import { createHash } from "node:crypto";
+var StepName = external_exports.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
+var ProposalSchema = external_exports.strictObject({
+  step: StepName,
+  objective: external_exports.string(),
+  verification: external_exports.string(),
+  acceptance_ids: external_exports.array(external_exports.string())
+});
+function objectiveFor(define2, intent) {
+  return [intent.trim(), ...define2.requirements.map(({ id, text: text2 }) => `${id}: ${text2}`)].join("\n").trimEnd();
+}
+function verificationFor(define2) {
+  return define2.acceptance.map(({ id, text: text2, requirement_ids }) => `${id} [${requirement_ids.join(", ")}]: ${text2}`).join("\n").trimEnd();
+}
+function verifyPlanProposal(define2, intent, value) {
+  const parsed = ProposalSchema.safeParse(value);
+  if (!parsed.success || intent.trim().length === 0)
+    return void 0;
+  const proposal = parsed.data;
+  const ids = proposal.acceptance_ids;
+  if (ids.length !== define2.acceptance.length || define2.acceptance.some(({ id }, index2) => ids[index2] !== id) || proposal.objective !== objectiveFor(define2, intent) || proposal.verification !== verificationFor(define2))
+    return void 0;
+  return proposal;
+}
+function jsonFileSha256(value) {
+  return createHash("sha256").update(JSON.stringify(value) + "\n").digest("hex");
+}
+function buildVerifiedPlan(define2, intent, step2) {
+  const name323 = StepName.safeParse(step2);
+  if (!name323.success) {
+    return { error: { code: "plan_step_invalid", message: "Supply a valid architect-os Step name in plan_step." } };
+  }
+  const proposal = verifyPlanProposal(define2, intent, {
+    step: name323.data,
+    objective: objectiveFor(define2, intent),
+    verification: verificationFor(define2),
+    acceptance_ids: define2.acceptance.map(({ id }) => id)
+  });
+  if (!proposal) {
+    return { error: { code: "plan_source_invalid", message: "The saved intent and Define criteria must yield a complete plan." } };
+  }
+  const binding = {
+    version: 1,
+    run_id: define2.run_id,
+    define_sha256: jsonFileSha256({ handoff: define2 }),
+    proposal_sha256: jsonFileSha256(proposal)
+  };
+  return { verified_plan: { ...binding, plan_sha256: jsonFileSha256(binding), proposal } };
+}
+
 // packages/mcp-server/dist/fit-page.js
 function selfMeasuredChars(zeroChars) {
   for (let digits2 = 1; ; digits2++) {
@@ -105558,6 +105609,13 @@ function architectOsRequired() {
     isError: true
   };
 }
+var planningSizeErrors = {
+  define: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+  plan: { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." }
+};
+function planningSizeError(kind) {
+  return { content: [{ type: "text", text: JSON.stringify({ error: planningSizeErrors[kind] }) }], isError: true };
+}
 function registerPipelineTools(server2) {
   const startPipeline = server2.tool("start_pipeline", "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.", {
     feature_description: external_exports.string().describe("What the PRD is about \u2014 passed to all prompts"),
@@ -105652,27 +105710,29 @@ function registerPipelineTools(server2) {
       inFlight.delete(run_id);
     }
   });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.", {
+  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint.", {
     run_id: external_exports.string(),
-    format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1"]).default("summary"),
-    invocation_offset: external_exports.number().int().min(0).default(0)
-  }, { readOnlyHint: true }, async ({ run_id, format: format6, invocation_offset }) => {
+    format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"]).default("summary"),
+    invocation_offset: external_exports.number().int().min(0).default(0),
+    plan_step: external_exports.string().optional().describe("Operator-selected architect-os Step name for verified_plan_v1.")
+  }, { readOnlyHint: true }, async ({ run_id, format: format6, invocation_offset, plan_step }) => {
     const found = runs.find(run_id);
     if (found.kind !== "found")
       return runNotFound(run_id, found);
     const state = found.run.state;
-    if (format6 === "define_handoff_v1") {
-      const result = readDefineHandoff(state, found.run.action);
-      const text2 = JSON.stringify(result);
-      if (text2.length > MAX_RESPONSE_CHARS) {
-        return {
-          content: [{ type: "text", text: JSON.stringify({
-            error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." }
-          }) }],
-          isError: true
-        };
+    if (format6 === "define_handoff_v1" || format6 === "verified_plan_v1") {
+      const define2 = readDefineHandoff(state, found.run.action);
+      const sourceText = JSON.stringify(define2);
+      if (sourceText.length > MAX_RESPONSE_CHARS)
+        return planningSizeError("define");
+      if (format6 === "define_handoff_v1" || "error" in define2) {
+        return { content: [{ type: "text", text: sourceText }], isError: "error" in define2 };
       }
-      return { content: [{ type: "text", text: text2 }], isError: "error" in result };
+      const plan = buildVerifiedPlan(define2.handoff, state.feature_description, plan_step);
+      const text2 = JSON.stringify(plan);
+      if (text2.length > MAX_RESPONSE_CHARS)
+        return planningSizeError("plan");
+      return { content: [{ type: "text", text: text2 }], isError: "error" in plan };
     }
     let payload;
     if (format6 === "full") {

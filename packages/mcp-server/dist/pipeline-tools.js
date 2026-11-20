@@ -14,7 +14,7 @@
  * call submit_action_result with the result, repeat until `done`.
  */
 import { z } from "zod";
-import { MAX_RESPONSE_CHARS, newPipelineState, readDefineHandoff, ARCHITECT_OS_BOUNDARY, isLegacyExecutionCheckpoint, isRetiredImplementationAnswer, recordLegacyDefineRefusal, refreshImplementationGateQuestion, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
+import { MAX_RESPONSE_CHARS, newPipelineState, readDefineHandoff, buildVerifiedPlan, ARCHITECT_OS_BOUNDARY, isLegacyExecutionCheckpoint, isRetiredImplementationAnswer, recordLegacyDefineRefusal, refreshImplementationGateQuestion, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
 import { SectionTypeSchema, PRDContextSchema, RequestSizeSchema, REQUEST_SIZE_CONFIGS, REQUEST_SIZE_DEFAULT, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
@@ -203,6 +203,13 @@ function architectOsRequired() {
         isError: true,
     };
 }
+const planningSizeErrors = {
+    define: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+    plan: { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." },
+};
+function planningSizeError(kind) {
+    return { content: [{ type: "text", text: JSON.stringify({ error: planningSizeErrors[kind] }) }], isError: true };
+}
 export function registerPipelineTools(server) {
     // ─── start_pipeline ─────────────────────────────────────────────────────
     const startPipeline = server.tool("start_pipeline", "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.", {
@@ -370,29 +377,32 @@ export function registerPipelineTools(server) {
         "next_offset is the invocation_offset to read them from. It is " +
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-        "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.", {
+        "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. " +
+        "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint.", {
         run_id: z.string(),
         format: z
-            .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1"])
+            .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"])
             .default("summary"),
         invocation_offset: z.number().int().min(0).default(0),
-    }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset }) => {
+        plan_step: z.string().optional().describe("Operator-selected architect-os Step name for verified_plan_v1."),
+    }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset, plan_step }) => {
         const found = runs.find(run_id);
         if (found.kind !== "found")
             return runNotFound(run_id, found);
         const state = found.run.state;
-        if (format === "define_handoff_v1") {
-            const result = readDefineHandoff(state, found.run.action);
-            const text = JSON.stringify(result);
-            if (text.length > MAX_RESPONSE_CHARS) {
-                return {
-                    content: [{ type: "text", text: JSON.stringify({
-                                error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
-                            }) }],
-                    isError: true,
-                };
+        if (format === "define_handoff_v1" || format === "verified_plan_v1") {
+            const define = readDefineHandoff(state, found.run.action);
+            const sourceText = JSON.stringify(define);
+            if (sourceText.length > MAX_RESPONSE_CHARS)
+                return planningSizeError("define");
+            if (format === "define_handoff_v1" || "error" in define) {
+                return { content: [{ type: "text", text: sourceText }], isError: "error" in define };
             }
-            return { content: [{ type: "text", text }], isError: "error" in result };
+            const plan = buildVerifiedPlan(define.handoff, state.feature_description, plan_step);
+            const text = JSON.stringify(plan);
+            if (text.length > MAX_RESPONSE_CHARS)
+                return planningSizeError("plan");
+            return { content: [{ type: "text", text }], isError: "error" in plan };
         }
         let payload;
         if (format === "full") {

@@ -121,3 +121,4 @@ export {
   type StubAgentInvokerOptions,
 } from "./production-dispatcher.js";
 export { readDefineHandoff } from "./define-handoff.js";
+export { buildVerifiedPlan } from "./verified-plan.js";

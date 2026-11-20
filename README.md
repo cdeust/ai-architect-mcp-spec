@@ -403,6 +403,8 @@ The reducer advances through PRD generation, specification verification and fina
 
 After self-check, the legacy-named `implementation_gate` presents specification verification. Use `get_pipeline_state` with `format: "define_handoff_v1"` while the question is pending to read validated requirements and acceptance criteria for planning. `PRD only` finishes the run. Architect-os owns implementation, tests, and publication. With the updated launcher, an older execution checkpoint remains readable in state formats. Requesting its action or submitting a result returns `architect_os_required`.
 
+At the same pending checkpoint, request `get_pipeline_state` with `format: "verified_plan_v1"` and `plan_step` set to an architect-os Step name. Spec derives one Step proposal from the saved intent, requirements and acceptance criteria, then verifies the proposal against that source. The result includes the proposal and the SHA-256 fingerprints of the Define and proposal JSON files (compact UTF-8 JSON with a terminating newline). The `plan_sha256` fingerprint covers the version, run ID and both file fingerprints. Architect-os prepares an execution manifest with the operator policy for the owner to approve. This projection covers a single Step. Both the Define source and plan must fit their MCP response budgets.
+
 
 Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
 
