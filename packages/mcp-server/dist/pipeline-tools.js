@@ -14,7 +14,7 @@
  * call submit_action_result with the result, repeat until `done`.
  */
 import { z } from "zod";
-import { newPipelineState, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
+import { MAX_RESPONSE_CHARS, newPipelineState, readDefineHandoff, refreshImplementationGateQuestion, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
 import { SectionTypeSchema, PRDContextSchema, RequestSizeSchema, REQUEST_SIZE_CONFIGS, REQUEST_SIZE_DEFAULT, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
@@ -354,17 +354,17 @@ export function registerPipelineTools(server) {
         "format:'grounding'); format:'grounding' returns the codebase_grounding (+ " +
         "prd_validation when it fits) blobs format:'full' sheds first; format:'validation' " +
         "returns prd_validation alone (the blob format:'grounding' sheds when the pair " +
-        "overshoots); format:'action' returns the last action emitted for this run with " +
+        "overshoots); format:'action' returns the last action (re-evaluating a pending implementation question) with " +
         "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
         "submit_action_result response's __bounded.applied records action.invocations[]." +
         "prompt: the prompts from that record's next_offset on are omitted stubs, and " +
         "next_offset is the invocation_offset to read them from. It is " +
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-        "page, null on the last one.", {
+        "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.", {
         run_id: z.string(),
         format: z
-            .enum(["full", "summary", "grounding", "validation", "action"])
+            .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1"])
             .default("summary"),
         invocation_offset: z.number().int().min(0).default(0),
     }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset }) => {
@@ -372,6 +372,19 @@ export function registerPipelineTools(server) {
         if (found.kind !== "found")
             return runNotFound(run_id, found);
         const state = found.run.state;
+        if (format === "define_handoff_v1") {
+            const result = readDefineHandoff(state, found.run.action);
+            const text = JSON.stringify(result);
+            if (text.length > MAX_RESPONSE_CHARS) {
+                return {
+                    content: [{ type: "text", text: JSON.stringify({
+                                error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+                            }) }],
+                    isError: true,
+                };
+            }
+            return { content: [{ type: "text", text }], isError: "error" in result };
+        }
         let payload;
         if (format === "full") {
             // Bound the full-state serialization to the 100,000-char MCP budget.
@@ -409,8 +422,9 @@ export function registerPipelineTools(server) {
             // action.invocations[].prompt. Paged by whole invocations under
             // MAX_RESPONSE_CHARS: the unpaged refetch measured ~112k chars in the
             // 2026-10-10 audit (#125). The action is the one kept with the state,
-            // in memory or in the run's file. source: page-action-response.ts.
-            const page = pageActionResponse(state.run_id, found.run.action, 
+            // in memory or in the run's file. A pending implementation question
+            // can be upgraded to match the current gate policy. source: page-action-response.ts.
+            const page = pageActionResponse(state.run_id, refreshImplementationGateQuestion(state, found.run.action), 
             // zod applies the default over MCP; a direct handler call (tests,
             // in-process hosts) may omit the field.
             invocation_offset ?? 0);
