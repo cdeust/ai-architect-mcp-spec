@@ -197,6 +197,35 @@ function stateAtGateWithExportedPrd(): PipelineState {
   };
 }
 
+it("revalidates an old pending checkpoint and replaces its optimistic report", () => {
+  const before = stateAtGateWithExportedPrd();
+  const path = "prd-output/impl_gate_001/10-verification-report.md";
+  const state: PipelineState = {
+    ...before,
+    written_files: [...before.written_files, path],
+    sections: [{ ...before.sections[0]!, section_type: "requirements", content: "ok" }],
+  };
+  const answer = (state: PipelineState, option: string) => step({
+    state,
+    result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [option] },
+  });
+  const rejected = answer(state, "Implement");
+  expect(rejected.action).toMatchObject({
+    kind: "ask_user",
+    description: expect.stringContaining("The requirements section must define"),
+  });
+  expect(rejected.state.post_specs?.decision).toBe("pending");
+  const approved = answer(rejected.state, "Override policy (explicit)");
+  expect(approved.action).toMatchObject({
+    kind: "write_file",
+    path,
+    content: expect.stringContaining("Computed status: blocked"),
+  });
+  const acknowledged = step({ state: approved.state, result: { kind: "file_written", path } });
+  expect(acknowledged.state.written_files.filter(file => file === path)).toHaveLength(1);
+  expect(acknowledged.state.current_step).toBe("implementation");
+});
+
 describe("implementation_gate — verification-report export (root-cause fix)", () => {
   it("writes 10-verification-report.md BEFORE asking the implementation decision", () => {
     const out = step({ state: stateAtGateWithExportedPrd() });

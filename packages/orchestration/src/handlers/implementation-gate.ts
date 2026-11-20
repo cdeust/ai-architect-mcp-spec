@@ -47,6 +47,7 @@
 
 import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
+import type { NextAction } from "../types/actions.js";
 import { type PipelineState } from "../types/state.js";
 import { initialPostSpecs, type PostSpecsState } from "../types/state/post-specs-state.js";
 import { IMPLEMENTATION_GATE_QUESTION_ID } from "./protocol-ids.js";
@@ -57,8 +58,9 @@ import {
   GATE_OPTION_IMPLEMENT_ANYWAY,
   GATE_OPTION_OVERRIDE_POLICY,
   GATE_OPTION_PRD_ONLY,
-  evaluatePolicy,
-  resolveVerificationPolicy,
+  defineFindings,
+  evaluateRunPolicy,
+  refreshDefineOutcome,
   type PolicyVerdict,
 } from "./verification-policy.js";
 
@@ -125,8 +127,8 @@ function advance(state: PipelineState, postSpecs: PostSpecsState) {
 /**
  * precondition:  the answer matched an option offered for this policy verdict.
  * postcondition: computes the decision + any derogation record, then either
- *                (a) returns the post-decision report write (non-"pass"
- *                verdicts only, single write) so the recorded decision is
+ *                (a) writes the non-pass report, replacing any report
+ *                exported before the run learned the current policy, so the recorded decision is
  *                rendered, or (b) advances directly ("pass" verdicts — no
  *                derogation possible, nothing new to render).
  */
@@ -150,7 +152,7 @@ function handleGateAnswer(
       : {}),
   };
 
-  if (policyVerdict.status !== "pass" && !hasVerificationReport(state)) {
+  if (policyVerdict.status !== "pass") {
     const stateWithDecision: PipelineState = { ...state, post_specs: newPostSpecs };
     const action = writeReportAction(stateWithDecision);
     if (action) return { state: stateWithDecision, action };
@@ -159,12 +161,10 @@ function handleGateAnswer(
 }
 
 export const handleImplementationGate: StepHandler = ({ state, result }) => {
-  const stateAfterReportWrite = recordReportWrite(state, result);
+  const findings = defineFindings(state);
+  const stateAfterReportWrite = recordReportWrite(refreshDefineOutcome(state, findings), result);
   const postSpecs = ensurePostSpecs(stateAfterReportWrite);
-  const policyVerdict: PolicyVerdict = evaluatePolicy(
-    stateAfterReportWrite.pending_completion?.verification,
-    resolveVerificationPolicy(stateAfterReportWrite.verification_policy),
-  );
+  const policyVerdict = evaluateRunPolicy(stateAfterReportWrite, findings);
 
   // (A) The gate answer was already processed on a PRIOR call (postSpecs.decision
   // left "pending" only until handleGateAnswer runs) and this file_written is
@@ -205,3 +205,12 @@ export const handleImplementationGate: StepHandler = ({ state, result }) => {
     action: question,
   };
 };
+
+/** Project a pending pre-upgrade question under the current deterministic rules. */
+export function refreshImplementationGateQuestion(state: PipelineState, action: NextAction | null): NextAction | null {
+  if (state.current_step !== "implementation_gate" || action?.kind !== "ask_user" ||
+      action.question_id !== IMPLEMENTATION_GATE_QUESTION_ID ||
+      !action.options?.some(({ label }) => label === GATE_OPTION_IMPLEMENT)) return action;
+  const findings = defineFindings(state);
+  return findings.length === 0 ? action : buildPolicyGateQuestion(evaluateRunPolicy(state, findings));
+}

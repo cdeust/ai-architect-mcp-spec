@@ -18,6 +18,7 @@ import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server
 import { z } from "zod";
 import {
   newPipelineState,
+  refreshImplementationGateQuestion,
   runRequestSize,
   step,
   ActionResultSchema,
@@ -500,7 +501,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         // in memory or in the run's file. source: page-action-response.ts.
         const page = pageActionResponse(
           state.run_id,
-          found.run.action,
+          refreshImplementationGateQuestion(state, found.run.action),
           // zod applies the default over MCP; a direct handler call (tests,
           // in-process hosts) may omit the field.
           invocation_offset ?? 0,

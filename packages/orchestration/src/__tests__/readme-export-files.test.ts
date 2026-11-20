@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RequestSize } from "@prd-gen/core";
-import { newPipelineState, plannedSections, SECTIONS_BY_CONTEXT, step } from "../index.js";
+import { makeCannedDispatcher, newPipelineState, plannedSections, SECTIONS_BY_CONTEXT, step } from "../index.js";
 import type { PipelineState } from "../index.js";
 
 const README = readFileSync(
@@ -29,6 +29,11 @@ const README = readFileSync(
 type Section = PipelineState["sections"][number];
 type Context = keyof typeof SECTIONS_BY_CONTEXT;
 
+const SECTION_CONTENT: Partial<Record<Section["section_type"], string>> = {
+  requirements: "- FR-001: Encrypt exported files.",
+  acceptance_criteria: "- AC-001: The exported file can only be read with its key (FR-001).",
+};
+
 function passed(section_type: Section["section_type"]): Section {
   return {
     section_type,
@@ -37,7 +42,7 @@ function passed(section_type: Section["section_type"]): Section {
     violation_count: 0,
     last_violations: [],
     attempt_log: [],
-    content: `${section_type} content`,
+    content: SECTION_CONTENT[section_type] ?? `${section_type} content`,
   };
 }
 
@@ -50,11 +55,16 @@ function exportedFiles(context: Context, request_size: RequestSize = "standard")
     sections: [...plannedSections(context, request_size).map(passed), passed("jira_tickets")],
   };
   const written: string[] = [];
+  const dispatch = makeCannedDispatcher();
   let out = step({ state });
-  for (let i = 0; i < 20 && out.action.kind === "write_file"; i++) {
-    const path = out.action.path;
-    written.push(path.slice(path.lastIndexOf("/") + 1));
-    out = step({ state, result: { kind: "file_written", path, bytes: 1 } });
+  for (let i = 0; i < 20 && out.action.kind !== "ask_user"; i++) {
+    if (out.action.kind === "write_file") {
+      const path = out.action.path;
+      written.push(path.slice(path.lastIndexOf("/") + 1));
+    }
+    const result = dispatch(out.action);
+    if (!result) break;
+    out = step({ state, result });
     state = out.state;
   }
   return written.sort();

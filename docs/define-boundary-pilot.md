@@ -12,6 +12,8 @@ The host drives the stdio server built from the producer baseline `e6bdbbbce6b6e
 
 The test reaches the producer's implementation gate through MCP stdio. The architect-os Define consumer and its versioned input fixture remain to be exercised.
 
+The corrective replay verifies two deterministic blockers. A supplied requirements or acceptance section with no numbered definition lowers the score and requires an explicit override at the implementation gate. Opposing publication instructions also require an explicit override when two sections name the same flag, value and publication target using the tested conditional prose format. The gate reports the findings and rejects a plain `Implement` answer. A resumed pending run is checked against the same rules. The positive pilot retains its original action trace and pre-decision report.
+
 The architect-os step reader at revision `be492ac325aad604f073c7cb9613cda67b7952ce` reads `step.json` and `brief.md` after planning. A replay against that revision passed three negative-control scenarios (22 steps). A missing `step.json`, a schema-invalid `step.json` and a missing `brief.md` each returned exit 2 without creating a session. These scenarios exercise the post-Plan step reader.
 
 From the producer root, run `pnpm build` followed by `pnpm exec vitest run packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts`.

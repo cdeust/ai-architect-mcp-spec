@@ -429,6 +429,13 @@ function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): s
   return lines.join("\n");
 }
 
+/** Raw paragraph lines, excluding fenced and indented code blocks. */
+export function* proseLines(content: string): Generator<string> {
+  for (const leaf of leavesOf(content)) {
+    if (leaf.type === "paragraph") yield* leaf.inline.split("\n");
+  }
+}
+
 /**
  * The requirement definitions of a section, in document order: table rows,
  * list items, headings and bold lines. `prefixes` names the identifiers read

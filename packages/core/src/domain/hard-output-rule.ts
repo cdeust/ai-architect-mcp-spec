@@ -41,6 +41,8 @@ export const HardOutputRuleSchema = z.enum([
   "measurable_requirements",
   "testable_acceptance_criteria",
   "contradictory_requirements",
+  "missing_prd_definitions",
+  "contradictory_publication_policy",
   "consistent_control_names",
   // Architecture & Code Quality
   "generic_over_specific",

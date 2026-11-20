@@ -1,5 +1,65 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`resumes the conflicting publication specification at Define without starting implementation > observed handoff 1`] = `
+{
+  "artifacts": [
+    "01-prd.md",
+    "05-testing.md",
+    "07-jira-tickets.md",
+    "00-run-notes.md",
+  ],
+  "pendingDecision": {
+    "description": "Conflicting publication instructions for --until ci: overview says "With \`--until ci\`, publish the verified commit automatically."; requirements/FR-002 says "With \`--until ci\`, stop after CI and never publish the verified commit.". A bare "Implement" is not offered while this run is blocked.",
+    "header": "Verification policy blocks implementation",
+    "kind": "ask_user",
+    "multi_select": false,
+    "options": [
+      {
+        "description": "Stop here. No code changes.",
+        "label": "PRD only",
+      },
+      {
+        "description": "Explicit override: implement despite the block above.",
+        "label": "Override policy (explicit)",
+      },
+    ],
+    "question_id": "implementation_gate",
+  },
+}
+`;
+
+exports[`resumes the conflicting publication specification at Define without starting implementation 1`] = `
+[
+  "preflight/call_cortex_tool/memory_stats",
+  "preflight/spawn_subagents/preflight_subagent_probe",
+  "input_analysis/call_cortex_tool/recall",
+  "clarification/spawn_subagents/clarification_compose_1",
+  "clarification/ask_user/clarification_answer",
+  "clarification/spawn_subagents/clarification_compose_2",
+  "clarification/ask_user/clarification_answer",
+  "clarification/spawn_subagents/clarification_compose_3",
+  "clarification/ask_user/clarification_answer",
+  "clarification/spawn_subagents/clarification_compose_4",
+  "clarification/ask_user/clarification_answer",
+  "clarification/ask_user/clarification_continue",
+  "section_generation/call_cortex_tool/recall",
+  "section_generation/spawn_subagents/section_generate_overview",
+  "section_generation/call_cortex_tool/recall",
+  "section_generation/spawn_subagents/section_generate_requirements",
+  "section_generation/call_cortex_tool/recall",
+  "section_generation/spawn_subagents/section_generate_acceptance_criteria",
+  "section_generation/call_cortex_tool/recall",
+  "section_generation/spawn_subagents/section_generate_testing",
+  "jira_generation/spawn_subagents/jira_generation",
+  "file_export/write_file/01-prd.md",
+  "file_export/write_file/05-testing.md",
+  "file_export/write_file/07-jira-tickets.md",
+  "file_export/write_file/00-run-notes.md",
+  "self_check/spawn_subagents/self_check_verify",
+  "implementation_gate/ask_user/implementation_gate",
+]
+`;
+
 exports[`resumes the delivery-command specification at Define without starting implementation > observed handoff 1`] = `
 {
   "artifacts": [
@@ -69,21 +129,20 @@ exports[`resumes the semantically empty specification at Define without starting
     "05-testing.md",
     "07-jira-tickets.md",
     "00-run-notes.md",
-    "10-verification-report.md",
   ],
   "pendingDecision": {
-    "description": "The PRD/specs are ready. Implement the change now (spawns an engineer, runs tests and review, opens a PR after a human gate), or stop here with PRD-only deliverables (today's behavior)?",
-    "header": "Proceed to implementation?",
+    "description": "The requirements section must define at least one FR or NFR statement. The acceptance_criteria section must define at least one AC statement. A bare "Implement" is not offered while this run is blocked.",
+    "header": "Verification policy blocks implementation",
     "kind": "ask_user",
     "multi_select": false,
     "options": [
       {
-        "description": "Stop here. No code changes — today's default behavior.",
+        "description": "Stop here. No code changes.",
         "label": "PRD only",
       },
       {
-        "description": "Spawn an engineer to implement, test, review, and (after a further gate) open a PR.",
-        "label": "Implement",
+        "description": "Explicit override: implement despite the block above.",
+        "label": "Override policy (explicit)",
       },
     ],
     "question_id": "implementation_gate",
@@ -118,7 +177,6 @@ exports[`resumes the semantically empty specification at Define without starting
   "file_export/write_file/05-testing.md",
   "file_export/write_file/07-jira-tickets.md",
   "file_export/write_file/00-run-notes.md",
-  "implementation_gate/write_file/10-verification-report.md",
   "implementation_gate/ask_user/implementation_gate",
 ]
 `;

@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
-import { makeCannedDispatcher, NextActionSchema, type ActionResult, type NextAction } from "@prd-gen/orchestration";
+import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction } from "@prd-gen/orchestration";
 import { startStdioServer, type StdioServer } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
+import { RunFiles } from "../run-files.js";
 
 interface Envelope {
   readonly run_id: string;
@@ -18,11 +19,20 @@ async function call<T>(server: StdioServer, tool: string, args: Record<string, u
   return JSON.parse(response.text) as T;
 }
 
-function makeHost(output: string, draftOverride?: string) {
+const PUBLISH = "With `--until ci`, publish the verified commit automatically.";
+const STOP = "With `--until ci`, stop after CI and never publish the verified commit.";
+type Pilot = "delivery" | "empty" | "conflict";
+
+function makeHost(output: string, pilot: Pilot) {
   const drafts: Readonly<Record<string, string>> = fixture.drafts;
   const canned = makeCannedDispatcher({ fake_section_draft: section => {
     expect(drafts, `draft for ${section}`).toHaveProperty(section);
-    return draftOverride ?? drafts[section]!;
+    if (pilot === "empty") return "ok";
+    if (pilot === "conflict" && section === "overview") return PUBLISH;
+    if (pilot === "conflict" && section === "requirements") {
+      return drafts[section]!.replace("Stop before publication with `--until ci`.", STOP);
+    }
+    return drafts[section]!;
   } });
   const answers: string[] = [];
   const artifacts = new Map<string, string>();
@@ -86,16 +96,16 @@ async function driveToGate(server: StdioServer, host: ReturnType<typeof makeHost
   throw new Error(`Run did not reach implementation_gate. Trace: ${trace.join(", ")}`);
 }
 
-// Characterization of the producer baseline. The false positive is a defect for the reconciliation phase.
-it.each([
-  { name: "delivery-command specification", draftOverride: undefined, status: "needs_attention" },
-  { name: "semantically empty specification", draftOverride: "ok", status: "passed" },
-])("resumes the $name at Define without starting implementation", async ({ draftOverride, status }) => {
+it.each<{ name: string; pilot: Pilot; finding?: string }>([
+  { name: "delivery-command specification", pilot: "delivery" },
+  { name: "semantically empty specification", pilot: "empty", finding: "The requirements section must define at least one FR or NFR statement." },
+  { name: "conflicting publication specification", pilot: "conflict", finding: "Conflicting publication instructions for --until ci" },
+])("resumes the $name at Define without starting implementation", async ({ pilot, finding }) => {
   const output = mkdtempSync(join(tmpdir(), "prd-gen-define-"));
   const home = join(output, "home");
   mkdirSync(home);
   const start = () => startStdioServer(undefined, { cwd: output, env: { HOME: home, USERPROFILE: home } });
-  const host = makeHost(output, draftOverride);
+  const host = makeHost(output, pilot);
   let server: StdioServer | undefined;
   try {
     server = await start();
@@ -105,13 +115,15 @@ it.each([
     expect({ artifacts: [...host.artifacts.keys()], pendingDecision: action }).toMatchSnapshot("observed handoff");
     expect(host.answers).toEqual(fixture.clarifications.map(turn => turn.answer));
     const prd = readFileSync(join(output, "01-prd.md"), "utf8");
-    if (draftOverride) {
+    if (pilot === "empty") {
       expect(prd).toMatch(/^ok$/m);
       expect(prd).not.toContain("FR-001:");
     } else {
       expect(prd).toContain("FR-001: Publish only the commit accepted by the local gate and CI.");
     }
-    expect(readFileSync(join(output, "10-verification-report.md"), "utf8")).toContain("Verification Report");
+    if (!finding) {
+      expect(readFileSync(join(output, "10-verification-report.md"), "utf8")).toContain("Verification Report");
+    }
 
     const readState = async (active: StdioServer) => {
       const full = await call<{ state: unknown; __bounded: { applied: unknown[] } }>(active, "get_pipeline_state", { run_id, format: "full" });
@@ -122,10 +134,11 @@ it.each([
     expect(before).toMatchObject({
       current_step: "implementation_gate",
       written_files: [...host.artifacts.values()],
-      pending_completion: { outcome: { status } },
+      pending_completion: { outcome: { status: "needs_attention" } },
     });
-    if (draftOverride) {
-      expect(before).toMatchObject({ pending_completion: { summary: expect.stringContaining("Hard-output score: 1.00 / 1.00") } });
+    if (finding) {
+      expect(before).not.toMatchObject({ pending_completion: { summary: expect.stringContaining("Hard-output score: 1.00 / 1.00") } });
+      expect(action.description).toContain(finding);
     }
     await server.close();
     server = await start();
@@ -133,13 +146,36 @@ it.each([
     const recovered = await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" });
     expect(recovered).toMatchObject({ run_id, action });
     expect(await readState(server)).toEqual(before);
+    if (finding) {
+      const answer = (selected: string) => call<Envelope>(server!, "submit_action_result", {
+        run_id,
+        result: { kind: "user_answer", question_id: "implementation_gate", selected: [selected] },
+      });
+      const rejected = await answer("Implement");
+      expect(rejected).toMatchObject({
+        current_step: "implementation_gate",
+        action: { kind: "ask_user", question_id: "implementation_gate", options: action.options },
+      });
+      expect(await readState(server)).toMatchObject({ post_specs: { decision: "pending" } });
+
+      const overridden = await answer("Override policy (explicit)");
+      expect(overridden.current_step).toBe("implementation_gate");
+      const report = NextActionSchema.parse(overridden.action);
+      expect(report).toMatchObject({
+        kind: "write_file",
+        content: expect.stringContaining("Computed status: blocked"),
+      });
+      expect(await readState(server)).toMatchObject({
+        post_specs: { decision: "implement", policy_derogation: { policy_status: "blocked" } },
+      });
+    }
   } finally {
     await server?.close();
     rmSync(output, { recursive: true, force: true });
   }
 }, 120_000);
 
-it("characterizes which cross-section contradictions the document verifier reports", async () => {
+it("reports quantity and publication contradictions through the MCP validator", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "prd-gen-define-verifier-"));
   let server: StdioServer | undefined;
   try {
@@ -155,11 +191,67 @@ it("characterizes which cross-section contradictions the document verifier repor
     expect(quantities.violations).toContainEqual(expect.objectContaining({
       rule: "contradictory_requirements", message: expect.stringContaining("FR-001"),
     }));
-    const publication = await verify(server, "With `--until ci`, publish the verified commit automatically.",
-      "With `--until ci`, stop after CI and never publish the verified commit.");
-    expect(publication.violations.map(finding => finding.rule)).not.toContain("contradictory_requirements");
+    const publication = await verify(server, PUBLISH, STOP);
+    expect(publication.violations).toContainEqual(expect.objectContaining({
+      rule: "contradictory_publication_policy",
+      message: expect.stringContaining("FR-001"),
+    }));
   } finally {
     await server?.close();
     rmSync(scratch, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("repairs the verdict of a pre-upgrade checkpoint through the PRD-only path", async () => {
+  const home = mkdtempSync(join(tmpdir(), "prd-gen-define-legacy-"));
+  const run_id = "run_legacy_define";
+  const formerReport = `prd-output/${run_id}/10-verification-report.md`;
+  const files = new RunFiles(join(home, ".prd-gen", "runs"));
+  const old = newPipelineState({ run_id, feature_description: "Legacy delivery PRD" });
+  files.write({
+    ...old,
+    current_step: "implementation_gate",
+    sections: [
+      { section_type: "overview", status: "passed", content: "Validate a delivery.", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [] },
+      { section_type: "requirements", status: "failed", attempt: 1, violation_count: 1, last_violations: [], attempt_log: [] },
+      { section_type: "acceptance_criteria", status: "passed", content: "", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [] },
+    ],
+    written_files: [`prd-output/${run_id}/01-prd.md`, formerReport],
+    pending_completion: {
+      summary: "Self-check complete.\nHard-output score: 1.00 / 1.00",
+      artifacts: [],
+      outcome: { status: "passed", reasons: [] },
+    },
+  }, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Proceed to implementation?",
+    description: "The PRD/specs are ready.", multi_select: false,
+    options: [{ label: "PRD only" }, { label: "Implement" }],
+  });
+  let server: StdioServer | undefined;
+  try {
+    server = await startStdioServer(undefined, { cwd: home, env: { HOME: home, USERPROFILE: home } });
+    const recovered = await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" });
+    expect(recovered.action).toMatchObject({
+      kind: "ask_user",
+      description: expect.stringContaining("The requirements section must define"),
+      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+    });
+    const submit = (result: ActionResult) => call<Envelope>(server!, "submit_action_result", { run_id, result });
+    const choice = await submit({ kind: "user_answer", question_id: "implementation_gate", selected: ["PRD only"] });
+    const report = NextActionSchema.parse(choice.action);
+    expect(report).toMatchObject({
+      kind: "write_file",
+      path: formerReport,
+      content: expect.stringContaining("Computed status: blocked"),
+    });
+
+    const acknowledged = await submit({ kind: "file_written", path: formerReport, bytes: 1 });
+    const dispatch = makeCannedDispatcher();
+    const next = NextActionSchema.parse(acknowledged.action);
+    const done = next.kind === "done" ? next : NextActionSchema.parse((await submit(dispatch(next)!)).action);
+    expect(done).toMatchObject({ kind: "done", outcome: { status: "needs_attention" }, summary: expect.stringContaining("Hard-output score: 0.70 / 1.00") });
+  } finally {
+    await server?.close();
+    rmSync(home, { recursive: true, force: true });
   }
 }, 120_000);

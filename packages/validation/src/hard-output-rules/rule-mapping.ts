@@ -169,6 +169,8 @@ export const DOCUMENT_LEVEL_RULES = [
   "measurable_requirements",
   "testable_acceptance_criteria",
   "contradictory_requirements",
+  "missing_prd_definitions",
+  "contradictory_publication_policy",
   "consistent_control_names",
 ] as const satisfies readonly HardOutputRule[];
 
