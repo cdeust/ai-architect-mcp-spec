@@ -27,7 +27,8 @@
 // source: issue #118.
 
 import MarkdownIt from "markdown-it";
-import { isHtmlComment, opaqueHtmlBlock, skipHtmlBlockQuote } from "./requirement-html.js";
+import { isHtmlComment, opaqueHtmlBlock } from "./requirement-html.js";
+import { withoutHtmlBlockQuotes } from "./define-html-quotes.js";
 
 /** An ordered list marker that opens a statement right after its identifier. */
 const NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -73,12 +74,6 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
  */
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-
-// Read the entire normative Markdown stream without CommonMark's type-6 HTML
-// fragments; a wrapper and a quote below it must share the same block context.
-const quoteAwareParser = new MarkdownIt("commonmark").enable("table").disable("inline");
-quoteAwareParser.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-quoteAwareParser.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
 
 /**
  * The identifiers a reader of definitions looks for, as three patterns over
@@ -150,7 +145,7 @@ interface Leaf {
  * the growth allocation-bound, near the perf ceiling.
  */
 function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity, excludeBlockQuotes?: boolean): Leaf[] {
-  const tokens = md.parse(content, {});
+  const tokens = md.parse(excludeBlockQuotes ? withoutHtmlBlockQuotes(content) : content, {});
   const leaves: Leaf[] = [];
   const at = (map: [number, number] | null): [number, number] => {
     const first = map === null ? 0 : map[0];
@@ -458,7 +453,7 @@ function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): s
 
 /** Raw paragraph lines, excluding fenced and indented code blocks. */
 export function* proseLines(content: string, excludeBlockQuotes?: boolean): Generator<string> {
-  for (const leaf of leavesOf(content, excludeBlockQuotes ? quoteAwareParser : parser, undefined, undefined, excludeBlockQuotes)) {
+  for (const leaf of leavesOf(content, excludeBlockQuotes ? htmlAsText : parser, undefined, undefined, excludeBlockQuotes)) {
     if (leaf.type === "paragraph") yield* leaf.inline.split("\n");
   }
 }
@@ -475,7 +470,7 @@ export function requirementDefinitions(
   options?: { readonly readSource?: boolean; readonly excludeBlockQuotes?: boolean },
 ): RequirementDefinition[] {
   const ids = definitionIds(prefixes);
-  const parserForDefinitions = options?.excludeBlockQuotes ? quoteAwareParser : parser;
+  const parserForDefinitions = options?.excludeBlockQuotes ? htmlAsText : parser;
   const leaves = leavesOf(content, parserForDefinitions, undefined, undefined, options?.excludeBlockQuotes);
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {

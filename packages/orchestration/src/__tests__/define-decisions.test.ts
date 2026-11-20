@@ -101,7 +101,7 @@ it("validates explicit register citations for a supported table policy and accep
 });
 
 it("ignores every paragraph of a nested HTML quotation and resumes reading after the outer close", () => {
-  const source = `<div>\n<blockquote cite="https://example.com/prior">\n\nA literal \`</blockquote>\` tag.\n\n<blockquote>${AUTO}</blockquote>\n\n${AUTO}\n\n</blockquote>\n</div>\n\n${STOP}`;
+  const source = `<div><blockquote cite="https://example.com/prior">\n\nA literal \`</blockquote>\` tag.\n\n<!--\n</blockquote>\n-->\n\n~~~html\n</blockquote>\n~~~\n\n<blockquote>${AUTO}</blockquote>\n\n${AUTO}\n\n</blockquote>\n</div>\n\n${STOP}`;
   const current = state(source);
   const { byTarget, conflicts } = deriveDefineDecisions(current);
   expect(conflicts.size).toBe(0);
@@ -121,6 +121,27 @@ it("keeps compatible manual and automatic policies distinct and validates the sc
   ]]);
   const content = `| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | ${manual} | clarification:1:1 |`;
   expect(findDefineDecisionConflicts(current, [{ type: "requirements", content }])).toEqual([
+    "requirements/FR-001 cites clarification:1:1, which does not support its publication decision.",
+  ]);
+});
+
+it("retains each direction and scope for the same target and lists every supporting source in a refusal", () => {
+  const manual = AUTO.replace(" automatically", "");
+  const autoRefusal = STOP.replace("commit.", "commit automatically.");
+  const evidence = [turn(1, AUTO), turn(2, STOP), turn(3, autoRefusal), turn(4, STOP)];
+  const ambiguous = deriveDefineDecisions(state(manual, evidence));
+  expect([...ambiguous.byTarget.values()][0]).toEqual([
+    expect.objectContaining({ direction: "publish", automatic: false, sources: ["user-request"] }),
+    expect.objectContaining({ direction: "publish", automatic: true, sources: ["clarification:1:1"] }),
+    expect.objectContaining({ direction: "refuse", automatic: false, sources: ["clarification:2:2", "clarification:4:4"] }),
+    expect.objectContaining({ direction: "refuse", automatic: true, sources: ["clarification:3:3"] }),
+  ]);
+  expect(ambiguous.conflicts.values().next().value?.[0]).toContain("clarification:2:2, clarification:4:4");
+  expect(findDefineDecisionConflicts(state(STOP, [turn(1, STOP)]), [{ type: "overview", content: AUTO }])).toEqual([
+    `overview says "${AUTO}", opposing the user publication decision from user-request, clarification:1:1.`,
+  ]);
+  const traced = `| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | ${STOP} | clarification:1:1 |`;
+  expect(findDefineDecisionConflicts(state(STOP, [turn(1, autoRefusal)]), [{ type: "requirements", content: traced }])).toEqual([
     "requirements/FR-001 cites clarification:1:1, which does not support its publication decision.",
   ]);
 });

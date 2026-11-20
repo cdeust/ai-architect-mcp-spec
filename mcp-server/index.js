@@ -47870,39 +47870,59 @@ function opaqueHtmlBlock(state, startLine, endLine, silent) {
   token.content = state.getLines(startLine, nextLine, state.blkIndent, true);
   return true;
 }
-var quoteInline = new lib_default("commonmark");
-var QUOTE_OPEN = /^<blockquote(?=[ \t/>])/i;
-var QUOTE_CLOSE = /^<\/blockquote[ \t]*>$/i;
-function skipHtmlBlockQuote(state, startLine, endLine, silent) {
-  if (state.sCount[startLine] - state.blkIndent >= 4)
+
+// packages/validation/dist/hard-output-rules/rules/define-html-quotes.js
+var lexer = new lib_default("commonmark").enable("table");
+lexer.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+lexer.inline.ruler.at("html_inline", (state, silent) => {
+  const offset = state.pos;
+  if (!html_inline(state, silent))
     return false;
-  const lineText = (line2) => state.src.slice(state.bMarks[line2] + state.tShift[line2], state.eMarks[line2]);
-  const first = lineText(startLine);
-  if (!QUOTE_OPEN.test(first))
-    return false;
-  if (silent)
-    return true;
+  if (!silent)
+    state.tokens.at(-1).meta = offset;
+  return true;
+});
+var BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
+function withoutHtmlBlockQuotes(content) {
+  if (!content.toLowerCase().includes("<blockquote"))
+    return content;
+  const lines = content.split(/\r\n?|\n/);
   let depth = 0;
-  let line = startLine;
-  for (; line < endLine; line++) {
-    if (state.sCount[line] < state.blkIndent && !state.isEmpty(line))
-      break;
-    for (const tag2 of quoteInline.parseInline(lineText(line), {})[0].children) {
-      if (tag2.type !== "html_inline")
+  let quoteStart = 0;
+  let markdownDepth = 0;
+  for (const token of lexer.parse(content, {})) {
+    if (token.type === "blockquote_open")
+      markdownDepth++;
+    if (token.type === "blockquote_close")
+      markdownDepth--;
+    if (markdownDepth > 0 || token.type !== "inline" || !token.map)
+      continue;
+    let line = token.map[0];
+    let nextBreak = token.content.indexOf("\n");
+    for (const child of token.children) {
+      if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content))
         continue;
-      if (QUOTE_OPEN.test(tag2.content))
-        depth++;
-      if (QUOTE_CLOSE.test(tag2.content))
+      const offset = child.meta;
+      while (nextBreak !== -1 && nextBreak < offset) {
+        line++;
+        nextBreak = token.content.indexOf("\n", nextBreak + 1);
+      }
+      if (child.content.startsWith("</")) {
+        if (depth === 0)
+          continue;
         depth--;
-    }
-    if (depth <= 0) {
-      line++;
-      break;
+        if (depth === 0)
+          lines.fill("", quoteStart, line + 1);
+      } else {
+        if (depth === 0)
+          quoteStart = line;
+        depth++;
+      }
     }
   }
-  state.line = line;
-  state.push("ignored_blockquote", "", 0);
-  return true;
+  if (depth > 0)
+    lines.fill("", quoteStart);
+  return lines.join("\n");
 }
 
 // packages/validation/dist/hard-output-rules/rules/requirement-definitions.js
@@ -47911,9 +47931,6 @@ var METADATA_HEADER = /^(?:(?:[\p{L}]+[ \t]+)?ids?|depends[ \t]+on|dependenc(?:y
 var parser = new lib_default("commonmark").enable("table").disable("inline");
 var htmlAsText = new lib_default("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-var quoteAwareParser = new lib_default("commonmark").enable("table").disable("inline");
-quoteAwareParser.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-quoteAwareParser.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
 var idsCache = /* @__PURE__ */ new Map();
 function definitionIds(prefixes) {
   const key = prefixes.join("|");
@@ -47938,7 +47955,7 @@ var DEFINE_REQUIREMENT_OPTIONS = {
   excludeBlockQuotes: true
 };
 function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeBlockQuotes) {
-  const tokens = md.parse(content, {});
+  const tokens = md.parse(excludeBlockQuotes ? withoutHtmlBlockQuotes(content) : content, {});
   const leaves = [];
   const at = (map4) => {
     const first = map4 === null ? 0 : map4[0];
@@ -48139,14 +48156,14 @@ function headingBody(leaves, at, ids) {
   return lines.join("\n");
 }
 function* proseLines(content, excludeBlockQuotes) {
-  for (const leaf of leavesOf(content, excludeBlockQuotes ? quoteAwareParser : parser, void 0, void 0, excludeBlockQuotes)) {
+  for (const leaf of leavesOf(content, excludeBlockQuotes ? htmlAsText : parser, void 0, void 0, excludeBlockQuotes)) {
     if (leaf.type === "paragraph")
       yield* leaf.inline.split("\n");
   }
 }
 function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES, options) {
   const ids = definitionIds(prefixes);
-  const parserForDefinitions = options?.excludeBlockQuotes ? quoteAwareParser : parser;
+  const parserForDefinitions = options?.excludeBlockQuotes ? htmlAsText : parser;
   const leaves = leavesOf(content, parserForDefinitions, void 0, void 0, options?.excludeBlockQuotes);
   const out = [];
   leaves.forEach((leaf, at) => {
@@ -55893,26 +55910,20 @@ function renderDefineDecisions(state) {
   ].join("\n");
 }
 function findDraftDecisionConflicts(register, { type, content }) {
-  if (register.byTarget.size === 0 && !content.includes("clarification:"))
-    return [];
   const messages = /* @__PURE__ */ new Set();
   for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
     const decisions = register.byTarget.get(policy.key);
     if (register.conflicts.has(policy.key))
       continue;
-    const supportedSources = /* @__PURE__ */ new Set();
-    for (const decision of decisions ?? []) {
-      if (publicationPoliciesConflict(decision, policy)) {
-        messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
-      }
-      if (decision.direction === policy.direction && decision.automatic === policy.automatic) {
-        for (const id of decision.sources)
-          supportedSources.add(id);
-      }
-    }
+    const supported = decisions?.find((decision) => decision.direction === policy.direction && decision.automatic === policy.automatic);
+    decisions?.forEach((decision) => {
+      if (!publicationPoliciesConflict(decision, policy))
+        return;
+      messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
+    });
     for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
       const exists = id === "user-request" || register.clarifications.some((source2) => source2.id === id);
-      if (!exists || decisions && !supportedSources.has(id)) {
+      if (!exists || decisions && !supported?.sources.includes(id)) {
         messages.add(`${label} cites ${id}, which does not support its publication decision.`);
       }
     }

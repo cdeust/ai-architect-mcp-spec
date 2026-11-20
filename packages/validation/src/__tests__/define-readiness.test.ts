@@ -1,3 +1,5 @@
+import { requirementDefinitions } from "../hard-output-rules/rules/requirement-definitions.js";
+import { withoutHtmlBlockQuotes } from "../hard-output-rules/rules/define-html-quotes.js";
 import { describe, expect, it } from "vitest";
 import { projectDefineDocument, publicationPoliciesConflict, readPublicationPolicies, validateDefineReadiness, validateDocument } from "../index.js";
 
@@ -190,8 +192,7 @@ it("compares traced acceptance statements and leaves a non-acceptance target unt
 
 it("keeps Markdown and wrapped HTML quotes out of normative statements and projection", () => {
   const content = [
-    '<div>',
-    '<BLOCKQUOTE cite="source">',
+    '<div><BLOCKQUOTE cite="source">',
     '',
     'An inline code example: `</blockquote>`.',
     '',
@@ -212,4 +213,23 @@ it("keeps Markdown and wrapped HTML quotes out of normative statements and proje
   ]);
   expect(projectDefineDocument([requirement(content)]).requirements).toEqual([{ id: "FR-001", text: stop }]);
   expect([...readPublicationPolicies(`> ${publish}\n\n${stop}`)]).toEqual([expect.objectContaining({ statement: stop })]);
+});
+
+it("preserves the first definition row and the exact legacy shape of a table without a source", () => {
+  const firstRow = "| FR-001 | Source |\n| --- | --- |";
+  expect(requirementDefinitions(firstRow, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: "Source" }]);
+  const unlabeled = `| ID | Requirement |\n| --- | --- |\n| FR-001 | ${stop} |`;
+  expect(requirementDefinitions(unlabeled, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: stop }]);
+});
+
+it("masks complete quote lines and recognizes the first normative line even within the same paragraph", () => {
+  const text = `<div><blockquote>\r\nOld plural example: <blockquote-example> and \`</blockquote>\`.\r\n</blockquote></div>\r\n${stop}`;
+  expect(withoutHtmlBlockQuotes(text)).toBe(`\n\n\n${stop}`);
+  const unclosed = `${stop}\n<blockquote>\n\n${publish}`;
+  expect(withoutHtmlBlockQuotes(unclosed)).toBe(`${stop}\n\n\n`);
+  const unrelated = `</blockquote>\n> <blockquote>\n\n${stop}`;
+  expect(withoutHtmlBlockQuotes(unrelated)).toBe(unrelated);
+  const comment = `Text\n<!--\n<blockquote>\n-->\n\n${stop}`;
+  expect(withoutHtmlBlockQuotes(comment)).toBe(comment);
+  expect(withoutHtmlBlockQuotes(stop)).toBe(stop);
 });
