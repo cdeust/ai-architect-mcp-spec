@@ -14,8 +14,7 @@ const offered = { ...clarify, clarifications: answeredRounds, clarification_cont
 const cases = [
   { id: "prd_context", state: { ...base, current_step: "context_detection", prd_context: null, feature_description: "bug" }, other: "feature", label: "release" },
   { id: "clarification_continue", state: offered, other: "continue", label: "proceed" },
-  { id: "pr_gate", state: { ...base, current_step: "pr_gate", pending_completion: completion }, other: "No", label: "Push + open PR", fallback: "No" },
-  { id: "implementation_gate", state: { ...base, current_step: "implementation_gate", pending_completion: completion }, other: "PRD only", label: "Implement", fallback: "PRD only" },
+  { id: "implementation_gate", state: { ...base, current_step: "implementation_gate", pending_completion: completion }, other: "Review verification findings", label: "PRD only", fallback: "PRD only" },
   { id: "self_check_verify_budget", state: selfCheckState(22, true), other: "Reduced sample", label: "Full fleet", fallback: "Reduced sample" },
 ] satisfies Array<{ id: string; state: PipelineState; label: string; other: string; fallback?: string }>;
 
@@ -54,7 +53,6 @@ describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
     }
     expect(out.state.unmatched_answers).toEqual({});
     expect(out.messages).toContainEqual({ level: "warn", text: `${id}: 3 unmatched answers. Using "${fallback}".` });
-    if (id === "pr_gate") expect(out.state.post_specs?.pr).toEqual({ pushed: false, url: null });
     if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("prd_only");
     if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(true);
   });
@@ -62,8 +60,7 @@ describe.each(cases)("bounded $id", ({ id, state, label, other, fallback }) => {
   it.each(["", " \t "])("accepts a single label alongside %j with explicit undefined freeform", (blank) => {
     const out = submit(state, [label, blank]);
     expect(out.state.unmatched_answers).toEqual({});
-    if (id === "pr_gate") expect(out.state.current_step).toBe("pr_creation");
-    if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("implement");
+    if (id === "implementation_gate") expect(out.state.post_specs?.decision).toBe("prd_only");
     if (id === "self_check_verify_budget") expect(out.state.verification_plan?.sampled).toBe(false);
     if (id === "clarification_continue") expect(out.state.proceed_signal).toBe(true);
     if (id === "prd_context") expect(out.state.prd_context).toBe("release");
@@ -132,35 +129,6 @@ it.each(["yes", "do not proceed", "", undefined, "unknown"])("repeats the full c
     options: [
       { label: "proceed", description: "Generate the PRD now" },
       { label: "continue", description: "Ask another question" },
-    ],
-    multi_select: false,
-  });
-});
-
-it.each([
-  ["Push + open PR", "Push approved. Opening a pull request."],
-  ["No", "Push declined. Proceeding to finalize without a PR."],
-])("reports the PR gate decision for %s", (choice, text) => {
-  const out = step({
-    state: { ...base, current_step: "pr_gate", pending_completion: completion },
-    result: { kind: "user_answer", question_id: "pr_gate", selected: [choice] },
-  });
-  expect(out.messages).toContainEqual({ level: "info", text });
-});
-
-it("repeats the full PR question on conflicting push instructions", () => {
-  const out = step({
-    state: { ...base, current_step: "pr_gate" },
-    result: { kind: "user_answer", question_id: "pr_gate", selected: ["Push + open PR"], freeform: "No, do not push" },
-  });
-  expect(out.action).toEqual({
-    kind: "ask_user",
-    question_id: "pr_gate",
-    header: "Push the branch and open a pull request?",
-    description: "Review verdict: unavailable.\nPost-implementation gates: not run.\nFiles changed: 0.\nBranch: (unknown).\n\nA pull request is opened for human review — it is never self-merged.\n\nYour answer was not one of the options. Choose one of: Push + open PR, No.",
-    options: [
-      { label: "Push + open PR", description: "Push the branch and open a pull request for human review." },
-      { label: "No", description: "Stop here. No branch is pushed and no PR is opened." },
     ],
     multi_select: false,
   });

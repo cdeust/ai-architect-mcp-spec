@@ -56,7 +56,7 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
 
-**10 packages. 16 MCP tools. 20 pipeline steps (11 PRD generation + 9 opt-in implementation). Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1903 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
+**10 packages. 16 MCP tools. 11 PRD-generation steps followed by specification verification and finalization. Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1903 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
 
 ---
 
@@ -385,7 +385,7 @@ codex mcp add prd-spec -- node /abs/path/ai-architect-mcp-spec/mcp-server/index.
 
 ## The pipeline
 
-The reducer produces twenty sequential steps: eleven PRD-generation steps, then nine opt-in post-specs implementation steps entered only through a human gate. Each step emits at most one substantive action; the host executes it and feeds the result back. A typical trial-tier feature run (11 sections) takes ~62 host-visible iterations.
+The reducer advances through PRD generation, specification verification and finalization. Each step emits at most one substantive action; the host executes it and feeds the result back. A typical trial-tier feature run (11 sections) takes ~62 host-visible iterations.
 
 | # | Step | What it produces |
 |---|------|------------------|
@@ -401,7 +401,8 @@ The reducer produces twenty sequential steps: eleven PRD-generation steps, then 
 | **10** | `file_export` | Writes the PRD files of the run's context profile, plus `00-run-notes.md` for each skipped file or withheld failed section (see [Exported files per context profile](#exported-files-per-context-profile)) |
 | **11** | `self_check` | Two-phase multi-judge verification (see below); typed `verification` field on `done` |
 
-Steps 12–20 are the opt-in post-specs implementation loop: `implementation_gate` (human gate — "Implement" vs "PRD only"; also writes `10-verification-report.md`) → `pre_impl_grounding` → `implementation` (engineer subagent in an isolated worktree) → `post_impl_verification` (index → detect changes → semantic diff → security gates) → `testing` → `review` (a FAIL verdict retries `implementation` on the same worktree, bounded by `REVIEW_RETRY_CAP`) → `pr_gate` (mandatory human gate before any push) → `pr_creation` → `finalize`. Answering "PRD only" at `implementation_gate` skips straight to `finalize`; `complete` is the terminal marker, not a step.
+After self-check, the legacy-named `implementation_gate` presents specification verification. Use `get_pipeline_state` with `format: "define_handoff_v1"` while the question is pending to read validated requirements and acceptance criteria for planning. `PRD only` finishes the run. Architect-os owns implementation, tests, and publication. With the updated launcher, an older execution checkpoint remains readable in state formats. Requesting its action or submitting a result returns `architect_os_required`.
+
 
 Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
 
@@ -663,7 +664,8 @@ The four pillars (consistent / true / useful / necessary) and the seven rules of
 
 The same standard applied to itself.
 
-1. **The PRD pipeline does not write code — and the server itself never does.** Steps 1–11 produce a PRD; symbols in the PRD are validated against the graph but never edited by us. The opt-in implementation loop (steps 12–20) runs only when a human answers "Implement" at `implementation_gate`; there, the host's engineer/test-engineer/code-reviewer subagents write, test, and review the implementation in an isolated worktree, and nothing is pushed or turned into a PR without the mandatory `pr_gate` approval. This server only emits `spawn_subagents` actions — it never edits source files or pushes branches itself.
+1. **The pipeline produces and verifies the specification.** The host follows the emitted analysis, drafting and verification actions. It hands validated planning data to architect-os, where an independent decision authorizes execution.
+
 2. **It does not validate prose quality.** Hard Output Rules check structural invariants (FR numbering, AC traceability, NFR shape, cross-references). They do not check whether a sentence is well-written or persuasive. That is what the multi-judge phase is for, and even there the judges return verdicts on *claims* — atomic assertions — not on style.
 3. **The judge phase is end-to-end testable but the judges are not deterministic.** In tests we use a canned dispatcher that returns 100% PASS by construction; the `distribution_suspicious` detector exists precisely because real judge panels can also degenerate into confirmatory consensus, and we do not pretend otherwise.
 4. **The KPI gates are calibrated, not hand-picked.** `iteration_count_max`, `wall_time_ms_max`, and `mean_section_attempts_max` are calibrated against the K=100 frozen baseline with Clopper-Pearson exact CIs, per-machine-class wall_time normalization, and `loadCalibratedGates` + `hold_provisional` ratchet protection. The lock file commits a content-hash of the baseline; mutating it post hoc fails the seal verification. Where data is still thin, gates remain `hold_provisional` rather than locked. See [docs/PHASE_4_PLAN.md](docs/PHASE_4_PLAN.md) for the full pre-registration.

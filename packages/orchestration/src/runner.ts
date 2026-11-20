@@ -28,6 +28,11 @@ import {
   type NextAction,
 } from "./types/actions.js";
 import { type PipelineState, touch, appendError } from "./types/state.js";
+import {
+  ARCHITECT_OS_BOUNDARY,
+  isLegacyExecutionCheckpoint,
+  isRetiredImplementationAnswer,
+} from "./architect-os-boundary.js";
 import { handleBanner } from "./handlers/banner.js";
 import { handlePreflight } from "./handlers/preflight.js";
 import { handleContextDetection } from "./handlers/context-detection.js";
@@ -40,13 +45,6 @@ import { handleJiraGeneration } from "./handlers/jira-generation.js";
 import { handleFileExport } from "./handlers/file-export.js";
 import { handleSelfCheck } from "./handlers/self-check.js";
 import { handleImplementationGate } from "./handlers/implementation-gate.js";
-import { handlePreImplGrounding } from "./handlers/pre-impl-grounding.js";
-import { handleImplementation } from "./handlers/implementation.js";
-import { handlePostImplVerification } from "./handlers/post-impl-verification.js";
-import { handleTesting } from "./handlers/testing.js";
-import { handleReview } from "./handlers/review.js";
-import { handlePrGate } from "./handlers/pr-gate.js";
-import { handlePrCreation } from "./handlers/pr-creation.js";
 import { handleFinalize } from "./handlers/finalize.js";
 
 export interface StepInput {
@@ -87,13 +85,13 @@ const HANDLERS: Record<PipelineState["current_step"], StepHandler> = {
   file_export: handleFileExport,
   self_check: handleSelfCheck,
   implementation_gate: handleImplementationGate,
-  pre_impl_grounding: handlePreImplGrounding,
-  implementation: handleImplementation,
-  post_impl_verification: handlePostImplVerification,
-  testing: handleTesting,
-  review: handleReview,
-  pr_gate: handlePrGate,
-  pr_creation: handlePrCreation,
+  pre_impl_grounding: refuseImplementation,
+  implementation: refuseImplementation,
+  post_impl_verification: refuseImplementation,
+  testing: refuseImplementation,
+  review: refuseImplementation,
+  pr_gate: refuseImplementation,
+  pr_creation: refuseImplementation,
   finalize: handleFinalize,
   complete: ({ state }) => ({
     state,
@@ -118,8 +116,7 @@ const HANDLERS: Record<PipelineState["current_step"], StepHandler> = {
  *   feasibility_gate → clarification (max-done) → budget → section_generation
  *   (all-done) → jira_generation (no-source) → file_export (all-written) →
  *   self_check (emit_message, hands off to implementation_gate) →
- *   pre_impl_grounding's dead-end is NOT on this chain (implementation_gate
- *   itself returns the substantive ask_user)
+ *   specification verification returns the substantive ask_user
  * = 10 emit_message hops before a substantive action. Cap of 16 gives ~1.6x
  * safety margin. Tune from production telemetry once we observe re-entry
  * depth.
@@ -127,6 +124,10 @@ const HANDLERS: Record<PipelineState["current_step"], StepHandler> = {
 const COALESCE_CAP = 16;
 
 export function step(input: StepInput): StepOutput {
+  if (isLegacyExecutionCheckpoint(input.state, null) ||
+      (input.result && isRetiredImplementationAnswer(input.state, input.result))) {
+    return { ...refuseImplementation(input), messages: [] };
+  }
   const messages: Array<{ text: string; level: "info" | "warn" | "error" }> =
     [];
   let currentState = input.state;
@@ -217,6 +218,10 @@ function terminalFromMessages(
     )
     .join("\n");
   return { kind: "done", summary, artifacts: [] };
+}
+
+function refuseImplementation({ state }: StepInput) {
+  return { state, action: { kind: "failed" as const, reason: ARCHITECT_OS_BOUNDARY.message, step: state.current_step } };
 }
 
 function invoke(

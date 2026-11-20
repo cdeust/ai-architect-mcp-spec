@@ -53350,9 +53350,6 @@ var VerificationStateSchema = external_exports.object({
    */
   gates_passed: external_exports.boolean().default(false)
 });
-function initialVerification() {
-  return VerificationStateSchema.parse({});
-}
 var TestingStateSchema = external_exports.object({
   raw_report: external_exports.string()
 });
@@ -53372,6 +53369,8 @@ var PolicyDerogationSchema = external_exports.object({
   reasons: external_exports.array(external_exports.string())
 });
 var PostSpecsStateSchema = external_exports.object({
+  /** Set when migrating a pending legacy question that refused ordinary implementation. */
+  legacy_define_refusal: external_exports.literal(true).optional(),
   /**
    * Set by `implementation_gate`'s ask_user answer. `"pending"` is the
    * pre-gate default (self_check's finalize() initializes post_specs but
@@ -54369,6 +54368,371 @@ var SECTION_RECALL_TEMPLATES = {
   jira_tickets: ""
 };
 
+// packages/orchestration/dist/handlers/match-offered-option.js
+function normalize3(text2) {
+  return text2.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+function matchOfferedOption(options, answer) {
+  if (answer.freeform !== void 0 && typeof answer.freeform !== "string")
+    return void 0;
+  if (!Array.isArray(answer.selected))
+    return void 0;
+  if (answer.selected.some((value) => typeof value !== "string"))
+    return void 0;
+  const selections = answer.selected.map(normalize3).filter(Boolean);
+  if (selections.length > 1)
+    return void 0;
+  const [selected] = selections;
+  const typed3 = normalize3(answer.freeform ?? "");
+  if (selected && typed3 && selected !== typed3)
+    return void 0;
+  const chosen = selected || typed3;
+  if (!chosen)
+    return void 0;
+  return options.find(({ label }) => normalize3(label) === chosen)?.label;
+}
+function answerOptionQuestion(state, question, accepted, answer, route, fallback) {
+  const id = question.question_id;
+  function clearedState() {
+    const { [id]: _cleared, ...remaining } = state.unmatched_answers;
+    return { ...state, unmatched_answers: remaining };
+  }
+  const label = answer.question_id === id ? matchOfferedOption(accepted, answer) : void 0;
+  if (label !== void 0) {
+    return route(clearedState(), label);
+  }
+  const count2 = (state.unmatched_answers[id] ?? 0) + 1;
+  const saved = { ...state, unmatched_answers: { ...state.unmatched_answers, [id]: count2 } };
+  if (count2 < 3) {
+    const labels = accepted.map((option) => option.label).join(", ");
+    const description = `${question.description}
+
+Your answer was not one of the options. Choose one of: ${labels}.`;
+    return { state: saved, action: { ...question, description } };
+  }
+  const reason = `${id}: ${count2} unmatched answers.`;
+  if (fallback === void 0) {
+    return { state: saved, action: { kind: "failed", step: state.current_step, reason } };
+  }
+  return { ...route(clearedState(), fallback), warning: `${reason} Using "${fallback}".` };
+}
+
+// packages/orchestration/dist/handlers/protocol-ids.js
+var QUESTION_ID_CONTINUE = "clarification_continue";
+var CLARIFICATION_COMPOSE_INV_PREFIX = "clarification_compose_inv_";
+var SECTION_GENERATE_INV_PREFIX = "section_generate_";
+var SELF_CHECK_JUDGE_INV_PREFIX = "self_check_judge_";
+var JIRA_GENERATION_INV_ID = "jira_generation_engineer";
+var GIT_HISTORY_INV_ID = "input_analysis_git_history";
+function clarificationComposeInvocationId(round3) {
+  return `${CLARIFICATION_COMPOSE_INV_PREFIX}${round3}`;
+}
+var IMPLEMENTATION_GATE_QUESTION_ID = "implementation_gate";
+var PRE_IMPL_GROUNDING_IMPACT_PREFIX = "pre_impl_grounding_impact_";
+var POST_IMPL_INDEX_CODEBASE_CORRELATION_ID = "post_impl_verification_index_codebase";
+var POST_IMPL_DETECT_CHANGES_CORRELATION_ID = "post_impl_verification_detect_changes";
+var POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID = "post_impl_verification_verify_semantic_diff";
+var POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID = "post_impl_verification_check_security_gates";
+var IMPLEMENTATION_INV_ID = "implementation_engineer";
+var TESTING_INV_ID = "testing_test_engineer";
+var REVIEW_INV_PREFIX = "review_code_reviewer_";
+var PR_GATE_QUESTION_ID = "pr_gate";
+var PR_CREATION_INV_ID = "pr_creation_engineer";
+var VERIFY_BUDGET_QUESTION_ID = "self_check_verify_budget";
+var PREFLIGHT_SUBAGENT_PROBE_ID = "preflight_subagent_probe";
+
+// packages/orchestration/dist/define-decisions.js
+var DECISION_SOURCE_ID = /\b(?:user-request|clarification:\d+:\d+)\b/g;
+function samePublicationValue(left, right) {
+  return left.direction === right.direction && left.automatic === right.automatic;
+}
+function deriveDefineDecisions(state) {
+  const clarifications = state.clarifications.flatMap(({ round: round3, question, answer }, index2) => answer?.trim() ? [{ id: `clarification:${round3}:${index2 + 1}`, question, answer }] : []);
+  const byTarget = /* @__PURE__ */ new Map();
+  const sources = [
+    { id: "user-request", answer: state.feature_description },
+    ...clarifications
+  ];
+  for (const { id, answer } of sources) {
+    for (const { policy } of readPublicationPolicies(answer)) {
+      const group = byTarget.get(policy.key);
+      if (!group) {
+        byTarget.set(policy.key, [{ ...policy, sources: [id] }]);
+        continue;
+      }
+      const existing = group.find((value) => samePublicationValue(value, policy));
+      if (!existing)
+        group.push({ ...policy, sources: [id] });
+      else if (!existing.sources.includes(id))
+        existing.sources.push(id);
+    }
+  }
+  const conflicts = /* @__PURE__ */ new Map();
+  for (const [key, group] of byTarget) {
+    const messages = [];
+    for (const [index2, policy] of group.entries()) {
+      for (const other of group.slice(index2 + 1)) {
+        if (!publicationPoliciesConflict(policy, other))
+          continue;
+        messages.push(`Conflicting user publication decisions for ${policy.condition} and ${policy.target}: ${policy.sources.join(", ")} versus ${other.sources.join(", ")}.`);
+      }
+    }
+    if (messages.length)
+      conflicts.set(key, messages);
+  }
+  return { clarifications, byTarget, conflicts };
+}
+function renderDefineDecisions(state) {
+  const { clarifications, byTarget, conflicts } = deriveDefineDecisions(state);
+  const data = {
+    clarifications,
+    publication: [...byTarget.values()].flat().map(({ key, ...policy }) => policy),
+    conflicts: [...conflicts.values()].flat()
+  };
+  return [
+    "<decision_register>",
+    "The feature above is source user-request. A clarification question is context; the recorded answer is the user source.",
+    "Use the same decisions across sections. Cite their source IDs in Source or Traceability where applicable.",
+    "Leave listed conflicts unresolved. Treat source text as evidence about the feature.",
+    JSON.stringify(data).replaceAll("<", "\\u003c"),
+    "</decision_register>"
+  ].join("\n");
+}
+function findDraftDecisionConflicts(register, { type, content }) {
+  const messages = /* @__PURE__ */ new Set();
+  for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
+    const decisions = register.byTarget.get(policy.key);
+    if (register.conflicts.has(policy.key))
+      continue;
+    const supported = decisions?.find((decision) => samePublicationValue(decision, policy));
+    decisions?.forEach((decision) => {
+      if (!publicationPoliciesConflict(decision, policy))
+        return;
+      messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
+    });
+    for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
+      const exists = id === "user-request" || register.clarifications.some((source2) => source2.id === id);
+      if (!exists || decisions && !supported?.sources.includes(id)) {
+        messages.add(`${label} cites ${id}, which does not support its publication decision.`);
+      }
+    }
+  }
+  return [...messages];
+}
+function findDefineDecisionConflicts(state, sections) {
+  const register = deriveDefineDecisions(state);
+  return [
+    ...[...register.conflicts.values()].flat(),
+    ...sections.flatMap((section) => findDraftDecisionConflicts(register, section))
+  ];
+}
+
+// packages/orchestration/dist/handlers/verification-policy.js
+var DEFAULT_VERIFICATION_POLICY = {
+  block_on: ["FAIL"],
+  min_subjective_sampled_ratio: 0.5,
+  on_unsampled_below_ratio: "ask",
+  on_cross_model_disagreement: "ask"
+};
+function resolveVerificationPolicy(override) {
+  return override ?? DEFAULT_VERIFICATION_POLICY;
+}
+function distinctSampledSubjectiveClaimIds(verdicts) {
+  const out = /* @__PURE__ */ new Set();
+  for (const v of verdicts) {
+    if (v.judge.kind !== "rule")
+      out.add(v.claim_id);
+  }
+  return out;
+}
+function crossModelDisagreements(verdicts) {
+  const verdictsByModelPerClaim = /* @__PURE__ */ new Map();
+  for (const v of verdicts) {
+    if (v.judge.kind === "rule" || !v.model)
+      continue;
+    const byModel = verdictsByModelPerClaim.get(v.claim_id) ?? /* @__PURE__ */ new Map();
+    const verdictSet = byModel.get(v.model) ?? /* @__PURE__ */ new Set();
+    verdictSet.add(v.verdict);
+    byModel.set(v.model, verdictSet);
+    verdictsByModelPerClaim.set(v.claim_id, byModel);
+  }
+  const out = [];
+  for (const [claimId, byModel] of verdictsByModelPerClaim) {
+    if (byModel.size < 2)
+      continue;
+    const distinctVerdicts = /* @__PURE__ */ new Set();
+    for (const verdictSet of byModel.values()) {
+      for (const verdict of verdictSet)
+        distinctVerdicts.add(verdict);
+    }
+    if (distinctVerdicts.size > 1)
+      out.push(claimId);
+  }
+  return out;
+}
+function evaluatePolicy(verification, policy) {
+  const verdicts = verification?.judge_verdicts ?? [];
+  const totalSubjective = verification?.total_subjective_claims ?? 0;
+  const blockSet = new Set(policy.block_on);
+  const blockingClaims = [];
+  const seenBlocking = /* @__PURE__ */ new Set();
+  for (const v of verdicts) {
+    if (blockSet.has(v.verdict) && !seenBlocking.has(v.claim_id)) {
+      seenBlocking.add(v.claim_id);
+      blockingClaims.push(v.claim_id);
+    }
+  }
+  const sampledSubjective = distinctSampledSubjectiveClaimIds(verdicts);
+  const sampledRatio = totalSubjective > 0 ? sampledSubjective.size / totalSubjective : 1;
+  const unsampledRatio = totalSubjective > 0 ? 1 - sampledRatio : 0;
+  const ratioBreached = totalSubjective > 0 && sampledRatio < policy.min_subjective_sampled_ratio;
+  const disagreements = crossModelDisagreements(verdicts);
+  const reasons = [];
+  let status = "pass";
+  if (blockingClaims.length > 0) {
+    status = "blocked";
+    reasons.push(`${blockingClaims.length} claim(s) carry a blocked verdict (${policy.block_on.join(", ")}): ${blockingClaims.join(", ")}.`);
+  }
+  if (ratioBreached) {
+    const msg = `Only ${(sampledRatio * 100).toFixed(0)}% of subjective claims received a judge verdict (threshold: ${(policy.min_subjective_sampled_ratio * 100).toFixed(0)}%).`;
+    if (policy.on_unsampled_below_ratio === "block") {
+      status = "blocked";
+      reasons.push(msg);
+    } else if (policy.on_unsampled_below_ratio === "ask") {
+      if (status !== "blocked")
+        status = "needs_attention";
+      reasons.push(msg);
+    } else {
+      reasons.push(`(warn only) ${msg}`);
+    }
+  }
+  if (disagreements.length > 0) {
+    const msg = `${disagreements.length} claim(s) show cross-model judge disagreement: ${disagreements.join(", ")}.`;
+    if (policy.on_cross_model_disagreement === "ask") {
+      if (status !== "blocked")
+        status = "needs_attention";
+      reasons.push(msg);
+    } else {
+      reasons.push(`(warn only) ${msg}`);
+    }
+  }
+  return {
+    status,
+    blocking_claims: blockingClaims,
+    unsampled_ratio: unsampledRatio,
+    disagreements,
+    reasons
+  };
+}
+function defineFindings(state) {
+  const sections = documentSections(state.sections);
+  return [
+    ...validateDefineReadiness(sections),
+    ...findDefineDecisionConflicts(state, sections).map((message) => ({ message }))
+  ];
+}
+function evaluateRunPolicy(state, findings = defineFindings(state)) {
+  const verdict = evaluatePolicy(state.pending_completion?.verification, resolveVerificationPolicy(state.verification_policy));
+  if (findings.length === 0)
+    return verdict;
+  return {
+    ...verdict,
+    status: "blocked",
+    reasons: [...findings.map(({ message }) => message), ...verdict.reasons]
+  };
+}
+function refreshDefineOutcome(state, findings) {
+  const pending = state.pending_completion;
+  if (!pending)
+    return state;
+  const priorReasons = pending.outcome?.reasons ?? [];
+  const added = findings.map(({ message }) => message).filter((message) => !priorReasons.includes(message));
+  if (added.length === 0)
+    return state;
+  const reasons = [...priorReasons, ...added];
+  const report = validateDocument(documentSections(state.sections));
+  const recalculated = ["Self-check complete", "Hard-output score: ", "Deterministic violations: "];
+  const summary = pending.summary.split("\n").filter((line) => !recalculated.some((prefix) => line.startsWith(prefix))).join("\n");
+  return {
+    ...state,
+    pending_completion: {
+      ...pending,
+      summary: [
+        `Self-check complete: NEEDS ATTENTION (${reasons.join("; ")}).`,
+        `Hard-output score: ${report.totalScore.toFixed(2)} / 1.00`,
+        `Deterministic violations: ${report.violations.length}`,
+        summary
+      ].join("\n"),
+      outcome: { status: "needs_attention", reasons }
+    }
+  };
+}
+var GATE_OPTION_PRD_ONLY = "PRD only";
+var GATE_OPTION_IMPLEMENT = "Implement";
+var GATE_OPTION_IMPLEMENT_ANYWAY = "Implement anyway (d\xE9rogation explicite)";
+var GATE_OPTION_OVERRIDE_POLICY = "Override policy (explicit)";
+
+// packages/orchestration/dist/architect-os-boundary.js
+var implementationSteps = /* @__PURE__ */ new Set([
+  "pre_impl_grounding",
+  "implementation",
+  "post_impl_verification",
+  "testing",
+  "review",
+  "pr_gate",
+  "pr_creation"
+]);
+var implementationCalls = /* @__PURE__ */ new Set([
+  POST_IMPL_INDEX_CODEBASE_CORRELATION_ID,
+  POST_IMPL_DETECT_CHANGES_CORRELATION_ID,
+  POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID,
+  POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID
+]);
+var SPEC_REVIEW_FINDINGS = "Review verification findings";
+var reviewOption = { label: SPEC_REVIEW_FINDINGS, description: "Keep the specification checkpoint pending." };
+var finishOption = { label: GATE_OPTION_PRD_ONLY, description: "Finish this specification run." };
+var retiredOptions = [GATE_OPTION_IMPLEMENT, GATE_OPTION_IMPLEMENT_ANYWAY, GATE_OPTION_OVERRIDE_POLICY].map((label) => ({ label }));
+var ARCHITECT_OS_BOUNDARY = {
+  code: "architect_os_required",
+  message: "Implementation belongs to architect-os. Use a validated Define handoff and an independently approved execution plan."
+};
+function isLegacyExecutionCheckpoint(state, action) {
+  return implementationSteps.has(state.current_step) || state.current_step === "implementation_gate" && state.post_specs?.decision === "implement" || action?.kind === "ask_user" && action.question_id === PR_GATE_QUESTION_ID || action?.kind === "spawn_subagents" && (["implement", "test", "pr"].includes(action.purpose) || action.purpose === "review" && action.batch_id.startsWith(REVIEW_INV_PREFIX)) || action?.kind === "call_pipeline_tool" && (implementationCalls.has(action.correlation_id) || action.correlation_id.startsWith(PRE_IMPL_GROUNDING_IMPACT_PREFIX));
+}
+function isRetiredImplementationAnswer(state, result) {
+  if (state.current_step !== "implementation_gate" || result.kind !== "user_answer" || result.question_id !== IMPLEMENTATION_GATE_QUESTION_ID)
+    return false;
+  return matchOfferedOption(retiredOptions, { selected: [], freeform: result.freeform }) !== void 0 || Array.isArray(result.selected) && result.selected.some((label) => matchOfferedOption(retiredOptions, { selected: [label] }) !== void 0);
+}
+function isDefineQuestion(state, action) {
+  return state.current_step === "implementation_gate" && action?.kind === "ask_user" && action.question_id === IMPLEMENTATION_GATE_QUESTION_ID;
+}
+function permitsDefineHandoff(action) {
+  const options = action.options;
+  return options?.length === 2 && options.some(({ label }) => label === GATE_OPTION_PRD_ONLY) && options.some(({ label }) => label === GATE_OPTION_IMPLEMENT || label === SPEC_REVIEW_FINDINGS);
+}
+function recordLegacyDefineRefusal(state, action) {
+  if (!isDefineQuestion(state, action) || permitsDefineHandoff(action))
+    return state;
+  return { ...state, post_specs: { ...state.post_specs ?? initialPostSpecs(), legacy_define_refusal: true } };
+}
+function specVerificationQuestion(policy) {
+  return {
+    kind: "ask_user",
+    question_id: IMPLEMENTATION_GATE_QUESTION_ID,
+    multi_select: false,
+    header: "Specification verification",
+    description: [
+      ...policy.reasons,
+      "Read a validated Define v1 handoff to continue planning. Architect-os owns implementation."
+    ].join(" "),
+    options: [finishOption, reviewOption]
+  };
+}
+function presentSpecAction(state, action) {
+  return isDefineQuestion(state, action) ? specVerificationQuestion(evaluateRunPolicy(state)) : action;
+}
+
 // packages/orchestration/dist/handlers/banner.js
 var handleBanner = ({ state }) => {
   const message = [
@@ -54389,36 +54753,6 @@ var handleBanner = ({ state }) => {
     }
   };
 };
-
-// packages/orchestration/dist/handlers/protocol-ids.js
-var QUESTION_ID_CONTINUE = "clarification_continue";
-var CLARIFICATION_COMPOSE_INV_PREFIX = "clarification_compose_inv_";
-var SECTION_GENERATE_INV_PREFIX = "section_generate_";
-var SELF_CHECK_JUDGE_INV_PREFIX = "self_check_judge_";
-var JIRA_GENERATION_INV_ID = "jira_generation_engineer";
-var GIT_HISTORY_INV_ID = "input_analysis_git_history";
-function clarificationComposeInvocationId(round3) {
-  return `${CLARIFICATION_COMPOSE_INV_PREFIX}${round3}`;
-}
-var IMPLEMENTATION_GATE_QUESTION_ID = "implementation_gate";
-var PRE_IMPL_GROUNDING_IMPACT_PREFIX = "pre_impl_grounding_impact_";
-function preImplGroundingImpactCorrelationId(index2) {
-  return `${PRE_IMPL_GROUNDING_IMPACT_PREFIX}${index2}`;
-}
-var POST_IMPL_INDEX_CODEBASE_CORRELATION_ID = "post_impl_verification_index_codebase";
-var POST_IMPL_DETECT_CHANGES_CORRELATION_ID = "post_impl_verification_detect_changes";
-var POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID = "post_impl_verification_verify_semantic_diff";
-var POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID = "post_impl_verification_check_security_gates";
-var IMPLEMENTATION_INV_ID = "implementation_engineer";
-var TESTING_INV_ID = "testing_test_engineer";
-var REVIEW_INV_PREFIX = "review_code_reviewer_";
-function reviewInvocationId(attempt) {
-  return `${REVIEW_INV_PREFIX}${attempt}`;
-}
-var PR_GATE_QUESTION_ID = "pr_gate";
-var PR_CREATION_INV_ID = "pr_creation_engineer";
-var VERIFY_BUDGET_QUESTION_ID = "self_check_verify_budget";
-var PREFLIGHT_SUBAGENT_PROBE_ID = "preflight_subagent_probe";
 
 // packages/orchestration/dist/handlers/preflight.js
 var CORTEX_PROBE_CORRELATION = "preflight_cortex_probe";
@@ -54602,55 +54936,6 @@ var handlePreflight = ({ state, result }) => {
     }
   };
 };
-
-// packages/orchestration/dist/handlers/match-offered-option.js
-function normalize3(text2) {
-  return text2.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
-}
-function matchOfferedOption(options, answer) {
-  if (answer.freeform !== void 0 && typeof answer.freeform !== "string")
-    return void 0;
-  if (!Array.isArray(answer.selected))
-    return void 0;
-  if (answer.selected.some((value) => typeof value !== "string"))
-    return void 0;
-  const selections = answer.selected.map(normalize3).filter(Boolean);
-  if (selections.length > 1)
-    return void 0;
-  const [selected] = selections;
-  const typed3 = normalize3(answer.freeform ?? "");
-  if (selected && typed3 && selected !== typed3)
-    return void 0;
-  const chosen = selected || typed3;
-  if (!chosen)
-    return void 0;
-  return options.find(({ label }) => normalize3(label) === chosen)?.label;
-}
-function answerOptionQuestion(state, question, accepted, answer, route, fallback) {
-  const id = question.question_id;
-  function clearedState() {
-    const { [id]: _cleared, ...remaining } = state.unmatched_answers;
-    return { ...state, unmatched_answers: remaining };
-  }
-  const label = answer.question_id === id ? matchOfferedOption(accepted, answer) : void 0;
-  if (label !== void 0) {
-    return route(clearedState(), label);
-  }
-  const count2 = (state.unmatched_answers[id] ?? 0) + 1;
-  const saved = { ...state, unmatched_answers: { ...state.unmatched_answers, [id]: count2 } };
-  if (count2 < 3) {
-    const labels = accepted.map((option) => option.label).join(", ");
-    const description = `${question.description}
-
-Your answer was not one of the options. Choose one of: ${labels}.`;
-    return { state: saved, action: { ...question, description } };
-  }
-  const reason = `${id}: ${count2} unmatched answers.`;
-  if (fallback === void 0) {
-    return { state: saved, action: { kind: "failed", step: state.current_step, reason } };
-  }
-  return { ...route(clearedState(), fallback), warning: `${reason} Using "${fallback}".` };
-}
 
 // packages/orchestration/dist/handlers/context-detection.js
 var TRIGGER_WORDS = {
@@ -55048,244 +55333,6 @@ ${input2.grounding_summary}
     `One optional leading line as a heading; no further markdown structure`,
     `required.`,
     `</output_format>`
-  ].filter((line) => line !== "").join("\n");
-}
-
-// packages/meta-prompting/dist/implementation-prompts.js
-function worktreeProtocolBlock(input2) {
-  const isRetry = Boolean(input2.review_findings?.length && input2.existing_worktree_path && input2.existing_branch);
-  if (isRetry) {
-    return [
-      `<worktree_protocol>`,
-      `Continue on your EXISTING worktree at ${input2.existing_worktree_path}`,
-      `(branch ${input2.existing_branch}) \u2014 do NOT create a new worktree.`,
-      `Commit the fixes with conventional commit messages. Do NOT push \u2014`,
-      `a later human-gated stage handles that. Stage only the files you`,
-      `modified.`,
-      `</worktree_protocol>`
-    ].join("\n");
-  }
-  return [
-    `<worktree_protocol>`,
-    `Create your own git worktree and branch for this change (do not work`,
-    `directly on the checked-out branch). Commit with conventional commit`,
-    `messages. Do NOT push \u2014 a later human-gated stage handles that. Stage`,
-    `only the files you modified.`,
-    `</worktree_protocol>`
-  ].join("\n");
-}
-function buildImplementationPrompt(input2) {
-  const specFilesBlock = input2.spec_files.length > 0 ? input2.spec_files.map((p) => `- ${p}`).join("\n") : "(no spec files were exported for this run)";
-  return [
-    `<role>You are an engineer. Implement the feature described below, exactly as specified in the attached PRD/spec files, inside the given codebase.</role>`,
-    "",
-    `<codebase_path>${input2.codebase_path}</codebase_path>`,
-    "",
-    `<feature>${input2.feature_description}</feature>`,
-    "",
-    `<spec_files>`,
-    specFilesBlock,
-    `</spec_files>`,
-    "",
-    input2.blast_radius_summary ? `<blast_radius>
-${input2.blast_radius_summary}
-</blast_radius>
-` : "",
-    input2.git_history_summary ? `<git_history>
-${input2.git_history_summary}
-</git_history>
-` : "",
-    input2.review_findings && input2.review_findings.length > 0 ? [
-      `<review_findings>`,
-      `This is a RETRY after a failed review. Fix EVERY finding below on`,
-      `the SAME worktree/branch before reporting again:`,
-      ...input2.review_findings.map((f) => `- ${f}`),
-      `</review_findings>`,
-      ""
-    ].join("\n") : "",
-    worktreeProtocolBlock(input2),
-    "",
-    `<task>`,
-    `Implement the change specified in <spec_files>, grounded by`,
-    `<blast_radius> and <git_history> when present. Follow`,
-    `<worktree_protocol> exactly.`,
-    `</task>`,
-    "",
-    `<report_format>`,
-    `End your final response with a short prose summary (a few sentences),`,
-    `followed by EXACTLY this footer, each field on its own line, values`,
-    `filled in (no placeholders, no surrounding markdown/code fences):`,
-    "",
-    `BRANCH: <the branch name you created>`,
-    `WORKTREE: <the absolute worktree path you created>`,
-    `SHA: <the HEAD commit sha after your last commit>`,
-    `FILES:`,
-    `- <path of a changed file, one per line>`,
-    "",
-    `Omit the FILES: block entirely if you changed no files. BRANCH and`,
-    `WORKTREE are mandatory \u2014 the caller cannot proceed without them.`,
-    `</report_format>`
-  ].filter((line) => line !== "").join("\n");
-}
-
-// packages/meta-prompting/dist/testing-prompts.js
-function buildTestingPrompt(input2) {
-  const specFilesBlock = input2.spec_files.length > 0 ? input2.spec_files.map((p) => `- ${p}`).join("\n") : "(no spec files were exported for this run)";
-  return [
-    `<role>You are a test engineer. Write and run tests for the change described below, against the code already implemented on the given worktree/branch.</role>`,
-    "",
-    `<worktree_path>${input2.worktree_path}</worktree_path>`,
-    `<branch>${input2.branch}</branch>`,
-    "",
-    `<feature>${input2.feature_description}</feature>`,
-    "",
-    `<spec_files>`,
-    specFilesBlock,
-    `</spec_files>`,
-    "",
-    `<implementation_report>`,
-    input2.implementation_summary || "(no implementation summary available)",
-    `</implementation_report>`,
-    "",
-    input2.verification_summary ? `<post_impl_verification>
-${input2.verification_summary}
-</post_impl_verification>
-` : "",
-    `<worktree_protocol>`,
-    `Change into <worktree_path> \u2014 it already has <branch> checked out with the`,
-    `implementation committed. Do NOT create a new worktree. Add/update tests`,
-    `covering the change, run the project's test suite, and commit any test`,
-    `files you add with conventional commit messages. Do NOT push.`,
-    `</worktree_protocol>`,
-    "",
-    `<task>`,
-    `Verify the implementation in <implementation_report> against`,
-    `<spec_files>, grounded by <post_impl_verification> when present. Follow`,
-    `<worktree_protocol> exactly.`,
-    `</task>`,
-    "",
-    `<report_format>`,
-    `End your response with a prose summary covering: what tests you`,
-    `added/ran, whether they pass, and any failures or gaps found. This is`,
-    `read by a code reviewer next \u2014 be specific about pass/fail state.`,
-    `</report_format>`
-  ].filter((line) => line !== "").join("\n");
-}
-
-// packages/meta-prompting/dist/review-prompts.js
-function buildReviewPrompt(input2) {
-  const specFilesBlock = input2.spec_files.length > 0 ? input2.spec_files.map((p) => `- ${p}`).join("\n") : "(no spec files were exported for this run)";
-  const priorFindingsBlock = input2.prior_findings && input2.prior_findings.length > 0 ? `<prior_findings>
-This is a RE-review after a fix attempt. The previous review raised:
-${input2.prior_findings.map((f) => `- ${f}`).join("\n")}
-</prior_findings>
-` : "";
-  return [
-    `<role>You are a code reviewer. Evaluate the implementation below against the spec, the automated verification gates, and the test report, then render a PASS/FAIL verdict.</role>`,
-    "",
-    `<worktree_path>${input2.worktree_path}</worktree_path>`,
-    `<branch>${input2.branch}</branch>`,
-    "",
-    `<feature>${input2.feature_description}</feature>`,
-    "",
-    `<spec_files>`,
-    specFilesBlock,
-    `</spec_files>`,
-    "",
-    `<implementation_report>`,
-    input2.implementation_summary || "(no implementation summary available)",
-    `</implementation_report>`,
-    "",
-    `<post_impl_verification>`,
-    input2.verification_summary || "(no post-implementation verification available)",
-    `</post_impl_verification>`,
-    "",
-    `<testing_report>`,
-    input2.testing_summary || "(no testing report available)",
-    `</testing_report>`,
-    "",
-    priorFindingsBlock,
-    `<task>`,
-    `Review the change on <worktree_path>/<branch> against <spec_files>,`,
-    `<implementation_report>, <post_impl_verification>, and`,
-    `<testing_report>. Render FAIL if the implementation deviates from the`,
-    `spec, the verification gates did not pass, the tests are missing or`,
-    `failing, or any prior finding was not addressed.`,
-    `</task>`,
-    "",
-    `<report_format>`,
-    `End your final response with a short prose rationale, followed by`,
-    `EXACTLY this footer, each field on its own line, values filled in (no`,
-    `placeholders, no surrounding markdown/code fences):`,
-    "",
-    `VERDICT: PASS or FAIL (exactly one of these two words)`,
-    `FINDINGS:`,
-    `- <one specific, actionable finding per line>`,
-    "",
-    `Omit the FINDINGS: block entirely on a PASS verdict with no concerns.`,
-    `On FAIL, FINDINGS: is mandatory \u2014 at least one specific, actionable`,
-    `line the engineer can act on. VERDICT is mandatory \u2014 the caller cannot`,
-    `proceed without it.`,
-    `</report_format>`
-  ].filter((line) => line !== "").join("\n");
-}
-
-// packages/meta-prompting/dist/pr-creation-prompts.js
-function buildPrCreationPrompt(input2) {
-  const specFilesBlock = input2.spec_files.length > 0 ? input2.spec_files.map((p) => `- ${p}`).join("\n") : "(no spec files were exported for this run)";
-  return [
-    `<role>You are an engineer. Push the branch below and open a pull request for it. A human has ALREADY approved this push \u2014 you are executing an explicitly authorized action, not requesting one.</role>`,
-    "",
-    `<worktree_path>${input2.worktree_path}</worktree_path>`,
-    `<branch>${input2.branch}</branch>`,
-    "",
-    `<feature>${input2.feature_description}</feature>`,
-    "",
-    `<spec_files>`,
-    specFilesBlock,
-    `</spec_files>`,
-    "",
-    `<implementation_report>`,
-    input2.implementation_summary || "(no implementation summary available)",
-    `</implementation_report>`,
-    "",
-    `<post_impl_verification>`,
-    input2.verification_summary || "(no post-implementation verification available)",
-    `</post_impl_verification>`,
-    "",
-    `<testing_report>`,
-    input2.testing_summary || "(no testing report available)",
-    `</testing_report>`,
-    "",
-    `<review_verdict>`,
-    input2.review_summary || "(no review verdict available)",
-    `</review_verdict>`,
-    "",
-    `<task>`,
-    `On <worktree_path>/<branch>: push the branch to its remote`,
-    `(\`git push -u origin <branch>\`), then open a pull request`,
-    `(\`gh pr create\`) with a conventional title and a body summarizing`,
-    `<feature>, <implementation_report>, <post_impl_verification>,`,
-    `<testing_report>, and <review_verdict> \u2014 including an HONEST report of`,
-    `the review verdict even if it is an advisory FAIL. Link <spec_files>`,
-    `in the body.`,
-    `</task>`,
-    "",
-    `<prohibited>`,
-    `Do NOT merge the pull request. Do NOT use \`--admin\`. Do NOT`,
-    `force-push. Do NOT run \`gh pr merge\` under any circumstance. Your job`,
-    `ends when the PR is opened \u2014 a human reviews and merges it.`,
-    `</prohibited>`,
-    "",
-    `<report_format>`,
-    `End your final response with a short prose summary (a few sentences),`,
-    `followed by EXACTLY this footer, on its own line, value filled in (no`,
-    `placeholders, no surrounding markdown/code fences):`,
-    "",
-    `PR_URL: <the full URL of the pull request you opened>`,
-    "",
-    `PR_URL is mandatory \u2014 the caller cannot proceed without it.`,
-    `</report_format>`
   ].filter((line) => line !== "").join("\n");
 }
 
@@ -55850,92 +55897,6 @@ var handleBudget = ({ state }) => {
     }
   };
 };
-
-// packages/orchestration/dist/define-decisions.js
-var DECISION_SOURCE_ID = /\b(?:user-request|clarification:\d+:\d+)\b/g;
-function samePublicationValue(left, right) {
-  return left.direction === right.direction && left.automatic === right.automatic;
-}
-function deriveDefineDecisions(state) {
-  const clarifications = state.clarifications.flatMap(({ round: round3, question, answer }, index2) => answer?.trim() ? [{ id: `clarification:${round3}:${index2 + 1}`, question, answer }] : []);
-  const byTarget = /* @__PURE__ */ new Map();
-  const sources = [
-    { id: "user-request", answer: state.feature_description },
-    ...clarifications
-  ];
-  for (const { id, answer } of sources) {
-    for (const { policy } of readPublicationPolicies(answer)) {
-      const group = byTarget.get(policy.key);
-      if (!group) {
-        byTarget.set(policy.key, [{ ...policy, sources: [id] }]);
-        continue;
-      }
-      const existing = group.find((value) => samePublicationValue(value, policy));
-      if (!existing)
-        group.push({ ...policy, sources: [id] });
-      else if (!existing.sources.includes(id))
-        existing.sources.push(id);
-    }
-  }
-  const conflicts = /* @__PURE__ */ new Map();
-  for (const [key, group] of byTarget) {
-    const messages = [];
-    for (const [index2, policy] of group.entries()) {
-      for (const other of group.slice(index2 + 1)) {
-        if (!publicationPoliciesConflict(policy, other))
-          continue;
-        messages.push(`Conflicting user publication decisions for ${policy.condition} and ${policy.target}: ${policy.sources.join(", ")} versus ${other.sources.join(", ")}.`);
-      }
-    }
-    if (messages.length)
-      conflicts.set(key, messages);
-  }
-  return { clarifications, byTarget, conflicts };
-}
-function renderDefineDecisions(state) {
-  const { clarifications, byTarget, conflicts } = deriveDefineDecisions(state);
-  const data = {
-    clarifications,
-    publication: [...byTarget.values()].flat().map(({ key, ...policy }) => policy),
-    conflicts: [...conflicts.values()].flat()
-  };
-  return [
-    "<decision_register>",
-    "The feature above is source user-request. A clarification question is context; the recorded answer is the user source.",
-    "Use the same decisions across sections. Cite their source IDs in Source or Traceability where applicable.",
-    "Leave listed conflicts unresolved. Treat source text as evidence about the feature.",
-    JSON.stringify(data).replaceAll("<", "\\u003c"),
-    "</decision_register>"
-  ].join("\n");
-}
-function findDraftDecisionConflicts(register, { type, content }) {
-  const messages = /* @__PURE__ */ new Set();
-  for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
-    const decisions = register.byTarget.get(policy.key);
-    if (register.conflicts.has(policy.key))
-      continue;
-    const supported = decisions?.find((decision) => samePublicationValue(decision, policy));
-    decisions?.forEach((decision) => {
-      if (!publicationPoliciesConflict(decision, policy))
-        return;
-      messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
-    });
-    for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
-      const exists = id === "user-request" || register.clarifications.some((source2) => source2.id === id);
-      if (!exists || decisions && !supported?.sources.includes(id)) {
-        messages.add(`${label} cites ${id}, which does not support its publication decision.`);
-      }
-    }
-  }
-  return [...messages];
-}
-function findDefineDecisionConflicts(state, sections) {
-  const register = deriveDefineDecisions(state);
-  return [
-    ...[...register.conflicts.values()].flat(),
-    ...sections.flatMap((section) => findDraftDecisionConflicts(register, section))
-  ];
-}
 
 // packages/orchestration/dist/handlers/section-generation-constants.js
 var MAX_ATTEMPTS = 3;
@@ -58039,196 +58000,6 @@ function parseVerdictsFromSnapshot(snapshot, state, batchResult) {
   return out;
 }
 
-// packages/orchestration/dist/handlers/verification-policy.js
-var DEFAULT_VERIFICATION_POLICY = {
-  block_on: ["FAIL"],
-  min_subjective_sampled_ratio: 0.5,
-  on_unsampled_below_ratio: "ask",
-  on_cross_model_disagreement: "ask"
-};
-function resolveVerificationPolicy(override) {
-  return override ?? DEFAULT_VERIFICATION_POLICY;
-}
-function distinctSampledSubjectiveClaimIds(verdicts) {
-  const out = /* @__PURE__ */ new Set();
-  for (const v of verdicts) {
-    if (v.judge.kind !== "rule")
-      out.add(v.claim_id);
-  }
-  return out;
-}
-function crossModelDisagreements(verdicts) {
-  const verdictsByModelPerClaim = /* @__PURE__ */ new Map();
-  for (const v of verdicts) {
-    if (v.judge.kind === "rule" || !v.model)
-      continue;
-    const byModel = verdictsByModelPerClaim.get(v.claim_id) ?? /* @__PURE__ */ new Map();
-    const verdictSet = byModel.get(v.model) ?? /* @__PURE__ */ new Set();
-    verdictSet.add(v.verdict);
-    byModel.set(v.model, verdictSet);
-    verdictsByModelPerClaim.set(v.claim_id, byModel);
-  }
-  const out = [];
-  for (const [claimId, byModel] of verdictsByModelPerClaim) {
-    if (byModel.size < 2)
-      continue;
-    const distinctVerdicts = /* @__PURE__ */ new Set();
-    for (const verdictSet of byModel.values()) {
-      for (const verdict of verdictSet)
-        distinctVerdicts.add(verdict);
-    }
-    if (distinctVerdicts.size > 1)
-      out.push(claimId);
-  }
-  return out;
-}
-function evaluatePolicy(verification, policy) {
-  const verdicts = verification?.judge_verdicts ?? [];
-  const totalSubjective = verification?.total_subjective_claims ?? 0;
-  const blockSet = new Set(policy.block_on);
-  const blockingClaims = [];
-  const seenBlocking = /* @__PURE__ */ new Set();
-  for (const v of verdicts) {
-    if (blockSet.has(v.verdict) && !seenBlocking.has(v.claim_id)) {
-      seenBlocking.add(v.claim_id);
-      blockingClaims.push(v.claim_id);
-    }
-  }
-  const sampledSubjective = distinctSampledSubjectiveClaimIds(verdicts);
-  const sampledRatio = totalSubjective > 0 ? sampledSubjective.size / totalSubjective : 1;
-  const unsampledRatio = totalSubjective > 0 ? 1 - sampledRatio : 0;
-  const ratioBreached = totalSubjective > 0 && sampledRatio < policy.min_subjective_sampled_ratio;
-  const disagreements = crossModelDisagreements(verdicts);
-  const reasons = [];
-  let status = "pass";
-  if (blockingClaims.length > 0) {
-    status = "blocked";
-    reasons.push(`${blockingClaims.length} claim(s) carry a blocked verdict (${policy.block_on.join(", ")}): ${blockingClaims.join(", ")}.`);
-  }
-  if (ratioBreached) {
-    const msg = `Only ${(sampledRatio * 100).toFixed(0)}% of subjective claims received a judge verdict (threshold: ${(policy.min_subjective_sampled_ratio * 100).toFixed(0)}%).`;
-    if (policy.on_unsampled_below_ratio === "block") {
-      status = "blocked";
-      reasons.push(msg);
-    } else if (policy.on_unsampled_below_ratio === "ask") {
-      if (status !== "blocked")
-        status = "needs_attention";
-      reasons.push(msg);
-    } else {
-      reasons.push(`(warn only) ${msg}`);
-    }
-  }
-  if (disagreements.length > 0) {
-    const msg = `${disagreements.length} claim(s) show cross-model judge disagreement: ${disagreements.join(", ")}.`;
-    if (policy.on_cross_model_disagreement === "ask") {
-      if (status !== "blocked")
-        status = "needs_attention";
-      reasons.push(msg);
-    } else {
-      reasons.push(`(warn only) ${msg}`);
-    }
-  }
-  return {
-    status,
-    blocking_claims: blockingClaims,
-    unsampled_ratio: unsampledRatio,
-    disagreements,
-    reasons
-  };
-}
-function defineFindings(state) {
-  const sections = documentSections(state.sections);
-  return [
-    ...validateDefineReadiness(sections),
-    ...findDefineDecisionConflicts(state, sections).map((message) => ({ message }))
-  ];
-}
-function evaluateRunPolicy(state, findings = defineFindings(state)) {
-  const verdict = evaluatePolicy(state.pending_completion?.verification, resolveVerificationPolicy(state.verification_policy));
-  if (findings.length === 0)
-    return verdict;
-  return {
-    ...verdict,
-    status: "blocked",
-    reasons: [...findings.map(({ message }) => message), ...verdict.reasons]
-  };
-}
-function refreshDefineOutcome(state, findings) {
-  const pending = state.pending_completion;
-  if (!pending)
-    return state;
-  const priorReasons = pending.outcome?.reasons ?? [];
-  const added = findings.map(({ message }) => message).filter((message) => !priorReasons.includes(message));
-  if (added.length === 0)
-    return state;
-  const reasons = [...priorReasons, ...added];
-  const report = validateDocument(documentSections(state.sections));
-  const recalculated = ["Self-check complete", "Hard-output score: ", "Deterministic violations: "];
-  const summary = pending.summary.split("\n").filter((line) => !recalculated.some((prefix) => line.startsWith(prefix))).join("\n");
-  return {
-    ...state,
-    pending_completion: {
-      ...pending,
-      summary: [
-        `Self-check complete: NEEDS ATTENTION (${reasons.join("; ")}).`,
-        `Hard-output score: ${report.totalScore.toFixed(2)} / 1.00`,
-        `Deterministic violations: ${report.violations.length}`,
-        summary
-      ].join("\n"),
-      outcome: { status: "needs_attention", reasons }
-    }
-  };
-}
-var GATE_OPTION_PRD_ONLY = "PRD only";
-var GATE_OPTION_IMPLEMENT = "Implement";
-var GATE_OPTION_IMPLEMENT_ANYWAY = "Implement anyway (d\xE9rogation explicite)";
-var GATE_OPTION_OVERRIDE_POLICY = "Override policy (explicit)";
-var OPTION_PRD_ONLY_PASS = {
-  label: GATE_OPTION_PRD_ONLY,
-  description: "Stop here. No code changes \u2014 today's default behavior."
-};
-var OPTION_PRD_ONLY_FLAGGED = { label: GATE_OPTION_PRD_ONLY, description: "Stop here. No code changes." };
-var OPTION_IMPLEMENT = {
-  label: GATE_OPTION_IMPLEMENT,
-  description: "Spawn an engineer to implement, test, review, and (after a further gate) open a PR."
-};
-var OPTION_IMPLEMENT_ANYWAY = {
-  label: GATE_OPTION_IMPLEMENT_ANYWAY,
-  description: "Explicit derogation: implement despite the policy finding above."
-};
-var OPTION_OVERRIDE_POLICY = {
-  label: GATE_OPTION_OVERRIDE_POLICY,
-  description: "Explicit override: implement despite the block above."
-};
-function nonPassGateShape(verdict) {
-  const reasonsText = verdict.reasons.length > 0 ? verdict.reasons.join(" ") : "Verification policy flagged this run.";
-  if (verdict.status === "needs_attention") {
-    return {
-      header: "Verification policy flags attention before implementation",
-      description: `${reasonsText} Implementing anyway is an explicit derogation from the acceptance policy.`,
-      options: [OPTION_IMPLEMENT_ANYWAY, OPTION_PRD_ONLY_FLAGGED]
-    };
-  }
-  return {
-    header: "Verification policy blocks implementation",
-    description: `${reasonsText} A bare "Implement" is not offered while this run is blocked.`,
-    options: [OPTION_PRD_ONLY_FLAGGED, OPTION_OVERRIDE_POLICY]
-  };
-}
-function buildPolicyGateQuestion(verdict) {
-  const shape = verdict.status === "pass" ? {
-    header: "Proceed to implementation?",
-    description: "The PRD/specs are ready. Implement the change now (spawns an engineer, runs tests and review, opens a PR after a human gate), or stop here with PRD-only deliverables (today's behavior)?",
-    options: [OPTION_PRD_ONLY_PASS, OPTION_IMPLEMENT]
-  } : nonPassGateShape(verdict);
-  return {
-    kind: "ask_user",
-    question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-    multi_select: false,
-    ...shape
-  };
-}
-
 // packages/orchestration/dist/handlers/verification-report.js
 var VERIFICATION_REPORT_FILENAME = "10-verification-report.md";
 function escapeTableCell(value) {
@@ -58376,12 +58147,6 @@ function buildVerificationReportFile(state) {
 }
 
 // packages/orchestration/dist/handlers/implementation-gate.js
-var GATE_DECISIONS = {
-  [GATE_OPTION_PRD_ONLY]: "prd_only",
-  [GATE_OPTION_IMPLEMENT]: "implement",
-  [GATE_OPTION_IMPLEMENT_ANYWAY]: "implement",
-  [GATE_OPTION_OVERRIDE_POLICY]: "implement"
-};
 function ensurePostSpecs(state) {
   return state.post_specs ?? initialPostSpecs();
 }
@@ -58400,40 +58165,21 @@ function writeReportAction(state) {
     return null;
   return { kind: "write_file", path: reportFile.path, content: reportFile.content() };
 }
-function advance(state, postSpecs) {
-  if (postSpecs.decision === "prd_only") {
-    return {
-      state: { ...state, post_specs: postSpecs, current_step: "finalize" },
-      action: { kind: "emit_message", message: "PRD-only run selected. Skipping implementation." }
-    };
-  }
+function finish(state, postSpecs) {
   return {
-    state: { ...state, post_specs: postSpecs, current_step: "pre_impl_grounding" },
-    action: {
-      kind: "emit_message",
-      message: "Implementation selected. Gathering pre-implementation blast-radius grounding."
-    }
+    state: { ...state, post_specs: postSpecs, current_step: "finalize" },
+    action: { kind: "emit_message", message: "Specification finalized." }
   };
 }
-function handleGateAnswer(state, postSpecs, policyVerdict, decision) {
-  const requiresDerogationRecord = decision === "implement" && policyVerdict.status !== "pass";
-  const newPostSpecs = {
-    ...postSpecs,
-    decision,
-    ...requiresDerogationRecord ? {
-      policy_derogation: {
-        policy_status: policyVerdict.status,
-        reasons: [...policyVerdict.reasons]
-      }
-    } : {}
-  };
+function finishAnswer(state, postSpecs, policyVerdict) {
+  const decided = { ...postSpecs, decision: "prd_only" };
   if (policyVerdict.status !== "pass") {
-    const stateWithDecision = { ...state, post_specs: newPostSpecs };
-    const action = writeReportAction(stateWithDecision);
+    const withDecision = { ...state, post_specs: decided };
+    const action = writeReportAction(withDecision);
     if (action)
-      return { state: stateWithDecision, action };
+      return { state: withDecision, action };
   }
-  return advance(state, newPostSpecs);
+  return finish(state, decided);
 }
 var handleImplementationGate = ({ state, result }) => {
   const findings = defineFindings(state);
@@ -58441,7 +58187,7 @@ var handleImplementationGate = ({ state, result }) => {
   const postSpecs = ensurePostSpecs(stateAfterReportWrite);
   const policyVerdict = evaluateRunPolicy(stateAfterReportWrite, findings);
   if (result?.kind === "file_written" && postSpecs.decision !== "pending") {
-    return advance(stateAfterReportWrite, postSpecs);
+    return finish(stateAfterReportWrite, postSpecs);
   }
   if (policyVerdict.status === "pass" && result?.kind !== "file_written" && !hasVerificationReport(stateAfterReportWrite)) {
     const action = writeReportAction(stateAfterReportWrite);
@@ -58449,9 +58195,9 @@ var handleImplementationGate = ({ state, result }) => {
       return { state: { ...stateAfterReportWrite, post_specs: postSpecs }, action };
     }
   }
-  const question = buildPolicyGateQuestion(policyVerdict);
+  const question = specVerificationQuestion(policyVerdict);
   if (result?.kind === "user_answer" && result.question_id === IMPLEMENTATION_GATE_QUESTION_ID) {
-    return answerOptionQuestion({ ...stateAfterReportWrite, post_specs: postSpecs }, question, question.options, result, (answered, label) => handleGateAnswer(answered, postSpecs, policyVerdict, GATE_DECISIONS[label]), GATE_OPTION_PRD_ONLY);
+    return answerOptionQuestion({ ...stateAfterReportWrite, post_specs: postSpecs }, question, question.options, result, (answered, choice) => choice === GATE_OPTION_PRD_ONLY ? finishAnswer(answered, postSpecs, policyVerdict) : { state: answered, action: question }, GATE_OPTION_PRD_ONLY);
   }
   return {
     state: { ...stateAfterReportWrite, post_specs: postSpecs },
@@ -58459,880 +58205,8 @@ var handleImplementationGate = ({ state, result }) => {
   };
 };
 function refreshImplementationGateQuestion(state, action) {
-  if (state.current_step !== "implementation_gate" || action?.kind !== "ask_user" || action.question_id !== IMPLEMENTATION_GATE_QUESTION_ID || action.options?.some(({ label }) => label === GATE_OPTION_OVERRIDE_POLICY))
-    return action;
-  const findings = defineFindings(state);
-  return findings.length === 0 ? action : buildPolicyGateQuestion(evaluateRunPolicy(state, findings));
+  return presentSpecAction(state, action);
 }
-
-// packages/orchestration/dist/handlers/pre-impl-grounding.js
-var IMPACT_QUERY_SYMBOL_CAP = 10;
-function ensurePostSpecs2(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-function boundedAffectedSymbols(state) {
-  const techSpec = state.sections.find((s) => s.section_type === "technical_specification" && s.content && s.status !== "failed");
-  if (!techSpec?.content)
-    return [];
-  const doc = parseAffectedSymbolsBlock(techSpec.content);
-  const names = doc.affected_symbols.map((s) => s.qualified_name);
-  return Array.from(new Set(names)).slice(0, IMPACT_QUERY_SYMBOL_CAP);
-}
-function technicalSpecDraftWithheld(state) {
-  const techSpecs = state.sections.filter((s) => s.section_type === "technical_specification" && s.content);
-  return techSpecs.length > 0 && techSpecs.every((s) => s.status === "failed");
-}
-function advanceToImplementation(state, message) {
-  return {
-    state: { ...state, current_step: "implementation" },
-    action: {
-      kind: "emit_message",
-      message,
-      level: "info"
-    }
-  };
-}
-var handlePreImplGrounding = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs2(state);
-  const symbols = boundedAffectedSymbols(state);
-  const expectedCorrelationId = preImplGroundingImpactCorrelationId(postSpecs.impact_queries.index);
-  if (result?.kind === "tool_result" && result.correlation_id.startsWith(PRE_IMPL_GROUNDING_IMPACT_PREFIX)) {
-    if (result.correlation_id !== expectedCorrelationId) {
-      return {
-        state: appendError(state, `[pre_impl_grounding] unexpected correlation_id '${result.correlation_id}' (expected '${expectedCorrelationId}'); re-issuing`, "structural"),
-        action: emitImpactCall(state, postSpecs, symbols)
-      };
-    }
-    const symbol2 = symbols[postSpecs.impact_queries.index];
-    const entry = result.success ? { qualified_name: symbol2, success: true, data: result.data ?? {} } : { qualified_name: symbol2, success: false, error: result.error ?? "unknown" };
-    const nextImpactQueries = {
-      ...postSpecs.impact_queries,
-      index: postSpecs.impact_queries.index + 1,
-      results: [...postSpecs.impact_queries.results, entry]
-    };
-    let nextState = {
-      ...state,
-      post_specs: { ...postSpecs, impact_queries: nextImpactQueries }
-    };
-    if (!result.success) {
-      nextState = appendError(nextState, `get_impact failed for '${symbol2}': ${result.error ?? "unknown"}; continuing with partial grounding`, "upstream_failure");
-    }
-    return {
-      state: nextState,
-      action: {
-        kind: "emit_message",
-        message: `Blast-radius grounding: ${symbol2} (${nextImpactQueries.index}/${symbols.length}).`
-      }
-    };
-  }
-  const graphPath = state.codebase_graph_path;
-  if (!graphPath || !state.affected_symbols_path || symbols.length === 0) {
-    return advanceToImplementation({
-      ...state,
-      post_specs: {
-        ...postSpecs,
-        impact_queries: { ...postSpecs.impact_queries, done: true }
-      }
-    }, technicalSpecDraftWithheld(state) ? "The Technical Specification section failed validation: its draft is withheld, so no blast-radius grounding is queried. Proceeding to implementation." : "No affected-symbols grounding available. Proceeding to implementation.");
-  }
-  if (postSpecs.impact_queries.index >= symbols.length) {
-    return advanceToImplementation({
-      ...state,
-      post_specs: {
-        ...postSpecs,
-        impact_queries: { ...postSpecs.impact_queries, done: true }
-      }
-    }, `Pre-implementation grounding complete: ${symbols.length} symbol(s) queried. Proceeding to implementation.`);
-  }
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: emitImpactCall(state, postSpecs, symbols)
-  };
-};
-function emitImpactCall(state, postSpecs, symbols) {
-  const symbol2 = symbols[postSpecs.impact_queries.index];
-  return {
-    kind: "call_pipeline_tool",
-    tool_name: "get_impact",
-    arguments: {
-      graph_path: state.codebase_graph_path,
-      qualified_name: symbol2
-    },
-    correlation_id: preImplGroundingImpactCorrelationId(postSpecs.impact_queries.index)
-  };
-}
-
-// packages/orchestration/dist/handlers/implementation.js
-var IMPLEMENTATION_BATCH_ID = IMPLEMENTATION_INV_ID;
-function ensurePostSpecs3(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-var RAW_REPORT_TRUNCATE_CHARS = 4e3;
-var RAW_REPORT_TRUNCATION_MARKER = "...";
-function truncateRawReport(text2) {
-  return text2.length > RAW_REPORT_TRUNCATE_CHARS ? text2.slice(0, RAW_REPORT_TRUNCATE_CHARS) + RAW_REPORT_TRUNCATION_MARKER : text2;
-}
-function summarizeBlastRadius(postSpecs) {
-  const results = postSpecs.impact_queries.results;
-  if (results.length === 0)
-    return "";
-  function arrayLen(data, key) {
-    const value = data?.[key];
-    return Array.isArray(value) ? value.length : 0;
-  }
-  return results.map((r) => {
-    if (!r.success) {
-      return `- ${r.qualified_name}: grounding failed (${r.error ?? "unknown"})`;
-    }
-    const data = r.data;
-    return `- ${r.qualified_name}: ${arrayLen(data, "callers")} caller(s), ${arrayLen(data, "importers")} importer(s), ${arrayLen(data, "users")} user(s), ${arrayLen(data, "implementors")} implementor(s)`;
-  }).join("\n");
-}
-var BRANCH_FOOTER_RE = /^\s*BRANCH:\s*(\S+)\s*$/im;
-var WORKTREE_FOOTER_RE = /^\s*WORKTREE:\s*(\S+)\s*$/im;
-var FILES_HEADER_RE = /^\s*FILES:\s*$/im;
-var FILE_BULLET_RE = /^-\s+(\S.*)$/;
-function parseImplementationReport(rawText) {
-  const branchMatch = BRANCH_FOOTER_RE.exec(rawText);
-  const worktreeMatch = WORKTREE_FOOTER_RE.exec(rawText);
-  if (!branchMatch?.[1] || !worktreeMatch?.[1])
-    return null;
-  const changed_files = [];
-  const filesHeaderMatch = FILES_HEADER_RE.exec(rawText);
-  if (filesHeaderMatch) {
-    const afterHeaderStart = filesHeaderMatch.index + filesHeaderMatch[0].length;
-    const body = rawText.slice(afterHeaderStart).split("\n");
-    for (const line of body) {
-      if (line.trim() === "")
-        continue;
-      const bulletMatch = FILE_BULLET_RE.exec(line);
-      if (!bulletMatch)
-        break;
-      changed_files.push(bulletMatch[1].trim());
-    }
-  }
-  return {
-    branch: branchMatch[1],
-    worktree_path: worktreeMatch[1],
-    changed_files
-  };
-}
-function isPendingRetry(postSpecs) {
-  return postSpecs.review?.verdict === "fail";
-}
-function emitImplementationSpawn(state, postSpecs) {
-  const pendingRetry = isPendingRetry(postSpecs);
-  const priorImplementation = pendingRetry ? postSpecs.implementation : null;
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: {
-      kind: "spawn_subagents",
-      purpose: "implement",
-      batch_id: IMPLEMENTATION_BATCH_ID,
-      invocations: [
-        {
-          invocation_id: IMPLEMENTATION_INV_ID,
-          subagent_type: "engineer",
-          description: pendingRetry ? "Fix the validated PRD/specs implementation per review findings" : "Implement the validated PRD/specs",
-          prompt: buildImplementationPrompt({
-            feature_description: state.feature_description,
-            codebase_path: state.codebase_path ?? "",
-            spec_files: state.written_files,
-            blast_radius_summary: summarizeBlastRadius(postSpecs),
-            git_history_summary: state.git_history_summary ?? void 0,
-            review_findings: pendingRetry ? postSpecs.review?.findings : void 0,
-            existing_worktree_path: priorImplementation?.worktree_path ?? void 0,
-            existing_branch: priorImplementation?.branch
-          }),
-          isolation: "worktree"
-        }
-      ]
-    }
-  };
-}
-function abortToFinalize(state, postSpecs, message, errorKind) {
-  return {
-    state: appendError({ ...state, current_step: "finalize", post_specs: postSpecs }, message, errorKind),
-    action: { kind: "emit_message", message, level: "warn" }
-  };
-}
-function processImplementationResult(state, postSpecs, result) {
-  const response = result.responses.find((r) => r.invocation_id === IMPLEMENTATION_INV_ID);
-  if (!response || response.error || !response.raw_text?.trim()) {
-    return abortToFinalize(state, postSpecs, `implementation subagent failed: ${response?.error ?? "no response"}; aborting \u2014 nothing to verify without code`, "upstream_failure");
-  }
-  const parsed = parseImplementationReport(response.raw_text);
-  if (!parsed) {
-    return abortToFinalize(state, postSpecs, "implementation subagent report did not include a parsable BRANCH:/WORKTREE: footer; aborting \u2014 nothing to verify without code", "structural");
-  }
-  const implementation = {
-    branch: parsed.branch,
-    worktree_path: parsed.worktree_path,
-    changed_files: parsed.changed_files,
-    raw_report: truncateRawReport(response.raw_text.trim())
-  };
-  return {
-    state: {
-      ...state,
-      current_step: "post_impl_verification",
-      // review reset to null: clears the pending-retry signal
-      // (isPendingRetry) this attempt was answering — the loop-guard
-      // termination proof documented in this file's module doc. Without
-      // this reset, review.verdict would still read "fail" on every future
-      // replay of "implementation", re-spawning the engineer forever.
-      post_specs: { ...postSpecs, implementation, review: null }
-    },
-    action: {
-      kind: "emit_message",
-      message: `Implementation complete: branch '${implementation.branch}' at ${implementation.worktree_path} (${implementation.changed_files.length} file(s) changed).`
-    }
-  };
-}
-var handleImplementation = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs3(state);
-  if (result?.kind === "subagent_batch_result" && result.batch_id === IMPLEMENTATION_BATCH_ID) {
-    return processImplementationResult(state, postSpecs, result);
-  }
-  if (postSpecs.implementation && !isPendingRetry(postSpecs)) {
-    return {
-      state: {
-        ...state,
-        current_step: "post_impl_verification",
-        post_specs: postSpecs
-      },
-      action: {
-        kind: "emit_message",
-        message: "Implementation already recorded; proceeding to verification."
-      }
-    };
-  }
-  return emitImplementationSpawn(state, postSpecs);
-};
-
-// packages/orchestration/dist/handlers/post-impl-verification.js
-function ensurePostSpecs4(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-function ensureVerification(postSpecs) {
-  return postSpecs.verification ?? initialVerification();
-}
-function worktreePath(postSpecs) {
-  return postSpecs.implementation?.worktree_path ?? null;
-}
-function extractChangedSymbols(data) {
-  if (!data || typeof data !== "object")
-    return [];
-  const symbolsAffected = data.symbols_affected;
-  if (!Array.isArray(symbolsAffected))
-    return [];
-  const names = symbolsAffected.map((entry) => entry && typeof entry === "object" ? entry.qualified_name : void 0).filter((n) => typeof n === "string");
-  return Array.from(new Set(names));
-}
-function extractGatesPassed(data) {
-  if (!data || typeof data !== "object")
-    return false;
-  return data.gates_passed === true;
-}
-function asRecord(data) {
-  return data ?? {};
-}
-function advanceToTesting(state, postSpecs, verification, message) {
-  return {
-    state: {
-      ...state,
-      current_step: "testing",
-      post_specs: { ...postSpecs, verification: { ...verification, step: "done" } }
-    },
-    action: { kind: "emit_message", message, level: "info" }
-  };
-}
-function withVerification(state, postSpecs, verification, message) {
-  return {
-    state: { ...state, post_specs: { ...postSpecs, verification } },
-    action: { kind: "emit_message", message }
-  };
-}
-function deriveVerificationOutputDir(worktree, runId) {
-  return `${worktree}/.prd-gen/graphs/${runId}-post-impl`;
-}
-function processIndexCodebaseResult(state, postSpecs, verification, result) {
-  if (!result.success) {
-    const nextState = appendError(state, `index_codebase (post-impl) failed: ${result.error ?? "unknown"}; skipping post-impl verification`, "upstream_failure");
-    return advanceToTesting(nextState, postSpecs, { ...verification, after_graph_path: null, gates_passed: false }, "Post-implementation verification degraded: could not index the implementation worktree.");
-  }
-  const afterGraphPath = asRecord(result.data).graph_path;
-  const nextVerification = {
-    ...verification,
-    step: "detect_changes",
-    after_graph_path: afterGraphPath ?? null
-  };
-  return withVerification(state, postSpecs, nextVerification, "Post-implementation graph indexed.");
-}
-function processDetectChangesResult(state, postSpecs, verification, result) {
-  let nextState = state;
-  let changedSymbols = [];
-  let detectChangesData = null;
-  if (result.success) {
-    detectChangesData = asRecord(result.data);
-    changedSymbols = extractChangedSymbols(result.data);
-  } else {
-    nextState = appendError(nextState, `detect_changes failed: ${result.error ?? "unknown"}; continuing with no changed_symbols`, "upstream_failure");
-  }
-  const nextVerification = {
-    ...verification,
-    step: "verify_semantic_diff",
-    detect_changes: detectChangesData,
-    changed_symbols: changedSymbols
-  };
-  return withVerification(nextState, postSpecs, nextVerification, "Change detection complete.");
-}
-function processVerifySemanticDiffResult(state, postSpecs, verification, result) {
-  let nextState = state;
-  let verifyDiffData = null;
-  if (result.success) {
-    verifyDiffData = asRecord(result.data);
-  } else {
-    nextState = appendError(nextState, `verify_semantic_diff failed: ${result.error ?? "unknown"}; continuing without regression data`, "upstream_failure");
-  }
-  const nextVerification = {
-    ...verification,
-    step: "check_security_gates",
-    verify_semantic_diff: verifyDiffData
-  };
-  return withVerification(nextState, postSpecs, nextVerification, "Semantic-diff verification complete.");
-}
-function processCheckSecurityGatesResult(state, postSpecs, verification, result) {
-  let nextState = state;
-  let securityGatesData = null;
-  let gatesPassed = false;
-  if (result.success) {
-    securityGatesData = asRecord(result.data);
-    gatesPassed = extractGatesPassed(result.data);
-  } else {
-    nextState = appendError(nextState, `check_security_gates failed: ${result.error ?? "unknown"}; gates_passed defaults to false (fail-closed)`, "upstream_failure");
-  }
-  const nextVerification = {
-    ...verification,
-    check_security_gates: securityGatesData,
-    gates_passed: gatesPassed
-  };
-  return advanceToTesting(nextState, postSpecs, nextVerification, `Post-implementation verification complete: gates_passed=${gatesPassed}.`);
-}
-function processResult(state, postSpecs, verification, result) {
-  if (verification.step === "index_codebase" && result.correlation_id === POST_IMPL_INDEX_CODEBASE_CORRELATION_ID) {
-    return processIndexCodebaseResult(state, postSpecs, verification, result);
-  }
-  if (verification.step === "detect_changes" && result.correlation_id === POST_IMPL_DETECT_CHANGES_CORRELATION_ID) {
-    return processDetectChangesResult(state, postSpecs, verification, result);
-  }
-  if (verification.step === "verify_semantic_diff" && result.correlation_id === POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID) {
-    return processVerifySemanticDiffResult(state, postSpecs, verification, result);
-  }
-  if (verification.step === "check_security_gates" && result.correlation_id === POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID) {
-    return processCheckSecurityGatesResult(state, postSpecs, verification, result);
-  }
-  return null;
-}
-function emitIndexCodebaseCall(state, postSpecs, verification, worktree) {
-  return {
-    state: { ...state, post_specs: { ...postSpecs, verification } },
-    action: {
-      kind: "call_pipeline_tool",
-      tool_name: "index_codebase",
-      arguments: {
-        path: worktree,
-        output_dir: deriveVerificationOutputDir(worktree, state.run_id)
-      },
-      correlation_id: POST_IMPL_INDEX_CODEBASE_CORRELATION_ID
-    }
-  };
-}
-function emitDetectChangesCall(state, postSpecs, verification, worktree) {
-  const args = {
-    graph_path: verification.after_graph_path,
-    codebase_path: worktree
-  };
-  if (postSpecs.implementation?.branch) {
-    args.head_ref = postSpecs.implementation.branch;
-  }
-  return {
-    state: { ...state, post_specs: { ...postSpecs, verification } },
-    action: {
-      kind: "call_pipeline_tool",
-      tool_name: "detect_changes",
-      arguments: args,
-      correlation_id: POST_IMPL_DETECT_CHANGES_CORRELATION_ID
-    }
-  };
-}
-function emitVerifySemanticDiffCall(state, postSpecs, verification, beforeGraphPath) {
-  return {
-    state: { ...state, post_specs: { ...postSpecs, verification } },
-    action: {
-      kind: "call_pipeline_tool",
-      tool_name: "verify_semantic_diff",
-      arguments: {
-        before_graph_path: beforeGraphPath,
-        after_graph_path: verification.after_graph_path
-      },
-      correlation_id: POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID
-    }
-  };
-}
-function emitCheckSecurityGatesCall(state, postSpecs, verification) {
-  return {
-    state: { ...state, post_specs: { ...postSpecs, verification } },
-    action: {
-      kind: "call_pipeline_tool",
-      tool_name: "check_security_gates",
-      arguments: {
-        graph_path: verification.after_graph_path,
-        changed_symbols: verification.changed_symbols
-      },
-      correlation_id: POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID
-    }
-  };
-}
-function emitCallForStep(state, postSpecs, verification, worktree, beforeGraphPath) {
-  switch (verification.step) {
-    case "index_codebase":
-      return emitIndexCodebaseCall(state, postSpecs, verification, worktree);
-    case "detect_changes":
-      return emitDetectChangesCall(state, postSpecs, verification, worktree);
-    case "verify_semantic_diff":
-      return emitVerifySemanticDiffCall(state, postSpecs, verification, beforeGraphPath);
-    case "check_security_gates":
-      return emitCheckSecurityGatesCall(state, postSpecs, verification);
-    case "done":
-      return advanceToTesting(state, postSpecs, verification, `Post-implementation verification complete: gates_passed=${verification.gates_passed}.`);
-  }
-}
-var handlePostImplVerification = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs4(state);
-  const verification = ensureVerification(postSpecs);
-  const worktree = worktreePath(postSpecs);
-  const beforeGraphPath = state.codebase_graph_path;
-  if (result?.kind === "tool_result") {
-    const processed = processResult(state, postSpecs, verification, result);
-    if (processed)
-      return processed;
-  }
-  if (!beforeGraphPath || !worktree) {
-    return advanceToTesting(state, postSpecs, verification, "No implementation worktree available; skipping post-implementation verification.");
-  }
-  return emitCallForStep(state, postSpecs, verification, worktree, beforeGraphPath);
-};
-
-// packages/orchestration/dist/handlers/testing.js
-var TESTING_BATCH_ID = TESTING_INV_ID;
-function ensurePostSpecs5(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-var RAW_REPORT_TRUNCATE_CHARS2 = 4e3;
-var RAW_REPORT_TRUNCATION_MARKER2 = "...";
-function truncateRawReport2(text2) {
-  return text2.length > RAW_REPORT_TRUNCATE_CHARS2 ? text2.slice(0, RAW_REPORT_TRUNCATE_CHARS2) + RAW_REPORT_TRUNCATION_MARKER2 : text2;
-}
-function summarizeVerification(postSpecs) {
-  const v = postSpecs.verification;
-  if (!v)
-    return "";
-  const lines = [`gates_passed: ${v.gates_passed}`];
-  if (v.changed_symbols.length > 0) {
-    lines.push(`changed symbols: ${v.changed_symbols.join(", ")}`);
-  }
-  return lines.join("\n");
-}
-function emitTestingSpawn(state, postSpecs) {
-  const worktree = postSpecs.implementation?.worktree_path ?? "";
-  const branch = postSpecs.implementation?.branch ?? "";
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: {
-      kind: "spawn_subagents",
-      purpose: "test",
-      batch_id: TESTING_BATCH_ID,
-      invocations: [
-        {
-          invocation_id: TESTING_INV_ID,
-          subagent_type: "test-engineer",
-          description: "Write and run tests for the implemented change",
-          prompt: buildTestingPrompt({
-            feature_description: state.feature_description,
-            worktree_path: worktree,
-            branch,
-            spec_files: state.written_files,
-            implementation_summary: postSpecs.implementation?.raw_report ?? "",
-            verification_summary: summarizeVerification(postSpecs)
-          }),
-          isolation: "none"
-        }
-      ]
-    }
-  };
-}
-function advanceToReview(state, postSpecs, testing, message, level = "info") {
-  return {
-    state: {
-      ...state,
-      current_step: "review",
-      post_specs: { ...postSpecs, testing }
-    },
-    action: { kind: "emit_message", message, level }
-  };
-}
-function processTestingResult(state, postSpecs, result) {
-  const response = result.responses.find((r) => r.invocation_id === TESTING_INV_ID);
-  if (!response || response.error || !response.raw_text?.trim()) {
-    const nextState = appendError(state, `testing subagent failed: ${response?.error ?? "no response"}; degrading \u2014 surfaced to review as a finding`, "upstream_failure");
-    const testing2 = {
-      raw_report: `[TEST-ENGINEER FAILURE] ${response?.error ?? "no response"}`
-    };
-    return advanceToReview(nextState, postSpecs, testing2, "Testing subagent failed; proceeding to review with a degraded testing report.", "warn");
-  }
-  const testing = {
-    raw_report: truncateRawReport2(response.raw_text.trim())
-  };
-  return advanceToReview(state, postSpecs, testing, "Testing complete; proceeding to review.");
-}
-var handleTesting = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs5(state);
-  if (result?.kind === "subagent_batch_result" && result.batch_id === TESTING_BATCH_ID) {
-    return processTestingResult(state, postSpecs, result);
-  }
-  if (postSpecs.testing) {
-    return {
-      state: { ...state, current_step: "review", post_specs: postSpecs },
-      action: {
-        kind: "emit_message",
-        message: "Testing already recorded; proceeding to review."
-      }
-    };
-  }
-  return emitTestingSpawn(state, postSpecs);
-};
-
-// packages/orchestration/dist/handlers/review.js
-var REVIEW_RETRY_CAP = 3;
-function ensurePostSpecs6(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-function currentAttempt(postSpecs) {
-  return postSpecs.retry_count + 1;
-}
-function summarizeVerification2(postSpecs) {
-  const v = postSpecs.verification;
-  if (!v)
-    return "";
-  const lines = [`gates_passed: ${v.gates_passed}`];
-  if (v.changed_symbols.length > 0) {
-    lines.push(`changed symbols: ${v.changed_symbols.join(", ")}`);
-  }
-  return lines.join("\n");
-}
-function emitReviewSpawn(state, postSpecs) {
-  const attempt = currentAttempt(postSpecs);
-  const worktree = postSpecs.implementation?.worktree_path ?? "";
-  const branch = postSpecs.implementation?.branch ?? "";
-  const invocationId = reviewInvocationId(attempt);
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: {
-      kind: "spawn_subagents",
-      purpose: "review",
-      batch_id: invocationId,
-      invocations: [
-        {
-          invocation_id: invocationId,
-          subagent_type: "code-reviewer",
-          description: `Review the implementation (attempt ${attempt}/${REVIEW_RETRY_CAP})`,
-          prompt: buildReviewPrompt({
-            feature_description: state.feature_description,
-            worktree_path: worktree,
-            branch,
-            spec_files: state.written_files,
-            implementation_summary: postSpecs.implementation?.raw_report ?? "",
-            verification_summary: summarizeVerification2(postSpecs),
-            testing_summary: postSpecs.testing?.raw_report ?? "",
-            prior_findings: postSpecs.review?.findings
-          }),
-          isolation: "none"
-        }
-      ]
-    }
-  };
-}
-function advanceToPrGate(state, postSpecs, review, message, level = "info") {
-  return {
-    state: {
-      ...state,
-      current_step: "pr_gate",
-      post_specs: { ...postSpecs, review }
-    },
-    action: { kind: "emit_message", message, level }
-  };
-}
-function retryImplementation(state, postSpecs, nextRetryCount, findings, message) {
-  return {
-    state: {
-      ...state,
-      current_step: "implementation",
-      post_specs: {
-        ...postSpecs,
-        retry_count: nextRetryCount,
-        review: { verdict: "fail", findings: [...findings], attempt: nextRetryCount },
-        // The fix invalidates both — they measured the REJECTED code.
-        verification: null,
-        testing: null
-      }
-    },
-    action: { kind: "emit_message", message, level: "warn" }
-  };
-}
-function retryReviewer(state, postSpecs, nextRetryCount, message) {
-  return {
-    state: {
-      ...state,
-      current_step: "review",
-      post_specs: { ...postSpecs, retry_count: nextRetryCount }
-    },
-    action: { kind: "emit_message", message, level: "warn" }
-  };
-}
-function handleReviewOutcomeFailure(state, postSpecs, message, mode2, findings) {
-  const nextState = appendError(state, message, "upstream_failure");
-  const nextRetryCount = postSpecs.retry_count + 1;
-  if (postSpecs.retry_count < REVIEW_RETRY_CAP) {
-    if (mode2 === "retry_implementation") {
-      return retryImplementation(nextState, postSpecs, nextRetryCount, findings, `Review FAIL (attempt ${nextRetryCount}/${REVIEW_RETRY_CAP}): retrying implementation with findings.`);
-    }
-    return retryReviewer(nextState, postSpecs, nextRetryCount, `Review attempt ${postSpecs.retry_count + 1} failed to produce a verdict (${message}); retrying review (attempt ${nextRetryCount}/${REVIEW_RETRY_CAP}).`);
-  }
-  const advisoryFindings = mode2 === "retry_implementation" ? findings : [`Review cap exhausted: ${message}`];
-  return advanceToPrGate(nextState, postSpecs, { verdict: "fail", findings: [...advisoryFindings], attempt: currentAttempt(postSpecs) }, `Review retry cap (${REVIEW_RETRY_CAP}) exhausted; degrading to advisory FAIL, proceeding to the PR gate.`, "warn");
-}
-var VERDICT_FOOTER_RE = /^\s*VERDICT:\s*(PASS|FAIL)\s*$/im;
-var FINDINGS_HEADER_RE = /^\s*FINDINGS:\s*$/im;
-var FINDING_BULLET_RE = /^-\s+(\S.*)$/;
-function parseReviewReport(rawText) {
-  const verdictMatch = VERDICT_FOOTER_RE.exec(rawText);
-  if (!verdictMatch?.[1])
-    return null;
-  const findings = [];
-  const findingsHeaderMatch = FINDINGS_HEADER_RE.exec(rawText);
-  if (findingsHeaderMatch) {
-    const afterHeaderStart = findingsHeaderMatch.index + findingsHeaderMatch[0].length;
-    const body = rawText.slice(afterHeaderStart).split("\n");
-    for (const line of body) {
-      if (line.trim() === "")
-        continue;
-      const bulletMatch = FINDING_BULLET_RE.exec(line);
-      if (!bulletMatch)
-        break;
-      findings.push(bulletMatch[1].trim());
-    }
-  }
-  return { verdict: verdictMatch[1].toLowerCase(), findings };
-}
-function processReviewResult(state, postSpecs, result) {
-  const attempt = currentAttempt(postSpecs);
-  const invocationId = reviewInvocationId(attempt);
-  const response = result.responses.find((r) => r.invocation_id === invocationId);
-  if (!response || response.error || !response.raw_text?.trim()) {
-    return handleReviewOutcomeFailure(state, postSpecs, `reviewer subagent failed: ${response?.error ?? "no response"}`, "retry_reviewer", []);
-  }
-  const parsed = parseReviewReport(response.raw_text);
-  if (!parsed) {
-    return handleReviewOutcomeFailure(state, postSpecs, "reviewer report did not include a parsable VERDICT: footer", "retry_reviewer", []);
-  }
-  if (parsed.verdict === "pass") {
-    return advanceToPrGate(state, postSpecs, { verdict: "pass", findings: [], attempt }, "Review PASSED; proceeding to the PR gate.");
-  }
-  return handleReviewOutcomeFailure(state, postSpecs, `review FAILED: ${parsed.findings.join("; ") || "no findings given"}`, "retry_implementation", parsed.findings);
-}
-var handleReview = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs6(state);
-  const expectedBatchId = reviewInvocationId(currentAttempt(postSpecs));
-  if (result?.kind === "subagent_batch_result" && result.batch_id === expectedBatchId) {
-    return processReviewResult(state, postSpecs, result);
-  }
-  if (postSpecs.review?.verdict === "pass") {
-    return {
-      state: { ...state, current_step: "pr_gate", post_specs: postSpecs },
-      action: {
-        kind: "emit_message",
-        message: "Review already passed; proceeding to the PR gate."
-      }
-    };
-  }
-  return emitReviewSpawn(state, postSpecs);
-};
-
-// packages/orchestration/dist/handlers/pr-gate.js
-function ensurePostSpecs7(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-function buildGateSummary(postSpecs) {
-  const review = postSpecs.review;
-  const verdictLine = review ? `Review verdict: ${review.verdict.toUpperCase()}${review.findings.length > 0 ? ` \u2014 ${review.findings.join("; ")}` : ""} (attempt ${review.attempt}, ${postSpecs.retry_count} retry/retries used).` : "Review verdict: unavailable.";
-  const gatesLine = postSpecs.verification ? `Post-implementation gates passed: ${postSpecs.verification.gates_passed}.` : "Post-implementation gates: not run.";
-  const filesLine = `Files changed: ${postSpecs.implementation?.changed_files.length ?? 0}.`;
-  const branchLine = `Branch: ${postSpecs.implementation?.branch ?? "(unknown)"}.`;
-  return [verdictLine, gatesLine, filesLine, branchLine].join("\n");
-}
-var PUSH_LABEL = "Push + open PR";
-function prQuestion(postSpecs) {
-  return {
-    kind: "ask_user",
-    question_id: PR_GATE_QUESTION_ID,
-    header: "Push the branch and open a pull request?",
-    description: `${buildGateSummary(postSpecs)}
-
-A pull request is opened for human review \u2014 it is never self-merged.`,
-    options: [
-      {
-        label: PUSH_LABEL,
-        description: "Push the branch and open a pull request for human review."
-      },
-      {
-        label: "No",
-        description: "Stop here. No branch is pushed and no PR is opened."
-      }
-    ],
-    multi_select: false
-  };
-}
-var handlePrGate = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs7(state);
-  const question = prQuestion(postSpecs);
-  if (result?.kind === "user_answer" && result.question_id === PR_GATE_QUESTION_ID) {
-    return answerOptionQuestion({ ...state, post_specs: postSpecs }, question, question.options, result, (answered, label) => {
-      if (label === PUSH_LABEL) {
-        return {
-          state: { ...answered, current_step: "pr_creation", post_specs: postSpecs },
-          action: {
-            kind: "emit_message",
-            message: "Push approved. Opening a pull request."
-          }
-        };
-      }
-      return {
-        state: {
-          ...answered,
-          current_step: "finalize",
-          post_specs: { ...postSpecs, pr: { pushed: false, url: null } }
-        },
-        action: {
-          kind: "emit_message",
-          message: "Push declined. Proceeding to finalize without a PR."
-        }
-      };
-    }, "No");
-  }
-  return { state: { ...state, post_specs: postSpecs }, action: question };
-};
-
-// packages/orchestration/dist/handlers/pr-creation.js
-var PR_CREATION_BATCH_ID = PR_CREATION_INV_ID;
-function ensurePostSpecs8(state) {
-  return state.post_specs ?? initialPostSpecs();
-}
-function summarizeReview(postSpecs) {
-  const r = postSpecs.review;
-  if (!r)
-    return "";
-  const lines = [`verdict: ${r.verdict}`];
-  if (r.findings.length > 0) {
-    lines.push(`findings: ${r.findings.join("; ")}`);
-  }
-  return lines.join("\n");
-}
-function summarizeVerification3(postSpecs) {
-  const v = postSpecs.verification;
-  if (!v)
-    return "";
-  return `gates_passed: ${v.gates_passed}`;
-}
-function emitPrCreationSpawn(state, postSpecs) {
-  const worktree = postSpecs.implementation?.worktree_path ?? "";
-  const branch = postSpecs.implementation?.branch ?? "";
-  return {
-    state: { ...state, post_specs: postSpecs },
-    action: {
-      kind: "spawn_subagents",
-      purpose: "pr",
-      batch_id: PR_CREATION_BATCH_ID,
-      invocations: [
-        {
-          invocation_id: PR_CREATION_INV_ID,
-          subagent_type: "engineer",
-          description: "Push the branch and open a pull request",
-          prompt: buildPrCreationPrompt({
-            feature_description: state.feature_description,
-            worktree_path: worktree,
-            branch,
-            spec_files: state.written_files,
-            implementation_summary: postSpecs.implementation?.raw_report ?? "",
-            verification_summary: summarizeVerification3(postSpecs),
-            testing_summary: postSpecs.testing?.raw_report ?? "",
-            review_summary: summarizeReview(postSpecs)
-          }),
-          isolation: "none"
-        }
-      ]
-    }
-  };
-}
-function degradeToFinalize(state, postSpecs, message) {
-  const pr = { pushed: false, url: null };
-  return {
-    state: appendError({ ...state, current_step: "finalize", post_specs: { ...postSpecs, pr } }, message, "upstream_failure"),
-    action: { kind: "emit_message", message, level: "warn" }
-  };
-}
-var PR_URL_FOOTER_RE = /^\s*PR_URL:\s*(\S+)\s*$/im;
-function parsePrCreationReport(rawText) {
-  const match2 = PR_URL_FOOTER_RE.exec(rawText);
-  return match2?.[1] ?? null;
-}
-function processPrCreationResult(state, postSpecs, result) {
-  const response = result.responses.find((r) => r.invocation_id === PR_CREATION_INV_ID);
-  if (!response || response.error || !response.raw_text?.trim()) {
-    return degradeToFinalize(state, postSpecs, `pr_creation subagent failed: ${response?.error ?? "no response"}; degrading \u2014 proceeding to finalize without a PR`);
-  }
-  const url2 = parsePrCreationReport(response.raw_text);
-  if (!url2) {
-    return degradeToFinalize(state, postSpecs, "pr_creation subagent report did not include a parsable PR_URL: footer; degrading \u2014 proceeding to finalize without a PR");
-  }
-  const pr = { pushed: true, url: url2 };
-  return {
-    state: {
-      ...state,
-      current_step: "finalize",
-      post_specs: { ...postSpecs, pr }
-    },
-    action: {
-      kind: "emit_message",
-      message: `Pull request opened: ${url2}`
-    }
-  };
-}
-var handlePrCreation = ({ state, result }) => {
-  const postSpecs = ensurePostSpecs8(state);
-  if (result?.kind === "subagent_batch_result" && result.batch_id === PR_CREATION_BATCH_ID) {
-    return processPrCreationResult(state, postSpecs, result);
-  }
-  if (postSpecs.pr) {
-    return {
-      state: { ...state, current_step: "finalize", post_specs: postSpecs },
-      action: {
-        kind: "emit_message",
-        message: "PR outcome already recorded; proceeding to finalize."
-      }
-    };
-  }
-  return emitPrCreationSpawn(state, postSpecs);
-};
 
 // packages/orchestration/dist/handlers/finalize.js
 var REMEMBER_CORRELATION_ID = "self_check_remember";
@@ -59450,13 +58324,13 @@ var HANDLERS = {
   file_export: handleFileExport,
   self_check: handleSelfCheck,
   implementation_gate: handleImplementationGate,
-  pre_impl_grounding: handlePreImplGrounding,
-  implementation: handleImplementation,
-  post_impl_verification: handlePostImplVerification,
-  testing: handleTesting,
-  review: handleReview,
-  pr_gate: handlePrGate,
-  pr_creation: handlePrCreation,
+  pre_impl_grounding: refuseImplementation,
+  implementation: refuseImplementation,
+  post_impl_verification: refuseImplementation,
+  testing: refuseImplementation,
+  review: refuseImplementation,
+  pr_gate: refuseImplementation,
+  pr_creation: refuseImplementation,
   finalize: handleFinalize,
   complete: ({ state }) => ({
     state,
@@ -59469,6 +58343,9 @@ var HANDLERS = {
 };
 var COALESCE_CAP = 16;
 function step(input2) {
+  if (isLegacyExecutionCheckpoint(input2.state, null) || input2.result && isRetiredImplementationAnswer(input2.state, input2.result)) {
+    return { ...refuseImplementation(input2), messages: [] };
+  }
   const messages = [];
   let currentState = input2.state;
   let pendingResult = input2.result;
@@ -59519,6 +58396,9 @@ function terminalFromMessages(messages) {
   }
   const summary = messages.map((m) => m.level === "info" ? m.text : `[${m.level.toUpperCase()}] ${m.text}`).join("\n");
   return { kind: "done", summary, artifacts: [] };
+}
+function refuseImplementation({ state }) {
+  return { state, action: { kind: "failed", reason: ARCHITECT_OS_BOUNDARY.message, step: state.current_step } };
 }
 function invoke(state, result) {
   const handler = HANDLERS[state.current_step];
@@ -60014,8 +58894,8 @@ function readDefineHandoff(state, action) {
   if (policy.status !== "pass") {
     return refusal("define_not_ready", "The current verification policy requires attention.");
   }
-  if (!action.options?.some(({ label }) => label === GATE_OPTION_IMPLEMENT)) {
-    return refusal("define_not_ready", "The pending question does not offer ordinary implementation.");
+  if (state.post_specs?.legacy_define_refusal || !permitsDefineHandoff(action)) {
+    return refusal("define_not_ready", "The pending question does not permit a verified planning handoff.");
   }
   return { handoff: parsed.data };
 }
@@ -100446,19 +99326,19 @@ var createSimplifyCore = /* @__PURE__ */ factory(name286, dependencies287, (_ref
           }
         }
       }
-      var finish = true;
+      var finish2 = true;
       if (node2.op === "-") {
         if (isOperatorNode(a0)) {
           if (a0.isBinary() && a0.fn === "subtract") {
             node2 = new OperatorNode2("-", "subtract", [a0.args[1], a0.args[0]]);
-            finish = false;
+            finish2 = false;
           }
           if (a0.isUnary() && a0.op === "-") {
             return a0.args[0];
           }
         }
       }
-      if (finish) return new OperatorNode2(node2.op, node2.fn, [a0]);
+      if (finish2) return new OperatorNode2(node2.op, node2.fn, [a0]);
     }
     if (isOperatorNode(node2) && node2.isBinary()) {
       var _a4 = _simplifyCore(node2.args[0], options);
@@ -106672,6 +105552,12 @@ function describeRequestSizes() {
   });
   return sentences.join(" ");
 }
+function architectOsRequired() {
+  return {
+    content: [{ type: "text", text: JSON.stringify({ error: ARCHITECT_OS_BOUNDARY }) }],
+    isError: true
+  };
+}
 function registerPipelineTools(server2) {
   const startPipeline = server2.tool("start_pipeline", "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.", {
     feature_description: external_exports.string().describe("What the PRD is about \u2014 passed to all prompts"),
@@ -106749,7 +105635,9 @@ function registerPipelineTools(server2) {
       const found = runs.find(run_id);
       if (found.kind !== "found")
         return runNotFound(run_id, found);
-      const out = step({ state: found.run.state, result });
+      if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) || isRetiredImplementationAnswer(found.run.state, result))
+        return architectOsRequired();
+      const out = step({ state: recordLegacyDefineRefusal(found.run.state, found.run.action), result });
       const drained = drainEvidenceQueues(out.state);
       runs.keep(drained, out.action);
       return {
@@ -106764,7 +105652,7 @@ function registerPipelineTools(server2) {
       inFlight.delete(run_id);
     }
   });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (re-evaluating a pending implementation question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.", {
+  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.", {
     run_id: external_exports.string(),
     format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1"]).default("summary"),
     invocation_offset: external_exports.number().int().min(0).default(0)
@@ -106797,6 +105685,8 @@ function registerPipelineTools(server2) {
         prd_validation: state.prd_validation
       };
     } else if (format6 === "action") {
+      if (isLegacyExecutionCheckpoint(state, found.run.action))
+        return architectOsRequired();
       const page = pageActionResponse(
         state.run_id,
         refreshImplementationGateQuestion(state, found.run.action),

@@ -96,7 +96,7 @@ describe("get_pipeline_state format:'action'", () => {
 
   it("serves the current implementation policy for a pending saved question", async () => {
     expect(descriptions.get("get_pipeline_state")).toEqual(
-      expect.stringContaining("re-evaluating a pending implementation question"),
+      expect.stringContaining("refreshing a pending verification question"),
     );
     const run_id = "run_legacy_gate";
     const state = newPipelineState({ run_id, feature_description: "Legacy saved specification" });
@@ -117,7 +117,7 @@ describe("get_pipeline_state format:'action'", () => {
     expect(body.action).toMatchObject({
       kind: "ask_user",
       question_id: "implementation_gate",
-      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Review verification findings" })],
     });
     const refused = await handlers.get("get_pipeline_state")!({ run_id, format: "define_handoff_v1" });
     expect(refused.isError).toBe(true);
@@ -190,4 +190,47 @@ it.each([MAX_RESPONSE_CHARS, MAX_RESPONSE_CHARS + 1])("enforces the complete Def
     expect(response.content[0]?.text).toHaveLength(MAX_RESPONSE_CHARS);
     expect(parse(response)).toMatchObject({ handoff: { version: 1, run_id } });
   }
+});
+
+it.each([
+  { kind: "legacy stage", current_step: "implementation" as const, selected: ["PRD only"] },
+  { kind: "retired answer", current_step: "implementation_gate" as const, selected: ["Implement"] },
+])("refuses $kind through the in-process MCP tools", async ({ current_step, selected }) => {
+  const run_id = current_step === "implementation" ? "run_boundary_stage" : "run_boundary_answer";
+  const state = { ...newPipelineState({ run_id, feature_description: "Resume execution" }), current_step };
+  new RunFiles(RUNS_DIR).write(state, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
+    description: "Saved question", options: [{ label: "PRD only" }, { label: "Implement" }], multi_select: false,
+  });
+  if (current_step === "implementation") {
+    const recovered = await handlers.get("get_pipeline_state")!({ run_id, format: "action", invocation_offset: 1 });
+    expect(recovered.isError).toBe(true);
+    expect(parse(recovered)).toEqual({ error: {
+      code: "architect_os_required",
+      message: "Implementation belongs to architect-os. Use a validated Define handoff and an independently approved execution plan.",
+    } });
+  }
+  const response = await handlers.get("submit_action_result")!({ run_id, result: {
+    kind: "user_answer", question_id: "implementation_gate", selected,
+  } });
+  expect(response.isError).toBe(true);
+  expect(parse(response).error).toMatchObject({ code: "architect_os_required" });
+});
+
+it("stores a legacy handoff refusal through the in-process MCP tools", async () => {
+  const run_id = "run_boundary_override";
+  new RunFiles(RUNS_DIR).write({
+    ...newPipelineState({ run_id, feature_description: "Review an old specification" }),
+    current_step: "implementation_gate",
+  }, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Override?",
+    description: "Old verification policy", options: [{ label: "PRD only" }, { label: "Override policy (explicit)" }],
+    multi_select: false,
+  });
+  const submit = await handlers.get("submit_action_result")!({ run_id, result: {
+    kind: "user_answer", question_id: "implementation_gate", selected: ["Review verification findings"],
+  } });
+  expect(submit.isError).toBeFalsy();
+  const state = await handlers.get("get_pipeline_state")!({ run_id, format: "full" });
+  expect(parse(state)).toMatchObject({ state: { post_specs: { legacy_define_refusal: true, decision: "pending" } } });
 });

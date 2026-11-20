@@ -69,6 +69,12 @@ export {
 
 // Runner
 export { step, type StepInput, type StepOutput, type StepHandler } from "./runner.js";
+export {
+  ARCHITECT_OS_BOUNDARY,
+  isLegacyExecutionCheckpoint,
+  isRetiredImplementationAnswer,
+  recordLegacyDefineRefusal,
+} from "./architect-os-boundary.js";
 export { refreshImplementationGateQuestion } from "./handlers/implementation-gate.js";
 export { QUESTION_ID_CONTINUE as CLARIFICATION_CONTINUE_QUESTION_ID } from "./handlers/protocol-ids.js";
 

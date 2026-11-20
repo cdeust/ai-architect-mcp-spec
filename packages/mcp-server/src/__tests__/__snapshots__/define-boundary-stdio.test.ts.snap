@@ -9,18 +9,18 @@ exports[`resumes the conflicting publication specification at Define without sta
     "00-run-notes.md",
   ],
   "pendingDecision": {
-    "description": "Conflicting publication instructions for --until ci: overview says "With \`--until ci\`, publish the verified commit automatically."; requirements/FR-002 says "With \`--until ci\`, stop after CI and never publish the verified commit.". A bare "Implement" is not offered while this run is blocked.",
-    "header": "Verification policy blocks implementation",
+    "description": "Conflicting publication instructions for --until ci: overview says "With \`--until ci\`, publish the verified commit automatically."; requirements/FR-002 says "With \`--until ci\`, stop after CI and never publish the verified commit.". Read a validated Define v1 handoff to continue planning. Architect-os owns implementation.",
+    "header": "Specification verification",
     "kind": "ask_user",
     "multi_select": false,
     "options": [
       {
-        "description": "Stop here. No code changes.",
+        "description": "Finish this specification run.",
         "label": "PRD only",
       },
       {
-        "description": "Explicit override: implement despite the block above.",
-        "label": "Override policy (explicit)",
+        "description": "Keep the specification checkpoint pending.",
+        "label": "Review verification findings",
       },
     ],
     "question_id": "implementation_gate",
@@ -70,18 +70,18 @@ exports[`resumes the delivery-command specification at Define without starting i
     "10-verification-report.md",
   ],
   "pendingDecision": {
-    "description": "The PRD/specs are ready. Implement the change now (spawns an engineer, runs tests and review, opens a PR after a human gate), or stop here with PRD-only deliverables (today's behavior)?",
-    "header": "Proceed to implementation?",
+    "description": "Read a validated Define v1 handoff to continue planning. Architect-os owns implementation.",
+    "header": "Specification verification",
     "kind": "ask_user",
     "multi_select": false,
     "options": [
       {
-        "description": "Stop here. No code changes — today's default behavior.",
+        "description": "Finish this specification run.",
         "label": "PRD only",
       },
       {
-        "description": "Spawn an engineer to implement, test, review, and (after a further gate) open a PR.",
-        "label": "Implement",
+        "description": "Keep the specification checkpoint pending.",
+        "label": "Review verification findings",
       },
     ],
     "question_id": "implementation_gate",
@@ -131,18 +131,18 @@ exports[`resumes the semantically empty specification at Define without starting
     "00-run-notes.md",
   ],
   "pendingDecision": {
-    "description": "The requirements section must define at least one FR or NFR statement. The acceptance_criteria section must define at least one AC statement. A bare "Implement" is not offered while this run is blocked.",
-    "header": "Verification policy blocks implementation",
+    "description": "The requirements section must define at least one FR or NFR statement. The acceptance_criteria section must define at least one AC statement. Read a validated Define v1 handoff to continue planning. Architect-os owns implementation.",
+    "header": "Specification verification",
     "kind": "ask_user",
     "multi_select": false,
     "options": [
       {
-        "description": "Stop here. No code changes.",
+        "description": "Finish this specification run.",
         "label": "PRD only",
       },
       {
-        "description": "Explicit override: implement despite the block above.",
-        "label": "Override policy (explicit)",
+        "description": "Keep the specification checkpoint pending.",
+        "label": "Review verification findings",
       },
     ],
     "question_id": "implementation_gate",

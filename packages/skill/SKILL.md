@@ -1,7 +1,7 @@
 ---
 name: ai-architect-mcp-spec
 version: 0.9.0
-description: Action-driven PRD generation. The MCP server runs a stateless 20-step pipeline reducer (11 PRD-generation steps + 9 opt-in implementation steps behind a human gate); the host (Claude Code) executes each substantive action and feeds the result back via submit_action_result, looping until done. Multi-judge verification combines genius reasoning patterns with zetetic team subagents. Grounded in the ai-architect ecosystem (ai-architect-mcp-codebase MCP, Cortex MCP, zetetic-team-subagents).
+description: Action-driven PRD generation. The MCP server runs a stateless reducer for PRD generation and specification verification. The host submits each result and can read a validated Define handoff for planning. Architect-os owns implementation. Multi-judge verification combines genius reasoning patterns with zetetic team subagents. Grounded in the ai-architect ecosystem (ai-architect-mcp-codebase MCP, Cortex MCP, zetetic-team-subagents).
 dependencies: node>=20
 prd_contexts: proposal, feature, bug, incident, poc, mvp, release, cicd
 request_sizes: standard, tiny
@@ -32,7 +32,7 @@ You (the host) drive a loop:
 1. Call `start_pipeline` → receive an envelope with `{ run_id, messages, action, ... }`.
    Declare what you know and the server does not. You have the whole conversation; the server has only `feature_description`.
    - `prd_context`: the kind of PRD. Omit it and the server reads the kind from the words of the description, or asks the user.
-   - `request_size`: `"tiny"` for a small, self-contained change. It is the fast path: 4 sections (overview, requirements, acceptance criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. What it leaves out: every other section of the kind (for a feature: goals, user stories, the technical specification, the data model, the API specification, security and performance; for a release or a CI/CD change, deployment and the timeline too); with them the affected-symbols file (`stage-5.affected_symbols.json`), so on a codebase the PRD-versus-graph check reads the PRD text alone and the grounding before an implementation has no blast radius; and the quality score of the run, which is not filed in the history of its kind. An incident keeps the plan of its kind whatever the size, when the run knows it is one: declare `prd_context` whenever you declare `request_size: "tiny"`. A kind the server reads from the words can miss an incident ("checkout returns 500 since the deploy" reads as a bug), and the run would then take the fast path. The server never reads a size from the description: omit `request_size` and the run has the rounds and sections of its kind.
+   - `request_size`: `"tiny"` for a small, self-contained change. It is the fast path: 4 sections (overview, requirements, acceptance criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. What it leaves out: every other section of the kind (for a feature: goals, user stories, the technical specification, the data model, the API specification, security and performance; for a release or a CI/CD change, deployment and the timeline too); with them the affected-symbols file (`stage-5.affected_symbols.json`), so on a codebase the PRD-versus-graph check reads the PRD text alone and planning receives no affected-symbols sidecar on that path; and the quality score of the run, which is not filed in the history of its kind. An incident keeps the plan of its kind whatever the size, when the run knows it is one: declare `prd_context` whenever you declare `request_size: "tiny"`. A kind the server reads from the words can miss an incident ("checkout returns 500 since the deploy" reads as a bug), and the run would then take the fast path. The server never reads a size from the description: omit `request_size` and the run has the rounds and sections of its kind.
    - These two choices set the cost of the whole run. Make them the way you commit to an approach: in Claude Code with an advisor configured, that is a point where you consult it.
 2. Display every entry in `messages` to the user.
 3. Execute `action` per the dispatch table below.
@@ -257,12 +257,20 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 
 ---
 
+## SPECIFICATION HANDOFF
+
+At the `implementation_gate` question, show the verification findings. Read
+`get_pipeline_state({ run_id, format: "define_handoff_v1" })` to obtain a validated
+handoff for planning while the checkpoint is pending. `PRD only` closes the run.
+Execution requires a separately approved plan in architect-os.
+
 ## ERROR TRANSPORT
 
-`submit_action_result` itself can return `isError: true` from the MCP layer. Three cases:
+`submit_action_result` itself can return `isError: true` from the MCP layer.
 
 | Cause | Recovery |
 |---|---|
+| `architect_os_required` | The saved action belongs to the retired execution loop. Inspect the historical run using `format: "full"` and continue execution in architect-os. |
 | Concurrent submission rejected — you called `submit_action_result` for the same `run_id` while a previous call was still in flight | The host implementation has a bug. Wait for the in-flight call to return, then submit ONCE. Do not retry blindly. |
 | Unknown `run_id` | The server holds no run under that id and has no file for it. A run is kept in `~/.prd-gen/runs/` and survives a restart of the server, so the id is wrong, the run is a finished one the server dropped 30 minutes after its last use, or its file was deleted. Call `start_pipeline` to begin a new run. |
 | The state kept for the `run_id` cannot be read | The file of the run is damaged. Tell the user which run, and call `start_pipeline` to begin a new run. |

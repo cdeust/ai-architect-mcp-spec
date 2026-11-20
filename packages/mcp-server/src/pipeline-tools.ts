@@ -20,6 +20,10 @@ import {
   MAX_RESPONSE_CHARS,
   newPipelineState,
   readDefineHandoff,
+  ARCHITECT_OS_BOUNDARY,
+  isLegacyExecutionCheckpoint,
+  isRetiredImplementationAnswer,
+  recordLegacyDefineRefusal,
   refreshImplementationGateQuestion,
   runRequestSize,
   step,
@@ -249,6 +253,13 @@ function describeRequestSizes(): string {
   return sentences.join(" ");
 }
 
+function architectOsRequired() {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ error: ARCHITECT_OS_BOUNDARY }) }],
+    isError: true,
+  };
+}
+
 export function registerPipelineTools(server: McpServer): Record<string, RegisteredTool> {
   // ─── start_pipeline ─────────────────────────────────────────────────────
 
@@ -409,7 +420,9 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       try {
         const found = runs.find(run_id);
         if (found.kind !== "found") return runNotFound(run_id, found);
-        const out = step({ state: found.run.state, result });
+        if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) ||
+            isRetiredImplementationAnswer(found.run.state, result)) return architectOsRequired();
+        const out = step({ state: recordLegacyDefineRefusal(found.run.state, found.run.action), result });
         // Drain the evidence queues BEFORE the state is kept: a state on
         // disk has empty queues, so a run that comes back after a restart
         // writes nothing twice. drainEvidenceQueues is a no-op when the
@@ -446,7 +459,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
     "format:'grounding'); format:'grounding' returns the codebase_grounding (+ " +
     "prd_validation when it fits) blobs format:'full' sheds first; format:'validation' " +
     "returns prd_validation alone (the blob format:'grounding' sheds when the pair " +
-    "overshoots); format:'action' returns the last action (re-evaluating a pending implementation question) with " +
+    "overshoots); format:'action' returns the last action (refreshing a pending verification question) with " +
     "full spawn_subagents prompts — the recovery path when a start_pipeline/" +
     "submit_action_result response's __bounded.applied records action.invocations[]." +
     "prompt: the prompts from that record's next_offset on are omitted stubs, and " +
@@ -515,6 +528,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         // 2026-10-10 audit (#125). The action is the one kept with the state,
         // in memory or in the run's file. A pending implementation question
         // can be upgraded to match the current gate policy. source: page-action-response.ts.
+        if (isLegacyExecutionCheckpoint(state, found.run.action)) return architectOsRequired();
         const page = pageActionResponse(
           state.run_id,
           refreshImplementationGateQuestion(state, found.run.action),

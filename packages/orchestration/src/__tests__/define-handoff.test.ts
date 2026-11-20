@@ -86,9 +86,14 @@ it("never infers readiness from old or incomplete evidence or an override questi
       error: { code: "define_not_ready", message: "Define requires passed PRD sections, a passed self-check and detailed verification evidence." },
     });
   }
-  for (const action of [override, { ...pending, options: null }]) {
+  for (const action of [override,
+    { ...pending, options: null },
+    { ...pending, options: [{ label: "Implement" }, { label: "Implement" }] },
+    { ...pending, options: [...pending.options, { label: "Override policy (explicit)" }] },
+    { ...pending, options: [{ label: "PRD only" }, { label: "PRD only" }] },
+  ]) {
     expect(readDefineHandoff(state, action)).toEqual({
-      error: { code: "define_not_ready", message: "The pending question does not offer ordinary implementation." },
+      error: { code: "define_not_ready", message: "The pending question does not permit a verified planning handoff." },
     });
   }
 });
@@ -229,4 +234,13 @@ it("preserves both requirements and traced criteria when their normative text su
   });
   checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Keep the validated commit. | user-request |\n| FR-002 | <blockquote>Legacy requirement.</blockquote> | Prior design |";
   expect(readDefineHandoff(checkpoint, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
+});
+
+
+it("preserves the Define payload for the new gate and honors a persisted legacy refusal", () => {
+  const state = ready();
+  const safe = { ...pending, options: [{ label: "PRD only" }, { label: "Review verification findings" }] };
+  expect(readDefineHandoff(state, safe)).toEqual(readDefineHandoff(state, pending));
+  expect(readDefineHandoff({ ...state, post_specs: { ...initialPostSpecs(), legacy_define_refusal: true } }, safe))
+    .toMatchObject({ error: { code: "define_not_ready" } });
 });

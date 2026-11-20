@@ -16,6 +16,7 @@ PRD generation and verification MCP (prd-gen). Node.js host-driven pipeline runn
 - The tools are a strongly ordered pipeline: start_pipeline then submit_action_result until done; calling them out of order does not error, it leaves the run in a wrong state.
 - The host executes each emitted NextAction; the server never runs them itself.
 - Verification tools (plan_*_verification, conclude_verification) are a separate stage from generation.
+- Architect-os owns implementation and publication. Spec presents verification, exposes validated Define data, and returns `architect_os_required` for legacy execution actions and results.
 
 ## Etiquette
 
