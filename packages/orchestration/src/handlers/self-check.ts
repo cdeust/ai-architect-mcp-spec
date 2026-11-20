@@ -37,7 +37,7 @@ import {
   type JudgeVerdict,
 } from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
-import { prdSections } from "../section-plan.js";
+import { documentSections, prdSections } from "../section-plan.js";
 import {
   resolveVerifyBudget,
   reduceJudgeRequests,
@@ -116,8 +116,7 @@ function finalize(
   totalSubjectiveClaims = 0,
   judgedClaims: readonly Claim[] = [],
 ) {
-  const sections = gatherSections(state);
-  const docReport = validateDocument(sections);
+  const docReport = validateDocument(documentSections(state.sections));
   const { report: verificationReport, observations } = concludeWithObservations(verdicts, judgedClaims);
 
   // The sections of the PRD: the JIRA tickets, stored beside them, are not counted.

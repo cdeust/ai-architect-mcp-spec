@@ -129,6 +129,16 @@ export function prdSections<S extends { section_type: SectionType }>(sections: r
   return sections.filter((s) => s.section_type !== "jira_tickets");
 }
 
+/** Include missing required rows in validation without using their failed drafts as evidence. */
+export function documentSections(
+  sections: readonly { section_type: SectionType; status: string; content?: string }[],
+): { type: SectionType; content: string }[] {
+  return prdSections(sections).flatMap(({ section_type: type, status, content }) => {
+    if (status !== "failed" && content) return [{ type, content }];
+    return type === "requirements" || type === "acceptance_criteria" ? [{ type, content: "" }] : [];
+  });
+}
+
 /**
  * Section-specific Cortex recall query templates.
  * Mirror the table in SKILL.md "Section-Adaptive Retrieval via Cortex".

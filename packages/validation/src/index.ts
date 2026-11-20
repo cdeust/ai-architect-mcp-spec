@@ -7,6 +7,7 @@ export {
   DOCUMENT_LEVEL_RULES,
   type DocumentLevelRule,
 } from "./hard-output-rules/index.js";
+export { validateDefineReadiness } from "./hard-output-rules/rules/define-readiness.js";
 export { validateCrossReferences } from "./cross-ref-validator.js";
 export {
   checkSymbolExistence,

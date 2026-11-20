@@ -102,7 +102,7 @@ it.each([
   }
   if (kind === "normal") expect(minimum).toBe(200);
   if (kind === "ok") {
-    expect(record.quality).toMatchObject({ outcome: { status: "passed" }, hard_output_score: 1 });
+    expect(record.quality).toMatchObject({ outcome: { status: "needs_attention" }, hard_output_score: 0.7 });
     expect(minimum).toBe(2);
   }
   const summary = String(host.write.mock.calls.find(([path]) => path === join("out", "summary.md"))?.[1]);

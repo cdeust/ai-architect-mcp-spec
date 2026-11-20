@@ -20,6 +20,7 @@ import { checkDocumentDependencyTargetsDefined } from "./rules/dependency-target
 import { checkDocumentMeasurableRequirements } from "./rules/measurable-requirement-rules.js";
 import { checkDocumentTestableAcceptanceCriteria } from "./rules/testable-acceptance-criteria-rules.js";
 import { checkDocumentContradictoryRequirements } from "./rules/contradictory-requirement-rules.js";
+import { checkPrdDefinitions, checkPublicationPolicy } from "./rules/define-readiness.js";
 import { checkDocumentConsistentControlNames } from "./rules/control-name-rules.js";
 
 // SP Rules
@@ -330,6 +331,10 @@ function checkRule(
     case "measurable_requirements":
     case "testable_acceptance_criteria":
     case "contradictory_requirements":
+    // Stryker disable next-line StringLiteral: equivalent: rulesForSection never returns this document-only rule.
+    case "missing_prd_definitions":
+    // Stryker disable next-line StringLiteral: equivalent: rulesForSection never returns this document-only rule.
+    case "contradictory_publication_policy":
     case "consistent_control_names":
     case "post_generation_self_check":
     case "mandatory_codebase_analysis":
@@ -413,6 +418,8 @@ const DOCUMENT_LEVEL_CHECKS: Readonly<
   measurable_requirements: ({ sections }) => checkDocumentMeasurableRequirements(sections),
   testable_acceptance_criteria: ({ sections }) => checkDocumentTestableAcceptanceCriteria(sections),
   contradictory_requirements: ({ sections }) => checkDocumentContradictoryRequirements(sections),
+  missing_prd_definitions: ({ sections }) => checkPrdDefinitions(sections),
+  contradictory_publication_policy: ({ sections }) => checkPublicationPolicy(sections),
   consistent_control_names: ({ sections }) => checkDocumentConsistentControlNames(sections),
 };
 

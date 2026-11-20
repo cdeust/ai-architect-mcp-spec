@@ -24,9 +24,51 @@ import type { JudgeVerdict } from "@prd-gen/core";
 import type { VerificationSummary } from "../types/actions.js";
 import {
   DEFAULT_VERIFICATION_POLICY,
+  defineFindings,
   evaluatePolicy,
+  evaluateRunPolicy,
+  refreshDefineOutcome,
   resolveVerificationPolicy,
 } from "../handlers/verification-policy.js";
+import { newPipelineState, type PipelineState } from "../index.js";
+import { documentSections } from "../section-plan.js";
+
+it("keeps absent planned definitions in validation and discards other unusable drafts", () => {
+  expect(documentSections([
+    { section_type: "overview", status: "passed", content: "Scope" },
+    { section_type: "overview", status: "failed", content: "Rejected" },
+    { section_type: "testing", status: "passed" },
+    { section_type: "requirements", status: "failed", content: "- FR-001: Rejected." },
+    { section_type: "acceptance_criteria", status: "passed", content: "" },
+    { section_type: "jira_tickets", status: "passed", content: "Ticket" },
+  ])).toEqual([
+    { type: "overview", content: "Scope" },
+    { type: "requirements", content: "" },
+    { type: "acceptance_criteria", content: "" },
+  ]);
+});
+
+it("keeps pre-finalization state and upgrades a saved completion without an outcome", () => {
+  const seed = newPipelineState({ run_id: "run_policy_old", feature_description: "Old plan" });
+  const state: PipelineState = {
+    ...seed,
+    sections: [{
+      section_type: "requirements", status: "passed", content: "ok",
+      attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+    }],
+  };
+  const findings = defineFindings(state);
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "blocked", blocking_claims: [], disagreements: [] });
+  expect(refreshDefineOutcome(state, findings)).toBe(state);
+  const old = { ...state, pending_completion: { summary: "Notes for the reviewer", artifacts: [] } };
+  const refreshed = refreshDefineOutcome(old, findings);
+  expect(refreshed.pending_completion?.summary).toContain("Notes for the reviewer");
+  expect(refreshed.pending_completion?.outcome).toEqual({
+    status: "needs_attention",
+    reasons: ["The requirements section must define at least one FR or NFR statement."],
+  });
+  expect(refreshDefineOutcome(refreshed, findings)).toBe(refreshed);
+});
 
 function judge(overrides: Partial<JudgeVerdict> & Pick<JudgeVerdict, "claim_id" | "verdict">): JudgeVerdict {
   return {

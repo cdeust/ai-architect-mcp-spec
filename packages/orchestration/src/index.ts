@@ -69,6 +69,7 @@ export {
 
 // Runner
 export { step, type StepInput, type StepOutput, type StepHandler } from "./runner.js";
+export { refreshImplementationGateQuestion } from "./handlers/implementation-gate.js";
 export { QUESTION_ID_CONTINUE as CLARIFICATION_CONTINUE_QUESTION_ID } from "./handlers/protocol-ids.js";
 
 // Run store (bounded-I/O Phase 3: TTL + max-runs eviction of terminal runs)

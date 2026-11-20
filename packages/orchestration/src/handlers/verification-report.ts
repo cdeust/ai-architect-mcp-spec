@@ -11,7 +11,7 @@ import type { PipelineState } from "../types/state.js";
 import type { AgentIdentity } from "@prd-gen/core";
 import { SECTION_DISPLAY_NAMES } from "@prd-gen/core";
 import type { PrdFile } from "./file-export.js";
-import { evaluatePolicy, resolveVerificationPolicy } from "./verification-policy.js";
+import { evaluateRunPolicy, resolveVerificationPolicy } from "./verification-policy.js";
 
 const VERIFICATION_REPORT_FILENAME = "10-verification-report.md";
 
@@ -206,7 +206,7 @@ function renderGraphValidation(
  */
 function renderPolicySection(state: PipelineState): string {
   const policy = resolveVerificationPolicy(state.verification_policy);
-  const verdict = evaluatePolicy(state.pending_completion?.verification, policy);
+  const verdict = evaluateRunPolicy(state);
 
   const policyLine =
     `Policy in force: block_on=[${policy.block_on.join(", ")}], ` +

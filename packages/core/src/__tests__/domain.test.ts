@@ -16,6 +16,7 @@ import {
   PRD_CONTEXT_CONFIGS,
   PRD_CONTEXT_DEFAULT,
   SectionTypeSchema,
+  HardOutputRuleSchema,
   VerdictSchema,
   EXPECTED_VERDICT_DISTRIBUTION,
   isDistributionSuspicious,
@@ -25,6 +26,12 @@ import {
   JudgeVerdictSchema,
   extractJsonObject,
 } from "../index.js";
+
+it.each(["missing_prd_definitions", "contradictory_publication_policy"])(
+  "decodes the public Define diagnostic %s", rule => {
+    expect(HardOutputRuleSchema.parse(rule)).toBe(rule);
+  },
+);
 
 describe("Capabilities", () => {
   it("exposes the full pipeline feature set (no tier gating)", () => {

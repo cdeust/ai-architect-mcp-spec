@@ -2,7 +2,7 @@
  * Verification-policy evaluation — turns `pending_completion.verification`
  * (VerificationSummarySchema) plus a `VerificationPolicyConfig` into a
  * single `PolicyVerdict`. `implementation-gate.ts` (gate question shape) and
- * `verification-report.ts` (report rendering) both call `evaluatePolicy`
+ * `verification-report.ts` (report rendering) both call `evaluateRunPolicy`
  * independently rather than threading a shared value between them — it is a
  * pure function of state already available to both, so the two consumers
  * can never disagree about what the policy concluded (Move 5: evaluation is
@@ -12,8 +12,12 @@
  */
 
 import type { JudgeVerdict } from "@prd-gen/core";
+import { validateDefineReadiness, validateDocument } from "@prd-gen/validation";
+import { documentSections } from "../section-plan.js";
 import type { VerificationSummary } from "../types/actions.js";
+import type { PipelineState } from "../types/state.js";
 import type { VerificationPolicyConfig } from "../types/state/verification-policy.js";
+import { IMPLEMENTATION_GATE_QUESTION_ID } from "./protocol-ids.js";
 
 /**
  * Default acceptance policy (used whenever `PipelineState.verification_policy`
@@ -194,6 +198,51 @@ export function evaluatePolicy(
   };
 }
 
+/** The gate and its report share the same verdict, including for old pending runs. */
+export function defineFindings(state: PipelineState) {
+  return validateDefineReadiness(documentSections(state.sections));
+}
+
+export function evaluateRunPolicy(state: PipelineState, findings = defineFindings(state)): PolicyVerdict {
+  const verdict = evaluatePolicy(
+    state.pending_completion?.verification,
+    resolveVerificationPolicy(state.verification_policy),
+  );
+  if (findings.length === 0) return verdict;
+  return {
+    ...verdict,
+    status: "blocked",
+    reasons: [...findings.map(({ message }) => message), ...verdict.reasons],
+  };
+}
+
+/** Refresh a checkpoint saved under older validation rules before it can finalize. */
+export function refreshDefineOutcome(state: PipelineState, findings: ReturnType<typeof defineFindings>): PipelineState {
+  const pending = state.pending_completion;
+  if (!pending) return state;
+  const priorReasons = pending.outcome?.reasons ?? [];
+  const added = findings.map(({ message }) => message).filter(message => !priorReasons.includes(message));
+  if (added.length === 0) return state;
+  const reasons = [...priorReasons, ...added];
+  const report = validateDocument(documentSections(state.sections));
+  const recalculated = ["Self-check complete", "Hard-output score: ", "Deterministic violations: "];
+  const summary = pending.summary.split("\n").filter(line =>
+    !recalculated.some(prefix => line.startsWith(prefix))).join("\n");
+  return {
+    ...state,
+    pending_completion: {
+      ...pending,
+      summary: [
+        `Self-check complete: NEEDS ATTENTION (${reasons.join("; ")}).`,
+        `Hard-output score: ${report.totalScore.toFixed(2)} / 1.00`,
+        `Deterministic violations: ${report.violations.length}`,
+        summary,
+      ].join("\n"),
+      outcome: { status: "needs_attention", reasons },
+    },
+  };
+}
+
 /** ask_user option labels — shared between the gate builder and the decision table (implementation-gate.ts). */
 export const GATE_OPTION_PRD_ONLY = "PRD only";
 export const GATE_OPTION_IMPLEMENT = "Implement";
@@ -283,7 +332,7 @@ export function buildPolicyGateQuestion(verdict: PolicyVerdict) {
 
   return {
     kind: "ask_user" as const,
-    question_id: "implementation_gate",
+    question_id: IMPLEMENTATION_GATE_QUESTION_ID,
     multi_select: false,
     ...shape,
   };
