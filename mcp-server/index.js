@@ -416,11 +416,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants);
+          this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -437,10 +437,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants);
+        this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -501,8 +501,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants) {
-        this.code = optimizeExpr(this.code, names, constants);
+      optimizeNames(names, constants2) {
+        this.code = optimizeExpr(this.code, names, constants2);
         return this;
       }
       get names() {
@@ -531,12 +531,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         const { nodes } = this;
         let i2 = nodes.length;
         while (i2--) {
           const n = nodes[i2];
-          if (n.optimizeNames(names, constants))
+          if (n.optimizeNames(names, constants2))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i2, 1);
@@ -589,12 +589,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a4;
-        this.else = (_a4 = this.else) === null || _a4 === void 0 ? void 0 : _a4.optimizeNames(names, constants);
-        if (!(super.optimizeNames(names, constants) || this.else))
+        this.else = (_a4 = this.else) === null || _a4 === void 0 ? void 0 : _a4.optimizeNames(names, constants2);
+        if (!(super.optimizeNames(names, constants2) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants);
+        this.condition = optimizeExpr(this.condition, names, constants2);
         return this;
       }
       get names() {
@@ -617,10 +617,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants);
+        this.iteration = optimizeExpr(this.iteration, names, constants2);
         return this;
       }
       get names() {
@@ -656,10 +656,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants);
+        this.iterable = optimizeExpr(this.iterable, names, constants2);
         return this;
       }
       get names() {
@@ -701,11 +701,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a4, _b;
-        super.optimizeNames(names, constants);
-        (_a4 = this.catch) === null || _a4 === void 0 ? void 0 : _a4.optimizeNames(names, constants);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants);
+        super.optimizeNames(names, constants2);
+        (_a4 = this.catch) === null || _a4 === void 0 ? void 0 : _a4.optimizeNames(names, constants2);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants2);
         return this;
       }
       get names() {
@@ -1006,7 +1006,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants) {
+    function optimizeExpr(expr, names, constants2) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1021,14 +1021,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants[n.str];
+        const c = constants2[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e3) {
-        return e3 instanceof code_1._Code && e3._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
+        return e3 instanceof code_1._Code && e3._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants2[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -2990,7 +2990,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a4 = root.localRefs) === null || _a4 === void 0 ? void 0 : _a4[ref];
         const { schemaId } = this.opts;
@@ -3017,7 +3017,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3881,7 +3881,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4272,7 +4272,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize4,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal: equal2,
       serialize,
@@ -18298,7 +18298,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve2) {
+function isRecursive(inst, stack, resolve3) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -18308,7 +18308,7 @@ function isRecursive(inst, stack, resolve2) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve2);
+      const answer = isRecursive(child, stack, resolve3);
       if (answer > result)
         result = answer;
     }
@@ -18319,7 +18319,7 @@ function isRecursive(inst, stack, resolve2) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -18383,7 +18383,7 @@ function isRecursive(inst, stack, resolve2) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -36821,7 +36821,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -36838,7 +36838,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -36916,7 +36916,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -37178,12 +37178,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38323,7 +38323,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38987,20 +38987,20 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
 };
 
 // packages/mcp-server/dist/index.js
-import { readFileSync as readFileSync6, existsSync as existsSync7 } from "node:fs";
-import { join as join13, dirname as dirname6 } from "node:path";
+import { readFileSync as readFileSync7, existsSync as existsSync8 } from "node:fs";
+import { join as join14, dirname as dirname7 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // packages/core/dist/domain/prd-context.js
@@ -39674,12 +39674,12 @@ var AgentIdentitySchema = external_exports.discriminatedUnion("kind", [
   external_exports.object({ kind: external_exports.literal("team"), name: TeamAgentSchema }),
   external_exports.object({ kind: external_exports.literal("rule"), name: external_exports.literal("rule-tier") })
 ]);
-function agentSubagentType(identity2) {
-  switch (identity2.kind) {
+function agentSubagentType(identity3) {
+  switch (identity3.kind) {
     case "genius":
-      return `zetetic-team-subagents:genius:${identity2.name}`;
+      return `zetetic-team-subagents:genius:${identity3.name}`;
     case "team":
-      return `zetetic-team-subagents:${identity2.name}`;
+      return `zetetic-team-subagents:${identity3.name}`;
     case "rule":
       throw new Error("agentSubagentType: rule-tier is a synthetic verdict identity, never a dispatchable judge \u2014 this call indicates a mechanical claim leaked into judge selection.");
   }
@@ -58951,6 +58951,57 @@ function buildVerifiedPlan(define2, intent, step2) {
   return { verified_plan: { ...binding, plan_sha256: jsonFileSha256(binding), proposal } };
 }
 
+// packages/orchestration/dist/implementation-review.js
+import { createHash as createHash2 } from "node:crypto";
+var sha256 = external_exports.string().regex(/^[0-9a-f]{64}$/);
+var commit = external_exports.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+var ReviewIdSchema = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
+var inputName = external_exports.string().regex(/^(?:brief\.md|step\.json|scout\.[a-z][a-z0-9-]*\.md)$/);
+var inputMap = (value) => external_exports.unknown().refine((input2) => !Object.hasOwn(Object(input2), "__proto__")).pipe(external_exports.record(inputName, value));
+var ManifestSchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  run_id: external_exports.string(),
+  step: external_exports.string(),
+  source_sha256: external_exports.strictObject({ define: sha256, proposal: sha256, policy: sha256 }),
+  files_sha256: inputMap(sha256)
+});
+var AuthoritySchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  review_id: ReviewIdSchema,
+  repository_id: external_exports.string().min(1),
+  base_revision: commit,
+  reviewed_revision: commit,
+  manifest: external_exports.unknown(),
+  decision: external_exports.strictObject({
+    version: external_exports.literal(1),
+    decision: external_exports.literal("approve"),
+    approval_sha256: sha256
+  }),
+  policy: external_exports.string(),
+  files: inputMap(external_exports.string())
+});
+function reviewDigest(text2) {
+  return createHash2("sha256").update(text2).digest("hex");
+}
+function readReviewAuthority(value, reviewId, plan) {
+  const record2 = AuthoritySchema.safeParse(value);
+  if (!record2.success || record2.data.review_id !== reviewId)
+    return void 0;
+  const authority = record2.data;
+  const result = ManifestSchema.safeParse(authority.manifest);
+  if (!result.success)
+    return void 0;
+  const manifest = result.data;
+  const { source_sha256: sources, files_sha256: expected } = manifest;
+  const names = Object.keys(expected);
+  if (manifest.run_id !== plan.run_id || manifest.step !== plan.proposal.step || sources.define !== plan.define_sha256 || sources.proposal !== plan.proposal_sha256 || sources.policy !== reviewDigest(authority.policy) || // Source: architect-os fcf9d2c6, tools/plan/src/application/prepare.ts.
+  authority.decision.approval_sha256 !== reviewDigest(JSON.stringify(authority.manifest)))
+    return void 0;
+  if (!Object.hasOwn(expected, "brief.md") || !Object.hasOwn(expected, "step.json") || names.length !== Object.keys(authority.files).length || names.some((name323) => !Object.hasOwn(authority.files, name323) || expected[name323] !== reviewDigest(authority.files[name323])))
+    return void 0;
+  return authority;
+}
+
 // packages/mcp-server/dist/fit-page.js
 function selfMeasuredChars(zeroChars) {
   for (let digits2 = 1; ; digits2++) {
@@ -59556,6 +59607,205 @@ function getMaxAttemptsForRun(runId, calibratedValue) {
   return calibratedValue;
 }
 
+// packages/mcp-server/dist/implementation-review.js
+import { execFile } from "node:child_process";
+import { closeSync, constants, existsSync as existsSync5, fstatSync, openSync, readFileSync as readFileSync3, readSync, realpathSync, statSync } from "node:fs";
+import { devNull } from "node:os";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join5, resolve } from "node:path";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+var MAX_REVIEW_BYTES = 4 * MAX_RESPONSE_CHARS;
+var utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function identity(path) {
+  return statSync(path, { bigint: true });
+}
+function pathIsWithin(boundary, path) {
+  let current = path;
+  for (; ; ) {
+    if (sameFile(boundary, identity(current)))
+      return true;
+    const parent = dirname4(current);
+    if (parent === current)
+      return false;
+    current = parent;
+  }
+}
+async function git({ executable, repository }, ...args) {
+  return runGit(executable, repository, args);
+}
+async function runGit(executable, repository, args, attributes) {
+  const { stdout } = await execute(executable, [
+    "--no-pager",
+    "--no-replace-objects",
+    "-C",
+    repository,
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.quotePath=true",
+    "-c",
+    `core.attributesFile=${devNull}`,
+    ...attributes ? [`--attr-source=${attributes}`] : [],
+    ...args
+  ], {
+    cwd: dirname4(executable),
+    encoding: null,
+    maxBuffer: MAX_REVIEW_BYTES,
+    env: {
+      SystemRoot: process.env.SystemRoot,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_ATTR_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: devNull,
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_ALLOW_PROTOCOL: "",
+      GIT_GRAFT_FILE: devNull,
+      GIT_OPTIONAL_LOCKS: "0",
+      LC_ALL: "C"
+    }
+  });
+  return utf8.decode(stdout);
+}
+async function verifyRevisions(repository, base, head) {
+  for (const revision of [base, head]) {
+    const resolved = await git(repository, "rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`);
+    if (resolved !== revision + "\n")
+      return false;
+  }
+  await git(repository, "merge-base", "--is-ancestor", base, head);
+  return true;
+}
+function readAuthorityFile(path) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.nlink !== 1 || info.size > MAX_REVIEW_BYTES)
+      return void 0;
+    const content = Buffer.alloc(info.size + 1);
+    let length = 0;
+    for (; ; ) {
+      const read = readSync(fd, content, { offset: length, length: content.length - length, position: null });
+      if (read === 0)
+        break;
+      length += read;
+      if (length === content.length)
+        return void 0;
+    }
+    if (length !== info.size)
+      return void 0;
+    const text2 = utf8.decode(content.subarray(0, length));
+    return text2.length <= MAX_RESPONSE_CHARS ? JSON.parse(text2) : void 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+function gitPathLine(text2) {
+  const path = text2.replace(/[\r\n]+$/, "");
+  return path && !/[\r\n]/.test(path) ? path : void 0;
+}
+function gitMetadata(repository) {
+  const dotGit = join5(repository, ".git");
+  const info = statSync(dotGit);
+  let directory = dotGit;
+  if (!info.isDirectory()) {
+    if (!info.isFile())
+      return void 0;
+    const marker = gitPathLine(utf8.decode(readFileSync3(dotGit)));
+    const prefix = "gitdir: ";
+    if (!marker?.startsWith(prefix) || marker.length === prefix.length)
+      return void 0;
+    directory = resolve(repository, marker.slice(prefix.length));
+  }
+  const gitDir = realpathSync(directory);
+  const commonMarker = join5(gitDir, "commondir");
+  if (!existsSync5(commonMarker))
+    return [gitDir];
+  const common = gitPathLine(utf8.decode(readFileSync3(commonMarker)));
+  return common ? [gitDir, realpathSync(resolve(gitDir, common))] : void 0;
+}
+async function reviewTarget(repositoryPath, gitPath, source) {
+  const repository = realpathSync(repositoryPath);
+  const executable = realpathSync(gitPath);
+  const metadata = gitMetadata(repository);
+  if (!metadata)
+    return refusal2("review_repository_invalid");
+  const checkout = identity(repository);
+  const protectedDirs = [checkout, ...metadata.map(identity)];
+  if (protectedDirs.some((dir) => pathIsWithin(dir, source) || pathIsWithin(dir, executable))) {
+    return refusal2("review_authority_invalid");
+  }
+  const target = { executable, repository };
+  const root = await git(target, "rev-parse", "--show-toplevel");
+  const observed = gitPathLine(root);
+  if (!observed || !sameFile(identity(observed), checkout))
+    return refusal2("review_repository_invalid");
+  return target;
+}
+var refusal2 = (reason) => ({ error: { code: reason, message: "The implementation review dossier could not be prepared." } });
+async function prepareImplementationReview(paths, reviewId, plan, define2) {
+  const { authority: path, repository: repositoryPath, repositoryId, git: gitPath } = paths;
+  if (!path || !repositoryPath || !repositoryId || !gitPath || !reviewId || !isAbsolute2(path) || !isAbsolute2(repositoryPath) || !isAbsolute2(gitPath)) {
+    return refusal2("review_authority_unavailable");
+  }
+  try {
+    const source = realpathSync(path);
+    const target = await reviewTarget(repositoryPath, gitPath, source);
+    if ("error" in target)
+      return target;
+    const authority = readReviewAuthority(readAuthorityFile(source), reviewId, plan);
+    if (!authority)
+      return refusal2("review_authority_invalid");
+    if (authority.repository_id !== repositoryId)
+      return refusal2("review_repository_invalid");
+    const { base_revision: base, reviewed_revision: head } = authority;
+    if (base === head)
+      return refusal2("review_revision_invalid");
+    try {
+      if (!await verifyRevisions(target, base, head))
+        return refusal2("review_revision_invalid");
+    } catch {
+      return refusal2("review_revision_invalid");
+    }
+    const diff2 = await runGit(target.executable, target.repository, [
+      "diff",
+      "--binary",
+      "--full-index",
+      "--find-renames",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
+      `-O${devNull}`,
+      base,
+      head,
+      "--"
+    ], head);
+    return { implementation_review: {
+      version: 1,
+      status: "ready_for_review",
+      review_id: authority.review_id,
+      run_id: plan.run_id,
+      step: plan.proposal.step,
+      repository_id: authority.repository_id,
+      base_revision: base,
+      reviewed_revision: head,
+      plan_sha256: plan.plan_sha256,
+      approval_sha256: authority.decision.approval_sha256,
+      diff_sha256: reviewDigest(diff2),
+      diff: diff2,
+      acceptance: define2.acceptance.map((criterion) => ({ ...criterion, status: "evidence_required" }))
+    } };
+  } catch (error62) {
+    return refusal2(error62?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "review_response_too_large" : "review_evidence_unavailable");
+  }
+}
+
 // packages/mcp-server/dist/quality-score-drain.js
 function drainQualityScores(state, repo) {
   if (repo !== null) {
@@ -59579,8 +59829,8 @@ function drainQualityScores(state, repo) {
 }
 
 // packages/benchmark/dist/calibration/mismatch-fire-rate.js
-import { readFileSync as readFileSync3, readdirSync as readdirSync2, existsSync as existsSync5 } from "node:fs";
-import { join as join5 } from "node:path";
+import { readFileSync as readFileSync4, readdirSync as readdirSync2, existsSync as existsSync6 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // packages/benchmark/dist/calibration/clopper-pearson.js
 var MAX_ITER = 100;
@@ -59780,12 +60030,12 @@ function runPreflightInjectionCheck() {
   }
 }
 function loadDataset(dataDir) {
-  if (!existsSync5(dataDir))
+  if (!existsSync6(dataDir))
     return [];
   const files = readdirSync2(dataDir).filter((f) => f.startsWith("mismatch-fire-rate.") && f.endsWith(".jsonl"));
   const out = [];
   for (const f of files) {
-    const text2 = readFileSync3(join5(dataDir, f), "utf-8");
+    const text2 = readFileSync4(join6(dataDir, f), "utf-8");
     for (const line of text2.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed)
@@ -59950,7 +60200,7 @@ async function main() {
     throw new Error("PRE_REGISTERED_SEED has been mutated post-registration \u2014 refuse to analyze.");
   }
   runPreflightInjectionCheck();
-  const dataDir = process.argv[2] ?? join5(process.cwd(), "packages/benchmark/calibration/data");
+  const dataDir = process.argv[2] ?? join6(process.cwd(), "packages/benchmark/calibration/data");
   const runs2 = loadDataset(dataDir);
   if (runs2.length === 0) {
     console.log(`[mismatch-fire-rate] no data rows found under ${dataDir}; run the calibration runner first.`);
@@ -66408,7 +66658,7 @@ function filterRegExp(array2, regexp) {
   }
   return Array.prototype.filter.call(array2, (entry) => regexp.test(entry));
 }
-function join6(array2, separator) {
+function join7(array2, separator) {
   return Array.prototype.join.call(array2, separator);
 }
 function identify(a) {
@@ -75699,7 +75949,7 @@ var createPow = /* @__PURE__ */ factory(name130, dependencies131, (_ref) => {
   var {
     typed: typed3,
     config: config6,
-    identity: identity2,
+    identity: identity3,
     multiply: multiply2,
     matrix: matrix2,
     inv: inv2,
@@ -75789,7 +76039,7 @@ var createPow = /* @__PURE__ */ factory(name130, dependencies131, (_ref) => {
         throw error62;
       }
     }
-    var res = identity2(s[0]).valueOf();
+    var res = identity3(s[0]).valueOf();
     var px = x;
     while (y >= 1) {
       if ((y & 1) === 1) {
@@ -86050,8 +86300,8 @@ var createFunctionAssignmentNode = /* @__PURE__ */ factory(name217, dependencies
       var evalExpr = expr._compile(math2, childArgNames);
       var name323 = this.name;
       var params = this.params;
-      var signature = join6(this.types, ",");
-      var syntax = name323 + "(" + join6(this.params, ", ") + ")";
+      var signature = join7(this.types, ",");
+      var syntax = name323 + "(" + join7(this.params, ", ") + ")";
       return function evalFunctionAssignmentNode(scope, args, context) {
         var signatures = {};
         signatures[signature] = function() {
@@ -89681,7 +89931,7 @@ var createQr = /* @__PURE__ */ factory(name232, dependencies233, (_ref) => {
     typed: typed3,
     matrix: matrix2,
     zeros: zeros3,
-    identity: identity2,
+    identity: identity3,
     isZero: isZero2,
     equal: equal2,
     sign: sign4,
@@ -89715,7 +89965,7 @@ var createQr = /* @__PURE__ */ factory(name232, dependencies233, (_ref) => {
   function _denseQRimpl(m) {
     var rows = m._size[0];
     var cols = m._size[1];
-    var Q2 = identity2([rows], "dense");
+    var Q2 = identity3([rows], "dense");
     var Qdata = Q2._data;
     var R = m.clone();
     var Rdata = R._data;
@@ -94375,7 +94625,7 @@ var createInv = /* @__PURE__ */ factory(name246, dependencies247, (_ref) => {
     multiply: multiply2,
     unaryMinus: unaryMinus2,
     det: det2,
-    identity: identity2,
+    identity: identity3,
     abs: abs3
   } = _ref;
   return typed3(name246, {
@@ -94432,7 +94682,7 @@ var createInv = /* @__PURE__ */ factory(name246, dependencies247, (_ref) => {
       for (r = 0; r < rows; r++) {
         A[r] = A[r].concat();
       }
-      var B = identity2(rows).valueOf();
+      var B = identity3(rows).valueOf();
       for (var c = 0; c < cols; c++) {
         var ABig = abs3(A[c][c]);
         var rBig = c;
@@ -95534,7 +95784,7 @@ var createExpm = /* @__PURE__ */ factory(name249, dependencies250, (_ref) => {
     typed: typed3,
     abs: abs3,
     add: add4,
-    identity: identity2,
+    identity: identity3,
     inv: inv2,
     multiply: multiply2
   } = _ref;
@@ -95551,8 +95801,8 @@ var createExpm = /* @__PURE__ */ factory(name249, dependencies250, (_ref) => {
       var q = params.q;
       var j = params.j;
       var Apos = multiply2(A, Math.pow(2, -j));
-      var N = identity2(n);
-      var D = identity2(n);
+      var N = identity3(n);
+      var D = identity3(n);
       var factor = 1;
       var AposToI = Apos;
       var alternate = -1;
@@ -95628,7 +95878,7 @@ var createSqrtm = /* @__PURE__ */ factory(name250, dependencies251, (_ref) => {
     inv: inv2,
     size: size2,
     max: max3,
-    identity: identity2
+    identity: identity3
   } = _ref;
   var _maxIterations = 1e3;
   var _tolerance = 1e-6;
@@ -95636,7 +95886,7 @@ var createSqrtm = /* @__PURE__ */ factory(name250, dependencies251, (_ref) => {
     var error62;
     var iterations = 0;
     var Y = A;
-    var Z = identity2(size2(A));
+    var Z = identity3(size2(A));
     do {
       var Yk = Y;
       Y = multiply2(0.5, add4(Yk, inv2(Z)));
@@ -95691,7 +95941,7 @@ var createSylvester = /* @__PURE__ */ factory(name251, dependencies252, (_ref) =
     subset: subset2,
     add: add4,
     subtract: subtract2,
-    identity: identity2,
+    identity: identity3,
     lusolve: lusolve2,
     abs: abs3,
     config: config6
@@ -95740,10 +95990,10 @@ var createSylvester = /* @__PURE__ */ factory(name251, dependencies252, (_ref) =
         for (var j = 0; j < k; j++) {
           RHS = add4(RHS, vc(multiply2(y[j], subset2(G, index2(j, k))), multiply2(y[j], subset2(G, index2(j, k + 1)))));
         }
-        var gkk = multiply2(identity2(m), multiply2(-1, subset2(G, index2(k, k))));
-        var gmk = multiply2(identity2(m), multiply2(-1, subset2(G, index2(k + 1, k))));
-        var gkm = multiply2(identity2(m), multiply2(-1, subset2(G, index2(k, k + 1))));
-        var gmm = multiply2(identity2(m), multiply2(-1, subset2(G, index2(k + 1, k + 1))));
+        var gkk = multiply2(identity3(m), multiply2(-1, subset2(G, index2(k, k))));
+        var gmk = multiply2(identity3(m), multiply2(-1, subset2(G, index2(k + 1, k))));
+        var gkm = multiply2(identity3(m), multiply2(-1, subset2(G, index2(k, k + 1))));
+        var gmm = multiply2(identity3(m), multiply2(-1, subset2(G, index2(k + 1, k + 1))));
         var LHS = vc(hc(add4(F, gkk), gmk), hc(gkm, add4(F, gmm)));
         var yAux = lusolve2(LHS, RHS);
         y[k] = yAux.subset(index2(range2(0, m), [0]));
@@ -95755,7 +96005,7 @@ var createSylvester = /* @__PURE__ */ factory(name251, dependencies252, (_ref) =
           _RHS = add4(_RHS, multiply2(y[_j], subset2(G, index2(_j, k))));
         }
         var _gkk = subset2(G, index2(k, k));
-        var _LHS = subtract2(F, multiply2(_gkk, identity2(m)));
+        var _LHS = subtract2(F, multiply2(_gkk, identity3(m)));
         y[k] = lusolve2(_LHS, _RHS);
       }
     }
@@ -95772,7 +96022,7 @@ var createSchur = /* @__PURE__ */ factory(name252, dependencies253, (_ref) => {
   var {
     typed: typed3,
     matrix: matrix2,
-    identity: identity2,
+    identity: identity3,
     multiply: multiply2,
     qr: qr2,
     norm: norm2,
@@ -95793,7 +96043,7 @@ var createSchur = /* @__PURE__ */ factory(name252, dependencies253, (_ref) => {
   function _schur(X) {
     var n = X.size()[0];
     var A = X;
-    var U = identity2(n);
+    var U = identity3(n);
     var k = 0;
     var A0;
     do {
@@ -97943,7 +98193,7 @@ var createSimplify = /* @__PURE__ */ factory(name284, dependencies285, (_ref) =>
     typed: typed3,
     parse: parse6,
     equal: equal2,
-    resolve: resolve2,
+    resolve: resolve3,
     simplifyConstant: simplifyConstant2,
     simplifyCore: simplifyCore2,
     AccessorNode: AccessorNode2,
@@ -98521,7 +98771,7 @@ var createSimplify = /* @__PURE__ */ factory(name284, dependencies285, (_ref) =>
     var options = arguments.length > 3 && arguments[3] !== void 0 ? arguments[3] : {};
     var debug = options.consoleDebug;
     rules = _buildRules(rules || simplify2.rules, options.context);
-    var res = resolve2(expr, scope);
+    var res = resolve3(expr, scope);
     res = removeParens(res);
     var visited = {};
     var str = res.toString({
@@ -102491,7 +102741,7 @@ var fraction = /* @__PURE__ */ createFraction({
   Fraction: Fraction2,
   typed: typed2
 });
-var identity = /* @__PURE__ */ createIdentity({
+var identity2 = /* @__PURE__ */ createIdentity({
   BigNumber,
   DenseMatrix,
   SparseMatrix,
@@ -102909,7 +103159,7 @@ var qr = /* @__PURE__ */ createQr({
   conj,
   divideScalar,
   equal,
-  identity,
+  identity: identity2,
   isZero,
   matrix,
   multiplyScalar,
@@ -103023,7 +103273,7 @@ var inv = /* @__PURE__ */ createInv({
   addScalar,
   det,
   divideScalar,
-  identity,
+  identity: identity2,
   matrix,
   multiply,
   typed: typed2,
@@ -103077,7 +103327,7 @@ var pow2 = /* @__PURE__ */ createPow({
   Complex: Complex2,
   config: config3,
   fraction,
-  identity,
+  identity: identity2,
   inv,
   matrix,
   multiply,
@@ -103131,7 +103381,7 @@ var sort = /* @__PURE__ */ createSort({
 var sqrtm = /* @__PURE__ */ createSqrtm({
   abs: abs2,
   add: add3,
-  identity,
+  identity: identity2,
   inv,
   map: map3,
   max: max2,
@@ -103193,7 +103443,7 @@ var dotPow = /* @__PURE__ */ createDotPow({
 var expm = /* @__PURE__ */ createExpm({
   abs: abs2,
   add: add3,
-  identity,
+  identity: identity2,
   inv,
   multiply,
   typed: typed2
@@ -103830,7 +104080,7 @@ var rotate = /* @__PURE__ */ createRotate({
   typed: typed2
 });
 var schur = /* @__PURE__ */ createSchur({
-  identity,
+  identity: identity2,
   matrix,
   multiply,
   norm,
@@ -103842,7 +104092,7 @@ var sylvester = /* @__PURE__ */ createSylvester({
   abs: abs2,
   add: add3,
   concat: concat2,
-  identity,
+  identity: identity2,
   index,
   lusolve,
   matrix,
@@ -103958,7 +104208,7 @@ var parse5 = createParse({
   numeric: numeric2,
   typed: typed2
 });
-var resolve = createResolve({
+var resolve2 = createResolve({
   ConstantNode,
   FunctionNode,
   OperatorNode,
@@ -104036,7 +104286,7 @@ var simplify = createSimplify({
   equal,
   parse: parse5,
   replacer,
-  resolve,
+  resolve: resolve2,
   simplifyConstant,
   simplifyCore,
   typed: typed2
@@ -104220,7 +104470,7 @@ var rationalize = createRationalize({
   diag,
   equal,
   fraction,
-  identity,
+  identity: identity2,
   isInteger: isInteger3,
   kron,
   mapSlices,
@@ -104391,7 +104641,7 @@ var rationalize = createRationalize({
   median,
   parse: parse5,
   polynomialRoot,
-  resolve,
+  resolve: resolve2,
   simplifyConstant,
   std,
   zeta,
@@ -104647,7 +104897,7 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync as writeFileSync2, rmSync } from "fs";
 import { createRequire } from "module";
 import { tmpdir } from "os";
-import { dirname as dirname4, join as join7 } from "path";
+import { dirname as dirname5, join as join8 } from "path";
 
 // packages/benchmark/dist/calibration/oracle-errors.js
 var OracleUnavailableError = class _OracleUnavailableError extends Error {
@@ -104667,7 +104917,7 @@ var TSC_PROBE_TIMEOUT_MS = 1e4;
 function tscCandidates(resolvePackageJson = () => createRequire(import.meta.url).resolve("typescript/package.json")) {
   const candidates = [];
   try {
-    const entry = join7(dirname4(resolvePackageJson()), "bin", "tsc");
+    const entry = join8(dirname5(resolvePackageJson()), "bin", "tsc");
     candidates.push({ command: process.execPath, prefixArgs: [entry] });
   } catch {
   }
@@ -104698,8 +104948,8 @@ async function codeOracle(payload) {
     tscVersion = execFileSync(tscBin.command, [...tscBin.prefixArgs, "--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" }).toString().trim();
   } catch {
   }
-  const tempDir = mkdtempSync(join7(tmpdir(), "prd-gen-code-oracle-"));
-  const snippetFile = join7(tempDir, "snippet.ts");
+  const tempDir = mkdtempSync(join8(tmpdir(), "prd-gen-code-oracle-"));
+  const snippetFile = join8(tempDir, "snippet.ts");
   try {
     writeFileSync2(snippetFile, snippet2, "utf8");
     let compilesCleanly;
@@ -104777,8 +105027,8 @@ async function invokeOracle(input2) {
 
 // packages/mcp-server/dist/observation-log-path.js
 import { homedir as homedir3 } from "node:os";
-import { join as join8 } from "node:path";
-var OBSERVATION_LOG_PATH = join8(homedir3(), ".prd-gen", "judge-observation-log.jsonl");
+import { join as join9 } from "node:path";
+var OBSERVATION_LOG_PATH = join9(homedir3(), ".prd-gen", "judge-observation-log.jsonl");
 
 // packages/mcp-server/dist/observation-writer.js
 var _unavailableOracleWarnFired = null;
@@ -104846,9 +105096,9 @@ function drainReliabilityObservations(state, repo) {
 }
 
 // packages/mcp-server/dist/reliability-wiring.js
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 import { homedir as homedir4 } from "node:os";
-var DEFAULT_RELIABILITY_DB_PATH = join9(homedir4(), ".prd-gen", "reliability.db");
+var DEFAULT_RELIABILITY_DB_PATH = join10(homedir4(), ".prd-gen", "reliability.db");
 var _reliabilityRepo = void 0;
 var _reliabilityProvider = void 0;
 function getReliabilityRepo() {
@@ -105351,10 +105601,10 @@ var KeptRuns = class {
 };
 
 // packages/mcp-server/dist/run-files.js
-import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join10 } from "node:path";
-var RUNS_DIR = join10(homedir5(), ".prd-gen", "runs");
+import { join as join11 } from "node:path";
+var RUNS_DIR = join11(homedir5(), ".prd-gen", "runs");
 var RUN_ID = /^run_[0-9a-z]+_[0-9a-z]*$/;
 var FILE_VERSION = 1;
 var RUN_FILE = ".json";
@@ -105369,7 +105619,7 @@ var RunFiles = class {
    *                is not of the form the server generates.
    */
   pathOf(runId) {
-    return RUN_ID.test(runId) ? join10(this.dir, runId + RUN_FILE) : null;
+    return RUN_ID.test(runId) ? join11(this.dir, runId + RUN_FILE) : null;
   }
   /**
    * precondition:  `state.run_id` is an id the server generated.
@@ -105401,7 +105651,7 @@ var RunFiles = class {
       return { kind: "absent" };
     let text2;
     try {
-      text2 = readFileSync4(path, "utf8");
+      text2 = readFileSync5(path, "utf8");
     } catch (error62) {
       const code2 = error62.code;
       if (code2 === "ENOENT" || code2 === "ENOTDIR")
@@ -105476,9 +105726,9 @@ var RunFiles = class {
     for (const name323 of names) {
       if (!name323.endsWith(suffix))
         continue;
-      const path = join10(this.dir, name323);
+      const path = join11(this.dir, name323);
       try {
-        entries.push({ path, mtimeMs: statSync(path).mtimeMs });
+        entries.push({ path, mtimeMs: statSync2(path).mtimeMs });
       } catch {
       }
     }
@@ -105513,7 +105763,7 @@ function parseRunFile(runId, text2) {
 }
 function isFinishedRunFile(path) {
   try {
-    const doc = JSON.parse(readFileSync4(path, "utf8"));
+    const doc = JSON.parse(readFileSync5(path, "utf8"));
     const step2 = doc?.state?.current_step;
     return typeof step2 === "string" && isTerminalRun({ current_step: step2 });
   } catch {
@@ -105611,7 +105861,8 @@ function architectOsRequired() {
 }
 var planningSizeErrors = {
   define: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
-  plan: { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." }
+  plan: { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." },
+  review: { code: "review_response_too_large", message: "The complete implementation review exceeds the MCP response budget." }
 };
 function planningSizeError(kind) {
   return { content: [{ type: "text", text: JSON.stringify({ error: planningSizeErrors[kind] }) }], isError: true };
@@ -105710,17 +105961,18 @@ function registerPipelineTools(server2) {
       inFlight.delete(run_id);
     }
   });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint.", {
+  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
     run_id: external_exports.string(),
-    format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"]).default("summary"),
+    format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"]).default("summary"),
     invocation_offset: external_exports.number().int().min(0).default(0),
-    plan_step: external_exports.string().optional().describe("Operator-selected architect-os Step name for verified_plan_v1.")
-  }, { readOnlyHint: true }, async ({ run_id, format: format6, invocation_offset, plan_step }) => {
+    plan_step: external_exports.string().optional().describe("Operator-selected architect-os Step name for plan and review formats."),
+    review_id: ReviewIdSchema.optional().describe("Operator-assigned review dossier identifier.")
+  }, { readOnlyHint: true }, async ({ run_id, format: format6, invocation_offset, plan_step, review_id }) => {
     const found = runs.find(run_id);
     if (found.kind !== "found")
       return runNotFound(run_id, found);
     const state = found.run.state;
-    if (format6 === "define_handoff_v1" || format6 === "verified_plan_v1") {
+    if (format6 === "define_handoff_v1" || format6 === "verified_plan_v1" || format6 === "implementation_review_v1") {
       const define2 = readDefineHandoff(state, found.run.action);
       const sourceText = JSON.stringify(define2);
       if (sourceText.length > MAX_RESPONSE_CHARS)
@@ -105732,7 +105984,19 @@ function registerPipelineTools(server2) {
       const text2 = JSON.stringify(plan);
       if (text2.length > MAX_RESPONSE_CHARS)
         return planningSizeError("plan");
-      return { content: [{ type: "text", text: text2 }], isError: "error" in plan };
+      if (format6 === "verified_plan_v1" || "error" in plan) {
+        return { content: [{ type: "text", text: text2 }], isError: "error" in plan };
+      }
+      const review = await prepareImplementationReview({
+        authority: process.env.PRD_GEN_REVIEW_AUTHORITY,
+        repository: process.env.PRD_GEN_REVIEW_REPOSITORY,
+        repositoryId: process.env.PRD_GEN_REVIEW_REPOSITORY_ID,
+        git: process.env.PRD_GEN_REVIEW_GIT
+      }, review_id, plan.verified_plan, define2.handoff);
+      const reviewText = JSON.stringify(review);
+      if (reviewText.length > MAX_RESPONSE_CHARS)
+        return planningSizeError("review");
+      return { content: [{ type: "text", text: reviewText }], isError: "error" in review };
     }
     let payload;
     if (format6 === "full") {
@@ -105989,13 +106253,13 @@ function instructions(profile) {
 }
 
 // packages/mcp-server/dist/server-version.js
-import { readFileSync as readFileSync5 } from "node:fs";
-import { join as join11 } from "node:path";
+import { readFileSync as readFileSync6 } from "node:fs";
+import { join as join12 } from "node:path";
 var UNRESOLVED_VERSION = "0.0.0-unresolved";
 function readVersion(manifestPath) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync5(manifestPath, "utf-8"));
+    parsed = JSON.parse(readFileSync6(manifestPath, "utf-8"));
   } catch {
     return null;
   }
@@ -106003,7 +106267,7 @@ function readVersion(manifestPath) {
   return typeof version4 === "string" && version4.length > 0 ? version4 : null;
 }
 function resolveServerVersion(runtimeDir, pluginRoot) {
-  const candidates = [join11(runtimeDir, "package.json"), join11(pluginRoot, "package.json")];
+  const candidates = [join12(runtimeDir, "package.json"), join12(pluginRoot, "package.json")];
   for (const candidate of candidates) {
     const version4 = readVersion(candidate);
     if (version4 !== null) {
@@ -106020,43 +106284,43 @@ function healthStatus(components) {
 }
 
 // packages/mcp-server/dist/plugin-root.js
-import { existsSync as existsSync6 } from "node:fs";
-import { dirname as dirname5, join as join12 } from "node:path";
+import { existsSync as existsSync7 } from "node:fs";
+import { dirname as dirname6, join as join13 } from "node:path";
 var DEEPEST_ENTRY_LEVELS = 3;
-function resolvePluginRoot(runtimeDir, env, exists = existsSync6) {
+function resolvePluginRoot(runtimeDir, env, exists = existsSync7) {
   if (env.CLAUDE_PLUGIN_ROOT !== void 0)
     return env.CLAUDE_PLUGIN_ROOT;
   let dir = runtimeDir;
   for (let level = 0; level < DEEPEST_ENTRY_LEVELS; level++) {
-    if (exists(join12(dir, "packages", "skill")))
+    if (exists(join13(dir, "packages", "skill")))
       return dir;
-    dir = dirname5(dir);
+    dir = dirname6(dir);
   }
   return dir;
 }
 
 // packages/mcp-server/dist/index.js
-var __dirname = dirname6(fileURLToPath(import.meta.url));
+var __dirname = dirname7(fileURLToPath(import.meta.url));
 var PLUGIN_ROOT = resolvePluginRoot(__dirname, process.env);
 var CONFIG_NOT_FOUND = "config_not_found";
 function loadSkillConfig() {
   const configPaths = [
     process.env.PRD_GEN_SKILL_CONFIG,
-    join13(PLUGIN_ROOT, "skill-config.json"),
-    join13(PLUGIN_ROOT, "packages", "skill", "skill-config.json")
+    join14(PLUGIN_ROOT, "skill-config.json"),
+    join14(PLUGIN_ROOT, "packages", "skill", "skill-config.json")
   ].filter(Boolean);
   for (const p of configPaths) {
-    if (existsSync7(p)) {
-      return JSON.parse(readFileSync6(p, "utf-8"));
+    if (existsSync8(p)) {
+      return JSON.parse(readFileSync7(p, "utf-8"));
     }
   }
   return { version: "2.0.0", status: CONFIG_NOT_FOUND };
 }
 function loadSkillMd() {
-  const skillPaths = [join13(PLUGIN_ROOT, "packages", "skill", "SKILL.md")];
+  const skillPaths = [join14(PLUGIN_ROOT, "packages", "skill", "SKILL.md")];
   for (const p of skillPaths) {
-    if (existsSync7(p)) {
-      return readFileSync6(p, "utf-8");
+    if (existsSync8(p)) {
+      return readFileSync7(p, "utf-8");
     }
   }
   return "SKILL.md not found";

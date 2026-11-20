@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
 import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction, type PipelineState } from "@prd-gen/orchestration";
 import { startStdioServer, type StdioServer, type StdioServerOptions } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
+import { digest, makeReviewAuthority, makeReviewRepo, reviewGitPath } from "./fixtures/review-dossier.js";
 import { RunFiles } from "../run-files.js";
 
 interface Envelope {
@@ -288,6 +289,98 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
       await assertRefusedHandoff();
     }
 
+  } finally {
+    await server?.close();
+    rmSync(output, { recursive: true, force: true });
+  }
+}, 120_000);
+
+async function assertReviewRefusal(
+  server: StdioServer, args: Record<string, unknown>, code: string,
+) {
+  const response = await server.call("get_pipeline_state", args);
+  expect(response.isError).toBe(true);
+  expect(JSON.parse(response.text)).toEqual({ error: { code, message: expect.any(String) } });
+}
+
+it("prepares a review of the operator-approved revisions through the packaged tool", async () => {
+  const output = mkdtempSync(join(tmpdir(), "prd-gen-review-v1-"));
+  const candidate = makeReviewRepo(output);
+  const authorityFile = join(output, "approval.json");
+  const env = {
+    HOME: output, USERPROFILE: output,
+    PRD_GEN_REVIEW_REPOSITORY: candidate.repo,
+    PRD_GEN_REVIEW_REPOSITORY_ID: "fixture/review",
+    PRD_GEN_REVIEW_GIT: reviewGitPath(),
+  };
+  const start = (path: string, overrides?: Record<string, string>) => startDefineServer({
+    cwd: output, env: { ...env, PRD_GEN_REVIEW_AUTHORITY: path, ...overrides },
+  });
+  let server: StdioServer | undefined;
+  try {
+    server = await start(authorityFile);
+    const { run_id } = await driveToGate(server, makeHost(output, "ready"));
+    const args = { run_id, format: "implementation_review_v1", plan_step: "delivery", review_id: "delivery-review" };
+    const { verified_plan: plan } = await call<{ verified_plan: {
+      run_id: string; plan_sha256: string; define_sha256: string; proposal_sha256: string;
+    } }>(server, "get_pipeline_state", { ...args, format: "verified_plan_v1" });
+    const authority = makeReviewAuthority(plan, candidate);
+    const save = (patch: Partial<typeof authority> = {}) => writeFileSync(authorityFile, JSON.stringify({ ...authority, ...patch }));
+    await assertReviewRefusal(server, args, "review_evidence_unavailable");
+    save();
+    const { implementation_review: review } = await call<{ implementation_review: { diff: string } }>(
+      server, "get_pipeline_state", args,
+    );
+    expect(review).toMatchObject({
+      status: "ready_for_review", base_revision: candidate.base, reviewed_revision: candidate.head,
+      plan_sha256: plan.plan_sha256, approval_sha256: authority.decision.approval_sha256,
+      diff_sha256: digest(review.diff),
+      acceptance: ["AC-001", "AC-002", "AC-003"].map(id => ({ id, status: "evidence_required" })),
+    });
+    expect(review.diff).toContain("rename from old.txt");
+    expect(review.diff).toContain("rename to receipt.txt");
+    expect(review.diff).toContain("deleted file mode");
+    expect(review.diff).not.toMatch(/large\.txt|uncommitted change/);
+    writeFileSync(join(candidate.repo, ".gitattributes"), "*.txt -diff\n");
+    expect(await call(server, "get_pipeline_state", args)).toEqual({ implementation_review: review });
+    await assertReviewRefusal(server, { ...args, review_id: "wrong-review" }, "review_authority_invalid");
+    save({ decision: { ...authority.decision, approval_sha256: "a".repeat(64) } });
+    await assertReviewRefusal(server, args, "review_authority_invalid");
+    save({ base_revision: candidate.large });
+    await assertReviewRefusal(server, args, "review_revision_invalid");
+    save({ reviewed_revision: candidate.large });
+    await assertReviewRefusal(server, args, "review_response_too_large");
+    await server.close();
+    save();
+    const fork = join(output, "other-repository");
+    candidate.git("clone", "-q", candidate.repo, fork);
+    server = await start(authorityFile, {
+      PRD_GEN_REVIEW_REPOSITORY: fork, PRD_GEN_REVIEW_REPOSITORY_ID: "fixture/other",
+    });
+    await assertReviewRefusal(server, args, "review_repository_invalid");
+    await server.close();
+    if (process.platform !== "win32") {
+      const linked = join(output, "linked");
+      candidate.git("worktree", "add", "--quiet", "--detach", linked, candidate.head);
+      const binary = join(candidate.repo, ".git", "never-run");
+      const invoked = binary + ".invoked";
+      writeFileSync(binary, '#!/bin/sh\n: > "$0.invoked"\n', { mode: 0o700 });
+      server = await start(authorityFile, {
+        PRD_GEN_REVIEW_REPOSITORY: linked, PRD_GEN_REVIEW_GIT: binary,
+      });
+      await assertReviewRefusal(server, args, "review_authority_invalid");
+      expect(existsSync(invoked)).toBe(false);
+      await server.close();
+      server = await start(authorityFile, { PRD_GEN_REVIEW_REPOSITORY: linked });
+      expect(await call(server, "get_pipeline_state", args)).toEqual({ implementation_review: review });
+      await server.close();
+    }
+    const inside = join(candidate.repo, "approval.json");
+    writeFileSync(inside, readFileSync(authorityFile));
+    const shortcut = join(output, "candidate-link");
+    symlinkSync(candidate.repo, shortcut, "junction");
+    server = await start(join(shortcut, "approval.json"));
+    await assertReviewRefusal(server, args, "review_authority_invalid");
   } finally {
     await server?.close();
     rmSync(output, { recursive: true, force: true });

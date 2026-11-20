@@ -14,12 +14,13 @@
  * call submit_action_result with the result, repeat until `done`.
  */
 import { z } from "zod";
-import { MAX_RESPONSE_CHARS, newPipelineState, readDefineHandoff, buildVerifiedPlan, ARCHITECT_OS_BOUNDARY, isLegacyExecutionCheckpoint, isRetiredImplementationAnswer, recordLegacyDefineRefusal, refreshImplementationGateQuestion, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
+import { MAX_RESPONSE_CHARS, newPipelineState, readDefineHandoff, buildVerifiedPlan, ReviewIdSchema, ARCHITECT_OS_BOUNDARY, isLegacyExecutionCheckpoint, isRetiredImplementationAnswer, recordLegacyDefineRefusal, refreshImplementationGateQuestion, runRequestSize, step, ActionResultSchema, } from "@prd-gen/orchestration";
 import { planSectionVerification, planDocumentVerification, concludeSection, concludeDocument, } from "@prd-gen/verification";
 import { SectionTypeSchema, PRDContextSchema, RequestSizeSchema, REQUEST_SIZE_CONFIGS, REQUEST_SIZE_DEFAULT, JudgeVerdictSchema, ClaimSchema, ExternalGroundingTypeSchema, } from "@prd-gen/core";
 import { EffectivenessTracker } from "@prd-gen/strategy";
 import { getRetryArmForRun, getMaxAttemptsForRun, MAX_ATTEMPTS_BASELINE, } from "@prd-gen/benchmark";
 import { getEvidenceRepo } from "./evidence-db-path.js";
+import { prepareImplementationReview } from "./implementation-review.js";
 import { drainQualityScores } from "./quality-score-drain.js";
 import { drainReliabilityObservations } from "./reliability-observation-drain.js";
 import { getReliabilityRepo } from "./reliability-wiring.js";
@@ -206,6 +207,7 @@ function architectOsRequired() {
 const planningSizeErrors = {
     define: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
     plan: { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." },
+    review: { code: "review_response_too_large", message: "The complete implementation review exceeds the MCP response budget." },
 };
 function planningSizeError(kind) {
     return { content: [{ type: "text", text: JSON.stringify({ error: planningSizeErrors[kind] }) }], isError: true };
@@ -378,19 +380,21 @@ export function registerPipelineTools(server) {
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
         "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. " +
-        "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint.", {
+        "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
+        "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
         run_id: z.string(),
         format: z
-            .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"])
+            .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"])
             .default("summary"),
         invocation_offset: z.number().int().min(0).default(0),
-        plan_step: z.string().optional().describe("Operator-selected architect-os Step name for verified_plan_v1."),
-    }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset, plan_step }) => {
+        plan_step: z.string().optional().describe("Operator-selected architect-os Step name for plan and review formats."),
+        review_id: ReviewIdSchema.optional().describe("Operator-assigned review dossier identifier."),
+    }, { readOnlyHint: true }, async ({ run_id, format, invocation_offset, plan_step, review_id }) => {
         const found = runs.find(run_id);
         if (found.kind !== "found")
             return runNotFound(run_id, found);
         const state = found.run.state;
-        if (format === "define_handoff_v1" || format === "verified_plan_v1") {
+        if (format === "define_handoff_v1" || format === "verified_plan_v1" || format === "implementation_review_v1") {
             const define = readDefineHandoff(state, found.run.action);
             const sourceText = JSON.stringify(define);
             if (sourceText.length > MAX_RESPONSE_CHARS)
@@ -402,7 +406,19 @@ export function registerPipelineTools(server) {
             const text = JSON.stringify(plan);
             if (text.length > MAX_RESPONSE_CHARS)
                 return planningSizeError("plan");
-            return { content: [{ type: "text", text }], isError: "error" in plan };
+            if (format === "verified_plan_v1" || "error" in plan) {
+                return { content: [{ type: "text", text }], isError: "error" in plan };
+            }
+            const review = await prepareImplementationReview({
+                authority: process.env.PRD_GEN_REVIEW_AUTHORITY,
+                repository: process.env.PRD_GEN_REVIEW_REPOSITORY,
+                repositoryId: process.env.PRD_GEN_REVIEW_REPOSITORY_ID,
+                git: process.env.PRD_GEN_REVIEW_GIT,
+            }, review_id, plan.verified_plan, define.handoff);
+            const reviewText = JSON.stringify(review);
+            if (reviewText.length > MAX_RESPONSE_CHARS)
+                return planningSizeError("review");
+            return { content: [{ type: "text", text: reviewText }], isError: "error" in review };
         }
         let payload;
         if (format === "full") {
