@@ -1,6 +1,6 @@
 import { hasDefineStatementText, type DefineHandoffV1, type SectionType } from "@prd-gen/core";
 import MarkdownIt from "markdown-it";
-import { ACCEPTANCE_REFERENCES, requirementDefinitions } from "./hard-output-rules/rules/requirement-definitions.js";
+import { ACCEPTANCE_REFERENCES, DEFINE_REQUIREMENT_OPTIONS, requirementDefinitions } from "./hard-output-rules/rules/requirement-definitions.js";
 
 type Sections = ReadonlyArray<{ type: SectionType; content: string }>;
 
@@ -16,7 +16,7 @@ function hasVisibleProse(text: string): boolean {
 export function projectDefineDocument(sections: Sections): Pick<DefineHandoffV1, "requirements" | "acceptance"> {
   const definitions = (type: SectionType, prefixes?: readonly string[]) => sections
     .filter(section => section.type === type)
-    .flatMap(section => requirementDefinitions(section.content, prefixes))
+    .flatMap(section => requirementDefinitions(section.content, prefixes, DEFINE_REQUIREMENT_OPTIONS))
     .map(({ id, text }) => ({ id, text: text.replace(/^:(?:\*\*)?/, "").trim() }));
 
   return {

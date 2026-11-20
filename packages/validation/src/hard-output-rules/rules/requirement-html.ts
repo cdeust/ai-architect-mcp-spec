@@ -34,6 +34,12 @@ const COMMENT_ENDS = ["-->"] as const;
  */
 const RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name) => `</${name}>`);
 
+function opensBlockQuote(line: string): boolean {
+  const opening = "<blockquote";
+  if (line.slice(0, opening.length).toLowerCase() !== opening) return false;
+  return /^[ \t\/>]?$/.test(line.charAt(opening.length));
+}
+
 /**
  * What may close the opaque block a line opens, or null: `-->` for a comment
  * (start condition 2: `<!--`), any raw-text end tag for a raw-text block
@@ -42,8 +48,9 @@ const RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name) => `</${name}>`);
  * markdown, so, like a code block, it defines nothing (PR #302 review,
  * note 1). Plain prefix tests, with no pattern.
  */
-function opaqueEnds(line: string): readonly string[] | null {
+function opaqueEnds(line: string, excludeBlockQuotes: boolean): readonly string[] | null {
   if (line.startsWith("<!--")) return COMMENT_ENDS;
+  if (excludeBlockQuotes && opensBlockQuote(line)) return ["</blockquote>"];
   const head = line.slice(0, 10).toLowerCase();
   const opensRawText = RAW_TEXT_TAGS.some((name) => {
     if (!head.startsWith(`<${name}`)) return false;
@@ -83,10 +90,10 @@ function opaqueEnds(line: string): readonly string[] | null {
  * review, Codex P2 and note 1), and a comment inside a list item stays in
  * that item (PR #305 review, Codex P2 and note 2).
  */
-export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
+export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean, excludeBlockQuotes = false): boolean {
   if (state.sCount[startLine]! - state.blkIndent >= 4) return false;
   const lineText = (line: number): string => state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]!);
-  const ends = opaqueEnds(lineText(startLine));
+  const ends = opaqueEnds(lineText(startLine), excludeBlockQuotes);
   if (ends === null) return false;
   if (silent) return true;
   const closes = (line: number): boolean => {

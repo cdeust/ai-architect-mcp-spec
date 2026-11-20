@@ -76,13 +76,13 @@ type DecisionRegister = ReturnType<typeof deriveDefineDecisions>;
 type DraftSection = { readonly type: SectionType; readonly content: string };
 
 export function findDraftDecisionConflicts(register: DecisionRegister, { type, content }: DraftSection): string[] {
-  if (register.byTarget.size === 0) return [];
+  if (register.byTarget.size === 0 && !content.includes("clarification:")) return [];
   const messages = new Set<string>();
   for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
     const decisions = register.byTarget.get(policy.key);
-    if (!decisions || register.conflicts.has(policy.key)) continue;
+    if (register.conflicts.has(policy.key)) continue;
     const supportedSources = new Set<string>();
-    for (const decision of decisions) {
+    for (const decision of decisions ?? []) {
       if (publicationPoliciesConflict(decision, policy)) {
         messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
       }
@@ -91,7 +91,10 @@ export function findDraftDecisionConflicts(register: DecisionRegister, { type, c
       }
     }
     for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
-      if (!supportedSources.has(id)) messages.add(`${label} cites ${id}, which does not support its publication decision.`);
+      const exists = id === "user-request" || register.clarifications.some(source => source.id === id);
+      if (!exists || (decisions && !supportedSources.has(id))) {
+        messages.add(`${label} cites ${id}, which does not support its publication decision.`);
+      }
     }
   }
   return [...messages];

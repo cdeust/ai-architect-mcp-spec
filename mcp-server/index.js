@@ -47828,9 +47828,17 @@ var isHtmlComment = (content) => content.trimStart().startsWith("<!--");
 var RAW_TEXT_TAGS = ["pre", "script", "style", "textarea"];
 var COMMENT_ENDS = ["-->"];
 var RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name323) => `</${name323}>`);
-function opaqueEnds(line) {
+function opensBlockQuote(line) {
+  const opening = "<blockquote";
+  if (line.slice(0, opening.length).toLowerCase() !== opening)
+    return false;
+  return /^[ \t\/>]?$/.test(line.charAt(opening.length));
+}
+function opaqueEnds(line, excludeBlockQuotes) {
   if (line.startsWith("<!--"))
     return COMMENT_ENDS;
+  if (excludeBlockQuotes && opensBlockQuote(line))
+    return ["</blockquote>"];
   const head = line.slice(0, 10).toLowerCase();
   const opensRawText = RAW_TEXT_TAGS.some((name323) => {
     if (!head.startsWith(`<${name323}`))
@@ -47840,11 +47848,11 @@ function opaqueEnds(line) {
   });
   return opensRawText ? RAW_TEXT_ENDS : null;
 }
-function opaqueHtmlBlock(state, startLine, endLine, silent) {
+function opaqueHtmlBlock(state, startLine, endLine, silent, excludeBlockQuotes = false) {
   if (state.sCount[startLine] - state.blkIndent >= 4)
     return false;
   const lineText = (line) => state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
-  const ends = opaqueEnds(lineText(startLine));
+  const ends = opaqueEnds(lineText(startLine), excludeBlockQuotes);
   if (ends === null)
     return false;
   if (silent)
@@ -47877,6 +47885,8 @@ var METADATA_HEADER = /^(?:(?:[\p{L}]+[ \t]+)?ids?|depends[ \t]+on|dependenc(?:y
 var parser = new lib_default("commonmark").enable("table").disable("inline");
 var htmlAsText = new lib_default("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+var htmlOutsideQuotes = new lib_default("commonmark").enable("table").disable("inline");
+htmlOutsideQuotes.block.ruler.at("html_block", (state, start, end, silent) => opaqueHtmlBlock(state, start, end, silent, true), { alt: ["paragraph", "reference", "blockquote"] });
 var idsCache = /* @__PURE__ */ new Map();
 function definitionIds(prefixes) {
   const key = prefixes.join("|");
@@ -47896,7 +47906,11 @@ function definitionIds(prefixes) {
 }
 var REQUIREMENT_PREFIXES = ["FR", "NFR"];
 var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
-function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeQuotedAndHtmlBlocks) {
+var DEFINE_REQUIREMENT_OPTIONS = {
+  sourceHeader: /^(?:source(?:[ \t]*\/[ \t]*traceability)?|traceability)$/i,
+  excludeBlockQuotes: true
+};
+function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeBlockQuotes) {
   const tokens = md.parse(content, {});
   const leaves = [];
   const at = (map4) => {
@@ -47922,7 +47936,7 @@ function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infin
       }
       continue;
     }
-    if (token.type === "blockquote_open" && excludeQuotedAndHtmlBlocks) {
+    if (token.type === "blockquote_open" && excludeBlockQuotes) {
       while (tokens[i2 + 1].level > token.level)
         i2++;
       i2++;
@@ -47931,8 +47945,7 @@ function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infin
     if (token.type === "table_open") {
       table2 = { map: at(token.map), rows: [], containerEnd: openEnd[top] };
     } else if (token.type === "html_block") {
-      if (!excludeQuotedAndHtmlBlocks)
-        addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser, excludeBlockQuotes);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i2 + 1]?.content ?? "", openEnd[top], opensItem));
@@ -47961,11 +47974,11 @@ function extendOverComment(leaves, lines, containerEnd) {
     leaves[leaves.length - 1] = { ...last, map: [last.map[0], lines[1]] };
   }
 }
-function addHtmlBlock(leaves, content, lines, containerEnd, reparse) {
+function addHtmlBlock(leaves, content, lines, containerEnd, reparse, excludeBlockQuotes) {
   if (isHtmlComment(content))
     extendOverComment(leaves, lines, containerEnd);
   else if (reparse)
-    leaves.push(...leavesOf(content, htmlAsText, (line) => lines[0] + line, containerEnd));
+    leaves.push(...leavesOf(content, excludeBlockQuotes ? htmlOutsideQuotes : htmlAsText, (line) => lines[0] + line, containerEnd, excludeBlockQuotes));
 }
 function textLeaf(openType, map4, inline3, containerEnd, opensItem) {
   const type = openType === "paragraph_open" ? "paragraph" : "heading";
@@ -48097,15 +48110,15 @@ function headingBody(leaves, at, ids) {
   }
   return lines.join("\n");
 }
-function* proseLines(content, excludeQuotedAndHtmlBlocks) {
-  for (const leaf of leavesOf(content, parser, void 0, void 0, excludeQuotedAndHtmlBlocks)) {
+function* proseLines(content, excludeBlockQuotes) {
+  for (const leaf of leavesOf(content, parser, void 0, void 0, excludeBlockQuotes)) {
     if (leaf.type === "paragraph")
       yield* leaf.inline.split("\n");
   }
 }
 function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES, options) {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content, parser, void 0, void 0, options?.excludeQuotedAndHtmlBlocks);
+  const leaves = leavesOf(content, parser, void 0, void 0, options?.excludeBlockQuotes);
   const out = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
@@ -48579,7 +48592,7 @@ function checkPrdDefinitions(sections) {
   for (const { type, content } of sections) {
     if (type !== "requirements" && type !== "acceptance_criteria")
       continue;
-    const definitions = requirementDefinitions(content, type === "requirements" ? void 0 : ["AC"]);
+    const definitions = requirementDefinitions(content, type === "requirements" ? void 0 : ["AC"], DEFINE_REQUIREMENT_OPTIONS);
     if (definitions.some(({ text: text2 }) => /[\p{L}\p{N}]/u.test(text2)))
       continue;
     const expected = type === "requirements" ? "FR or NFR" : "AC";
@@ -48588,14 +48601,10 @@ function checkPrdDefinitions(sections) {
   return findings;
 }
 var CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`,?([ \t].*)$/i;
-var TRACEABILITY_HEADERS = /^source(?:\s*\/\s*traceability)?$|^traceability$/i;
 var PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)/i;
 function* policyStatements(type, content) {
   const prefixes = type === "acceptance_criteria" ? ["AC"] : void 0;
-  const definitions = requirementDefinitions(content, prefixes, {
-    sourceHeader: TRACEABILITY_HEADERS,
-    excludeQuotedAndHtmlBlocks: true
-  });
+  const definitions = requirementDefinitions(content, prefixes, DEFINE_REQUIREMENT_OPTIONS);
   for (const { id, text: text2, source } of definitions) {
     const body = text2.replace(/^:(?:\*\*)?/, "");
     for (const statement of body.split("\n"))
@@ -52339,7 +52348,7 @@ function hasVisibleProse(text2) {
   return inline2.parseInline(text2, {})[0].children.some((token) => token.type === "text" && hasDefineStatementText(token.content));
 }
 function projectDefineDocument(sections) {
-  const definitions = (type, prefixes) => sections.filter((section) => section.type === type).flatMap((section) => requirementDefinitions(section.content, prefixes)).map(({ id, text: text2 }) => ({ id, text: text2.replace(/^:(?:\*\*)?/, "").trim() }));
+  const definitions = (type, prefixes) => sections.filter((section) => section.type === type).flatMap((section) => requirementDefinitions(section.content, prefixes, DEFINE_REQUIREMENT_OPTIONS)).map(({ id, text: text2 }) => ({ id, text: text2.replace(/^:(?:\*\*)?/, "").trim() }));
   return {
     requirements: definitions("requirements").map(({ id, text: text2 }) => ({ id, text: hasVisibleProse(text2) ? text2 : "" })),
     acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text: text2 }) => {
@@ -55855,15 +55864,15 @@ function renderDefineDecisions(state) {
   ].join("\n");
 }
 function findDraftDecisionConflicts(register, { type, content }) {
-  if (register.byTarget.size === 0)
+  if (register.byTarget.size === 0 && !content.includes("clarification:"))
     return [];
   const messages = /* @__PURE__ */ new Set();
   for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
     const decisions = register.byTarget.get(policy.key);
-    if (!decisions || register.conflicts.has(policy.key))
+    if (register.conflicts.has(policy.key))
       continue;
     const supportedSources = /* @__PURE__ */ new Set();
-    for (const decision of decisions) {
+    for (const decision of decisions ?? []) {
       if (publicationPoliciesConflict(decision, policy)) {
         messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
       }
@@ -55873,8 +55882,10 @@ function findDraftDecisionConflicts(register, { type, content }) {
       }
     }
     for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
-      if (!supportedSources.has(id))
+      const exists = id === "user-request" || register.clarifications.some((source2) => source2.id === id);
+      if (!exists || decisions && !supportedSources.has(id)) {
         messages.add(`${label} cites ${id}, which does not support its publication decision.`);
+      }
     }
   }
   return [...messages];

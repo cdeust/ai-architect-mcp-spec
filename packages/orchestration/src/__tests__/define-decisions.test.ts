@@ -86,4 +86,14 @@ it("validates explicit register citations for a supported table policy and accep
     "requirements/FR-001 cites clarification:1:1, which does not support its publication decision.",
   ]);
   expect(check("clarification:1:1", "Other notes")).toEqual([]);
+  const unrelated = [{
+    type: "requirements" as const,
+    content: `| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-003 | ${STOP.replace("verified commit", "changelog")} | clarification:99:99 |`,
+  }];
+  const absent = ["requirements/FR-003 cites clarification:99:99, which does not support its publication decision."];
+  expect(findDefineDecisionConflicts(current, unrelated)).toEqual(absent);
+  expect(findDefineDecisionConflicts(state("Plan"), unrelated)).toEqual(absent);
+  expect(findDefineDecisionConflicts(state("Plan", [turn(99, "Please keep the notes private")]), [
+    { ...unrelated[0]!, content: unrelated[0]!.content.replace("clarification:99:99", "clarification:99:1") },
+  ])).toEqual([]);
 });

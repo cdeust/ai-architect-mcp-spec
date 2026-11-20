@@ -161,3 +161,24 @@ it("blocks a stale passed gate when an otherwise valid acceptance policy contrad
   expect(readDefineHandoff(state, pending)).toHaveProperty("handoff.version", 1);
   expect(evaluateRunPolicy(state)).toMatchObject({ status: "pass", reasons: [] });
 });
+
+it("checks an ordinary HTML wrapper around a requirement using the same definition as Define v1", () => {
+  const checkpoint = ready();
+  checkpoint.feature_description = "With `--until ci`, never publish the verified commit.";
+  checkpoint.sections[0]!.content = "<div>\n- FR-001: With `--until ci`, publish the verified commit automatically.\n</div>";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    error: { code: "define_document_invalid", message: expect.stringContaining("requirements/FR-001") },
+  });
+});
+
+it("does not offer quoted requirements as planning input and detaches table source metadata", () => {
+  const checkpoint = ready();
+  checkpoint.sections[0]!.content = "> - FR-001: The previous version published automatically.";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    error: { code: "define_document_invalid" },
+  });
+  checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Verify the saved commit. | user-request |";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },
+  });
+});

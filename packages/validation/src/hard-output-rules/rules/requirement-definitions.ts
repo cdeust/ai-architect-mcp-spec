@@ -74,6 +74,10 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 
+const htmlOutsideQuotes = new MarkdownIt("commonmark").enable("table").disable("inline");
+htmlOutsideQuotes.block.ruler.at("html_block", (state, start, end, silent) =>
+  opaqueHtmlBlock(state, start, end, silent, true), { alt: ["paragraph", "reference", "blockquote"] });
+
 /**
  * The identifiers a reader of definitions looks for, as three patterns over
  * one alternation of prefixes (`FR|NFR`): a line of a block that opens with
@@ -113,6 +117,11 @@ const REQUIREMENT_PREFIXES = ["FR", "NFR"] as const;
 // Final parenthesized list after whitespace, shared with the Define v1 projection.
 export const ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
 
+export const DEFINE_REQUIREMENT_OPTIONS = {
+  sourceHeader: /^(?:source(?:[ \t]*\/[ \t]*traceability)?|traceability)$/i,
+  excludeBlockQuotes: true,
+};
+
 /** A leaf block a definition's text is read from: a paragraph, a heading or a table. */
 interface Leaf {
   readonly type: "paragraph" | "heading" | "table";
@@ -138,7 +147,7 @@ interface Leaf {
  * primitives: on a long section of nested lists, an object per token made
  * the growth allocation-bound, near the perf ceiling.
  */
-function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity, excludeQuotedAndHtmlBlocks?: boolean): Leaf[] {
+function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity, excludeBlockQuotes?: boolean): Leaf[] {
   const tokens = md.parse(content, {});
   const leaves: Leaf[] = [];
   const at = (map: [number, number] | null): [number, number] => {
@@ -163,7 +172,7 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
       }
       continue;
     }
-    if (token.type === "blockquote_open" && excludeQuotedAndHtmlBlocks) {
+    if (token.type === "blockquote_open" && excludeBlockQuotes) {
       // The closing token is at the same level as the opener.
       while (tokens[i + 1]!.level > token.level) i++;
       i++;
@@ -172,7 +181,7 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      if (!excludeQuotedAndHtmlBlocks) addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser, excludeBlockQuotes);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -219,9 +228,9 @@ function extendOverComment(leaves: Leaf[], lines: [number, number], containerEnd
  * does. An HTML block met by `htmlAsText` is a comment or a raw-text block
  * (`opaqueHtmlBlock`), so it is never parsed again.
  */
-function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number, reparse: boolean): void {
+function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number, reparse: boolean, excludeBlockQuotes?: boolean): void {
   if (isHtmlComment(content)) extendOverComment(leaves, lines, containerEnd);
-  else if (reparse) leaves.push(...leavesOf(content, htmlAsText, (line) => lines[0] + line, containerEnd));
+  else if (reparse) leaves.push(...leavesOf(content, excludeBlockQuotes ? htmlOutsideQuotes : htmlAsText, (line) => lines[0] + line, containerEnd, excludeBlockQuotes));
 }
 
 /** The leaf of a paragraph or heading, from its opening token's type, its lines and its inline source. */
@@ -443,8 +452,8 @@ function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): s
 }
 
 /** Raw paragraph lines, excluding fenced and indented code blocks. */
-export function* proseLines(content: string, excludeQuotedAndHtmlBlocks?: boolean): Generator<string> {
-  for (const leaf of leavesOf(content, parser, undefined, undefined, excludeQuotedAndHtmlBlocks)) {
+export function* proseLines(content: string, excludeBlockQuotes?: boolean): Generator<string> {
+  for (const leaf of leavesOf(content, parser, undefined, undefined, excludeBlockQuotes)) {
     if (leaf.type === "paragraph") yield* leaf.inline.split("\n");
   }
 }
@@ -458,10 +467,10 @@ export function* proseLines(content: string, excludeQuotedAndHtmlBlocks?: boolea
 export function requirementDefinitions(
   content: string,
   prefixes: readonly string[] = REQUIREMENT_PREFIXES,
-  options?: { readonly sourceHeader?: RegExp; readonly excludeQuotedAndHtmlBlocks?: boolean },
+  options?: { readonly sourceHeader?: RegExp; readonly excludeBlockQuotes?: boolean },
 ): RequirementDefinition[] {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content, parser, undefined, undefined, options?.excludeQuotedAndHtmlBlocks);
+  const leaves = leavesOf(content, parser, undefined, undefined, options?.excludeBlockQuotes);
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {

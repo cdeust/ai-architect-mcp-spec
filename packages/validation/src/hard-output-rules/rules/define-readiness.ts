@@ -1,6 +1,6 @@
 import type { HardOutputRuleViolation, SectionType } from "@prd-gen/core";
 import { makeViolation } from "./helpers.js";
-import { ACCEPTANCE_REFERENCES, proseLines, requirementDefinitions } from "./requirement-definitions.js";
+import { ACCEPTANCE_REFERENCES, DEFINE_REQUIREMENT_OPTIONS, proseLines, requirementDefinitions } from "./requirement-definitions.js";
 
 type Sections = ReadonlyArray<{ type: SectionType; content: string }>;
 
@@ -9,7 +9,7 @@ export function checkPrdDefinitions(sections: Sections): HardOutputRuleViolation
   const findings: HardOutputRuleViolation[] = [];
   for (const { type, content } of sections) {
     if (type !== "requirements" && type !== "acceptance_criteria") continue;
-    const definitions = requirementDefinitions(content, type === "requirements" ? undefined : ["AC"]);
+    const definitions = requirementDefinitions(content, type === "requirements" ? undefined : ["AC"], DEFINE_REQUIREMENT_OPTIONS);
     if (definitions.some(({ text }) => /[\p{L}\p{N}]/u.test(text))) continue;
     const expected = type === "requirements" ? "FR or NFR" : "AC";
     findings.push(makeViolation("missing_prd_definitions", type, `The ${type} section must define at least one ${expected} statement.`));
@@ -21,7 +21,6 @@ export function checkPrdDefinitions(sections: Sections): HardOutputRuleViolation
 // The option, its value and the publication target must all match. Quantity
 // comparisons and general natural-language entailment are separate checks.
 const CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`,?([ \t].*)$/i;
-const TRACEABILITY_HEADERS = /^source(?:\s*\/\s*traceability)?$|^traceability$/i;
 const PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)/i;
 
 interface PublicationSource {
@@ -33,10 +32,7 @@ interface PublicationSource {
 
 function* policyStatements(type: SectionType | undefined, content: string) {
   const prefixes = type === "acceptance_criteria" ? ["AC"] : undefined;
-  const definitions = requirementDefinitions(content, prefixes, {
-    sourceHeader: TRACEABILITY_HEADERS,
-    excludeQuotedAndHtmlBlocks: true,
-  });
+  const definitions = requirementDefinitions(content, prefixes, DEFINE_REQUIREMENT_OPTIONS);
   for (const { id, text, source } of definitions) {
     const body = text.replace(/^:(?:\*\*)?/, "");
     for (const statement of body.split("\n")) yield { label: type ? `${type}/${id}` : id, statement: statement.trim(), source };
