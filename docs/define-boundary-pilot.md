@@ -1,6 +1,6 @@
 # Define boundary pilot
 
-The host drives the stdio server built from the producer baseline `e6bdbbbce6b6e90941e59aabe6f38378c4168ee4`. The [delivery-command fixture](../packages/mcp-server/src/__tests__/fixtures/define-delivery-command.json) records the source of the design-derived intent, questions, answers and drafts. The [stdio test](../packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) substitutes local responses for external actions and writes the exported artifacts to an isolated directory.
+The host drives the stdio server built from the producer baseline `e6bdbbbce6b6e90941e59aabe6f38378c4168ee4`. The [delivery-command fixture](../packages/mcp-server/src/__tests__/fixtures/define-delivery-command.json) records the source of the design-derived intent, questions, answers and drafts. The [stdio test](../packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) substitutes local responses for external actions and writes the exported artifacts to an isolated directory. The [ordered trace](../packages/mcp-server/src/__tests__/__snapshots__/define-boundary-stdio.test.ts.snap) retains repeated actions and uses artifact names in place of run-specific paths.
 
 | Probe | Observed baseline |
 |---|---|
@@ -10,6 +10,8 @@ The host drives the stdio server built from the producer baseline `e6bdbbbce6b6e
 | Incompatible quantities in separate sections | The document verifier returns `contradictory_requirements` for one hour versus three hours. |
 | Incompatible publication decisions in separate sections | The document verifier does not emit `contradictory_requirements` for automatic publication versus stopping before publication with `--until ci`. |
 
-The test reaches the producer's implementation gate through MCP stdio. The architect-os Define consumer and its versioned input fixture still need to be exercised. The downstream step reader at architect-os revision `be492ac325aad604f073c7cb9613cda67b7952ce` reads `step.json` and `brief.md` after planning. Its contract is distinct from the Define handoff being characterized here.
+The test reaches the producer's implementation gate through MCP stdio. The architect-os Define consumer and its versioned input fixture remain to be exercised.
+
+The architect-os step reader at revision `be492ac325aad604f073c7cb9613cda67b7952ce` reads `step.json` and `brief.md` after planning. A replay against that revision passed three negative-control scenarios (22 steps). A missing `step.json`, a schema-invalid `step.json` and a missing `brief.md` each returned exit 2 without creating a session. These scenarios exercise the post-Plan step reader.
 
 From the producer root, run `pnpm build` followed by `pnpm exec vitest run packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts`.

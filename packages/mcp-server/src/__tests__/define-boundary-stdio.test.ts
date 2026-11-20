@@ -53,17 +53,28 @@ function makeHost(output: string, draftOverride?: string) {
   return { respond, answers, artifacts };
 }
 
+function actionLabel(action: NextAction): string {
+  switch (action.kind) {
+    case "ask_user": return `${action.kind}/${action.question_id}`;
+    case "call_cortex_tool":
+    case "call_pipeline_tool": return `${action.kind}/${action.tool_name}`;
+    case "spawn_subagents": return `${action.kind}/${action.batch_id}`;
+    case "write_file": return `${action.kind}/${basename(action.path)}`;
+    default: return action.kind;
+  }
+}
+
 async function driveToGate(server: StdioServer, host: ReturnType<typeof makeHost>) {
   let envelope = await call<Envelope>(server, "start_pipeline", fixture.request);
   const run_id = envelope.run_id;
-  const phases = new Set<string>();
+  const trace: string[] = [];
   // Same ceiling as the local canned-run harness. The pilot stops at the first gate question.
   for (let count = 0; count < 300; count++) {
     expect(envelope.run_id).toBe(run_id);
     const action = NextActionSchema.parse(envelope.action);
-    phases.add(envelope.current_step);
+    trace.push(`${envelope.current_step}/${actionLabel(action)}`);
     if (envelope.current_step === "implementation_gate" && action.kind === "ask_user") {
-      return { run_id, action, phases: [...phases] };
+      return { run_id, action, trace };
     }
     if (action.kind === "spawn_subagents") {
       expect(["probe", "draft", "judge"]).toContain(action.purpose);
@@ -72,7 +83,7 @@ async function driveToGate(server: StdioServer, host: ReturnType<typeof makeHost
     if (!result) throw new Error(`Run ended at ${envelope.current_step}/${action.kind} before the gate`);
     envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
   }
-  throw new Error(`Run did not reach implementation_gate. Phases: ${[...phases].join(", ")}`);
+  throw new Error(`Run did not reach implementation_gate. Trace: ${trace.join(", ")}`);
 }
 
 // Characterization of the producer baseline. The false positive is a defect for the reconciliation phase.
@@ -88,11 +99,10 @@ it.each([
   let server: StdioServer | undefined;
   try {
     server = await start();
-    const { run_id, action, phases } = await driveToGate(server, host);
+    const { run_id, action, trace } = await driveToGate(server, host);
     expect(action.question_id).toBe("implementation_gate");
-    const definePhases = ["clarification", "section_generation", "file_export", "self_check", "implementation_gate"];
-    expect(phases.filter(phase => definePhases.includes(phase)))
-      .toEqual(draftOverride ? definePhases.filter(phase => phase !== "self_check") : definePhases);
+    expect(trace).toMatchSnapshot();
+    expect({ artifacts: [...host.artifacts.keys()], pendingDecision: action }).toMatchSnapshot("observed handoff");
     expect(host.answers).toEqual(fixture.clarifications.map(turn => turn.answer));
     const prd = readFileSync(join(output, "01-prd.md"), "utf8");
     if (draftOverride) {
