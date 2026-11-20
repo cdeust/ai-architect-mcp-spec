@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { validateDefineReadiness, validateDocument } from "../index.js";
+import { requirementDefinitions } from "../hard-output-rules/rules/requirement-definitions.js";
+import { describe, expect, it, vi } from "vitest";
+import MarkdownIt from "markdown-it";
+import { parseWithoutHtmlQuotes } from "../hard-output-rules/rules/define-html-quotes.js";
+import { projectDefineDocument, publicationPoliciesConflict, readPublicationPolicies, validateDefineReadiness, validateDocument } from "../index.js";
 
 const publish = "With `--until ci`, publish the verified commit automatically.";
 const stop = "With `--until ci`, stop after CI and never publish the verified commit.";
@@ -161,4 +164,106 @@ describe("Define readiness", () => {
     const directive = publish.replace("`, ", "`" + separator);
     expect(validateDefineReadiness([overview(directive), definition(stop)])).toHaveLength(1);
   });
+});
+
+it("reads the normative policy and Source cell from a traced requirement table", () => {
+  for (const header of ["Source", "Traceability", "Source/Traceability"]) {
+    const table = `| ID | Requirement | Priority | ${header} |\n| --- | --- | --- | --- |\n| FR-001 | ${stop} | P1 | clarification:3:3 |`;
+    const [found] = [...readPublicationPolicies(table, "requirements")];
+    expect(found).toMatchObject({ label: "requirements/FR-001", source: "clarification:3:3", statement: stop });
+    expect(projectDefineDocument([requirement(table)]).requirements).toEqual([{ id: "FR-001", text: stop }]);
+  }
+  const firstRow = `| FR-001 | ${stop} |\n| --- | --- |`;
+  expect([...readPublicationPolicies(firstRow, "requirements")][0]).toMatchObject({ statement: stop });
+});
+
+it("compares traced acceptance statements and leaves a non-acceptance target untouched", () => {
+  const traced = publish.replace(/\.$/, " (FR-001, NFR-002).");
+  const [ac] = [...readPublicationPolicies(`- AC-001: ${traced}`, "acceptance_criteria")];
+  expect(ac).toMatchObject({ label: "acceptance_criteria/AC-001", statement: traced, policy: { automatic: true, target: "the verified commit" } });
+  const [fr] = [...readPublicationPolicies(`- FR-001: ${traced}`, "requirements")];
+  expect(fr?.policy).toMatchObject({ automatic: false, target: "the verified commit automatically (FR-001, NFR-002)" });
+  const [policy] = [...readPublicationPolicies(stop)];
+  expect(policy?.label).toBe("overview");
+  expect(publicationPoliciesConflict(ac!.policy, policy!.policy)).toBe(true);
+  expect(publicationPoliciesConflict(policy!.policy, ac!.policy)).toBe(true);
+  expect(publicationPoliciesConflict(ac!.policy, ac!.policy)).toBe(false);
+  expect(publicationPoliciesConflict(fr!.policy, policy!.policy)).toBe(false);
+});
+
+it("keeps Markdown and wrapped HTML quotes out of normative statements and projection", () => {
+  const content = [
+    '<div><BLOCKQUOTE cite="source">',
+    '',
+    'An inline code example: `</blockquote>`.',
+    '',
+    '~~~html',
+    '</blockquote>',
+    '~~~',
+    '',
+    '<!--',
+    '</blockquote>',
+    '-->',
+    '',
+    '<blockquote>',
+    `- FR-002: ${publish}`,
+    '</blockquote>',
+    '',
+    `- FR-003: ${publish}`,
+    '</BLOCKQUOTE>',
+    '</div>',
+    '',
+    `> ${publish}\n>\n> > - FR-004: ${publish}`,
+    '',
+    `- FR-001: ${stop}`,
+  ].join("\n");
+  expect([...readPublicationPolicies(content, "requirements")]).toEqual([
+    expect.objectContaining({ label: "requirements/FR-001", statement: stop }),
+  ]);
+  expect(projectDefineDocument([requirement(content)]).requirements).toEqual([{ id: "FR-001", text: stop }]);
+  expect([...readPublicationPolicies(`> ${publish}\n\n${stop}`)]).toEqual([expect.objectContaining({ statement: stop })]);
+});
+
+it("preserves the first definition row and the exact legacy shape of a table without a source", () => {
+  const firstRow = "| FR-001 | Source |\n| --- | --- |";
+  expect(requirementDefinitions(firstRow, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: "Source" }]);
+  const unlabeled = `| ID | Requirement |\n| --- | --- |\n| FR-001 | ${stop} |`;
+  expect(requirementDefinitions(unlabeled, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: stop }]);
+});
+
+it("retains normative text outside inline quotes and masks unclosed and nested quoted content", () => {
+  const text = `<div><blockquote>\r\nOld example: <blockquote-example> and \`</blockquote>\`.\r\n</blockquote></div>\r\n${stop}`;
+  const policy = (value: string) => [...readPublicationPolicies(value)].map(({ statement }) => statement);
+  expect(policy(text)).toEqual([stop]);
+  expect(policy(`${stop}\n<blockquote>\n\n${publish}`)).toEqual([stop]);
+  expect(policy(`</blockquote>\n> <blockquote>\n\n${stop}`)).toEqual([stop]);
+  expect(policy(`Text\n<!--\n<blockquote>\n-->\n\n${stop}`)).toEqual([stop]);
+  expect(policy(`${stop}\n<!--\n<blockquote>\n${publish}`)).toEqual([stop]);
+  expect(policy(`> <blockquote>\n\n<div><blockquote>\n${publish}\n</blockquote></div>\n${stop}`)).toEqual([stop]);
+  expect(policy(`<div data-example="<blockquote>">\n${stop}\n</div>`)).toEqual([stop]);
+
+  const inline = "- FR-001: Retain the signed receipt. <blockquote>Legacy rule.<blockquote>Nested legacy rule.</blockquote>More legacy text.</blockquote>";
+  const additional = "- FR-002: Retain the plan.";
+  expect(projectDefineDocument([requirement(`${inline}\n${additional}`)]).requirements).toEqual([
+    { id: "FR-001", text: "Retain the signed receipt." },
+    { id: "FR-002", text: "Retain the plan." },
+  ]);
+  const table = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Retain the signed receipt. <blockquote>Legacy rule.</blockquote> | user-request |\n| FR-002 | <blockquote>Legacy requirement.</blockquote> | Prior design |";
+  expect(projectDefineDocument([requirement(table)]).requirements).toEqual([
+    { id: "FR-001", text: "Retain the signed receipt." },
+    { id: "FR-002", text: "" },
+  ]);
+});
+
+it("uses the plain inline-free parser for ordinary sections", () => {
+  const parser = new MarkdownIt("commonmark").disable("inline");
+  const parse = vi.spyOn(parser, "parse");
+  const parseInline = vi.spyOn(MarkdownIt.prototype, "parseInline");
+  try {
+    expect(parseWithoutHtmlQuotes(stop, parser)).toContainEqual(expect.objectContaining({ type: "inline", content: stop, children: [] }));
+    expect(parse).toHaveBeenCalledWith(stop, {});
+    expect(parseInline).not.toHaveBeenCalled();
+  } finally {
+    parseInline.mockRestore();
+  }
 });

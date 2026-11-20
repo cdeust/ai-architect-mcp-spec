@@ -446,3 +446,38 @@ describe("PipelineStateSchema — retry_policy seam (Wave D1.C)", () => {
     expect(parsed.retry_policy?.maxAttempts).toBe(1);
   });
 });
+
+it.each(["with_prior_violations", "without_prior_violations"] as const)("enforces sourced publication on retries with %s", arm => {
+  const stop = "With `--until ci`, never publish the verified commit.";
+  const publish = "With `--until ci`, publish the verified commit automatically.";
+  const seed = newPipelineState({ run_id: "run_retry_source", feature_description: stop });
+  const state: PipelineState = {
+    ...seed,
+    current_step: "section_generation",
+    prd_context: "feature",
+    retry_policy: { maxAttempts: 2, arm },
+    sections: [SectionStatusSchema.parse({ section_type: "overview", status: "generating", attempt: 1, violation_count: 0 })],
+  };
+  const initial = step({ state });
+  expect(initial.action.kind).toBe("spawn_subagents");
+
+  function draft(prompted: ReturnType<typeof step>, raw_text: string) {
+    if (prompted.action.kind !== "spawn_subagents") throw new Error(prompted.action.kind);
+    const { batch_id, invocations } = prompted.action;
+    return step({
+      state: prompted.state,
+      result: { kind: "subagent_batch_result", batch_id, responses: [{ invocation_id: invocations[0]!.invocation_id, raw_text }] },
+    });
+  }
+  const retry = draft(initial, publish);
+  const reissued = step({ state: retry.state });
+  expect(reissued.action).toEqual(retry.action);
+  expect(retry.state.sections[0]?.violation_count).toBe(1);
+  if (retry.action.kind !== "spawn_subagents") throw new Error(retry.action.kind);
+  const prompt = retry.action.invocations[0]!.prompt;
+  const finding = `[sourced_publication_policy] overview says "${publish}", opposing the user publication decision from user-request.`;
+  if (arm === "without_prior_violations") expect(prompt).not.toContain(finding);
+  else expect(prompt).toContain(finding);
+  expect(prompt).toContain('"direction":"refuse","automatic":false,"sources":["user-request"]');
+  expect(draft(retry, stop).state.sections[0]?.status).toBe("passed");
+});

@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { initialPostSpecs, newPipelineState, readDefineHandoff, type NextAction, type PipelineState } from "../index.js";
 
+import { evaluateRunPolicy } from "../handlers/verification-policy.js";
+
 const run_id = "run_define_v1";
 const pending: NextAction = {
   kind: "ask_user", question_id: "implementation_gate", header: "Proceed?",
@@ -143,4 +145,88 @@ it("returns contract-level issues for present definitions with bad references", 
   expect(readDefineHandoff(source, pending)).toMatchObject({
     error: { code: "define_document_invalid", message: expect.stringContaining("AC-001 references unknown requirement FR-002.") },
   });
+});
+
+it("blocks a stale passed gate when an otherwise valid acceptance policy contradicts a saved decision", () => {
+  const state = ready();
+  state.feature_description = "With `--until ci`, never publish the verified commit.";
+  const draft = "With `--until ci`, publish the verified commit automatically (FR-001).";
+  state.sections[1]!.content = `- AC-001: ${draft}`;
+  const finding = `acceptance_criteria/AC-001 says "${draft}", opposing the user publication decision from user-request.`;
+  expect(readDefineHandoff(state, pending)).toEqual({
+    error: { code: "define_document_invalid", message: `sourced_publication_policy: ${finding}` },
+  });
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "blocked", reasons: [finding] });
+  state.sections[1]!.content = state.sections[1]!.content!.replace("verified commit", "verification report");
+  expect(readDefineHandoff(state, pending)).toHaveProperty("handoff.version", 1);
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "pass", reasons: [] });
+});
+
+it("checks an ordinary HTML wrapper around a requirement using the same definition as Define v1", () => {
+  const checkpoint = ready();
+  checkpoint.feature_description = "With `--until ci`, never publish the verified commit.";
+  checkpoint.sections[0]!.content = "<div>\n- FR-001: With `--until ci`, publish the verified commit automatically.\n</div>";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    error: { code: "define_document_invalid", message: expect.stringContaining("requirements/FR-001") },
+  });
+});
+
+it("does not offer quoted requirements as planning input and detaches table source metadata", () => {
+  const checkpoint = ready();
+  checkpoint.sections[0]!.content = "> - FR-001: The previous version published automatically.";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    error: { code: "define_document_invalid" },
+  });
+  checkpoint.sections[0]!.content = [
+    '<div><blockquote>',
+    '',
+    'A literal `</blockquote>` tag.',
+    '',
+    '<!--',
+    '</blockquote>',
+    '-->',
+    '',
+    '~~~html',
+    '</blockquote>',
+    '~~~',
+    '',
+    '<blockquote>',
+    '- FR-002: An older version published automatically.',
+    '</blockquote>',
+    '',
+    '- FR-003: A rejected design published automatically.',
+    '',
+    '</blockquote>',
+    '</div>',
+    '',
+    '- FR-001: Verify the saved commit.',
+  ].join("\n");
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },
+  });
+  checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Verify the saved commit. | user-request |";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },
+  });
+});
+
+it("preserves both requirements and traced criteria when their normative text surrounds an illustrative quote", () => {
+  const checkpoint = ready();
+  checkpoint.sections[0]!.content += "\n- FR-002: Retain the signed receipt. <blockquote>Legacy rule.</blockquote>";
+  checkpoint.sections[1]!.content += "\n- AC-002: Preserve the receipt. <blockquote>Legacy note.</blockquote> (FR-002).";
+  checkpoint.sections[2]!.content += " Replay AC-002 against the saved receipt.";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: {
+      requirements: [
+        { id: "FR-001", text: "Keep the validated commit." },
+        { id: "FR-002", text: "Retain the signed receipt." },
+      ],
+      acceptance: [
+        { id: "AC-001", requirement_ids: ["FR-001"] },
+        { id: "AC-002", requirement_ids: ["FR-002"] },
+      ],
+    },
+  });
+  checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Keep the validated commit. | user-request |\n| FR-002 | <blockquote>Legacy requirement.</blockquote> | Prior design |";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
 });

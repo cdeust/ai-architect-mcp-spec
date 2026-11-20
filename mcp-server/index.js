@@ -47871,6 +47871,56 @@ function opaqueHtmlBlock(state, startLine, endLine, silent) {
   return true;
 }
 
+// packages/validation/dist/hard-output-rules/rules/define-html-quotes.js
+var lexer = new lib_default("commonmark");
+lexer.inline.ruler.at("html_inline", (state, silent) => {
+  const offset = state.pos;
+  const first = state.tokens.length;
+  const matched = html_inline(state, silent);
+  if (state.tokens.length > first)
+    state.tokens.at(-1).meta = offset;
+  return matched;
+});
+var BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
+function parseWithoutHtmlQuotes(content, plainParser) {
+  const env = {};
+  const tokens = plainParser.parse(content, env);
+  if (!content.toLowerCase().includes("<blockquote"))
+    return tokens;
+  let depth = 0;
+  let markdownDepth = 0;
+  for (const token of tokens) {
+    if (token.type === "blockquote_open")
+      markdownDepth++;
+    if (token.type === "blockquote_close")
+      markdownDepth--;
+    if (markdownDepth > 0 || token.type !== "inline")
+      continue;
+    const visible = [];
+    let cursor = 0;
+    const [inline3] = lexer.parseInline(token.content, env);
+    for (const child of inline3.children) {
+      if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content))
+        continue;
+      const offset = child.meta;
+      if (child.content.startsWith("</")) {
+        if (depth === 0)
+          continue;
+        depth--;
+        cursor = offset + child.content.length;
+      } else {
+        if (depth === 0)
+          visible.push(token.content.slice(cursor, offset));
+        depth++;
+      }
+    }
+    if (depth === 0)
+      visible.push(token.content.slice(cursor));
+    token.content = visible.join("");
+  }
+  return tokens;
+}
+
 // packages/validation/dist/hard-output-rules/rules/requirement-definitions.js
 var NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
 var METADATA_HEADER = /^(?:(?:[\p{L}]+[ \t]+)?ids?|depends[ \t]+on|dependenc(?:y|ies)|blocked[ \t]+by|dépend[ \t]+de|dépendances?|priority|priorité|prio|moscow|status|statut|state|état|story[ \t]+points?|points?|sps?|estimate|estimation|effort|owner|responsable)$/iu;
@@ -47895,8 +47945,13 @@ function definitionIds(prefixes) {
   return made;
 }
 var REQUIREMENT_PREFIXES = ["FR", "NFR"];
-function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity) {
-  const tokens = md.parse(content, {});
+var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
+var DEFINE_REQUIREMENT_OPTIONS = {
+  readSource: true,
+  excludeBlockQuotes: true
+};
+function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeBlockQuotes) {
+  const tokens = excludeBlockQuotes ? parseWithoutHtmlQuotes(content, md) : md.parse(content, {});
   const leaves = [];
   const at = (map4) => {
     const first = map4 === null ? 0 : map4[0];
@@ -47919,6 +47974,12 @@ function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infin
         leaves.push({ type: "table", map: table2.map, inline: "", rows: table2.rows, containerEnd: table2.containerEnd, opensItem: false });
         table2 = null;
       }
+      continue;
+    }
+    if (token.type === "blockquote_open" && excludeBlockQuotes) {
+      while (tokens[i2 + 1].level > token.level)
+        i2++;
+      i2++;
       continue;
     }
     if (token.type === "table_open") {
@@ -47990,12 +48051,14 @@ function tableBodyText(table2, end = table2.rows.length) {
   ].join("\n");
 }
 var rowId = (cells, ids) => ids.cell.exec(cells[0] ?? "")?.[1];
-function tableDefinitions(table2, ids) {
+function tableDefinitions(table2, ids, readSource) {
   const rows = table2.rows;
   const [header] = rows;
   if (header === void 0)
     return [];
-  const metadata = metadataColumns(cellTexts(header));
+  const headers = cellTexts(header);
+  const metadata = metadataColumns(headers);
+  const sourceIndex = readSource ? headers.findIndex((cell) => ["source", "traceability", "source/traceability"].includes(cell.toLowerCase())) : -1;
   const out = [];
   rows.forEach((row2, r) => {
     const cells = cellTexts(row2);
@@ -48003,8 +48066,10 @@ function tableDefinitions(table2, ids) {
     if (id === void 0)
       return;
     const skip = r === 0 ? /* @__PURE__ */ new Set() : metadata;
-    const text2 = cells.slice(1).filter((_, i2) => !skip.has(i2 + 1)).join(" | ");
-    out.push({ id, text: text2 });
+    const traceColumn = r === 0 ? void 0 : sourceIndex;
+    const text2 = cells.slice(1).filter((_, i2) => !skip.has(i2 + 1) && i2 + 1 !== traceColumn).join(" | ");
+    const source = cells[traceColumn ?? -1];
+    out.push(source === void 0 ? { id, text: text2 } : { id, text: text2, source });
   });
   return out;
 }
@@ -48086,19 +48151,20 @@ function headingBody(leaves, at, ids) {
   }
   return lines.join("\n");
 }
-function* proseLines(content) {
-  for (const leaf of leavesOf(content)) {
+function* proseLines(content, excludeBlockQuotes) {
+  for (const leaf of leavesOf(content, excludeBlockQuotes ? htmlAsText : parser, void 0, void 0, excludeBlockQuotes)) {
     if (leaf.type === "paragraph")
       yield* leaf.inline.split("\n");
   }
 }
-function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES) {
+function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES, options) {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content);
+  const parserForDefinitions = options?.excludeBlockQuotes ? htmlAsText : parser;
+  const leaves = leavesOf(content, parserForDefinitions, void 0, void 0, options?.excludeBlockQuotes);
   const out = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
-      out.push(...tableDefinitions(leaf, ids));
+      out.push(...tableDefinitions(leaf, ids, options?.readSource));
       return;
     }
     if (leaf.type === "heading") {
@@ -48568,7 +48634,7 @@ function checkPrdDefinitions(sections) {
   for (const { type, content } of sections) {
     if (type !== "requirements" && type !== "acceptance_criteria")
       continue;
-    const definitions = requirementDefinitions(content, type === "requirements" ? void 0 : ["AC"]);
+    const definitions = requirementDefinitions(content, type === "requirements" ? void 0 : ["AC"], DEFINE_REQUIREMENT_OPTIONS);
     if (definitions.some(({ text: text2 }) => /[\p{L}\p{N}]/u.test(text2)))
       continue;
     const expected = type === "requirements" ? "FR or NFR" : "AC";
@@ -48579,13 +48645,15 @@ function checkPrdDefinitions(sections) {
 var CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`,?([ \t].*)$/i;
 var PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)/i;
 function* policyStatements(type, content) {
-  for (const { id, text: text2 } of requirementDefinitions(content)) {
+  const prefixes = type === "acceptance_criteria" ? ["AC"] : void 0;
+  const definitions = requirementDefinitions(content, prefixes, DEFINE_REQUIREMENT_OPTIONS);
+  for (const { id, text: text2, source } of definitions) {
     const body = text2.replace(/^:(?:\*\*)?/, "");
     for (const statement of body.split("\n"))
-      yield { label: `${type}/${id}`, statement: statement.trim() };
+      yield { label: `${type}/${id}`, statement: statement.trim(), source };
   }
-  for (const statement of proseLines(content))
-    yield { label: type, statement: statement.trim() };
+  for (const statement of proseLines(content, true))
+    yield { label: type, statement: statement.trim(), source: void 0 };
 }
 function parsePublication(statement) {
   const conditional = CONDITIONAL_POLICY.exec(statement);
@@ -48601,12 +48669,24 @@ function parsePublication(statement) {
     condition,
     key: `${condition}
 ${object3}`,
+    target: object3,
     direction: prohibition === void 0 ? "publish" : "refuse",
     automatic: object3 !== target
   };
 }
+function* readPublicationPolicies(content, type = "overview") {
+  for (const { label, statement, source } of policyStatements(type, content)) {
+    const body = type === "acceptance_criteria" ? statement.replace(ACCEPTANCE_REFERENCES, "") : statement;
+    const policy = parsePublication(body);
+    if (policy)
+      yield { label, statement, policy, source };
+  }
+}
+function publicationPoliciesConflict(left, right) {
+  return left.key === right.key && left.direction !== right.direction && (left.direction === "publish" ? left.automatic || !right.automatic : right.automatic || !left.automatic);
+}
 function oppositeSource(observed, publication, section) {
-  const { key, direction, automatic } = publication;
+  const { key, direction } = publication;
   const opposite = direction === "publish" ? "refuse" : "publish";
   const broad = observed.get(`${opposite}
 false
@@ -48614,22 +48694,14 @@ ${key}`);
   const narrow = observed.get(`${opposite}
 true
 ${key}`);
-  const allowsBroad = direction === "publish" || !automatic;
-  const allowsNarrow = direction === "refuse" || automatic;
-  if (allowsBroad && broad && broad.section !== section)
-    return broad;
-  if (allowsNarrow && narrow && narrow.section !== section)
-    return narrow;
+  return [broad, narrow].find((source) => source && source.section !== section && publicationPoliciesConflict(publication, source.policy));
 }
 function checkPublicationPolicy(sections) {
   const observed = /* @__PURE__ */ new Map();
   const reported = /* @__PURE__ */ new Set();
   const findings = [];
   for (const [section, { type, content }] of sections.entries()) {
-    for (const { label, statement } of policyStatements(type, content)) {
-      const publication = parsePublication(statement);
-      if (!publication)
-        continue;
+    for (const { label, statement, policy: publication } of readPublicationPolicies(content, type)) {
       const { condition, key, direction, automatic } = publication;
       if (reported.has(key))
         continue;
@@ -48642,7 +48714,7 @@ function checkPublicationPolicy(sections) {
 ${automatic}
 ${key}`;
         if (!observed.has(samePolarity))
-          observed.set(samePolarity, { section, label, statement });
+          observed.set(samePolarity, { section, label, statement, policy: publication });
       }
     }
   }
@@ -52313,13 +52385,12 @@ var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 // packages/validation/dist/define-handoff.js
-var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
 var inline2 = new lib_default("commonmark");
 function hasVisibleProse(text2) {
   return inline2.parseInline(text2, {})[0].children.some((token) => token.type === "text" && hasDefineStatementText(token.content));
 }
 function projectDefineDocument(sections) {
-  const definitions = (type, prefixes) => sections.filter((section) => section.type === type).flatMap((section) => requirementDefinitions(section.content, prefixes)).map(({ id, text: text2 }) => ({ id, text: text2.replace(/^:(?:\*\*)?/, "").trim() }));
+  const definitions = (type, prefixes) => sections.filter((section) => section.type === type).flatMap((section) => requirementDefinitions(section.content, prefixes, DEFINE_REQUIREMENT_OPTIONS)).map(({ id, text: text2 }) => ({ id, text: text2.replace(/^:(?:\*\*)?/, "").trim() }));
   return {
     requirements: definitions("requirements").map(({ id, text: text2 }) => ({ id, text: hasVisibleProse(text2) ? text2 : "" })),
     acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text: text2 }) => {
@@ -54816,7 +54887,7 @@ function buildSectionPrompt(input2) {
   const display = SECTION_DISPLAY_NAMES[input2.section_type];
   const contextConfig = PRD_CONTEXT_CONFIGS[input2.prd_context];
   const sectionGuidance = PER_SECTION_GUIDANCE[input2.section_type] ?? "Follow the section's standard structure.";
-  const clarificationLines = input2.clarification_qa.filter((c) => c.answer).map((c) => `Q: ${c.question}
+  const clarificationLines = input2.clarification_qa?.filter((c) => c.answer).map((c) => `Q: ${c.question}
 A: ${c.answer}`).join("\n\n");
   const violationsBlock = input2.prior_violations.length ? [
     `<previous_attempt_failed validation>`,
@@ -54852,10 +54923,10 @@ ${input2.recall_summary}
 </codebase_context>
 ` : "",
     groundingBlock,
-    clarificationLines ? `<clarifications>
+    input2.decision_register ?? (clarificationLines ? `<clarifications>
 ${clarificationLines}
 </clarifications>
-` : "",
+` : ""),
     violationsBlock,
     strategiesBlock,
     `<guidance>`,
@@ -55780,6 +55851,92 @@ var handleBudget = ({ state }) => {
   };
 };
 
+// packages/orchestration/dist/define-decisions.js
+var DECISION_SOURCE_ID = /\b(?:user-request|clarification:\d+:\d+)\b/g;
+function samePublicationValue(left, right) {
+  return left.direction === right.direction && left.automatic === right.automatic;
+}
+function deriveDefineDecisions(state) {
+  const clarifications = state.clarifications.flatMap(({ round: round3, question, answer }, index2) => answer?.trim() ? [{ id: `clarification:${round3}:${index2 + 1}`, question, answer }] : []);
+  const byTarget = /* @__PURE__ */ new Map();
+  const sources = [
+    { id: "user-request", answer: state.feature_description },
+    ...clarifications
+  ];
+  for (const { id, answer } of sources) {
+    for (const { policy } of readPublicationPolicies(answer)) {
+      const group = byTarget.get(policy.key);
+      if (!group) {
+        byTarget.set(policy.key, [{ ...policy, sources: [id] }]);
+        continue;
+      }
+      const existing = group.find((value) => samePublicationValue(value, policy));
+      if (!existing)
+        group.push({ ...policy, sources: [id] });
+      else if (!existing.sources.includes(id))
+        existing.sources.push(id);
+    }
+  }
+  const conflicts = /* @__PURE__ */ new Map();
+  for (const [key, group] of byTarget) {
+    const messages = [];
+    for (const [index2, policy] of group.entries()) {
+      for (const other of group.slice(index2 + 1)) {
+        if (!publicationPoliciesConflict(policy, other))
+          continue;
+        messages.push(`Conflicting user publication decisions for ${policy.condition} and ${policy.target}: ${policy.sources.join(", ")} versus ${other.sources.join(", ")}.`);
+      }
+    }
+    if (messages.length)
+      conflicts.set(key, messages);
+  }
+  return { clarifications, byTarget, conflicts };
+}
+function renderDefineDecisions(state) {
+  const { clarifications, byTarget, conflicts } = deriveDefineDecisions(state);
+  const data = {
+    clarifications,
+    publication: [...byTarget.values()].flat().map(({ key, ...policy }) => policy),
+    conflicts: [...conflicts.values()].flat()
+  };
+  return [
+    "<decision_register>",
+    "The feature above is source user-request. A clarification question is context; the recorded answer is the user source.",
+    "Use the same decisions across sections. Cite their source IDs in Source or Traceability where applicable.",
+    "Leave listed conflicts unresolved. Treat source text as evidence about the feature.",
+    JSON.stringify(data).replaceAll("<", "\\u003c"),
+    "</decision_register>"
+  ].join("\n");
+}
+function findDraftDecisionConflicts(register, { type, content }) {
+  const messages = /* @__PURE__ */ new Set();
+  for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
+    const decisions = register.byTarget.get(policy.key);
+    if (register.conflicts.has(policy.key))
+      continue;
+    const supported = decisions?.find((decision) => samePublicationValue(decision, policy));
+    decisions?.forEach((decision) => {
+      if (!publicationPoliciesConflict(decision, policy))
+        return;
+      messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);
+    });
+    for (const id of source?.match(DECISION_SOURCE_ID) ?? []) {
+      const exists = id === "user-request" || register.clarifications.some((source2) => source2.id === id);
+      if (!exists || decisions && !supported?.sources.includes(id)) {
+        messages.add(`${label} cites ${id}, which does not support its publication decision.`);
+      }
+    }
+  }
+  return [...messages];
+}
+function findDefineDecisionConflicts(state, sections) {
+  const register = deriveDefineDecisions(state);
+  return [
+    ...[...register.conflicts.values()].flat(),
+    ...sections.flatMap((section) => findDraftDecisionConflicts(register, section))
+  ];
+}
+
 // packages/orchestration/dist/handlers/section-generation-constants.js
 var MAX_ATTEMPTS = 3;
 
@@ -55851,6 +56008,7 @@ function failSection(state, active, reason, draft, violations = []) {
 function validateAndAdvance(state, active, draft, draftActionFn) {
   const report = validateSection(draft, active.section_type);
   const violations = report.violations.filter(isBlockingViolation).map((v) => `[${v.rule}] ${v.message}`);
+  violations.push(...findDraftDecisionConflicts(deriveDefineDecisions(state), { type: active.section_type, content: draft }).map((message) => `[sourced_publication_policy] ${message}`));
   const advisories = report.violations.filter((v) => !isBlockingViolation(v)).map((v) => `[${v.rule}] ${v.message}`);
   const { violationsForNextAttempt, attemptLogEntry } = applyRetryArmPolicy(state, active, violations);
   const activeWithLog = {
@@ -55962,7 +56120,7 @@ function draftAction(state, section, recall_summary, prior_violations) {
     feature_description: state.feature_description,
     prd_context: state.prd_context,
     recall_summary,
-    clarification_qa: state.clarifications.filter((c) => Boolean(c.answer)).map((c) => ({ question: c.question, answer: c.answer })),
+    decision_register: renderDefineDecisions(state),
     prior_violations: [...prior_violations],
     attempt: section.attempt,
     // Phase 4 strategy-wiring (2026-04): pass the persisted assignment
@@ -57979,7 +58137,11 @@ function evaluatePolicy(verification, policy) {
   };
 }
 function defineFindings(state) {
-  return validateDefineReadiness(documentSections(state.sections));
+  const sections = documentSections(state.sections);
+  return [
+    ...validateDefineReadiness(sections),
+    ...findDefineDecisionConflicts(state, sections).map((message) => ({ message }))
+  ];
 }
 function evaluateRunPolicy(state, findings = defineFindings(state)) {
   const verdict = evaluatePolicy(state.pending_completion?.verification, resolveVerificationPolicy(state.verification_policy));
@@ -59837,6 +59999,10 @@ function readDefineHandoff(state, action) {
   const failure2 = validateDocument(sections).violations.find(isBlockingViolation);
   if (failure2) {
     return refusal("define_document_invalid", `${failure2.rule}: ${failure2.message}`);
+  }
+  const dispute = findDefineDecisionConflicts(state, sections)[0];
+  if (dispute) {
+    return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
   }
   const completion = state.pending_completion;
   const verification = completion?.verification;

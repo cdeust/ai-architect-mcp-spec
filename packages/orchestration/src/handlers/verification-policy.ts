@@ -13,6 +13,7 @@
 
 import type { JudgeVerdict } from "@prd-gen/core";
 import { validateDefineReadiness, validateDocument } from "@prd-gen/validation";
+import { findDefineDecisionConflicts } from "../define-decisions.js";
 import { documentSections } from "../section-plan.js";
 import type { VerificationSummary } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
@@ -200,7 +201,11 @@ export function evaluatePolicy(
 
 /** The gate and its report share the same verdict, including for old pending runs. */
 export function defineFindings(state: PipelineState) {
-  return validateDefineReadiness(documentSections(state.sections));
+  const sections = documentSections(state.sections);
+  return [
+    ...validateDefineReadiness(sections),
+    ...findDefineDecisionConflicts(state, sections).map(message => ({ message })),
+  ];
 }
 
 export function evaluateRunPolicy(state: PipelineState, findings = defineFindings(state)): PolicyVerdict {

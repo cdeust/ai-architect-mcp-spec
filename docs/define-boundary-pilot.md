@@ -27,3 +27,11 @@ End the criterion's text with its explicit references in parentheses, for exampl
 Read the handoff while the implementation question is pending. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff. It returns an MCP error for missing evidence, an invalid document, a completed decision or an oversized response. The read preserves the saved decision and action order. Hosts keep command arguments and executor policy in their own trusted configuration.
 
 The original delivery fixture fails the Define v1 read. A second deterministic replay adds the three acceptance references to its testing draft and produces the handoff before and after restart. The stdio suite can also run against a reconstructed plugin by setting `PRD_GEN_TEST_PLUGIN_ROOT` to the staged plugin root containing `.mcp.json`.
+
+## Sourced decisions
+
+Drafts receive a shared register built from the feature description and recorded clarification answers. Each source has an ID of `user-request` or `clarification:<round>:<position>`. Position is one-based in the saved clarification list. Question text provides context and the answer supplies evidence. The register retains unclassified answers and groups matching policy values with their sources. Saved actions can be replayed, and subsequent drafts derive the register from the saved state.
+
+The comparison covers explicit conditional publication statements in Markdown prose and numbered definitions, including requirement tables. The instruction ``With `--until ci`, never publish the verified commit.`` forbids publication of that target. Adding `automatically` narrows the refusal. The comparison matches the same flag, value and target and skips block quotes and code blocks. Explicit register citations in a Source or Traceability cell must exist. If the register contains a decision for that flag and target, the citation must support the stated policy.
+
+An opposing draft uses the existing validation retry. Conflicting human decisions stay visible together and block the v1 handoff. The producer checks these findings again when reading a saved gate. A dedicated stdio variant names the publication target in the clarification answer and covers retry, restart and refusal.

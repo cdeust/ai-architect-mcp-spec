@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
-import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction } from "@prd-gen/orchestration";
+import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction, type PipelineState } from "@prd-gen/orchestration";
 import { startStdioServer, type StdioServer, type StdioServerOptions } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
 import { RunFiles } from "../run-files.js";
@@ -35,15 +35,20 @@ async function call<T>(server: StdioServer, tool: string, args: Record<string, u
 
 const PUBLISH = "With `--until ci`, publish the verified commit automatically.";
 const STOP = "With `--until ci`, stop after CI and never publish the verified commit.";
-type Pilot = "delivery" | "ready" | "empty" | "conflict";
+type Pilot = "delivery" | "ready" | "empty" | "conflict" | "sourced";
 
 function makeHost(output: string, pilot: Pilot) {
   const drafts: Readonly<Record<string, string>> = fixture.drafts;
+  let requirementAttempts = 0;
   const canned = makeCannedDispatcher({ fake_section_draft: section => {
     expect(drafts, `draft for ${section}`).toHaveProperty(section);
     if (pilot === "empty") return "ok";
-    if (pilot === "ready" && section === "testing") {
+    if ((pilot === "ready" || pilot === "sourced") && section === "testing") {
       return "Replay AC-001 with a failed check, AC-002 with a CI-only stop, and AC-003 with an already published ref whose ruleset failed.";
+    }
+    if (pilot === "sourced" && section === "requirements") {
+      const policy = ++requirementAttempts === 1 ? PUBLISH : STOP;
+      return drafts[section]!.replace("Stop before publication with `--until ci`.", policy);
     }
     if (pilot === "conflict" && section === "overview") return PUBLISH;
     if (pilot === "conflict" && section === "requirements") {
@@ -58,8 +63,10 @@ function makeHost(output: string, pilot: Pilot) {
       const turn = fixture.clarifications[answers.length];
       if (!turn) throw new Error("The host requested an unrecorded clarification answer");
       expect(action.header).toContain(turn.question);
-      answers.push(turn.answer);
-      return { kind: "user_answer", question_id: action.question_id, selected: [], freeform: turn.answer };
+      // The historical fixture leaves the target implicit. This variant names it.
+      const answer = pilot === "sourced" && answers.length === 2 ? STOP : turn.answer;
+      answers.push(answer);
+      return { kind: "user_answer", question_id: action.question_id, selected: [], freeform: answer };
     }
     if (action.kind === "spawn_subagents" && action.batch_id.startsWith("clarification_compose_")) {
       const turn = fixture.clarifications[answers.length];
@@ -91,7 +98,11 @@ function actionLabel(action: NextAction): string {
   }
 }
 
-async function driveToGate(server: StdioServer, host: ReturnType<typeof makeHost>) {
+async function driveToGate(
+  server: StdioServer,
+  host: ReturnType<typeof makeHost>,
+  observeDraft?: (runId: string, action: Extract<NextAction, { kind: "spawn_subagents" }>) => Promise<StdioServer>,
+) {
   let envelope = await call<Envelope>(server, "start_pipeline", fixture.request);
   const run_id = envelope.run_id;
   const trace: string[] = [];
@@ -105,6 +116,7 @@ async function driveToGate(server: StdioServer, host: ReturnType<typeof makeHost
     }
     if (action.kind === "spawn_subagents") {
       expect(["probe", "draft", "judge"]).toContain(action.purpose);
+      if (observeDraft && action.batch_id.startsWith("section_generate_")) server = await observeDraft(run_id, action);
     }
     const result = host.respond(action);
     if (!result) throw new Error(`Run ended at ${envelope.current_step}/${action.kind} before the gate`);
@@ -326,6 +338,86 @@ it.each([
     expect(done).toMatchObject({ kind: "done", outcome: { status: "needs_attention" }, summary: expect.stringContaining("Hard-output score: 0.70 / 1.00") });
   } finally {
     await server?.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 120_000);
+
+
+it("reuses sourced decisions across drafts and retry, then rechecks saved decisions on restart", async () => {
+  const home = mkdtempSync(join(tmpdir(), "prd-gen-define-decisions-"));
+  const start = () => startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
+  let server = await start();
+  try {
+    const observed = new Map<string, string[]>();
+    const { run_id, action } = await driveToGate(server, makeHost(home, "sourced"), async (runId, draft) => {
+      const prompt = draft.invocations[0]!.prompt;
+      const registers = observed.get(draft.batch_id) ?? [];
+      registers.push(prompt.match(/<decision_register>[\s\S]*?<\/decision_register>/)?.[0] ?? "");
+      observed.set(draft.batch_id, registers);
+      if (draft.batch_id === "section_generate_requirements" && registers.length === 2) {
+        const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id: runId, format: "full" });
+        expect(state.sections.find(section => section.section_type === "requirements")?.violation_count).toBe(1);
+        if (state.retry_policy?.arm === "without_prior_violations") {
+          expect(prompt).not.toContain("opposing the user publication decision");
+        } else {
+          expect(prompt).toContain("requirements/FR-002");
+          expect(prompt).toContain("opposing the user publication decision from clarification:");
+        }
+        await server.close();
+        server = await start();
+        expect(await call(server, "get_pipeline_state", { run_id: runId, format: "action" })).toMatchObject({ action: draft });
+      }
+      return server;
+    });
+    const overview = observed.get("section_generate_overview")![0]!;
+    expect(overview).toContain('"sources":["clarification:');
+    expect(overview).toContain('"direction":"refuse"');
+    expect(observed.get("section_generate_requirements")).toEqual([overview, overview]);
+    expect(observed.get("section_generate_acceptance_criteria")).toEqual([overview]);
+    const args = { run_id, format: "define_handoff_v1" };
+    expect(await call(server, "get_pipeline_state", args)).toMatchObject({
+      handoff: { run_id, requirements: expect.arrayContaining([{ id: "FR-002", text: STOP }]) },
+    });
+
+    const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+    const source = state.clarifications.find(turn => turn.answer === STOP)!;
+    const index = state.clarifications.indexOf(source);
+    const files = new RunFiles(join(home, ".prd-gen", "runs"));
+    const requireRefusal = async (saved: PipelineState, expected: string[]) => {
+      await server.close();
+      files.write(saved, action);
+      server = await start();
+      const failure = await server.call("get_pipeline_state", args);
+      expect(failure.isError).toBe(true);
+      const parsed = JSON.parse(failure.text) as { error: { code: string; message: string } };
+      expect(parsed.error.code).toBe("define_document_invalid");
+      for (const evidence of expected) expect(parsed.error.message).toContain(evidence);
+    };
+    // An old gate accepted individually valid drafts and saved no source checks.
+    await requireRefusal({
+      ...state,
+      sections: state.sections.map(section => section.section_type === "requirements"
+        ? { ...section, content: section.content!.replace(STOP, PUBLISH) }
+        : section),
+    }, ["requirements/FR-002", `clarification:${source.round}:${index + 1}`]);
+    await requireRefusal({
+      ...state,
+      // The source is the only place that records a policy on this target.
+      sections: state.sections.map(section => {
+        if (section.section_type === "requirements") return { ...section, content: fixture.drafts.requirements };
+        if (section.section_type === "acceptance_criteria") {
+          const traced = PUBLISH.replace(/\.$/, " (FR-002).");
+          return { ...section, content: section.content!.replace(/^(- AC-002: ).*$/m, `$1${traced}`) };
+        }
+        return section;
+      }),
+    }, ["acceptance_criteria/AC-002", "FR-002", `clarification:${source.round}:${index + 1}`]);
+    await requireRefusal({
+      ...state,
+      feature_description: PUBLISH,
+    }, ["Conflicting user publication decisions", "user-request", `clarification:${source.round}:${index + 1}`]);
+  } finally {
+    await server.close();
     rmSync(home, { recursive: true, force: true });
   }
 }, 120_000);

@@ -24,6 +24,7 @@ import {
   type PipelineState,
   type SectionStatus,
 } from "../../types/state.js";
+import { deriveDefineDecisions, findDraftDecisionConflicts } from "../../define-decisions.js";
 import { validateSection } from "@prd-gen/validation";
 // SectionType is not imported: every section type in this module arrives as
 // SectionStatus.section_type, which state/section-status.ts already types via
@@ -235,6 +236,8 @@ export function validateAndAdvance(
   const violations = report.violations
     .filter(isBlockingViolation)
     .map((v) => `[${v.rule}] ${v.message}`);
+  violations.push(...findDraftDecisionConflicts(deriveDefineDecisions(state), { type: active.section_type, content: draft })
+    .map(message => `[sourced_publication_policy] ${message}`));
   const advisories = report.violations
     .filter((v) => !isBlockingViolation(v))
     .map((v) => `[${v.rule}] ${v.message}`);

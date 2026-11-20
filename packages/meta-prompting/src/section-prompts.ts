@@ -69,7 +69,8 @@ export interface SectionPromptInput {
   readonly feature_description: string;
   readonly prd_context: PRDContext;
   readonly recall_summary: string;
-  readonly clarification_qa: ReadonlyArray<{ question: string; answer: string }>;
+  readonly decision_register?: string;
+  readonly clarification_qa?: ReadonlyArray<{ question: string; answer: string }>;
   readonly prior_violations: readonly string[];
   readonly attempt: number;
   /**
@@ -379,7 +380,7 @@ export function buildSectionPrompt(input: SectionPromptInput): string {
     "Follow the section's standard structure.";
 
   const clarificationLines = input.clarification_qa
-    .filter((c) => c.answer)
+    ?.filter((c) => c.answer)
     .map((c) => `Q: ${c.question}\nA: ${c.answer}`)
     .join("\n\n");
 
@@ -420,9 +421,9 @@ export function buildSectionPrompt(input: SectionPromptInput): string {
       ? `<codebase_context>\n${input.recall_summary}\n</codebase_context>\n`
       : "",
     groundingBlock,
-    clarificationLines
+    input.decision_register ?? (clarificationLines
       ? `<clarifications>\n${clarificationLines}\n</clarifications>\n`
-      : "",
+      : ""),
     violationsBlock,
     strategiesBlock,
     `<guidance>`,

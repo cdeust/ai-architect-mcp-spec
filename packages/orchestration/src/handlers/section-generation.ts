@@ -24,6 +24,7 @@
  * source: coding-standards §4.1 (500-line file limit).
  */
 
+import { renderDefineDecisions } from "../define-decisions.js";
 import type { StepHandler } from "../runner.js";
 import type { ActionResult, HandlerAction } from "../types/actions.js";
 import {
@@ -167,9 +168,7 @@ function draftAction(
     feature_description: state.feature_description,
     prd_context: state.prd_context,
     recall_summary,
-    clarification_qa: state.clarifications
-      .filter((c): c is typeof c & { answer: string } => Boolean(c.answer))
-      .map((c) => ({ question: c.question, answer: c.answer })),
+    decision_register: renderDefineDecisions(state),
     prior_violations: [...prior_violations],
     attempt: section.attempt,
     // Phase 4 strategy-wiring (2026-04): pass the persisted assignment
