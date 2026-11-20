@@ -18,6 +18,10 @@ interface SourcedPublication extends PublicationPolicy {
   readonly sources: string[];
 }
 
+function samePublicationValue(left: PublicationPolicy, right: PublicationPolicy): boolean {
+  return left.direction === right.direction && left.automatic === right.automatic;
+}
+
 export function deriveDefineDecisions(
   state: Pick<PipelineState, "feature_description" | "clarifications">,
 ) {
@@ -35,7 +39,7 @@ export function deriveDefineDecisions(
         byTarget.set(policy.key, [{ ...policy, sources: [id] }]);
         continue;
       }
-      const existing = group.find(value => value.direction === policy.direction && value.automatic === policy.automatic);
+      const existing = group.find(value => samePublicationValue(value, policy));
       if (!existing) group.push({ ...policy, sources: [id] });
       else if (!existing.sources.includes(id)) existing.sources.push(id);
     }
@@ -80,7 +84,7 @@ export function findDraftDecisionConflicts(register: DecisionRegister, { type, c
   for (const { label, statement, policy, source } of readPublicationPolicies(content, type)) {
     const decisions = register.byTarget.get(policy.key);
     if (register.conflicts.has(policy.key)) continue;
-    const supported = decisions?.find(decision => decision.direction === policy.direction && decision.automatic === policy.automatic);
+    const supported = decisions?.find(decision => samePublicationValue(decision, policy));
     decisions?.forEach(decision => {
       if (!publicationPoliciesConflict(decision, policy)) return;
       messages.add(`${label} says "${statement}", opposing the user publication decision from ${decision.sources.join(", ")}.`);

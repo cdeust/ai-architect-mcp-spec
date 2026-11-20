@@ -28,7 +28,7 @@
 
 import MarkdownIt from "markdown-it";
 import { isHtmlComment, opaqueHtmlBlock } from "./requirement-html.js";
-import { withoutHtmlBlockQuotes } from "./define-html-quotes.js";
+import { parseWithoutHtmlQuotes } from "./define-html-quotes.js";
 
 /** An ordered list marker that opens a statement right after its identifier. */
 const NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -145,7 +145,7 @@ interface Leaf {
  * the growth allocation-bound, near the perf ceiling.
  */
 function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity, excludeBlockQuotes?: boolean): Leaf[] {
-  const tokens = md.parse(excludeBlockQuotes ? withoutHtmlBlockQuotes(content) : content, {});
+  const tokens = excludeBlockQuotes ? parseWithoutHtmlQuotes(content, md) : md.parse(content, {});
   const leaves: Leaf[] = [];
   const at = (map: [number, number] | null): [number, number] => {
     const first = map === null ? 0 : map[0];

@@ -209,3 +209,24 @@ it("does not offer quoted requirements as planning input and detaches table sour
     handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },
   });
 });
+
+it("preserves both requirements and traced criteria when their normative text surrounds an illustrative quote", () => {
+  const checkpoint = ready();
+  checkpoint.sections[0]!.content += "\n- FR-002: Retain the signed receipt. <blockquote>Legacy rule.</blockquote>";
+  checkpoint.sections[1]!.content += "\n- AC-002: Preserve the receipt. <blockquote>Legacy note.</blockquote> (FR-002).";
+  checkpoint.sections[2]!.content += " Replay AC-002 against the saved receipt.";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: {
+      requirements: [
+        { id: "FR-001", text: "Keep the validated commit." },
+        { id: "FR-002", text: "Retain the signed receipt." },
+      ],
+      acceptance: [
+        { id: "AC-001", requirement_ids: ["FR-001"] },
+        { id: "AC-002", requirement_ids: ["FR-002"] },
+      ],
+    },
+  });
+  checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Keep the validated commit. | user-request |\n| FR-002 | <blockquote>Legacy requirement.</blockquote> | Prior design |";
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
+});

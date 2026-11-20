@@ -1,6 +1,7 @@
 import { requirementDefinitions } from "../hard-output-rules/rules/requirement-definitions.js";
-import { withoutHtmlBlockQuotes } from "../hard-output-rules/rules/define-html-quotes.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import MarkdownIt from "markdown-it";
+import { parseWithoutHtmlQuotes } from "../hard-output-rules/rules/define-html-quotes.js";
 import { projectDefineDocument, publicationPoliciesConflict, readPublicationPolicies, validateDefineReadiness, validateDocument } from "../index.js";
 
 const publish = "With `--until ci`, publish the verified commit automatically.";
@@ -222,14 +223,33 @@ it("preserves the first definition row and the exact legacy shape of a table wit
   expect(requirementDefinitions(unlabeled, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: stop }]);
 });
 
-it("masks complete quote lines and recognizes the first normative line even within the same paragraph", () => {
-  const text = `<div><blockquote>\r\nOld plural example: <blockquote-example> and \`</blockquote>\`.\r\n</blockquote></div>\r\n${stop}`;
-  expect(withoutHtmlBlockQuotes(text)).toBe(`\n\n\n${stop}`);
-  const unclosed = `${stop}\n<blockquote>\n\n${publish}`;
-  expect(withoutHtmlBlockQuotes(unclosed)).toBe(`${stop}\n\n\n`);
-  const unrelated = `</blockquote>\n> <blockquote>\n\n${stop}`;
-  expect(withoutHtmlBlockQuotes(unrelated)).toBe(unrelated);
-  const comment = `Text\n<!--\n<blockquote>\n-->\n\n${stop}`;
-  expect(withoutHtmlBlockQuotes(comment)).toBe(comment);
-  expect(withoutHtmlBlockQuotes(stop)).toBe(stop);
+it("retains normative text outside inline quotes and masks unclosed and nested quoted content", () => {
+  const text = `<div><blockquote>\r\nOld example: <blockquote-example> and \`</blockquote>\`.\r\n</blockquote></div>\r\n${stop}`;
+  const policy = (value: string) => [...readPublicationPolicies(value)].map(({ statement }) => statement);
+  expect(policy(text)).toEqual([stop]);
+  expect(policy(`${stop}\n<blockquote>\n\n${publish}`)).toEqual([stop]);
+  expect(policy(`</blockquote>\n> <blockquote>\n\n${stop}`)).toEqual([stop]);
+  expect(policy(`Text\n<!--\n<blockquote>\n-->\n\n${stop}`)).toEqual([stop]);
+  expect(policy(`${stop}\n<!--\n<blockquote>\n${publish}`)).toEqual([stop]);
+  expect(policy(`> <blockquote>\n\n<div><blockquote>\n${publish}\n</blockquote></div>\n${stop}`)).toEqual([stop]);
+  expect(policy(`<div data-example="<blockquote>">\n${stop}\n</div>`)).toEqual([stop]);
+
+  const inline = "- FR-001: Retain the signed receipt. <blockquote>Legacy rule.</blockquote>";
+  const additional = "- FR-002: Retain the plan.";
+  expect(projectDefineDocument([requirement(`${inline}\n${additional}`)]).requirements).toEqual([
+    { id: "FR-001", text: "Retain the signed receipt." },
+    { id: "FR-002", text: "Retain the plan." },
+  ]);
+  const table = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Retain the signed receipt. <blockquote>Legacy rule.</blockquote> | user-request |\n| FR-002 | <blockquote>Legacy requirement.</blockquote> | Prior design |";
+  expect(projectDefineDocument([requirement(table)]).requirements).toEqual([
+    { id: "FR-001", text: "Retain the signed receipt." },
+    { id: "FR-002", text: "" },
+  ]);
+});
+
+it("uses the plain inline-free parser for ordinary sections", () => {
+  const parser = new MarkdownIt("commonmark").disable("inline");
+  const parse = vi.spyOn(parser, "parse");
+  expect(parseWithoutHtmlQuotes(stop, parser)).toContainEqual(expect.objectContaining({ type: "inline", content: stop, children: [] }));
+  expect(parse).toHaveBeenCalledWith(stop, {});
 });

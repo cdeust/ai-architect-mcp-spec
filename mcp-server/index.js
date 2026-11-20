@@ -47883,46 +47883,42 @@ lexer.inline.ruler.at("html_inline", (state, silent) => {
   return true;
 });
 var BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
-function withoutHtmlBlockQuotes(content) {
+function parseWithoutHtmlQuotes(content, plainParser) {
   if (!content.toLowerCase().includes("<blockquote"))
-    return content;
-  const lines = content.split(/\r\n?|\n/);
+    return plainParser.parse(content, {});
+  const tokens = lexer.parse(content, {});
   let depth = 0;
-  let quoteStart = 0;
   let markdownDepth = 0;
-  for (const token of lexer.parse(content, {})) {
+  for (const token of tokens) {
     if (token.type === "blockquote_open")
       markdownDepth++;
     if (token.type === "blockquote_close")
       markdownDepth--;
-    if (markdownDepth > 0 || token.type !== "inline" || !token.map)
+    if (markdownDepth > 0 || token.type !== "inline")
       continue;
-    let line = token.map[0];
-    let nextBreak = token.content.indexOf("\n");
+    const visible = [];
+    let cursor = 0;
     for (const child of token.children) {
       if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content))
         continue;
       const offset = child.meta;
-      while (nextBreak !== -1 && nextBreak < offset) {
-        line++;
-        nextBreak = token.content.indexOf("\n", nextBreak + 1);
-      }
       if (child.content.startsWith("</")) {
         if (depth === 0)
           continue;
         depth--;
         if (depth === 0)
-          lines.fill("", quoteStart, line + 1);
+          cursor = offset + child.content.length;
       } else {
         if (depth === 0)
-          quoteStart = line;
+          visible.push(token.content.slice(cursor, offset));
         depth++;
       }
     }
+    if (depth === 0)
+      visible.push(token.content.slice(cursor));
+    token.content = visible.join("");
   }
-  if (depth > 0)
-    lines.fill("", quoteStart);
-  return lines.join("\n");
+  return tokens;
 }
 
 // packages/validation/dist/hard-output-rules/rules/requirement-definitions.js
@@ -47955,7 +47951,7 @@ var DEFINE_REQUIREMENT_OPTIONS = {
   excludeBlockQuotes: true
 };
 function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeBlockQuotes) {
-  const tokens = md.parse(excludeBlockQuotes ? withoutHtmlBlockQuotes(content) : content, {});
+  const tokens = excludeBlockQuotes ? parseWithoutHtmlQuotes(content, md) : md.parse(content, {});
   const leaves = [];
   const at = (map4) => {
     const first = map4 === null ? 0 : map4[0];
@@ -55857,6 +55853,9 @@ var handleBudget = ({ state }) => {
 
 // packages/orchestration/dist/define-decisions.js
 var DECISION_SOURCE_ID = /\b(?:user-request|clarification:\d+:\d+)\b/g;
+function samePublicationValue(left, right) {
+  return left.direction === right.direction && left.automatic === right.automatic;
+}
 function deriveDefineDecisions(state) {
   const clarifications = state.clarifications.flatMap(({ round: round3, question, answer }, index2) => answer?.trim() ? [{ id: `clarification:${round3}:${index2 + 1}`, question, answer }] : []);
   const byTarget = /* @__PURE__ */ new Map();
@@ -55871,7 +55870,7 @@ function deriveDefineDecisions(state) {
         byTarget.set(policy.key, [{ ...policy, sources: [id] }]);
         continue;
       }
-      const existing = group.find((value) => value.direction === policy.direction && value.automatic === policy.automatic);
+      const existing = group.find((value) => samePublicationValue(value, policy));
       if (!existing)
         group.push({ ...policy, sources: [id] });
       else if (!existing.sources.includes(id))
@@ -55915,7 +55914,7 @@ function findDraftDecisionConflicts(register, { type, content }) {
     const decisions = register.byTarget.get(policy.key);
     if (register.conflicts.has(policy.key))
       continue;
-    const supported = decisions?.find((decision) => decision.direction === policy.direction && decision.automatic === policy.automatic);
+    const supported = decisions?.find((decision) => samePublicationValue(decision, policy));
     decisions?.forEach((decision) => {
       if (!publicationPoliciesConflict(decision, policy))
         return;

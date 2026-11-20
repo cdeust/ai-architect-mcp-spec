@@ -145,3 +145,16 @@ it("retains each direction and scope for the same target and lists every support
     "requirements/FR-001 cites clarification:1:1, which does not support its publication decision.",
   ]);
 });
+
+
+it("requires explicit register attribution to support the exact scope present in the draft", () => {
+  const automatic = STOP.replace("commit.", "commit automatically.");
+  const plan = state(STOP);
+  const sections = [{
+    type: "requirements" as const,
+    content: `| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | ${automatic} | user-request |`,
+  }];
+  expect(findDefineDecisionConflicts(plan, sections)).toEqual([
+    "requirements/FR-001 cites user-request, which does not support its publication decision.",
+  ]);
+});
