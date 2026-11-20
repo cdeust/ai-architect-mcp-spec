@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateDefineReadiness, validateDocument } from "../index.js";
+import { projectDefineDocument, publicationPoliciesConflict, readPublicationPolicies, validateDefineReadiness, validateDocument } from "../index.js";
 
 const publish = "With `--until ci`, publish the verified commit automatically.";
 const stop = "With `--until ci`, stop after CI and never publish the verified commit.";
@@ -161,4 +161,55 @@ describe("Define readiness", () => {
     const directive = publish.replace("`, ", "`" + separator);
     expect(validateDefineReadiness([overview(directive), definition(stop)])).toHaveLength(1);
   });
+});
+
+it("reads the normative policy and Source cell from a traced requirement table", () => {
+  for (const header of ["Source", "Traceability", "Source/Traceability"]) {
+    const table = `| ID | Requirement | Priority | ${header} |\n| --- | --- | --- | --- |\n| FR-001 | ${stop} | P1 | clarification:3:3 |`;
+    const [found] = [...readPublicationPolicies(table, "requirements")];
+    expect(found).toMatchObject({ label: "requirements/FR-001", source: "clarification:3:3", statement: stop });
+    expect(projectDefineDocument([requirement(table)]).requirements).toEqual([{ id: "FR-001", text: stop }]);
+  }
+  const firstRow = `| FR-001 | ${stop} |\n| --- | --- |`;
+  expect([...readPublicationPolicies(firstRow, "requirements")][0]).toMatchObject({ statement: stop });
+});
+
+it("compares traced acceptance statements and leaves a non-acceptance target untouched", () => {
+  const traced = publish.replace(/\.$/, " (FR-001, NFR-002).");
+  const [ac] = [...readPublicationPolicies(`- AC-001: ${traced}`, "acceptance_criteria")];
+  expect(ac).toMatchObject({ label: "acceptance_criteria/AC-001", statement: traced, policy: { automatic: true, target: "the verified commit" } });
+  const [fr] = [...readPublicationPolicies(`- FR-001: ${traced}`, "requirements")];
+  expect(fr?.policy).toMatchObject({ automatic: false, target: "the verified commit automatically (FR-001, NFR-002)" });
+  const [policy] = [...readPublicationPolicies(stop)];
+  expect(policy?.label).toBe("overview");
+  expect(publicationPoliciesConflict(ac!.policy, policy!.policy)).toBe(true);
+  expect(publicationPoliciesConflict(policy!.policy, ac!.policy)).toBe(true);
+  expect(publicationPoliciesConflict(ac!.policy, ac!.policy)).toBe(false);
+  expect(publicationPoliciesConflict(fr!.policy, policy!.policy)).toBe(false);
+});
+
+it("keeps Markdown and wrapped HTML quotes out of normative statements and projection", () => {
+  const content = [
+    '<div>',
+    '<BLOCKQUOTE cite="source">',
+    '',
+    'An inline code example: `</blockquote>`.',
+    '',
+    '<blockquote>',
+    `- FR-002: ${publish}`,
+    '</blockquote>',
+    '',
+    `- FR-003: ${publish}`,
+    '</BLOCKQUOTE>',
+    '</div>',
+    '',
+    `> ${publish}\n>\n> > - FR-004: ${publish}`,
+    '',
+    `- FR-001: ${stop}`,
+  ].join("\n");
+  expect([...readPublicationPolicies(content, "requirements")]).toEqual([
+    expect.objectContaining({ label: "requirements/FR-001", statement: stop }),
+  ]);
+  expect(projectDefineDocument([requirement(content)]).requirements).toEqual([{ id: "FR-001", text: stop }]);
+  expect([...readPublicationPolicies(`> ${publish}\n\n${stop}`)]).toEqual([expect.objectContaining({ statement: stop })]);
 });

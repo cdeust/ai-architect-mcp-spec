@@ -30,14 +30,14 @@ interface PublicationSource {
   readonly policy: PublicationPolicy;
 }
 
-function* policyStatements(type: SectionType | undefined, content: string) {
+function* policyStatements(type: SectionType, content: string) {
   const prefixes = type === "acceptance_criteria" ? ["AC"] : undefined;
   const definitions = requirementDefinitions(content, prefixes, DEFINE_REQUIREMENT_OPTIONS);
   for (const { id, text, source } of definitions) {
     const body = text.replace(/^:(?:\*\*)?/, "");
-    for (const statement of body.split("\n")) yield { label: type ? `${type}/${id}` : id, statement: statement.trim(), source };
+    for (const statement of body.split("\n")) yield { label: `${type}/${id}`, statement: statement.trim(), source };
   }
-  for (const statement of proseLines(content, true)) yield { label: type ?? "user", statement: statement.trim(), source: undefined };
+  for (const statement of proseLines(content, true)) yield { label: type, statement: statement.trim(), source: undefined };
 }
 
 function parsePublication(statement: string) {
@@ -59,7 +59,7 @@ function parsePublication(statement: string) {
 
 export type PublicationPolicy = NonNullable<ReturnType<typeof parsePublication>>;
 
-export function* readPublicationPolicies(content: string, type?: SectionType) {
+export function* readPublicationPolicies(content: string, type: SectionType = "overview") {
   for (const { label, statement, source } of policyStatements(type, content)) {
     const body = type === "acceptance_criteria" ? statement.replace(ACCEPTANCE_REFERENCES, "") : statement;
     const policy = parsePublication(body);

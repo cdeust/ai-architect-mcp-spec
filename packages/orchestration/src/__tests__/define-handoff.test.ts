@@ -178,7 +178,10 @@ it("does not offer quoted requirements as planning input and detaches table sour
     error: { code: "define_document_invalid" },
   });
   checkpoint.sections[0]!.content = [
+    '<div>',
     '<blockquote>',
+    '',
+    'A literal `</blockquote>` tag.',
     '',
     '<blockquote>',
     '- FR-002: An older version published automatically.',
@@ -187,6 +190,7 @@ it("does not offer quoted requirements as planning input and detaches table sour
     '- FR-003: A rejected design published automatically.',
     '',
     '</blockquote>',
+    '</div>',
     '',
     '- FR-001: Verify the saved commit.',
   ].join("\n");

@@ -11,7 +11,7 @@
 //
 // source: issue #118.
 
-import { HTML_TAG_RE } from "markdown-it/lib/common/html_re.mjs";
+import MarkdownIt from "markdown-it";
 import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 
 /**
@@ -114,7 +114,8 @@ export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: n
 
 // HTML block type 6 ends at a blank line (CommonMark §4.6). For Define, consume
 // the complete block quotation before that rule can expose its inner Markdown.
-// The tag lexer is markdown-it's CommonMark §6.6 recognizer.
+// CommonMark §6.1 code spans are opaque, including literal closing tags.
+const quoteInline = new MarkdownIt("commonmark");
 const QUOTE_OPEN = /^<blockquote(?=[ \t/>])/i;
 const QUOTE_CLOSE = /^<\/blockquote[ \t]*>$/i;
 
@@ -129,13 +130,10 @@ export function skipHtmlBlockQuote(state: StateBlock, startLine: number, endLine
   let line = startLine;
   for (; line < endLine; line++) {
     if (state.sCount[line]! < state.blkIndent && !state.isEmpty(line)) break;
-    const text = lineText(line);
-    let offset = text.indexOf("<");
-    while (offset !== -1) {
-      const tag = HTML_TAG_RE.exec(text.slice(offset))?.[0];
-      if (tag && QUOTE_OPEN.test(tag)) depth++;
-      if (tag && QUOTE_CLOSE.test(tag)) depth--;
-      offset = text.indexOf("<", offset + (tag?.length ?? 1));
+    for (const tag of quoteInline.parseInline(lineText(line), {})[0]!.children!) {
+      if (tag.type !== "html_inline") continue;
+      if (QUOTE_OPEN.test(tag.content)) depth++;
+      if (QUOTE_CLOSE.test(tag.content)) depth--;
     }
     if (depth <= 0) {
       line++;
@@ -143,7 +141,6 @@ export function skipHtmlBlockQuote(state: StateBlock, startLine: number, endLine
     }
   }
   state.line = line;
-  const token = state.push("ignored_blockquote", "", 0);
-  token.map = [startLine, line];
+  state.push("ignored_blockquote", "", 0);
   return true;
 }

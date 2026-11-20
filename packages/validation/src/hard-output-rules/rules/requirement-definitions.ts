@@ -74,12 +74,11 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 
+// Read the entire normative Markdown stream without CommonMark's type-6 HTML
+// fragments; a wrapper and a quote below it must share the same block context.
 const quoteAwareParser = new MarkdownIt("commonmark").enable("table").disable("inline");
-const htmlOutsideQuotes = new MarkdownIt("commonmark").enable("table").disable("inline");
-htmlOutsideQuotes.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-for (const md of [quoteAwareParser, htmlOutsideQuotes]) {
-  md.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
-}
+quoteAwareParser.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+quoteAwareParser.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
 
 /**
  * The identifiers a reader of definitions looks for, as three patterns over
@@ -121,7 +120,7 @@ const REQUIREMENT_PREFIXES = ["FR", "NFR"] as const;
 export const ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
 
 export const DEFINE_REQUIREMENT_OPTIONS = {
-  sourceHeader: /^(?:source(?:[ \t]*\/[ \t]*traceability)?|traceability)$/i,
+  readSource: true,
   excludeBlockQuotes: true,
 };
 
@@ -184,7 +183,7 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser || md === quoteAwareParser, excludeBlockQuotes);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -231,9 +230,9 @@ function extendOverComment(leaves: Leaf[], lines: [number, number], containerEnd
  * does. An HTML block met by `htmlAsText` is a comment or a raw-text block
  * (`opaqueHtmlBlock`), so it is never parsed again.
  */
-function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number, reparse: boolean, excludeBlockQuotes?: boolean): void {
+function addHtmlBlock(leaves: Leaf[], content: string, lines: [number, number], containerEnd: number, reparse: boolean): void {
   if (isHtmlComment(content)) extendOverComment(leaves, lines, containerEnd);
-  else if (reparse) leaves.push(...leavesOf(content, excludeBlockQuotes ? htmlOutsideQuotes : htmlAsText, (line) => lines[0] + line, containerEnd, excludeBlockQuotes));
+  else if (reparse) leaves.push(...leavesOf(content, htmlAsText, (line) => lines[0] + line, containerEnd));
 }
 
 /** The leaf of a paragraph or heading, from its opening token's type, its lines and its inline source. */
@@ -298,13 +297,15 @@ function tableBodyText(table: Leaf, end = table.rows.length): string {
 const rowId = (cells: readonly string[], ids: DefinitionIds): string | undefined => ids.cell.exec(cells[0] ?? "")?.[1];
 
 /** The requirement rows of a table: a row whose first cell is one identifier; its statement is the other cells less the metadata columns. */
-function tableDefinitions(table: Leaf, ids: DefinitionIds, sourceHeader?: RegExp): RequirementDefinition[] {
+function tableDefinitions(table: Leaf, ids: DefinitionIds, readSource?: boolean): RequirementDefinition[] {
   const rows = table.rows;
   const [header] = rows;
   if (header === undefined) return [];
   const headers = cellTexts(header);
   const metadata = metadataColumns(headers);
-  const sourceIndex = sourceHeader ? headers.findIndex(cell => sourceHeader.test(cell)) : -1;
+  const sourceIndex = readSource
+    ? headers.findIndex(cell => ["source", "traceability", "source/traceability"].includes(cell.toLowerCase()))
+    : -1;
   const out: RequirementDefinition[] = [];
   rows.forEach((row, r) => {
     const cells = cellTexts(row);
@@ -313,12 +314,13 @@ function tableDefinitions(table: Leaf, ids: DefinitionIds, sourceHeader?: RegExp
     // The header row is a definition only when its first cell is one; it
     // names no metadata column for itself.
     const skip = r === 0 ? new Set<number>() : metadata;
-    const traceColumn = r === 0 ? -1 : sourceIndex;
+    const traceColumn = r === 0 ? undefined : sourceIndex;
     const text = cells
       .slice(1)
       .filter((_, i) => !skip.has(i + 1) && i + 1 !== traceColumn)
       .join(" | ");
-    out.push(traceColumn < 0 ? { id, text } : { id, text, source: cells[traceColumn] });
+    const source = cells[traceColumn ?? -1];
+    out.push(source === undefined ? { id, text } : { id, text, source });
   });
   return out;
 }
@@ -470,7 +472,7 @@ export function* proseLines(content: string, excludeBlockQuotes?: boolean): Gene
 export function requirementDefinitions(
   content: string,
   prefixes: readonly string[] = REQUIREMENT_PREFIXES,
-  options?: { readonly sourceHeader?: RegExp; readonly excludeBlockQuotes?: boolean },
+  options?: { readonly readSource?: boolean; readonly excludeBlockQuotes?: boolean },
 ): RequirementDefinition[] {
   const ids = definitionIds(prefixes);
   const parserForDefinitions = options?.excludeBlockQuotes ? quoteAwareParser : parser;
@@ -478,7 +480,7 @@ export function requirementDefinitions(
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
-      out.push(...tableDefinitions(leaf, ids, options?.sourceHeader));
+      out.push(...tableDefinitions(leaf, ids, options?.readSource));
       return;
     }
     if (leaf.type === "heading") {

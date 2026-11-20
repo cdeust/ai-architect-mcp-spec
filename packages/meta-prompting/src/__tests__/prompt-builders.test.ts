@@ -208,6 +208,8 @@ describe("buildSectionPrompt", () => {
       attempt: 1,
     });
     expect(out).toContain("OAuth login for admin console");
+    expect(out).not.toContain("<clarifications>");
+    expect(out).toContain("</context>\n<guidance>");
   });
 
   it("includes clarification Q&A only when answer is present", () => {
@@ -544,6 +546,7 @@ describe("buildJiraPrompt", () => {
       ],
     });
     expect(out).toContain("OAuth login for admin console");
+    expect(out).not.toContain("<clarifications>");
     expect(out).toContain("FR-001");
     expect(out).toContain("AC-001");
   });

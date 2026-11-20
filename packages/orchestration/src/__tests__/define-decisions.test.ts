@@ -28,6 +28,8 @@ it("keeps the request and answered turns distinct, merging identical policy valu
   expect(prompt).toContain(String.raw`\u003c/decision_register>`);
   expect(prompt).toContain("The feature above is source user-request.");
   expect(prompt).toContain("Cite their source IDs in Source or Traceability");
+  expect(prompt.split("\n")[0]).toBe("<decision_register>");
+  expect(prompt).toContain("Leave listed conflicts unresolved.");
 });
 
 it("keeps both sides of a human conflict and reports it without treating the draft as the resolution", () => {
@@ -99,10 +101,26 @@ it("validates explicit register citations for a supported table policy and accep
 });
 
 it("ignores every paragraph of a nested HTML quotation and resumes reading after the outer close", () => {
-  const source = `<blockquote cite="https://example.com/prior">\n\n<blockquote>${AUTO}</blockquote>\n\n${AUTO}\n\n</blockquote>\n\n${STOP}`;
+  const source = `<div>\n<blockquote cite="https://example.com/prior">\n\nA literal \`</blockquote>\` tag.\n\n<blockquote>${AUTO}</blockquote>\n\n${AUTO}\n\n</blockquote>\n</div>\n\n${STOP}`;
   const current = state(source);
   const { byTarget, conflicts } = deriveDefineDecisions(current);
   expect(conflicts.size).toBe(0);
   expect([...byTarget.values()]).toEqual([[expect.objectContaining({ direction: "refuse", sources: ["user-request"] })]]);
   expect(findDefineDecisionConflicts(current, [{ type: "overview", content: source }])).toEqual([]);
+});
+
+it("keeps compatible manual and automatic policies distinct and validates the scope of each citation", () => {
+  const manual = AUTO.replace(" automatically", "");
+  const autoRefusal = STOP.replace("commit.", "commit automatically.");
+  const current = state(manual, [turn(1, autoRefusal), turn(2, manual)]);
+  const { byTarget, conflicts } = deriveDefineDecisions(current);
+  expect(conflicts.size).toBe(0);
+  expect([...byTarget.values()]).toEqual([[
+    expect.objectContaining({ direction: "publish", automatic: false, sources: ["user-request", "clarification:2:2"] }),
+    expect.objectContaining({ direction: "refuse", automatic: true, sources: ["clarification:1:1"] }),
+  ]]);
+  const content = `| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | ${manual} | clarification:1:1 |`;
+  expect(findDefineDecisionConflicts(current, [{ type: "requirements", content }])).toEqual([
+    "requirements/FR-001 cites clarification:1:1, which does not support its publication decision.",
+  ]);
 });

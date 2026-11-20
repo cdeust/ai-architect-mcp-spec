@@ -47870,6 +47870,7 @@ function opaqueHtmlBlock(state, startLine, endLine, silent) {
   token.content = state.getLines(startLine, nextLine, state.blkIndent, true);
   return true;
 }
+var quoteInline = new lib_default("commonmark");
 var QUOTE_OPEN = /^<blockquote(?=[ \t/>])/i;
 var QUOTE_CLOSE = /^<\/blockquote[ \t]*>$/i;
 function skipHtmlBlockQuote(state, startLine, endLine, silent) {
@@ -47886,15 +47887,13 @@ function skipHtmlBlockQuote(state, startLine, endLine, silent) {
   for (; line < endLine; line++) {
     if (state.sCount[line] < state.blkIndent && !state.isEmpty(line))
       break;
-    const text2 = lineText(line);
-    let offset = text2.indexOf("<");
-    while (offset !== -1) {
-      const tag2 = HTML_TAG_RE.exec(text2.slice(offset))?.[0];
-      if (tag2 && QUOTE_OPEN.test(tag2))
+    for (const tag2 of quoteInline.parseInline(lineText(line), {})[0].children) {
+      if (tag2.type !== "html_inline")
+        continue;
+      if (QUOTE_OPEN.test(tag2.content))
         depth++;
-      if (tag2 && QUOTE_CLOSE.test(tag2))
+      if (QUOTE_CLOSE.test(tag2.content))
         depth--;
-      offset = text2.indexOf("<", offset + (tag2?.length ?? 1));
     }
     if (depth <= 0) {
       line++;
@@ -47902,8 +47901,7 @@ function skipHtmlBlockQuote(state, startLine, endLine, silent) {
     }
   }
   state.line = line;
-  const token = state.push("ignored_blockquote", "", 0);
-  token.map = [startLine, line];
+  state.push("ignored_blockquote", "", 0);
   return true;
 }
 
@@ -47914,11 +47912,8 @@ var parser = new lib_default("commonmark").enable("table").disable("inline");
 var htmlAsText = new lib_default("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 var quoteAwareParser = new lib_default("commonmark").enable("table").disable("inline");
-var htmlOutsideQuotes = new lib_default("commonmark").enable("table").disable("inline");
-htmlOutsideQuotes.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
-for (const md of [quoteAwareParser, htmlOutsideQuotes]) {
-  md.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
-}
+quoteAwareParser.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+quoteAwareParser.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
 var idsCache = /* @__PURE__ */ new Map();
 function definitionIds(prefixes) {
   const key = prefixes.join("|");
@@ -47939,7 +47934,7 @@ function definitionIds(prefixes) {
 var REQUIREMENT_PREFIXES = ["FR", "NFR"];
 var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
 var DEFINE_REQUIREMENT_OPTIONS = {
-  sourceHeader: /^(?:source(?:[ \t]*\/[ \t]*traceability)?|traceability)$/i,
+  readSource: true,
   excludeBlockQuotes: true
 };
 function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infinity, excludeBlockQuotes) {
@@ -47977,7 +47972,7 @@ function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infin
     if (token.type === "table_open") {
       table2 = { map: at(token.map), rows: [], containerEnd: openEnd[top] };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser || md === quoteAwareParser, excludeBlockQuotes);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i2 + 1]?.content ?? "", openEnd[top], opensItem));
@@ -48006,11 +48001,11 @@ function extendOverComment(leaves, lines, containerEnd) {
     leaves[leaves.length - 1] = { ...last, map: [last.map[0], lines[1]] };
   }
 }
-function addHtmlBlock(leaves, content, lines, containerEnd, reparse, excludeBlockQuotes) {
+function addHtmlBlock(leaves, content, lines, containerEnd, reparse) {
   if (isHtmlComment(content))
     extendOverComment(leaves, lines, containerEnd);
   else if (reparse)
-    leaves.push(...leavesOf(content, excludeBlockQuotes ? htmlOutsideQuotes : htmlAsText, (line) => lines[0] + line, containerEnd, excludeBlockQuotes));
+    leaves.push(...leavesOf(content, htmlAsText, (line) => lines[0] + line, containerEnd));
 }
 function textLeaf(openType, map4, inline3, containerEnd, opensItem) {
   const type = openType === "paragraph_open" ? "paragraph" : "heading";
@@ -48043,14 +48038,14 @@ function tableBodyText(table2, end = table2.rows.length) {
   ].join("\n");
 }
 var rowId = (cells, ids) => ids.cell.exec(cells[0] ?? "")?.[1];
-function tableDefinitions(table2, ids, sourceHeader) {
+function tableDefinitions(table2, ids, readSource) {
   const rows = table2.rows;
   const [header] = rows;
   if (header === void 0)
     return [];
   const headers = cellTexts(header);
   const metadata = metadataColumns(headers);
-  const sourceIndex = sourceHeader ? headers.findIndex((cell) => sourceHeader.test(cell)) : -1;
+  const sourceIndex = readSource ? headers.findIndex((cell) => ["source", "traceability", "source/traceability"].includes(cell.toLowerCase())) : -1;
   const out = [];
   rows.forEach((row2, r) => {
     const cells = cellTexts(row2);
@@ -48058,9 +48053,10 @@ function tableDefinitions(table2, ids, sourceHeader) {
     if (id === void 0)
       return;
     const skip = r === 0 ? /* @__PURE__ */ new Set() : metadata;
-    const traceColumn = r === 0 ? -1 : sourceIndex;
+    const traceColumn = r === 0 ? void 0 : sourceIndex;
     const text2 = cells.slice(1).filter((_, i2) => !skip.has(i2 + 1) && i2 + 1 !== traceColumn).join(" | ");
-    out.push(traceColumn < 0 ? { id, text: text2 } : { id, text: text2, source: cells[traceColumn] });
+    const source = cells[traceColumn ?? -1];
+    out.push(source === void 0 ? { id, text: text2 } : { id, text: text2, source });
   });
   return out;
 }
@@ -48155,7 +48151,7 @@ function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES, option
   const out = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
-      out.push(...tableDefinitions(leaf, ids, options?.sourceHeader));
+      out.push(...tableDefinitions(leaf, ids, options?.readSource));
       return;
     }
     if (leaf.type === "heading") {
@@ -48641,10 +48637,10 @@ function* policyStatements(type, content) {
   for (const { id, text: text2, source } of definitions) {
     const body = text2.replace(/^:(?:\*\*)?/, "");
     for (const statement of body.split("\n"))
-      yield { label: type ? `${type}/${id}` : id, statement: statement.trim(), source };
+      yield { label: `${type}/${id}`, statement: statement.trim(), source };
   }
   for (const statement of proseLines(content, true))
-    yield { label: type ?? "user", statement: statement.trim(), source: void 0 };
+    yield { label: type, statement: statement.trim(), source: void 0 };
 }
 function parsePublication(statement) {
   const conditional = CONDITIONAL_POLICY.exec(statement);
@@ -48665,7 +48661,7 @@ ${object3}`,
     automatic: object3 !== target
   };
 }
-function* readPublicationPolicies(content, type) {
+function* readPublicationPolicies(content, type = "overview") {
   for (const { label, statement, source } of policyStatements(type, content)) {
     const body = type === "acceptance_criteria" ? statement.replace(ACCEPTANCE_REFERENCES, "") : statement;
     const policy = parsePublication(body);
