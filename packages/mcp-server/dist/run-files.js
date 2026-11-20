@@ -19,7 +19,7 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { NextActionSchema, PipelineStateSchema, isTerminalRun, } from "@prd-gen/orchestration";
+import { CLARIFICATION_CONTINUE_QUESTION_ID, NextActionSchema, PipelineStateSchema, isTerminalRun, } from "@prd-gen/orchestration";
 /** Where the server keeps its runs: beside its databases. */
 export const RUNS_DIR = join(homedir(), ".prd-gen", "runs");
 /**
@@ -193,6 +193,13 @@ function parseRunFile(runId, text) {
     const action = NextActionSchema.safeParse(doc.action);
     if (!action.success)
         return { kind: "unreadable", reason: `its action is not valid (${action.error.message})` };
+    // Older clarification checkpoints kept the pending action but no marker.
+    // The saved action distinguishes a decision from a compose already authorized.
+    if (state.data.current_step === "clarification" && state.data.clarification_continue_pending === undefined) {
+        // Stryker disable next-line ConditionalExpression: equivalent: validated non-question actions have no question_id, so the ID comparison already returns false.
+        state.data.clarification_continue_pending = action.data.kind === "ask_user"
+            && action.data.question_id === CLARIFICATION_CONTINUE_QUESTION_ID;
+    }
     return { kind: "found", run: { state: state.data, action: action.data } };
 }
 /** Whether the file at `path` holds a run that reached its last step. */

@@ -11,7 +11,8 @@
  * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15).
  */
 import { describe, expect, it, beforeAll } from "vitest";
-import { newPipelineState } from "@prd-gen/orchestration";
+import { z } from "zod";
+import { MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -25,14 +26,17 @@ interface CapturingServer {
 
 let handlers: Map<string, ToolHandler>;
 let descriptions: Map<string, unknown>;
+let schemas: Map<string, z.ZodRawShape>;
 
 beforeAll(async () => {
   const { registerPipelineTools } = await import("../pipeline-tools.js");
   handlers = new Map();
   descriptions = new Map();
+  schemas = new Map();
   const server: CapturingServer = {
     tool(name, ...rest) {
       descriptions.set(name, rest[0]);
+      schemas.set(name, rest[1] as z.ZodRawShape);
       const handler = rest[rest.length - 1] as ToolHandler;
       handlers.set(name, handler);
     },
@@ -115,6 +119,9 @@ describe("get_pipeline_state format:'action'", () => {
       question_id: "implementation_gate",
       options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
     });
+    const refused = await handlers.get("get_pipeline_state")!({ run_id, format: "define_handoff_v1" });
+    expect(refused.isError).toBe(true);
+    expect(parse(refused)).toMatchObject({ error: { code: "define_document_invalid" } });
   });
 
   it("format:'action' on an unknown run_id returns a structured error, not a crash", async () => {
@@ -124,4 +131,63 @@ describe("get_pipeline_state format:'action'", () => {
     const body = parse(res);
     expect(body.error).toContain("unknown run_id");
   });
+});
+
+it("preserves the existing state formats when the v1 selector is added", () => {
+  const args = z.object(schemas.get("get_pipeline_state")!);
+  for (const format of ["full", "summary", "grounding", "validation", "action", "define_handoff_v1"]) {
+    expect(args.parse({ run_id: "run_define_small", format }).format).toBe(format);
+  }
+  expect(args.parse({ run_id: "run_define_small" }).format).toBe("summary");
+});
+
+it.each([MAX_RESPONSE_CHARS, MAX_RESPONSE_CHARS + 1])("enforces the complete Define response at %s chars", async size => {
+  expect(descriptions.get("get_pipeline_state")).toEqual(expect.stringContaining("format:'define_handoff_v1'"));
+  const oversized = size > MAX_RESPONSE_CHARS;
+  const run_id = oversized ? "run_define_large" : "run_define_small";
+  const requirement = "Retain the verified receipt.";
+  const criterion = "Verify the saved receipt (FR-001).";
+  const fixed = JSON.stringify({ handoff: {
+    version: 1, run_id, requirements: [{ id: "FR-001", text: requirement }],
+    acceptance: [{ id: "AC-001", text: criterion, requirement_ids: ["FR-001"] }],
+  } }).length;
+  const text = requirement + "x".repeat(size - fixed);
+  const sections = [
+    ["requirements", `- FR-001: ${text}`],
+    ["acceptance_criteria", `- AC-001: ${criterion}`],
+    ["testing", "Replay AC-001."],
+  ] as const;
+  new RunFiles(RUNS_DIR).write({
+    ...newPipelineState({ run_id, feature_description: "Verify the saved receipt" }),
+    current_step: "implementation_gate",
+    sections: sections.map(([section_type, content]) => ({
+      section_type, content, status: "passed", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+    })),
+    pending_completion: {
+      summary: "Passed",
+      artifacts: [],
+      outcome: { status: "passed", reasons: [] },
+      verification: {
+        claims_evaluated: 2, distribution_suspicious: false, total_subjective_claims: 0,
+        distribution: { PASS: 2, FAIL: 0, INCONCLUSIVE: 0, "NEEDS-RUNTIME": 0, "SPEC-COMPLETE": 0 },
+        judge_verdicts: ["FR-001", "AC-001"].map(claim_id => ({
+          claim_id, judge: { kind: "genius", name: "dijkstra" }, verdict: "PASS",
+          confidence: 0.9, rationale: "Synthetic evidence.", caveats: [],
+        })),
+      },
+    },
+  }, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
+    description: "Decide", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
+  });
+  const response = await handlers.get("get_pipeline_state")!({ run_id, format: "define_handoff_v1" });
+  expect(response.isError).toBe(oversized);
+  if (oversized) {
+    expect(parse(response)).toEqual({
+      error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+    });
+  } else {
+    expect(response.content[0]?.text).toHaveLength(MAX_RESPONSE_CHARS);
+    expect(parse(response)).toMatchObject({ handoff: { version: 1, run_id } });
+  }
 });

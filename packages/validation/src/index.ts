@@ -22,3 +22,4 @@ export {
   type AuditRule,
   type AuditRuleFamily,
 } from "./audit-flags/index.js";
+export { projectDefineDocument } from "./define-handoff.js";

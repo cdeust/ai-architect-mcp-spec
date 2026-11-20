@@ -17,3 +17,13 @@ The corrective replay verifies two deterministic blockers. A supplied requiremen
 The architect-os step reader at revision `be492ac325aad604f073c7cb9613cda67b7952ce` reads `step.json` and `brief.md` after planning. A replay against that revision passed three negative-control scenarios (22 steps). A missing `step.json`, a schema-invalid `step.json` and a missing `brief.md` each returned exit 2 without creating a session. These scenarios exercise the post-Plan step reader.
 
 From the producer root, run `pnpm build` followed by `pnpm exec vitest run packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts`.
+
+## Define v1
+
+A host can opt into planning data by calling `get_pipeline_state` with its `run_id` and `format: "define_handoff_v1"`. The response has one `handoff` object with `version: 1`, `run_id`, `requirements` and `acceptance`. Each requirement has `id` and `text`. Each acceptance criterion adds `requirement_ids`. The schema rejects unknown fields, duplicate IDs, unresolved references and requirements without acceptance coverage.
+
+End the criterion's text with its explicit references in parentheses, for example `Check the receipt (FR-001, NFR-002).` A mention inside the criterion, example code, comments or a link destination does not supply traceability.
+
+Read the handoff while the implementation question is pending. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff. It returns an MCP error for missing evidence, an invalid document, a completed decision or an oversized response. The read preserves the saved decision and action order. Hosts keep command arguments and executor policy in their own trusted configuration.
+
+The original delivery fixture fails the Define v1 read. A second deterministic replay adds the three acceptance references to its testing draft and produces the handoff before and after restart. The stdio suite can also run against a reconstructed plugin by setting `PRD_GEN_TEST_PLUGIN_ROOT` to the staged plugin root containing `.mcp.json`.

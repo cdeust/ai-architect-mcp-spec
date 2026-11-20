@@ -150,3 +150,4 @@ export {
 
 // Consensus reliability port — core declares, benchmark implements, verification consumes.
 export type { ConsensusReliabilityProvider } from "./persistence/consensus-reliability-provider.js";
+export { DefineHandoffV1Schema, hasDefineStatementText, type DefineHandoffV1 } from "./domain/define-handoff.js";
