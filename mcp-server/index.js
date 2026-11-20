@@ -40356,7 +40356,10 @@ function tryCreateReliabilityRepository(dbPath) {
 // packages/core/dist/domain/define-handoff.js
 var RequirementId = external_exports.string().regex(/^(?:FR|NFR)-\d{1,9}$/);
 var AcceptanceId = external_exports.string().regex(/^AC-\d{1,9}$/);
-var Statement = external_exports.string().refine((text2) => /[\p{L}\p{N}]/u.test(text2.replace(/(?<![\w-])(?:FR|NFR)-\d{1,9}(?![\w-])/g, "")));
+function hasDefineStatementText(text2) {
+  return /[\p{L}\p{N}]/u.test(text2.replace(/(?<![\w-])(?:FR|NFR)-\d{1,9}(?![\w-])/g, ""));
+}
+var Statement = external_exports.string().refine(hasDefineStatementText);
 var DefineHandoffV1Schema = external_exports.strictObject({
   version: external_exports.literal(1),
   run_id: external_exports.string().min(1),
@@ -52313,17 +52316,20 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
 var inline2 = new lib_default("commonmark", { html: true });
 function hasVisibleProse(text2) {
-  return inline2.parseInline(text2, {})[0]?.children?.some((token) => token.type === "text" && /[\p{L}\p{N}]/u.test(token.content)) ?? false;
+  return inline2.parseInline(text2, {})[0].children.some((token) => token.type === "text" && hasDefineStatementText(token.content));
 }
 function projectDefineDocument(sections) {
   const definitions = (type, prefixes) => sections.filter((section) => section.type === type).flatMap((section) => requirementDefinitions(section.content, prefixes)).map(({ id, text: text2 }) => ({ id, text: text2.replace(/^:(?:\*\*)?/, "").trim() }));
   return {
     requirements: definitions("requirements").map(({ id, text: text2 }) => ({ id, text: hasVisibleProse(text2) ? text2 : "" })),
-    acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text: text2 }) => ({
-      id,
-      text: hasVisibleProse(text2.replace(ACCEPTANCE_REFERENCES, "")) ? text2 : "",
-      requirement_ids: ACCEPTANCE_REFERENCES.exec(text2)?.[1]?.split(",").map((id2) => id2.trim()) ?? []
-    }))
+    acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text: text2 }) => {
+      const references2 = ACCEPTANCE_REFERENCES.exec(text2);
+      return {
+        id,
+        text: hasVisibleProse(text2.replace(ACCEPTANCE_REFERENCES, "")) ? text2 : "",
+        requirement_ids: references2 ? references2[1].split(",").map((id2) => id2.trim()) : []
+      };
+    })
   };
 }
 
@@ -59826,7 +59832,7 @@ function readDefineHandoff(state, action) {
   const sections = documentSections(state.sections);
   const parsed = DefineHandoffV1Schema.safeParse({ version: 1, run_id: state.run_id, ...projectDefineDocument(sections) });
   if (!parsed.success) {
-    return refusal("define_document_invalid", parsed.error.issues.map((issue2) => issue2.path.length > 0 ? `${issue2.path.join(".")}: ${issue2.message}` : issue2.message).join(" "));
+    return refusal("define_document_invalid", external_exports.prettifyError(parsed.error));
   }
   const failure2 = validateDocument(sections).violations.find(isBlockingViolation);
   if (failure2) {
