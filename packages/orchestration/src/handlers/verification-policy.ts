@@ -17,6 +17,7 @@ import { documentSections } from "../section-plan.js";
 import type { VerificationSummary } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
 import type { VerificationPolicyConfig } from "../types/state/verification-policy.js";
+import { IMPLEMENTATION_GATE_QUESTION_ID } from "./protocol-ids.js";
 
 /**
  * Default acceptance policy (used whenever `PipelineState.verification_policy`
@@ -332,7 +333,7 @@ export function buildPolicyGateQuestion(verdict: PolicyVerdict) {
 
   return {
     kind: "ask_user" as const,
-    question_id: "implementation_gate",
+    question_id: IMPLEMENTATION_GATE_QUESTION_ID,
     multi_select: false,
     ...shape,
   };

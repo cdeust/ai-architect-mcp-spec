@@ -18,7 +18,7 @@
 
 import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
-import { newPipelineState, step, type PipelineState } from "../index.js";
+import { newPipelineState, refreshImplementationGateQuestion, step, type NextAction, type PipelineState } from "../index.js";
 
 /** Must match handlers/protocol-ids.ts:IMPLEMENTATION_GATE_QUESTION_ID. */
 const IMPLEMENTATION_GATE_QUESTION_ID = "implementation_gate";
@@ -203,7 +203,12 @@ it("revalidates an old pending checkpoint and replaces its optimistic report", (
   const state: PipelineState = {
     ...before,
     written_files: [...before.written_files, path],
-    sections: [{ ...before.sections[0]!, section_type: "requirements", content: "ok" }],
+    sections: [{ ...before.sections[0]!, section_type: "requirements", status: "failed", content: "- FR-001: Encrypt exported files." }],
+    pending_completion: {
+      ...before.pending_completion!,
+      summary: "Self-check complete.\nDeterministic violations: 0 (0 critical, 0 advisory)\nHard-output score: 1.00 / 1.00\nMulti-judge claims: 2",
+      outcome: { status: "passed", reasons: [] },
+    },
   };
   const answer = (state: PipelineState, option: string) => step({
     state,
@@ -215,15 +220,45 @@ it("revalidates an old pending checkpoint and replaces its optimistic report", (
     description: expect.stringContaining("The requirements section must define"),
   });
   expect(rejected.state.post_specs?.decision).toBe("pending");
+  expect(rejected.state.pending_completion?.summary).toBe([
+    "Self-check complete: NEEDS ATTENTION (The requirements section must define at least one FR or NFR statement.).",
+    "Hard-output score: 0.85 / 1.00",
+    "Deterministic violations: 1",
+    "Multi-judge claims: 2",
+  ].join("\n"));
   const approved = answer(rejected.state, "Override policy (explicit)");
   expect(approved.action).toMatchObject({
     kind: "write_file",
     path,
     content: expect.stringContaining("Computed status: blocked"),
   });
+  expect(approved.state.pending_completion).toBe(rejected.state.pending_completion);
   const acknowledged = step({ state: approved.state, result: { kind: "file_written", path } });
   expect(acknowledged.state.written_files.filter(file => file === path)).toHaveLength(1);
   expect(acknowledged.state.current_step).toBe("implementation");
+});
+
+it("refreshes only a stale implementation question with a current Define blocker", () => {
+  const seed = stateAtGate();
+  const stale: NextAction = {
+    kind: "ask_user", question_id: IMPLEMENTATION_GATE_QUESTION_ID, header: "Prior question",
+    description: "Prior policy", multi_select: false,
+    options: [{ label: "Implement anyway (dérogation explicite)" }, { label: "PRD only" }],
+  };
+  const provided: PipelineState["sections"][number] = { section_type: "requirements", status: "passed", content: "ok",
+    attempt: 1, violation_count: 0, last_violations: [], attempt_log: [] };
+  const blocked = { ...seed, sections: [provided] };
+  expect(refreshImplementationGateQuestion(seed, stale)).toBe(stale);
+  expect(refreshImplementationGateQuestion(blocked, null)).toBeNull();
+  const other: NextAction = { ...stale, question_id: "other" };
+  expect(refreshImplementationGateQuestion(blocked, other)).toBe(other);
+  expect(refreshImplementationGateQuestion({ ...blocked, current_step: "self_check" }, stale)).toBe(stale);
+  const current = refreshImplementationGateQuestion(blocked, stale);
+  expect(current).toMatchObject({
+    description: expect.stringContaining("The requirements section must define"),
+    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+  });
+  expect(refreshImplementationGateQuestion(blocked, current)).toBe(current);
 });
 
 describe("implementation_gate — verification-report export (root-cause fix)", () => {

@@ -11,6 +11,8 @@
  * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15).
  */
 import { describe, expect, it, beforeAll } from "vitest";
+import { newPipelineState } from "@prd-gen/orchestration";
+import { RUNS_DIR, RunFiles } from "../run-files.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
@@ -83,6 +85,30 @@ describe("get_pipeline_state format:'action'", () => {
     const res = await getState({ run_id: runId, format: "action", invocation_offset: 10_000 });
     expect(res.isError).toBe(true);
     expect(parse(res).error).toContain("out of range");
+  });
+
+  it("serves the current implementation policy for a pending saved question", async () => {
+    const run_id = "run_legacy_gate";
+    const state = newPipelineState({ run_id, feature_description: "Legacy saved specification" });
+    new RunFiles(RUNS_DIR).write({
+      ...state,
+      current_step: "implementation_gate",
+      sections: [{
+        section_type: "requirements", status: "passed", content: "ok",
+        attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+      }],
+    }, {
+      kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
+      description: "Old decision", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
+    });
+    const response = await handlers.get("get_pipeline_state")!({ run_id, format: "action" });
+    const body = parse(response);
+    expect(response.isError, JSON.stringify(body)).not.toBe(true);
+    expect(body.action).toMatchObject({
+      kind: "ask_user",
+      question_id: "implementation_gate",
+      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+    });
   });
 
   it("format:'action' on an unknown run_id returns a structured error, not a crash", async () => {
