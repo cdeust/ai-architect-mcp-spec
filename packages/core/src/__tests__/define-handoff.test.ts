@@ -70,5 +70,5 @@ it.each([
   [{ requirements: [requirement, { ...requirement, id: "NFR-002" }] }, "NFR-002 has no acceptance criterion."],
 ] as const)("gives the contract diagnostic for %j", (change, message) => {
   const parsed = DefineHandoffV1Schema.safeParse({ ...handoff, ...change });
-  expect(parsed.error?.issues.map(issue => issue.message)).toContain(message);
+  expect(parsed.error?.issues).toContainEqual(expect.objectContaining({ code: "custom", message }));
 });

@@ -69,6 +69,17 @@ it("requires visible prose in every definition, outside links, examples and comm
   ]);
 });
 
+it("preserves valid Markdown prose mixed with emphasis and inline code", () => {
+  const document = projectDefineDocument([
+    { type: "requirements", content: "- FR-001: **Keep** the `receipt`." },
+    { type: "acceptance_criteria", content: "- AC-001: Check the **receipt** (FR-001)." },
+  ]);
+  expect(document).toEqual({
+    requirements: [{ id: "FR-001", text: "**Keep** the `receipt`." }],
+    acceptance: [{ id: "AC-001", text: "Check the **receipt** (FR-001).", requirement_ids: ["FR-001"] }],
+  });
+});
+
 it("keeps a missing reference distinguishable from an absent criterion", () => {
   expect(projectDefineDocument([{ type: "acceptance_criteria", content: "- AC-001: Record the result." }])).toEqual({
     requirements: [],

@@ -8,7 +8,7 @@ type Sections = ReadonlyArray<{ type: SectionType; content: string }>;
 // marker. A URL destination or a reference inside inline code or a comment
 // cannot supply it, since the closing Markdown punctuation would follow it.
 const ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
-const inline = new MarkdownIt("commonmark", { html: true });
+const inline = new MarkdownIt("commonmark");
 
 function hasVisibleProse(text: string): boolean {
   // parseInline's block rule creates exactly one inline token with children.
