@@ -1,6 +1,6 @@
 import { readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tempDirectory } from "./real-run-cli-harness.js";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { API } from "typescript/unstable/sync";
 import { isBinaryExpression, isPropertyAccessExpression, isPropertyAssignment, isShorthandPropertyAssignment, SyntaxKind, type Node } from "typescript/unstable/ast";
@@ -31,15 +31,16 @@ function emittedQuestionIds(root = orchestration) {
   try {
     const project = api.updateSnapshot({ openProjects: [config] }).getProject(config)!;
     for (const file of project.rootFiles) {
-      if (!file.startsWith(join(root, "src") + "/") || /(?:\/__tests__\/|\.(?:test|spec)\.[^.]+$)/.test(file)) continue;
+      const sourcePath = relative(root, file).split(sep).join("/");
+      if (!sourcePath.startsWith("src/") || /(?:\/__tests__\/|\.(?:test|spec)\.[^.]+$)/.test(sourcePath)) continue;
       const source = project.program.getSourceFile(file)!;
       function visit(node: Node) {
         const value = assignedQuestion(node);
         if (value) {
           // These are schema declarations and echoes of the question in a canned answer.
           const spelling = value.getText();
-          const schema = file === join(root, "src/types/actions.ts") && spelling === "z.string()";
-          const echo = file === join(root, "src/canned-dispatcher.ts") && spelling === "action.question_id";
+          const schema = sourcePath === "src/types/actions.ts" && spelling === "z.string()";
+          const echo = sourcePath === "src/canned-dispatcher.ts" && spelling === "action.question_id";
           if (!schema && !echo) {
             const binding = isShorthandPropertyAssignment(node) && project.checker.getShorthandAssignmentValueSymbol(node);
             const type = binding ? project.checker.getTypeOfSymbol(binding) : project.checker.getTypeAtLocation(value);
