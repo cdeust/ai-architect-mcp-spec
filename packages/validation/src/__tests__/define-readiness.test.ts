@@ -126,6 +126,7 @@ describe("Define readiness", () => {
 
   it("does not find a directive embedded in an example or erase meaningful target text", () => {
     expect(validateDefineReadiness([overview(`Example: ${publish}`), definition(stop)])).toEqual([]);
+    expect(validateDefineReadiness([overview(publish.replace("publish", "documents how to publish")), definition(stop)])).toEqual([]);
     expect(validateDefineReadiness([overview(publish), definition(stop.replace("stop after CI and never", "documents when not to"))])).toEqual([]);
     expect(validateDefineReadiness([overview(`${publish}\u2028Additional prose.`), definition(stop)])).toEqual([]);
     expect(validateDefineReadiness([
@@ -144,5 +145,20 @@ describe("Define readiness", () => {
     expect(validateDefineReadiness([prose, requirements])).toEqual([
       expect.objectContaining({ message: expect.stringContaining('requirements/FR-011 says') }),
     ]);
+  });
+
+  it("keeps punctuation inside an explicitly opposed publication target", () => {
+    const dotted = publish.replace("verified commit", "tag v1.2");
+    const dottedBan = stop.replace("verified commit", "tag v1.2");
+    expect(validateDefineReadiness([overview(dotted), definition(dottedBan)])).toHaveLength(1);
+    const colon = publish.replace("verified commit", "tag vault:stable");
+    const colonBan = stop.replace("verified commit", "tag vault:stable");
+    const table = requirement(`| ID | Requirement |\n| --- | --- |\n| FR-010 | ${colon} |`);
+    expect(validateDefineReadiness([table, overview(colonBan)])).toHaveLength(1);
+  });
+
+  it.each([" ", "\t", ",\t", ",   "])("reads a conditional directive with separator %j", separator => {
+    const directive = publish.replace("`, ", "`" + separator);
+    expect(validateDefineReadiness([overview(directive), definition(stop)])).toHaveLength(1);
   });
 });

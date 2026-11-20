@@ -20,7 +20,7 @@ export function checkPrdDefinitions(sections: Sections): HardOutputRuleViolation
 // Recognize the pilot's explicit conditional publication grammar in prose.
 // The option, its value and the publication target must all match. Quantity
 // comparisons and general natural-language entailment are separate checks.
-const CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`, (.+)$/i;
+const CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`,?([ \t].*)$/i;
 const PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)/i;
 
 interface PublicationSource {
@@ -41,7 +41,7 @@ function parsePublication(statement: string) {
   const conditional = CONDITIONAL_POLICY.exec(statement);
   if (!conditional) return;
   const [, condition, instruction] = conditional;
-  const publication = PUBLICATION.exec(instruction!.replace(/\.$/, ""));
+  const publication = PUBLICATION.exec(instruction!.trimStart().replace(/\.$/, ""));
   if (!publication) return;
   const [, prohibition, target] = publication;
   const object = target!.replace(/ automatically$/i, "");
