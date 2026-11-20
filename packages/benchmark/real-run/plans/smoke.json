@@ -1,0 +1,27 @@
+{
+  "description": "build a simple feature for OAuth login",
+  "prd_context": "feature",
+  "plan_max_cost_usd": 2,
+  "call_timeout_ms": 180000,
+  "limits": { "max_invocations": 30, "max_cost_usd": 1, "max_unmetered_calls": 0, "max_steps": 120 },
+  "answers": {
+    "clarification_answer": { "selected": [], "freeform": "Use OAuth 2.0 authorization code flow with PKCE against one identity provider, Google; sessions last 24 hours; no social account linking; web only." },
+    "clarification_continue": { "selected": ["proceed"] },
+    "self_check_verify_budget": { "selected": ["Reduced sample"] },
+    "implementation_gate": { "selected": ["PRD only"] }
+  },
+  "policies": {
+    "smoke": {
+      "judge": { "model": "haiku", "effort": "low" },
+      "draft": { "model": "haiku", "effort": "low" },
+      "review": { "model": "haiku", "effort": "low" },
+      "implement": { "model": "haiku", "effort": "low" },
+      "test": { "model": "haiku", "effort": "low" },
+      "pr": { "model": "haiku", "effort": "low" },
+      "probe": { "model": "haiku", "effort": "low" }
+    }
+  },
+  "arms": [
+    { "name": "smoke", "request_size": "tiny", "policy": "smoke", "mode": "sequential" }
+  ]
+}
