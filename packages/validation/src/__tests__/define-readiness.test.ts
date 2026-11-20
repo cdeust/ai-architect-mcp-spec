@@ -234,7 +234,7 @@ it("retains normative text outside inline quotes and masks unclosed and nested q
   expect(policy(`> <blockquote>\n\n<div><blockquote>\n${publish}\n</blockquote></div>\n${stop}`)).toEqual([stop]);
   expect(policy(`<div data-example="<blockquote>">\n${stop}\n</div>`)).toEqual([stop]);
 
-  const inline = "- FR-001: Retain the signed receipt. <blockquote>Legacy rule.</blockquote>";
+  const inline = "- FR-001: Retain the signed receipt. <blockquote>Legacy rule.<blockquote>Nested legacy rule.</blockquote>More legacy text.</blockquote>";
   const additional = "- FR-002: Retain the plan.";
   expect(projectDefineDocument([requirement(`${inline}\n${additional}`)]).requirements).toEqual([
     { id: "FR-001", text: "Retain the signed receipt." },

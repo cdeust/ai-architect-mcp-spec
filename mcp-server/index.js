@@ -47872,21 +47872,21 @@ function opaqueHtmlBlock(state, startLine, endLine, silent) {
 }
 
 // packages/validation/dist/hard-output-rules/rules/define-html-quotes.js
-var lexer = new lib_default("commonmark").enable("table");
-lexer.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+var lexer = new lib_default("commonmark");
 lexer.inline.ruler.at("html_inline", (state, silent) => {
   const offset = state.pos;
-  if (!html_inline(state, silent))
-    return false;
-  if (!silent)
+  const first = state.tokens.length;
+  const matched = html_inline(state, silent);
+  if (state.tokens.length > first)
     state.tokens.at(-1).meta = offset;
-  return true;
+  return matched;
 });
 var BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
 function parseWithoutHtmlQuotes(content, plainParser) {
+  const env = {};
+  const tokens = plainParser.parse(content, env);
   if (!content.toLowerCase().includes("<blockquote"))
-    return plainParser.parse(content, {});
-  const tokens = lexer.parse(content, {});
+    return tokens;
   let depth = 0;
   let markdownDepth = 0;
   for (const token of tokens) {
@@ -47898,7 +47898,8 @@ function parseWithoutHtmlQuotes(content, plainParser) {
       continue;
     const visible = [];
     let cursor = 0;
-    for (const child of token.children) {
+    const [inline3] = lexer.parseInline(token.content, env);
+    for (const child of inline3.children) {
       if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content))
         continue;
       const offset = child.meta;
@@ -47906,8 +47907,7 @@ function parseWithoutHtmlQuotes(content, plainParser) {
         if (depth === 0)
           continue;
         depth--;
-        if (depth === 0)
-          cursor = offset + child.content.length;
+        cursor = offset + child.content.length;
       } else {
         if (depth === 0)
           visible.push(token.content.slice(cursor, offset));

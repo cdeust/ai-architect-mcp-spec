@@ -1,24 +1,25 @@
 import MarkdownIt from "markdown-it";
 import htmlInline from "markdown-it/lib/rules_inline/html_inline.mjs";
-import { opaqueHtmlBlock } from "./requirement-html.js";
 
 // CommonMark §4.6 HTML blocks of type 6 stop at blank lines. For a quotation
 // we need to see valid tags through those boundaries and leave code opaque.
 // Use the normal inline rule (§6.6), recording the tag's offset in its token.
-const lexer = new MarkdownIt("commonmark").enable("table");
-lexer.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+const lexer = new MarkdownIt("commonmark");
 lexer.inline.ruler.at("html_inline", (state, silent) => {
   const offset = state.pos;
-  if (!htmlInline(state, silent)) return false;
-  if (!silent) state.tokens.at(-1)!.meta = offset;
-  return true;
+  const first = state.tokens.length;
+  const matched = htmlInline(state, silent);
+  if (state.tokens.length > first) state.tokens.at(-1)!.meta = offset;
+  return matched;
 });
 const BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
 
 /** Remove HTML quotations from inline source while preserving the block tree. */
 export function parseWithoutHtmlQuotes(content: string, plainParser: MarkdownIt) {
-  if (!content.toLowerCase().includes("<blockquote")) return plainParser.parse(content, {});
-  const tokens = lexer.parse(content, {});
+  const env = {};
+  const tokens = plainParser.parse(content, env);
+  // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent: omitting this fast path scans inline tokens that contain no opening quote and leaves their source unchanged.
+  if (!content.toLowerCase().includes("<blockquote")) return tokens;
   let depth = 0;
   let markdownDepth = 0;
   for (const token of tokens) {
@@ -28,13 +29,14 @@ export function parseWithoutHtmlQuotes(content: string, plainParser: MarkdownIt)
 
     const visible: string[] = [];
     let cursor = 0;
-    for (const child of token.children!) {
+    const [inline] = lexer.parseInline(token.content, env);
+    for (const child of inline!.children!) {
       if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content)) continue;
       const offset: number = child.meta;
       if (child.content.startsWith("</")) {
         if (depth === 0) continue;
         depth--;
-        if (depth === 0) cursor = offset + child.content.length;
+        cursor = offset + child.content.length;
       } else {
         if (depth === 0) visible.push(token.content.slice(cursor, offset));
         depth++;
