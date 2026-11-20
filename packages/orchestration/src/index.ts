@@ -114,3 +114,4 @@ export {
   type ProductionDispatcherOptions,
   type StubAgentInvokerOptions,
 } from "./production-dispatcher.js";
+export { readDefineHandoff } from "./define-handoff.js";

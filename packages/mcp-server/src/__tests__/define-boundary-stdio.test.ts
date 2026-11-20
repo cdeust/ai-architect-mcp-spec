@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
 import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction } from "@prd-gen/orchestration";
-import { startStdioServer, type StdioServer } from "./stdio-server.js";
+import { startStdioServer, type StdioServer, type StdioServerOptions } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
 import { RunFiles } from "../run-files.js";
 
@@ -11,6 +11,20 @@ interface Envelope {
   readonly run_id: string;
   readonly current_step: string;
   readonly action: unknown;
+}
+
+function startDefineServer(options: StdioServerOptions) {
+  const root = process.env.PRD_GEN_TEST_PLUGIN_ROOT;
+  if (!root) return startStdioServer(undefined, options);
+  const { mcpServers } = JSON.parse(readFileSync(join(root, ".mcp.json"), "utf8")) as {
+    mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+  };
+  const launcher = mcpServers["prd-gen"]!;
+  expect(launcher.command).toBe("node");
+  const resolveRoot = (value: string) => value.replaceAll("${CLAUDE_PLUGIN_ROOT}", root);
+  const [entry, ...args] = launcher.args.map(resolveRoot);
+  const env = Object.fromEntries(Object.entries(launcher.env).map(([name, value]) => [name, resolveRoot(value)]));
+  return startStdioServer(undefined, { ...options, entry, args, env: { ...options.env, ...env } });
 }
 
 async function call<T>(server: StdioServer, tool: string, args: Record<string, unknown>): Promise<T> {
@@ -21,13 +35,16 @@ async function call<T>(server: StdioServer, tool: string, args: Record<string, u
 
 const PUBLISH = "With `--until ci`, publish the verified commit automatically.";
 const STOP = "With `--until ci`, stop after CI and never publish the verified commit.";
-type Pilot = "delivery" | "empty" | "conflict";
+type Pilot = "delivery" | "ready" | "empty" | "conflict";
 
 function makeHost(output: string, pilot: Pilot) {
   const drafts: Readonly<Record<string, string>> = fixture.drafts;
   const canned = makeCannedDispatcher({ fake_section_draft: section => {
     expect(drafts, `draft for ${section}`).toHaveProperty(section);
     if (pilot === "empty") return "ok";
+    if (pilot === "ready" && section === "testing") {
+      return "Replay AC-001 with a failed check, AC-002 with a CI-only stop, and AC-003 with an already published ref whose ruleset failed.";
+    }
     if (pilot === "conflict" && section === "overview") return PUBLISH;
     if (pilot === "conflict" && section === "requirements") {
       return drafts[section]!.replace("Stop before publication with `--until ci`.", STOP);
@@ -104,7 +121,7 @@ it.each<{ name: string; pilot: Pilot; finding?: string }>([
   const output = mkdtempSync(join(tmpdir(), "prd-gen-define-"));
   const home = join(output, "home");
   mkdirSync(home);
-  const start = () => startStdioServer(undefined, { cwd: output, env: { HOME: home, USERPROFILE: home } });
+  const start = () => startDefineServer({ cwd: output, env: { HOME: home, USERPROFILE: home } });
   const host = makeHost(output, pilot);
   let server: StdioServer | undefined;
   try {
@@ -135,6 +152,11 @@ it.each<{ name: string; pilot: Pilot; finding?: string }>([
       current_step: "implementation_gate",
       written_files: [...host.artifacts.values()],
       pending_completion: { outcome: { status: "needs_attention" } },
+    });
+    const handoff = await server.call("get_pipeline_state", { run_id, format: "define_handoff_v1" });
+    expect(handoff.isError).toBe(true);
+    expect(JSON.parse(handoff.text)).toMatchObject({
+      error: { code: "define_document_invalid" },
     });
     if (finding) {
       expect(before).not.toMatchObject({ pending_completion: { summary: expect.stringContaining("Hard-output score: 1.00 / 1.00") } });
@@ -175,11 +197,56 @@ it.each<{ name: string; pilot: Pilot; finding?: string }>([
   }
 }, 120_000);
 
+it("reads a validated Define v1 handoff at the gate and after restart", async () => {
+  const output = mkdtempSync(join(tmpdir(), "prd-gen-define-v1-"));
+  const start = () => startDefineServer({ cwd: output, env: { HOME: output, USERPROFILE: output } });
+  const host = makeHost(output, "ready");
+  let server: StdioServer | undefined;
+  try {
+    server = await start();
+    const { run_id, action } = await driveToGate(server, host);
+    const args = { run_id, format: "define_handoff_v1" };
+    const before = await call(server, "get_pipeline_state", { run_id, format: "full" });
+    expect(before).toMatchObject({ state: {
+      pending_completion: { outcome: { status: "passed" }, verification: expect.any(Object) },
+      post_specs: { decision: "pending" },
+    } });
+    expect(action.options?.map(option => option.label)).toEqual(["PRD only", "Implement"]);
+    expect((await server.call("get_pipeline_state", { run_id, format: "define_handoff_v2" })).isError).toBe(true);
+    const ready = await call(server, "get_pipeline_state", args);
+    expect(ready).toMatchObject({
+      handoff: {
+        version: 1,
+        run_id,
+        requirements: [
+          { id: "FR-001", text: "Publish only the commit accepted by the local gate and CI." },
+          { id: "FR-002", text: "Stop before publication with `--until ci`." },
+          { id: "FR-003", text: expect.any(String) },
+        ],
+        acceptance: [
+          { id: "AC-001", requirement_ids: ["FR-001"] },
+          { id: "AC-002", requirement_ids: ["FR-002"] },
+          { id: "AC-003", requirement_ids: ["FR-003"] },
+        ],
+      },
+    });
+    expect(await call(server, "get_pipeline_state", args)).toEqual(ready);
+    expect(await call(server, "get_pipeline_state", { run_id, format: "full" })).toEqual(before);
+    await server.close();
+    server = await start();
+    expect(await call(server, "get_pipeline_state", args)).toEqual(ready);
+    expect(await call(server, "get_pipeline_state", { run_id, format: "action" })).toMatchObject({ action });
+  } finally {
+    await server?.close();
+    rmSync(output, { recursive: true, force: true });
+  }
+}, 120_000);
+
 it("reports quantity and publication contradictions through the MCP validator", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "prd-gen-define-verifier-"));
   let server: StdioServer | undefined;
   try {
-    server = await startStdioServer(undefined, { cwd: scratch, env: { HOME: scratch, USERPROFILE: scratch } });
+    server = await startDefineServer({ cwd: scratch, env: { HOME: scratch, USERPROFILE: scratch } });
     const verify = (active: StdioServer, overview: string, requirement: string) =>
       call<{ violations: { rule: string; message: string }[] }>(active, "validate_prd_document", { sections: [
         { type: "requirements", content: `- FR-001: ${requirement}` },
@@ -232,7 +299,7 @@ it.each([
   });
   let server: StdioServer | undefined;
   try {
-    server = await startStdioServer(undefined, { cwd: home, env: { HOME: home, USERPROFILE: home } });
+    server = await startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
     const recovered = await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" });
     expect(recovered.action).toMatchObject({
       kind: "ask_user",

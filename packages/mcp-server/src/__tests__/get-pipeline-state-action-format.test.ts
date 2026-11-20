@@ -11,7 +11,7 @@
  * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15).
  */
 import { describe, expect, it, beforeAll } from "vitest";
-import { newPipelineState } from "@prd-gen/orchestration";
+import { MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -124,4 +124,48 @@ describe("get_pipeline_state format:'action'", () => {
     const body = parse(res);
     expect(body.error).toContain("unknown run_id");
   });
+});
+
+it.each([false, true])("returns the full Define handoff or a budget refusal (oversize: %s)", async oversized => {
+  expect(descriptions.get("get_pipeline_state")).toEqual(expect.stringContaining("format:'define_handoff_v1'"));
+  const run_id = oversized ? "run_define_large" : "run_define_small";
+  const requirement = "Retain the verified receipt. ";
+  const text = oversized ? requirement.repeat(Math.ceil(MAX_RESPONSE_CHARS / requirement.length)) : requirement;
+  const sections = [
+    ["requirements", `- FR-001: ${text}`],
+    ["acceptance_criteria", "- AC-001: Verify the saved receipt (FR-001)."],
+    ["testing", "Replay AC-001."],
+  ] as const;
+  new RunFiles(RUNS_DIR).write({
+    ...newPipelineState({ run_id, feature_description: "Verify the saved receipt" }),
+    current_step: "implementation_gate",
+    sections: sections.map(([section_type, content]) => ({
+      section_type, content, status: "passed", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+    })),
+    pending_completion: {
+      summary: "Passed",
+      artifacts: [],
+      outcome: { status: "passed", reasons: [] },
+      verification: {
+        claims_evaluated: 2, distribution_suspicious: false, total_subjective_claims: 0,
+        distribution: { PASS: 2, FAIL: 0, INCONCLUSIVE: 0, "NEEDS-RUNTIME": 0, "SPEC-COMPLETE": 0 },
+        judge_verdicts: ["FR-001", "AC-001"].map(claim_id => ({
+          claim_id, judge: { kind: "genius", name: "dijkstra" }, verdict: "PASS",
+          confidence: 0.9, rationale: "Synthetic evidence.", caveats: [],
+        })),
+      },
+    },
+  }, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
+    description: "Decide", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
+  });
+  const response = await handlers.get("get_pipeline_state")!({ run_id, format: "define_handoff_v1" });
+  expect(response.isError).toBe(oversized);
+  if (oversized) {
+    expect(parse(response)).toEqual({
+      error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+    });
+  } else {
+    expect(parse(response)).toMatchObject({ handoff: { version: 1, run_id } });
+  }
 });

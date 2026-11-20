@@ -17,7 +17,9 @@
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  MAX_RESPONSE_CHARS,
   newPipelineState,
+  readDefineHandoff,
   refreshImplementationGateQuestion,
   runRequestSize,
   step,
@@ -451,11 +453,11 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
     "next_offset is the invocation_offset to read them from. It is " +
     "paged under the same budget: each page holds whole invocations from " +
     "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-    "page, null on the last one.",
+    "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint.",
     {
       run_id: z.string(),
       format: z
-        .enum(["full", "summary", "grounding", "validation", "action"])
+        .enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1"])
         .default("summary"),
       invocation_offset: z.number().int().min(0).default(0),
     },
@@ -464,6 +466,19 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       const found = runs.find(run_id);
       if (found.kind !== "found") return runNotFound(run_id, found);
       const state = found.run.state;
+      if (format === "define_handoff_v1") {
+        const result = readDefineHandoff(state, found.run.action);
+        const text = JSON.stringify(result);
+        if (text.length > MAX_RESPONSE_CHARS) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({
+              error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+            }) }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: "text" as const, text }], isError: "error" in result };
+      }
       let payload: unknown;
       if (format === "full") {
         // Bound the full-state serialization to the 100,000-char MCP budget.

@@ -40,6 +40,7 @@ interface RpcMessage {
 export interface StdioServerOptions {
   /** The entry point to start instead of the workspace build. */
   readonly entry?: string;
+  readonly args?: readonly string[];
   /** Variables removed from the server's environment. */
   readonly unset?: readonly string[];
   /** Variables set in the server's environment, after `unset`. */
@@ -64,7 +65,7 @@ export async function startStdioServer(
   const env: NodeJS.ProcessEnv = { ...process.env, PRD_GEN_EVIDENCE_DB: evidenceDbPath };
   for (const name of options.unset ?? []) delete env[name];
   Object.assign(env, options.env ?? {});
-  const child = spawn(process.execPath, [options.entry ?? ENTRY], {
+  const child = spawn(process.execPath, [options.entry ?? ENTRY, ...options.args ?? []], {
     env,
     cwd: options.cwd,
     stdio: ["pipe", "pipe", "pipe"],
