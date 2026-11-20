@@ -219,16 +219,15 @@ export function evaluateRunPolicy(state: PipelineState, findings = defineFinding
 /** Refresh a checkpoint saved under older validation rules before it can finalize. */
 export function refreshDefineOutcome(state: PipelineState, findings: ReturnType<typeof defineFindings>): PipelineState {
   const pending = state.pending_completion;
-  if (!pending || findings.length === 0) return state;
+  if (!pending) return state;
   const priorReasons = pending.outcome?.reasons ?? [];
   const added = findings.map(({ message }) => message).filter(message => !priorReasons.includes(message));
   if (added.length === 0) return state;
   const reasons = [...priorReasons, ...added];
   const report = validateDocument(documentSections(state.sections));
-  const summary = pending.summary
-    .replace(/^Self-check complete[^\n]*\n?/m, "")
-    .replace(/^Hard-output score: [^\n]*\n?/m, "")
-    .replace(/^Deterministic violations: [^\n]*\n?/m, "");
+  const recalculated = ["Self-check complete", "Hard-output score: ", "Deterministic violations: "];
+  const summary = pending.summary.split("\n").filter(line =>
+    !recalculated.some(prefix => line.startsWith(prefix))).join("\n");
   return {
     ...state,
     pending_completion: {

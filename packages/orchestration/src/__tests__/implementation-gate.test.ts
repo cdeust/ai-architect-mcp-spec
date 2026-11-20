@@ -250,6 +250,9 @@ it("refreshes only a stale implementation question with a current Define blocker
   const blocked = { ...seed, sections: [provided] };
   expect(refreshImplementationGateQuestion(seed, stale)).toBe(stale);
   expect(refreshImplementationGateQuestion(blocked, null)).toBeNull();
+  expect(refreshImplementationGateQuestion(blocked, { ...stale, options: null })).toMatchObject({
+    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+  });
   const other: NextAction = { ...stale, question_id: "other" };
   expect(refreshImplementationGateQuestion(blocked, other)).toBe(other);
   expect(refreshImplementationGateQuestion({ ...blocked, current_step: "self_check" }, stale)).toBe(stale);

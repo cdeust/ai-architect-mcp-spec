@@ -24,12 +24,15 @@ interface CapturingServer {
 }
 
 let handlers: Map<string, ToolHandler>;
+let descriptions: Map<string, unknown>;
 
 beforeAll(async () => {
   const { registerPipelineTools } = await import("../pipeline-tools.js");
   handlers = new Map();
+  descriptions = new Map();
   const server: CapturingServer = {
     tool(name, ...rest) {
+      descriptions.set(name, rest[0]);
       const handler = rest[rest.length - 1] as ToolHandler;
       handlers.set(name, handler);
     },
@@ -88,6 +91,9 @@ describe("get_pipeline_state format:'action'", () => {
   });
 
   it("serves the current implementation policy for a pending saved question", async () => {
+    expect(descriptions.get("get_pipeline_state")).toEqual(
+      expect.stringContaining("re-evaluating a pending implementation question"),
+    );
     const run_id = "run_legacy_gate";
     const state = newPipelineState({ run_id, feature_description: "Legacy saved specification" });
     new RunFiles(RUNS_DIR).write({

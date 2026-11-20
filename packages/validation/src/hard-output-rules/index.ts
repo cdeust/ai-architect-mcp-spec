@@ -331,7 +331,9 @@ function checkRule(
     case "measurable_requirements":
     case "testable_acceptance_criteria":
     case "contradictory_requirements":
+    // Stryker disable next-line StringLiteral: equivalent: rulesForSection never returns this document-only rule.
     case "missing_prd_definitions":
+    // Stryker disable next-line StringLiteral: equivalent: rulesForSection never returns this document-only rule.
     case "contradictory_publication_policy":
     case "consistent_control_names":
     case "post_generation_self_check":

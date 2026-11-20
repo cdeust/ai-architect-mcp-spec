@@ -70,7 +70,11 @@ describe("Define readiness", () => {
 
   it("ignores code examples and requires a conflict across sections", () => {
     expect(validateDefineReadiness([overview(`\`\`\`md\n${publish}\n\`\`\``), definition(stop)])).toEqual([]);
+    expect(validateDefineReadiness([overview(`## ${publish}`), definition(stop)])).toEqual([]);
     expect(validateDefineReadiness([overview(`${publish}\n\n${stop}`), overview("Other scope.")])).toEqual([]);
+    const manual = publish.replace(" automatically", "");
+    expect(validateDefineReadiness([overview(`${manual}\n\n${stop}`)])).toEqual([]);
+    expect(validateDefineReadiness([overview(`${publish}\n\n${stop.replace("commit.", "commit automatically.")}`)])).toEqual([]);
   });
 
   it("reports later cross-section conflicts even when the earlier section contains both polarities", () => {
@@ -102,5 +106,43 @@ describe("Define readiness", () => {
       overview(publish.replace("verified commit", "tag Release")),
       definition(stop.replace("verified commit", "tag release")),
     ])).toEqual([]);
+  });
+
+  it("keeps the first source and reports independent flag scopes", () => {
+    const sections = [
+      requirement(`- FR-007: ${publish}\n- FR-008: ${publish}\n- FR-009: ${publish.replace("--until ci", "--dry-run")}`),
+      overview(`${stop}\n\n${stop.replace("--until ci", "--dry-run").replace("stop after CI and never", "never")}`),
+    ];
+    expect(validateDefineReadiness(sections)).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('requirements/FR-007 says') }),
+      expect.objectContaining({ message: expect.stringContaining('requirements/FR-009 says') }),
+    ]);
+    const longValue = "publication-preview";
+    expect(validateDefineReadiness([
+      overview(publish.replace("--until ci", `--until ${longValue}`)),
+      definition(stop.replace("--until ci", `--until ${longValue}`)),
+    ])).toHaveLength(1);
+  });
+
+  it("does not find a directive embedded in an example or erase meaningful target text", () => {
+    expect(validateDefineReadiness([overview(`Example: ${publish}`), definition(stop)])).toEqual([]);
+    expect(validateDefineReadiness([overview(publish), definition(stop.replace("stop after CI and never", "documents when not to"))])).toEqual([]);
+    expect(validateDefineReadiness([overview(`${publish}\u2028Additional prose.`), definition(stop)])).toEqual([]);
+    expect(validateDefineReadiness([
+      overview(publish.replace("verified commit", "tag v1.2")),
+      definition(stop.replace("verified commit", "tag v12")),
+    ])).toEqual([]);
+    expect(validateDefineReadiness([
+      overview(publish.replace("verified commit automatically", "automatically named tag")),
+      definition(stop.replace("verified commit", "named tag")),
+    ])).toEqual([]);
+  });
+
+  it("supports continued paragraphs and definitions with explicit indentation", () => {
+    const prose = overview(`Delivery policy:\n   ${publish}  \nDetails follow.`);
+    const requirements = requirement(`- FR-011: Delivery rule.\n     ${stop}  \n  Stop this command.`);
+    expect(validateDefineReadiness([prose, requirements])).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('requirements/FR-011 says') }),
+    ]);
   });
 });

@@ -20,8 +20,8 @@ export function checkPrdDefinitions(sections: Sections): HardOutputRuleViolation
 // Recognize the pilot's explicit conditional publication grammar in prose.
 // The option, its value and the publication target must all match. Quantity
 // comparisons and general natural-language entailment are separate checks.
-const CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`,?[ \t]+(.+)$/i;
-const PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)$/i;
+const CONDITIONAL_POLICY = /^With `(--[a-z][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)?)`, (.+)$/i;
+const PUBLICATION = /^(?:(stop after CI and never |never ))?publish (the .+)/i;
 
 interface PublicationSource {
   readonly section: number;
@@ -31,7 +31,7 @@ interface PublicationSource {
 
 function* policyStatements(type: SectionType, content: string) {
   for (const { id, text } of requirementDefinitions(content)) {
-    const body = text.trim().replace(/^:(?:\*\*)?[ \t]*/, "");
+    const body = text.replace(/^:(?:\*\*)?/, "");
     for (const statement of body.split("\n")) yield { label: `${type}/${id}`, statement: statement.trim() };
   }
   for (const statement of proseLines(content)) yield { label: type, statement: statement.trim() };
@@ -44,12 +44,12 @@ function parsePublication(statement: string) {
   const publication = PUBLICATION.exec(instruction!.replace(/\.$/, ""));
   if (!publication) return;
   const [, prohibition, target] = publication;
-  const automatic = / automatically$/i.test(target!);
+  const object = target!.replace(/ automatically$/i, "");
   return {
     condition: condition!,
-    key: `${condition}\n${target!.replace(/ automatically$/i, "")}`,
+    key: `${condition}\n${object}`,
     direction: prohibition === undefined ? "publish" : "refuse",
-    automatic,
+    automatic: object !== target,
   } as const;
 }
 
@@ -73,7 +73,6 @@ export function checkPublicationPolicy(sections: Sections): HardOutputRuleViolat
   const reported = new Set<string>();
   const findings: HardOutputRuleViolation[] = [];
   for (const [section, { type, content }] of sections.entries()) {
-    if (!content.includes("`--")) continue;
     for (const { label, statement } of policyStatements(type, content)) {
       const publication = parsePublication(statement);
       if (!publication) continue;
