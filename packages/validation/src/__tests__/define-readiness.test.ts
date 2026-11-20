@@ -197,6 +197,14 @@ it("keeps Markdown and wrapped HTML quotes out of normative statements and proje
     '',
     'An inline code example: `</blockquote>`.',
     '',
+    '~~~html',
+    '</blockquote>',
+    '~~~',
+    '',
+    '<!--',
+    '</blockquote>',
+    '-->',
+    '',
     '<blockquote>',
     `- FR-002: ${publish}`,
     '</blockquote>',
@@ -250,6 +258,12 @@ it("retains normative text outside inline quotes and masks unclosed and nested q
 it("uses the plain inline-free parser for ordinary sections", () => {
   const parser = new MarkdownIt("commonmark").disable("inline");
   const parse = vi.spyOn(parser, "parse");
-  expect(parseWithoutHtmlQuotes(stop, parser)).toContainEqual(expect.objectContaining({ type: "inline", content: stop, children: [] }));
-  expect(parse).toHaveBeenCalledWith(stop, {});
+  const parseInline = vi.spyOn(MarkdownIt.prototype, "parseInline");
+  try {
+    expect(parseWithoutHtmlQuotes(stop, parser)).toContainEqual(expect.objectContaining({ type: "inline", content: stop, children: [] }));
+    expect(parse).toHaveBeenCalledWith(stop, {});
+    expect(parseInline).not.toHaveBeenCalled();
+  } finally {
+    parseInline.mockRestore();
+  }
 });

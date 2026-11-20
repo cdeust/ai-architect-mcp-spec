@@ -18,7 +18,6 @@ const BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
 export function parseWithoutHtmlQuotes(content: string, plainParser: MarkdownIt) {
   const env = {};
   const tokens = plainParser.parse(content, env);
-  // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent: omitting this fast path scans inline tokens that contain no opening quote and leaves their source unchanged.
   if (!content.toLowerCase().includes("<blockquote")) return tokens;
   let depth = 0;
   let markdownDepth = 0;
