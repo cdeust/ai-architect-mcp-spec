@@ -52314,7 +52314,7 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 // packages/validation/dist/define-handoff.js
 var ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
-var inline2 = new lib_default("commonmark", { html: true });
+var inline2 = new lib_default("commonmark");
 function hasVisibleProse(text2) {
   return inline2.parseInline(text2, {})[0].children.some((token) => token.type === "text" && hasDefineStatementText(token.content));
 }
