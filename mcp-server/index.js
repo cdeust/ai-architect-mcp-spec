@@ -47828,17 +47828,9 @@ var isHtmlComment = (content) => content.trimStart().startsWith("<!--");
 var RAW_TEXT_TAGS = ["pre", "script", "style", "textarea"];
 var COMMENT_ENDS = ["-->"];
 var RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name323) => `</${name323}>`);
-function opensBlockQuote(line) {
-  const opening = "<blockquote";
-  if (line.slice(0, opening.length).toLowerCase() !== opening)
-    return false;
-  return /^[ \t\/>]?$/.test(line.charAt(opening.length));
-}
-function opaqueEnds(line, excludeBlockQuotes) {
+function opaqueEnds(line) {
   if (line.startsWith("<!--"))
     return COMMENT_ENDS;
-  if (excludeBlockQuotes && opensBlockQuote(line))
-    return ["</blockquote>"];
   const head = line.slice(0, 10).toLowerCase();
   const opensRawText = RAW_TEXT_TAGS.some((name323) => {
     if (!head.startsWith(`<${name323}`))
@@ -47848,11 +47840,11 @@ function opaqueEnds(line, excludeBlockQuotes) {
   });
   return opensRawText ? RAW_TEXT_ENDS : null;
 }
-function opaqueHtmlBlock(state, startLine, endLine, silent, excludeBlockQuotes = false) {
+function opaqueHtmlBlock(state, startLine, endLine, silent) {
   if (state.sCount[startLine] - state.blkIndent >= 4)
     return false;
   const lineText = (line) => state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
-  const ends = opaqueEnds(lineText(startLine), excludeBlockQuotes);
+  const ends = opaqueEnds(lineText(startLine));
   if (ends === null)
     return false;
   if (silent)
@@ -47878,6 +47870,42 @@ function opaqueHtmlBlock(state, startLine, endLine, silent, excludeBlockQuotes =
   token.content = state.getLines(startLine, nextLine, state.blkIndent, true);
   return true;
 }
+var QUOTE_OPEN = /^<blockquote(?=[ \t/>])/i;
+var QUOTE_CLOSE = /^<\/blockquote[ \t]*>$/i;
+function skipHtmlBlockQuote(state, startLine, endLine, silent) {
+  if (state.sCount[startLine] - state.blkIndent >= 4)
+    return false;
+  const lineText = (line2) => state.src.slice(state.bMarks[line2] + state.tShift[line2], state.eMarks[line2]);
+  const first = lineText(startLine);
+  if (!QUOTE_OPEN.test(first))
+    return false;
+  if (silent)
+    return true;
+  let depth = 0;
+  let line = startLine;
+  for (; line < endLine; line++) {
+    if (state.sCount[line] < state.blkIndent && !state.isEmpty(line))
+      break;
+    const text2 = lineText(line);
+    let offset = text2.indexOf("<");
+    while (offset !== -1) {
+      const tag2 = HTML_TAG_RE.exec(text2.slice(offset))?.[0];
+      if (tag2 && QUOTE_OPEN.test(tag2))
+        depth++;
+      if (tag2 && QUOTE_CLOSE.test(tag2))
+        depth--;
+      offset = text2.indexOf("<", offset + (tag2?.length ?? 1));
+    }
+    if (depth <= 0) {
+      line++;
+      break;
+    }
+  }
+  state.line = line;
+  const token = state.push("ignored_blockquote", "", 0);
+  token.map = [startLine, line];
+  return true;
+}
 
 // packages/validation/dist/hard-output-rules/rules/requirement-definitions.js
 var NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -47885,8 +47913,12 @@ var METADATA_HEADER = /^(?:(?:[\p{L}]+[ \t]+)?ids?|depends[ \t]+on|dependenc(?:y
 var parser = new lib_default("commonmark").enable("table").disable("inline");
 var htmlAsText = new lib_default("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+var quoteAwareParser = new lib_default("commonmark").enable("table").disable("inline");
 var htmlOutsideQuotes = new lib_default("commonmark").enable("table").disable("inline");
-htmlOutsideQuotes.block.ruler.at("html_block", (state, start, end, silent) => opaqueHtmlBlock(state, start, end, silent, true), { alt: ["paragraph", "reference", "blockquote"] });
+htmlOutsideQuotes.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+for (const md of [quoteAwareParser, htmlOutsideQuotes]) {
+  md.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
+}
 var idsCache = /* @__PURE__ */ new Map();
 function definitionIds(prefixes) {
   const key = prefixes.join("|");
@@ -47945,7 +47977,7 @@ function leavesOf(content, md = parser, lineAt = (line) => line, rootEnd = Infin
     if (token.type === "table_open") {
       table2 = { map: at(token.map), rows: [], containerEnd: openEnd[top] };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser, excludeBlockQuotes);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top], md === parser || md === quoteAwareParser, excludeBlockQuotes);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i2 + 1]?.content ?? "", openEnd[top], opensItem));
@@ -48111,14 +48143,15 @@ function headingBody(leaves, at, ids) {
   return lines.join("\n");
 }
 function* proseLines(content, excludeBlockQuotes) {
-  for (const leaf of leavesOf(content, parser, void 0, void 0, excludeBlockQuotes)) {
+  for (const leaf of leavesOf(content, excludeBlockQuotes ? quoteAwareParser : parser, void 0, void 0, excludeBlockQuotes)) {
     if (leaf.type === "paragraph")
       yield* leaf.inline.split("\n");
   }
 }
 function requirementDefinitions(content, prefixes = REQUIREMENT_PREFIXES, options) {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content, parser, void 0, void 0, options?.excludeBlockQuotes);
+  const parserForDefinitions = options?.excludeBlockQuotes ? quoteAwareParser : parser;
+  const leaves = leavesOf(content, parserForDefinitions, void 0, void 0, options?.excludeBlockQuotes);
   const out = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {

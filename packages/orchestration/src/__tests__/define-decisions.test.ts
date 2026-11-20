@@ -97,3 +97,12 @@ it("validates explicit register citations for a supported table policy and accep
     { ...unrelated[0]!, content: unrelated[0]!.content.replace("clarification:99:99", "clarification:99:1") },
   ])).toEqual([]);
 });
+
+it("ignores every paragraph of a nested HTML quotation and resumes reading after the outer close", () => {
+  const source = `<blockquote cite="https://example.com/prior">\n\n<blockquote>${AUTO}</blockquote>\n\n${AUTO}\n\n</blockquote>\n\n${STOP}`;
+  const current = state(source);
+  const { byTarget, conflicts } = deriveDefineDecisions(current);
+  expect(conflicts.size).toBe(0);
+  expect([...byTarget.values()]).toEqual([[expect.objectContaining({ direction: "refuse", sources: ["user-request"] })]]);
+  expect(findDefineDecisionConflicts(current, [{ type: "overview", content: source }])).toEqual([]);
+});

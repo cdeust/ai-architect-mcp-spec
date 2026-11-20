@@ -27,7 +27,7 @@
 // source: issue #118.
 
 import MarkdownIt from "markdown-it";
-import { isHtmlComment, opaqueHtmlBlock } from "./requirement-html.js";
+import { isHtmlComment, opaqueHtmlBlock, skipHtmlBlockQuote } from "./requirement-html.js";
 
 /** An ordered list marker that opens a statement right after its identifier. */
 const NUMBERED_STATEMENT = /^[ \t]*\d{1,9}[.)](?=[ \t]+\S)/;
@@ -74,9 +74,12 @@ const parser = new MarkdownIt("commonmark").enable("table").disable("inline");
 const htmlAsText = new MarkdownIt("commonmark").enable("table").disable("inline");
 htmlAsText.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
 
+const quoteAwareParser = new MarkdownIt("commonmark").enable("table").disable("inline");
 const htmlOutsideQuotes = new MarkdownIt("commonmark").enable("table").disable("inline");
-htmlOutsideQuotes.block.ruler.at("html_block", (state, start, end, silent) =>
-  opaqueHtmlBlock(state, start, end, silent, true), { alt: ["paragraph", "reference", "blockquote"] });
+htmlOutsideQuotes.block.ruler.at("html_block", opaqueHtmlBlock, { alt: ["paragraph", "reference", "blockquote"] });
+for (const md of [quoteAwareParser, htmlOutsideQuotes]) {
+  md.block.ruler.before("html_block", "ignored_blockquote", skipHtmlBlockQuote, { alt: ["paragraph", "reference", "blockquote"] });
+}
 
 /**
  * The identifiers a reader of definitions looks for, as three patterns over
@@ -181,7 +184,7 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser, excludeBlockQuotes);
+      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser || md === quoteAwareParser, excludeBlockQuotes);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -453,7 +456,7 @@ function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): s
 
 /** Raw paragraph lines, excluding fenced and indented code blocks. */
 export function* proseLines(content: string, excludeBlockQuotes?: boolean): Generator<string> {
-  for (const leaf of leavesOf(content, parser, undefined, undefined, excludeBlockQuotes)) {
+  for (const leaf of leavesOf(content, excludeBlockQuotes ? quoteAwareParser : parser, undefined, undefined, excludeBlockQuotes)) {
     if (leaf.type === "paragraph") yield* leaf.inline.split("\n");
   }
 }
@@ -470,7 +473,8 @@ export function requirementDefinitions(
   options?: { readonly sourceHeader?: RegExp; readonly excludeBlockQuotes?: boolean },
 ): RequirementDefinition[] {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content, parser, undefined, undefined, options?.excludeBlockQuotes);
+  const parserForDefinitions = options?.excludeBlockQuotes ? quoteAwareParser : parser;
+  const leaves = leavesOf(content, parserForDefinitions, undefined, undefined, options?.excludeBlockQuotes);
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {

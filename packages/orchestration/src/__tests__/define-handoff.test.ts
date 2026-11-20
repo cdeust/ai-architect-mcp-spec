@@ -177,6 +177,22 @@ it("does not offer quoted requirements as planning input and detaches table sour
   expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
     error: { code: "define_document_invalid" },
   });
+  checkpoint.sections[0]!.content = [
+    '<blockquote>',
+    '',
+    '<blockquote>',
+    '- FR-002: An older version published automatically.',
+    '</blockquote>',
+    '',
+    '- FR-003: A rejected design published automatically.',
+    '',
+    '</blockquote>',
+    '',
+    '- FR-001: Verify the saved commit.',
+  ].join("\n");
+  expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
+    handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },
+  });
   checkpoint.sections[0]!.content = "| ID | Requirement | Source |\n| --- | --- | --- |\n| FR-001 | Verify the saved commit. | user-request |";
   expect(readDefineHandoff(checkpoint, pending)).toMatchObject({
     handoff: { requirements: [{ id: "FR-001", text: "Verify the saved commit." }] },

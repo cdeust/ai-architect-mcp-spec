@@ -11,6 +11,7 @@
 //
 // source: issue #118.
 
+import { HTML_TAG_RE } from "markdown-it/lib/common/html_re.mjs";
 import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 
 /**
@@ -34,12 +35,6 @@ const COMMENT_ENDS = ["-->"] as const;
  */
 const RAW_TEXT_ENDS = RAW_TEXT_TAGS.map((name) => `</${name}>`);
 
-function opensBlockQuote(line: string): boolean {
-  const opening = "<blockquote";
-  if (line.slice(0, opening.length).toLowerCase() !== opening) return false;
-  return /^[ \t\/>]?$/.test(line.charAt(opening.length));
-}
-
 /**
  * What may close the opaque block a line opens, or null: `-->` for a comment
  * (start condition 2: `<!--`), any raw-text end tag for a raw-text block
@@ -48,9 +43,8 @@ function opensBlockQuote(line: string): boolean {
  * markdown, so, like a code block, it defines nothing (PR #302 review,
  * note 1). Plain prefix tests, with no pattern.
  */
-function opaqueEnds(line: string, excludeBlockQuotes: boolean): readonly string[] | null {
+function opaqueEnds(line: string): readonly string[] | null {
   if (line.startsWith("<!--")) return COMMENT_ENDS;
-  if (excludeBlockQuotes && opensBlockQuote(line)) return ["</blockquote>"];
   const head = line.slice(0, 10).toLowerCase();
   const opensRawText = RAW_TEXT_TAGS.some((name) => {
     if (!head.startsWith(`<${name}`)) return false;
@@ -90,10 +84,10 @@ function opaqueEnds(line: string, excludeBlockQuotes: boolean): readonly string[
  * review, Codex P2 and note 1), and a comment inside a list item stays in
  * that item (PR #305 review, Codex P2 and note 2).
  */
-export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean, excludeBlockQuotes = false): boolean {
+export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
   if (state.sCount[startLine]! - state.blkIndent >= 4) return false;
   const lineText = (line: number): string => state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]!);
-  const ends = opaqueEnds(lineText(startLine), excludeBlockQuotes);
+  const ends = opaqueEnds(lineText(startLine));
   if (ends === null) return false;
   if (silent) return true;
   const closes = (line: number): boolean => {
@@ -114,5 +108,42 @@ export function opaqueHtmlBlock(state: StateBlock, startLine: number, endLine: n
   const token = state.push("html_block", "", 0);
   token.map = [startLine, nextLine];
   token.content = state.getLines(startLine, nextLine, state.blkIndent, true);
+  return true;
+}
+
+
+// HTML block type 6 ends at a blank line (CommonMark §4.6). For Define, consume
+// the complete block quotation before that rule can expose its inner Markdown.
+// The tag lexer is markdown-it's CommonMark §6.6 recognizer.
+const QUOTE_OPEN = /^<blockquote(?=[ \t/>])/i;
+const QUOTE_CLOSE = /^<\/blockquote[ \t]*>$/i;
+
+export function skipHtmlBlockQuote(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
+  if (state.sCount[startLine]! - state.blkIndent >= 4) return false;
+  const lineText = (line: number): string => state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]!);
+  const first = lineText(startLine);
+  if (!QUOTE_OPEN.test(first)) return false;
+  if (silent) return true;
+
+  let depth = 0;
+  let line = startLine;
+  for (; line < endLine; line++) {
+    if (state.sCount[line]! < state.blkIndent && !state.isEmpty(line)) break;
+    const text = lineText(line);
+    let offset = text.indexOf("<");
+    while (offset !== -1) {
+      const tag = HTML_TAG_RE.exec(text.slice(offset))?.[0];
+      if (tag && QUOTE_OPEN.test(tag)) depth++;
+      if (tag && QUOTE_CLOSE.test(tag)) depth--;
+      offset = text.indexOf("<", offset + (tag?.length ?? 1));
+    }
+    if (depth <= 0) {
+      line++;
+      break;
+    }
+  }
+  state.line = line;
+  const token = state.push("ignored_blockquote", "", 0);
+  token.map = [startLine, line];
   return true;
 }
