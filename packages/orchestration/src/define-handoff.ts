@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { DefineHandoffV1Schema, isBlockingViolation, type DefineHandoffV1 } from "@prd-gen/core";
 import { projectDefineDocument, validateDocument } from "@prd-gen/validation";
 import { evaluatePolicy, GATE_OPTION_IMPLEMENT, resolveVerificationPolicy } from "./handlers/verification-policy.js";
@@ -25,8 +26,7 @@ export function readDefineHandoff(state: PipelineState, action: NextAction | nul
   const sections = documentSections(state.sections);
   const parsed = DefineHandoffV1Schema.safeParse({ version: 1, run_id: state.run_id, ...projectDefineDocument(sections) });
   if (!parsed.success) {
-    return refusal("define_document_invalid", parsed.error.issues.map(issue =>
-      issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message).join(" "));
+    return refusal("define_document_invalid", z.prettifyError(parsed.error));
   }
 
   const failure = validateDocument(sections).violations.find(isBlockingViolation);

@@ -46,6 +46,8 @@ it("projects without mutating the saved checkpoint or granting execution control
     },
   });
   expect(state).toEqual(prior);
+  expect(readDefineHandoff({ ...state, post_specs: initialPostSpecs() }, pending))
+    .toEqual(readDefineHandoff(state, pending));
 });
 
 it("requires the saved implementation question and an undecided gate", () => {
@@ -58,7 +60,9 @@ it("requires the saved implementation question and an undecided gate", () => {
     [{ ...source, post_specs: { ...initialPostSpecs(), decision: "implement" } }, pending],
     [{ ...source, post_specs: { ...initialPostSpecs(), decision: "prd_only" } }, pending],
   ] satisfies Array<[PipelineState, NextAction | null]>) {
-    expect(readDefineHandoff(state, action)).toMatchObject({ error: { code: "define_not_pending" } });
+    expect(readDefineHandoff(state, action)).toEqual({
+      error: { code: "define_not_pending", message: "Define requires a pending implementation decision." },
+    });
   }
 });
 
@@ -75,10 +79,15 @@ it("never infers readiness from old or incomplete evidence or an override questi
     [{ ...state, pending_completion: { ...completion, outcome: { status: "needs_attention", reasons: ["Failed"] } } }, pending],
     [{ ...state, pending_completion: { ...completion, verification: undefined } }, pending],
     [failed, pending],
-    [state, override],
-    [state, { ...pending, options: null }],
   ] satisfies Array<[PipelineState, NextAction]>) {
-    expect(readDefineHandoff(input, action)).toMatchObject({ error: { code: "define_not_ready" } });
+    expect(readDefineHandoff(input, action)).toEqual({
+      error: { code: "define_not_ready", message: "Define requires passed PRD sections, a passed self-check and detailed verification evidence." },
+    });
+  }
+  for (const action of [override, { ...pending, options: null }]) {
+    expect(readDefineHandoff(state, action)).toEqual({
+      error: { code: "define_not_ready", message: "The pending question does not offer ordinary implementation." },
+    });
   }
 });
 
@@ -125,5 +134,13 @@ it("cannot project a required section that never existed", () => {
   source.sections = source.sections.filter(section => section.section_type !== "acceptance_criteria");
   expect(readDefineHandoff(source, pending)).toMatchObject({
     error: { code: "define_document_invalid", message: expect.stringContaining("acceptance") },
+  });
+});
+
+it("returns contract-level issues for present definitions with bad references", () => {
+  const source = ready();
+  source.sections[1]!.content = "- AC-001: Confirm the receipt (FR-002).";
+  expect(readDefineHandoff(source, pending)).toMatchObject({
+    error: { code: "define_document_invalid", message: expect.stringContaining("AC-001 references unknown requirement FR-002.") },
   });
 });

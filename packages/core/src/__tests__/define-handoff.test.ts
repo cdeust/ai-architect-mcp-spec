@@ -54,6 +54,14 @@ it("accepts both identifier lengths supported by the document parser", () => {
   expect(DefineHandoffV1Schema.parse(payload)).toEqual(payload);
 });
 
+it.each(["OLD-FR-001", "FR-001-extra"])("rejects a mirrored malformed requirement ID %s", id => {
+  expect(DefineHandoffV1Schema.safeParse({
+    ...handoff,
+    requirements: [{ ...requirement, id }],
+    acceptance: [{ ...criterion, requirement_ids: [id] }],
+  }).success).toBe(false);
+});
+
 it.each([
   [{ requirements: [requirement, requirement] }, "Define identifiers must be unique."],
   [{ acceptance: [criterion, criterion] }, "Define identifiers must be unique."],

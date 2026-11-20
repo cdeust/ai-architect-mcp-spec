@@ -1,4 +1,4 @@
-import type { DefineHandoffV1, SectionType } from "@prd-gen/core";
+import { hasDefineStatementText, type DefineHandoffV1, type SectionType } from "@prd-gen/core";
 import MarkdownIt from "markdown-it";
 import { requirementDefinitions } from "./hard-output-rules/rules/requirement-definitions.js";
 
@@ -11,8 +11,9 @@ const ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|N
 const inline = new MarkdownIt("commonmark", { html: true });
 
 function hasVisibleProse(text: string): boolean {
-  return inline.parseInline(text, {})[0]?.children?.some(token =>
-    token.type === "text" && /[\p{L}\p{N}]/u.test(token.content)) ?? false;
+  // parseInline's block rule creates exactly one inline token with children.
+  return inline.parseInline(text, {})[0]!.children!.some(token =>
+    token.type === "text" && hasDefineStatementText(token.content));
 }
 
 /** Reuse the CommonMark definition parser used by the document rules. */
@@ -24,10 +25,13 @@ export function projectDefineDocument(sections: Sections): Pick<DefineHandoffV1,
 
   return {
     requirements: definitions("requirements").map(({ id, text }) => ({ id, text: hasVisibleProse(text) ? text : "" })),
-    acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text }) => ({
-      id,
-      text: hasVisibleProse(text.replace(ACCEPTANCE_REFERENCES, "")) ? text : "",
-      requirement_ids: ACCEPTANCE_REFERENCES.exec(text)?.[1]?.split(",").map(id => id.trim()) ?? [],
-    })),
+    acceptance: definitions("acceptance_criteria", ["AC"]).map(({ id, text }) => {
+      const references = ACCEPTANCE_REFERENCES.exec(text);
+      return {
+        id,
+        text: hasVisibleProse(text.replace(ACCEPTANCE_REFERENCES, "")) ? text : "",
+        requirement_ids: references ? references[1]!.split(",").map(id => id.trim()) : [],
+      };
+    }),
   };
 }

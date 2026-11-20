@@ -49,22 +49,23 @@ it.each([
 });
 
 it("returns explicit duplicates so the v1 schema can reject them", () => {
-  expect(projectDefineDocument([{ type: "acceptance_criteria", content: "- AC-001: Record it (FR-1,FR-1)" }])
+  expect(projectDefineDocument([{ type: "acceptance_criteria", content: "- AC-001: Record it (FR-1\t,FR-1)" }])
     .acceptance[0]?.requirement_ids).toEqual(["FR-1", "FR-1"]);
 });
 
 it("requires visible prose in every definition, outside links, examples and comments", () => {
   const document = projectDefineDocument([
-    { type: "requirements", content: "- FR-001: Keep the record.\n- FR-002: ...\n- FR-003: <!-- Invisible -->" },
-    { type: "acceptance_criteria", content: "- AC-001: (FR-001).\n- AC-002: ... (FR-002).\n- AC-003: `example` (FR-003)." },
+    { type: "requirements", content: "- FR-001: Keep the record.\n- FR-002: ...\n- FR-003: FR-002 <!-- Invisible -->" },
+    { type: "acceptance_criteria", content: "- AC-001: (FR-001).\n- AC-002: ... (FR-002).\n- AC-003: FR-003 <!-- placeholder --> (FR-003).\n- AC-004: `example` (FR-003)." },
   ]);
   expect(document.requirements).toEqual([
     { id: "FR-001", text: "Keep the record." }, { id: "FR-002", text: "" }, { id: "FR-003", text: "" },
   ]);
   expect(document.acceptance).toEqual([
-    { id: "AC-001", text: "(FR-001).", requirement_ids: [] },
+    { id: "AC-001", text: "", requirement_ids: [] },
     { id: "AC-002", text: "", requirement_ids: ["FR-002"] },
     { id: "AC-003", text: "", requirement_ids: ["FR-003"] },
+    { id: "AC-004", text: "", requirement_ids: ["FR-003"] },
   ]);
 });
 

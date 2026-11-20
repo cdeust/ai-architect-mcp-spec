@@ -2,9 +2,11 @@ import { z } from "zod";
 
 const RequirementId = z.string().regex(/^(?:FR|NFR)-\d{1,9}$/);
 const AcceptanceId = z.string().regex(/^AC-\d{1,9}$/);
-const Statement = z.string().refine(text => /[\p{L}\p{N}]/u.test(
-  text.replace(/(?<![\w-])(?:FR|NFR)-\d{1,9}(?![\w-])/g, ""),
-));
+export function hasDefineStatementText(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(text.replace(/(?<![\w-])(?:FR|NFR)-\d{1,9}(?![\w-])/g, ""));
+}
+
+const Statement = z.string().refine(hasDefineStatementText);
 
 /** Closed, data-only contract at the Define boundary. */
 export const DefineHandoffV1Schema = z.strictObject({
