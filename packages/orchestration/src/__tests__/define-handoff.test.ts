@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { initialPostSpecs, newPipelineState, readDefineHandoff, type NextAction, type PipelineState } from "../index.js";
 
+import { evaluateRunPolicy } from "../handlers/verification-policy.js";
+
 const run_id = "run_define_v1";
 const pending: NextAction = {
   kind: "ask_user", question_id: "implementation_gate", header: "Proceed?",
@@ -143,4 +145,19 @@ it("returns contract-level issues for present definitions with bad references", 
   expect(readDefineHandoff(source, pending)).toMatchObject({
     error: { code: "define_document_invalid", message: expect.stringContaining("AC-001 references unknown requirement FR-002.") },
   });
+});
+
+it("blocks a stale passed gate when an otherwise valid acceptance policy contradicts a saved decision", () => {
+  const state = ready();
+  state.feature_description = "With `--until ci`, never publish the verified commit.";
+  const draft = "With `--until ci`, publish the verified commit automatically (FR-001).";
+  state.sections[1]!.content = `- AC-001: ${draft}`;
+  const finding = `acceptance_criteria/AC-001 says "${draft}", opposing the user publication decision from user-request.`;
+  expect(readDefineHandoff(state, pending)).toEqual({
+    error: { code: "define_document_invalid", message: `sourced_publication_policy: ${finding}` },
+  });
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "blocked", reasons: [finding] });
+  state.sections[1]!.content = state.sections[1]!.content!.replace("verified commit", "verification report");
+  expect(readDefineHandoff(state, pending)).toHaveProperty("handoff.version", 1);
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "pass", reasons: [] });
 });

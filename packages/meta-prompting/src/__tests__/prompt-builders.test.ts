@@ -228,6 +228,23 @@ describe("buildSectionPrompt", () => {
     expect(out).not.toContain("Pending Q?");
   });
 
+  it("uses the shared decision register once in place of the older Q&A block", () => {
+    const register = "<decision_register>Recorded evidence.</decision_register>";
+    const out = buildSectionPrompt({
+      section_type: "requirements",
+      feature_description: "x",
+      prd_context: "feature",
+      recall_summary: "",
+      clarification_qa: [{ question: "Old question", answer: "Old answer" }],
+      decision_register: register,
+      prior_violations: [],
+      attempt: 1,
+    });
+    expect(out.split(register)).toHaveLength(2);
+    expect(out).not.toContain("<clarifications>");
+    expect(out).not.toContain("Old answer");
+  });
+
   it("on attempt > 1, embeds prior_violations in a previous_attempt_failed block", () => {
     const out = buildSectionPrompt({
       section_type: "requirements",

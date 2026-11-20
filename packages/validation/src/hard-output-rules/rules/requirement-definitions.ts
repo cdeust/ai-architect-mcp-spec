@@ -51,6 +51,7 @@ export interface RequirementDefinition {
    * them as structure.
    */
   readonly text: string;
+  readonly source?: string;
 }
 
 /**
@@ -109,6 +110,9 @@ function definitionIds(prefixes: readonly string[]): DefinitionIds {
 /** Requirement identifiers: the default of `requirementDefinitions`. */
 const REQUIREMENT_PREFIXES = ["FR", "NFR"] as const;
 
+// Final parenthesized list after whitespace, shared with the Define v1 projection.
+export const ACCEPTANCE_REFERENCES = /[ \t]\(((?:FR|NFR)-\d{1,9}(?:[ \t]*,[ \t]*(?:FR|NFR)-\d{1,9})*)\)\.?$/;
+
 /** A leaf block a definition's text is read from: a paragraph, a heading or a table. */
 interface Leaf {
   readonly type: "paragraph" | "heading" | "table";
@@ -134,7 +138,7 @@ interface Leaf {
  * primitives: on a long section of nested lists, an object per token made
  * the growth allocation-bound, near the perf ceiling.
  */
-function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity): Leaf[] {
+function leavesOf(content: string, md = parser, lineAt = (line: number): number => line, rootEnd = Infinity, excludeQuotedAndHtmlBlocks?: boolean): Leaf[] {
   const tokens = md.parse(content, {});
   const leaves: Leaf[] = [];
   const at = (map: [number, number] | null): [number, number] => {
@@ -159,10 +163,16 @@ function leavesOf(content: string, md = parser, lineAt = (line: number): number 
       }
       continue;
     }
+    if (token.type === "blockquote_open" && excludeQuotedAndHtmlBlocks) {
+      // The closing token is at the same level as the opener.
+      while (tokens[i + 1]!.level > token.level) i++;
+      i++;
+      continue;
+    }
     if (token.type === "table_open") {
       table = { map: at(token.map), rows: [], containerEnd: openEnd[top]! };
     } else if (token.type === "html_block") {
-      addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser);
+      if (!excludeQuotedAndHtmlBlocks) addHtmlBlock(leaves, token.content, at(token.map), openEnd[top]!, md === parser);
     } else if (token.type === "paragraph_open" || token.type === "heading_open") {
       const opensItem = token.type === "paragraph_open" && openType[top] === "list_item_open" && !openFilled[top];
       leaves.push(textLeaf(token.type, at(token.map), tokens[i + 1]?.content ?? "", openEnd[top]!, opensItem));
@@ -276,11 +286,13 @@ function tableBodyText(table: Leaf, end = table.rows.length): string {
 const rowId = (cells: readonly string[], ids: DefinitionIds): string | undefined => ids.cell.exec(cells[0] ?? "")?.[1];
 
 /** The requirement rows of a table: a row whose first cell is one identifier; its statement is the other cells less the metadata columns. */
-function tableDefinitions(table: Leaf, ids: DefinitionIds): RequirementDefinition[] {
+function tableDefinitions(table: Leaf, ids: DefinitionIds, sourceHeader?: RegExp): RequirementDefinition[] {
   const rows = table.rows;
   const [header] = rows;
   if (header === undefined) return [];
-  const metadata = metadataColumns(cellTexts(header));
+  const headers = cellTexts(header);
+  const metadata = metadataColumns(headers);
+  const sourceIndex = sourceHeader ? headers.findIndex(cell => sourceHeader.test(cell)) : -1;
   const out: RequirementDefinition[] = [];
   rows.forEach((row, r) => {
     const cells = cellTexts(row);
@@ -289,11 +301,12 @@ function tableDefinitions(table: Leaf, ids: DefinitionIds): RequirementDefinitio
     // The header row is a definition only when its first cell is one; it
     // names no metadata column for itself.
     const skip = r === 0 ? new Set<number>() : metadata;
+    const traceColumn = r === 0 ? -1 : sourceIndex;
     const text = cells
       .slice(1)
-      .filter((_, i) => !skip.has(i + 1))
+      .filter((_, i) => !skip.has(i + 1) && i + 1 !== traceColumn)
       .join(" | ");
-    out.push({ id, text });
+    out.push(traceColumn < 0 ? { id, text } : { id, text, source: cells[traceColumn] });
   });
   return out;
 }
@@ -430,8 +443,8 @@ function headingBody(leaves: readonly Leaf[], at: number, ids: DefinitionIds): s
 }
 
 /** Raw paragraph lines, excluding fenced and indented code blocks. */
-export function* proseLines(content: string): Generator<string> {
-  for (const leaf of leavesOf(content)) {
+export function* proseLines(content: string, excludeQuotedAndHtmlBlocks?: boolean): Generator<string> {
+  for (const leaf of leavesOf(content, parser, undefined, undefined, excludeQuotedAndHtmlBlocks)) {
     if (leaf.type === "paragraph") yield* leaf.inline.split("\n");
   }
 }
@@ -445,13 +458,14 @@ export function* proseLines(content: string): Generator<string> {
 export function requirementDefinitions(
   content: string,
   prefixes: readonly string[] = REQUIREMENT_PREFIXES,
+  options?: { readonly sourceHeader?: RegExp; readonly excludeQuotedAndHtmlBlocks?: boolean },
 ): RequirementDefinition[] {
   const ids = definitionIds(prefixes);
-  const leaves = leavesOf(content);
+  const leaves = leavesOf(content, parser, undefined, undefined, options?.excludeQuotedAndHtmlBlocks);
   const out: RequirementDefinition[] = [];
   leaves.forEach((leaf, at) => {
     if (leaf.type === "table") {
-      out.push(...tableDefinitions(leaf, ids));
+      out.push(...tableDefinitions(leaf, ids, options?.sourceHeader));
       return;
     }
     if (leaf.type === "heading") {

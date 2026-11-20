@@ -1,3 +1,4 @@
+import { findDefineDecisionConflicts } from "./define-decisions.js";
 import { z } from "zod";
 import { DefineHandoffV1Schema, isBlockingViolation, type DefineHandoffV1 } from "@prd-gen/core";
 import { projectDefineDocument, validateDocument } from "@prd-gen/validation";
@@ -32,6 +33,10 @@ export function readDefineHandoff(state: PipelineState, action: NextAction | nul
   const failure = validateDocument(sections).violations.find(isBlockingViolation);
   if (failure) {
     return refusal("define_document_invalid", `${failure.rule}: ${failure.message}`);
+  }
+  const dispute = findDefineDecisionConflicts(state, sections)[0];
+  if (dispute) {
+    return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
   }
   const completion = state.pending_completion;
   const verification = completion?.verification;
