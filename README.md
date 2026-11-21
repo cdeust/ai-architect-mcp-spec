@@ -40,7 +40,22 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 ![Spec analyses and verifies the PRD, using the codebase graph when provided, then hands a verified one-Step plan to architect-os for owner approval, build, tests and delivery. Next, evidence per criterion returns from the delivered commit to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
 
-**Ready** marks capabilities available on each repository’s `main`. With `codebase_path`, Spec uses the graph for analysis and checks the PRD against it at self-check. The graph findings are advisory. The host transfers the Define and proposal files, then invokes architect-os commands separately. A measured replay from the approved plan through delivery remains **next**, along with acceptance evidence on the delivered commit and Spec’s conformity review. [Spec pipeline](#the-pipeline) · [Codebase MCP](https://github.com/cdeust/ai-architect-mcp-codebase) · [Architect-os Plan](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/docs/plan.md) · [Architect-os delivery](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/tools/deliver/src/application/deliver.ts)
+**Ready** marks capabilities available on each repository’s `main`. With `codebase_path`, Spec uses the graph for analysis and runs an advisory check of the PRD against it. The host transfers Define and the verified one-Step proposal to architect-os, which prepares the execution manifest, verifies operator approval, and owns implementation, checks, and delivery. For the canonical verified plan, Spec can already prepare a read-only dossier bound to the approved plan, with the diff between the recorded Git revisions. [Spec pipeline](#the-pipeline) · [Codebase MCP](https://github.com/cdeust/ai-architect-mcp-codebase) · [Architect OS Plan](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/docs/plan.md) · [Spec review dossier](https://github.com/cdeust/ai-architect-mcp-spec/pull/385)
+
+**Next** is the measured replay from approval through Step and Deliver back to Spec. Architect OS must return the delivered revision and observed results for each acceptance criterion. The current dossier marks every criterion `evidence_required`. Conformity review needs a result tied to the reviewed revision. Review of an externally drafted proposal also needs a handoff that binds the exact approved proposal bytes. [Architect OS Deliver](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/tools/deliver/src/application/deliver.ts) · [Review interface](#the-pipeline)
+
+#### Reference model setup for trials
+
+Choose the model for each role on the host. Review the Plan before operator approval and implementation, then review the delivered code against the approved Plan.
+
+| Role | Reference choices |
+| --- | --- |
+| Plan orchestration | Astra 6.2 or Fable 5.2 |
+| Implementation | Opus 5.5 or Sol 6.2 |
+| Plan review before implementation | Gemini Argon |
+| Code review after implementation | Fable 5.2 or Astra 6.2 |
+
+This is a proposed configuration for trials. The first integration replay uses the canonical plan offline. Compare later model runs on the same case before changing the reference choices. For Gemini Argon, use the personal Antigravity subscription with **Use AI Credits** set to **Off**. Pause the run if the included quota runs out. Do not fall back to a paid API for these trials. [Antigravity CLI credits](https://antigravity.google/docs/cli/credits/)
 
 ### What you get
 
