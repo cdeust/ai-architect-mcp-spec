@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  <strong>Catch a hallucinated spec before it becomes code.</strong><br>
-  Its structural checks — every acceptance criterion traces to a requirement, no performance claim passes without a measurement — run deterministically, with no model in the loop. Given the symbols of your code graph, it reports the inline-code symbols of the spec that none of them resolve.<br>
+  <strong>Check your specification before it becomes code.</strong><br>
+  Deterministic checks find structural defects, including broken requirement links and performance sections whose only verdicts are PASS. Supply a codebase symbol catalog to receive advisory findings for unmatched inline-code references.<br>
   <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
 </p>
 
@@ -32,7 +32,7 @@
 
 ---
 
-Every AI agent that drafts a PRD eventually invents a function that doesn't exist, claims latency it can't measure, or writes acceptance criteria that don't tie back to the requirements they're supposed to test. The output sounds confident. It is not actionable. The next stage in the pipeline — code generation, ticket import, sprint planning — silently inherits the hallucination, ships it, and pays for it later.
+A PRD can name a function that does not exist, assert a latency limit without evidence, or lose the links between requirements and acceptance criteria. These defects can carry into code generation, ticket import, and sprint planning. Check the document and its code references before handing it to the implementation team.
 
 **AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
 
@@ -61,7 +61,7 @@ This is a proposed configuration for trials. The first integration replay uses t
 
 - **A spec checked against your code.** With a codebase (`codebase_path`), self-check sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report. That check is advisory: it does not block the run.
 - **Traceability that is actually checked.** Every acceptance criterion must tie back to a requirement; numbering gaps are caught, not assumed away.
-- **No PASS without a measurement.** The verdict taxonomy *refuses* to pass a latency, throughput, fps or storage claim — it returns SPEC-COMPLETE or NEEDS-RUNTIME instead of a confident guess.
+- **Performance verdict checks.** When the validator recognizes a performance target, it flags a verification section with one or more verdicts that all say PASS. An observed measurement belongs in runtime verification. [Verdict regression tests](packages/validation/src/__tests__/quality-rules.test.ts)
 - **A guard against agreeable judges.** A panel that agrees 100% of the time over 5+ claims raises `distribution_suspicious` rather than being read as consensus.
 - **It works where you work.** The deterministic verifier travels to Codex, Gemini CLI, Claude Code and CI; the full generation pipeline runs on hosts that can execute its orchestration actions.
 
@@ -609,11 +609,13 @@ A cross-audit found and fixed two layer violations:
 |---|---|
 | **Section drift between turns** | Single immutable `PipelineState` snapshot per step; reducer is pure; host can replay any step |
 | **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list. With a codebase graph (`codebase_path`), self-check also sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report, advisory (#118) |
-| **NFRs claiming PASS without measurement** | Verdict taxonomy refuses PASS for latency/throughput/fps/storage; consensus engine forwards SPEC-COMPLETE / NEEDS-RUNTIME |
+| **Performance sections with only PASS verdicts** | The deterministic validator flags all-PASS verdicts on recognized performance targets, including a single PASS. Runtime verification establishes the measured result. |
 | **Confirmatory bias (every judge says PASS)** | `distribution_suspicious` flag fires at 100% PASS over ≥5 claims; surfaced in typed `done.verification.distribution_suspicious` |
 | **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
 | **Tests claiming "comprehensive" without listing what they cover** | Test-traceability rule: every section's claimed test must reference an FR or AC ID |
 | **Retries that use the same context as the failure** | `map_failure_to_retrieval` closes the validator→Cortex feedback loop; corrective queries before retry |
+
+The reconstructed defect fixture records where structural validation stops. Its scope-creep and missing-edge-case examples still require semantic review. [Seeded defect regression](packages/validation/src/__tests__/seeded-defects-regression.test.ts)
 
 ---
 
@@ -770,6 +772,6 @@ code is built on.
 ---
 
 <p align="center">
-  <em>Don't ship a PRD that hallucinates a function it can't measure.<br>
+  <em>Check requirement links, code references, and performance verdicts before implementation.<br>
   Ship one whose every claim was judged by Pearl, Curie, Liskov, and a panel of seven others, validated against the call graph, and grounded in what Cortex remembers from yesterday.</em>
 </p>
