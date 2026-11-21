@@ -1,8 +1,9 @@
+import { permitsDefineHandoff } from "./architect-os-boundary.js";
 import { findDefineDecisionConflicts } from "./define-decisions.js";
 import { z } from "zod";
 import { DefineHandoffV1Schema, isBlockingViolation, type DefineHandoffV1 } from "@prd-gen/core";
 import { projectDefineDocument, validateDocument } from "@prd-gen/validation";
-import { evaluatePolicy, GATE_OPTION_IMPLEMENT, resolveVerificationPolicy } from "./handlers/verification-policy.js";
+import { evaluatePolicy, resolveVerificationPolicy } from "./handlers/verification-policy.js";
 import { IMPLEMENTATION_GATE_QUESTION_ID } from "./handlers/protocol-ids.js";
 import { documentSections, prdSections } from "./section-plan.js";
 import type { NextAction } from "./types/actions.js";
@@ -51,8 +52,8 @@ export function readDefineHandoff(state: PipelineState, action: NextAction | nul
   if (policy.status !== "pass") {
     return refusal("define_not_ready", "The current verification policy requires attention.");
   }
-  if (!action.options?.some(({ label }) => label === GATE_OPTION_IMPLEMENT)) {
-    return refusal("define_not_ready", "The pending question does not offer ordinary implementation.");
+  if (state.post_specs?.legacy_define_refusal || !permitsDefineHandoff(action)) {
+    return refusal("define_not_ready", "The pending question does not permit a verified planning handoff.");
   }
   return { handoff: parsed.data };
 }

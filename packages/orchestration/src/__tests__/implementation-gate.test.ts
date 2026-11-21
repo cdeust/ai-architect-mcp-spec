@@ -1,20 +1,4 @@
-/**
- * `implementation_gate` — the human gate between self_check's PRD
- * deliverables and the post-specs implementation loop.
- *
- * Proves:
- *   1. On entry (no result), emits ask_user(question_id="implementation_gate")
- *      with exactly the "PRD only" / "Implement" options.
- *   2. Answering "PRD only" advances straight to `finalize`, preserving
- *      `state.pending_completion` untouched — today's exact behavior (zero
- *      regression is the acceptance criterion for this branch,
- *      design-phases-3-5.md §5, PR 3b).
- *   3. Answering "Implement" advances to `pre_impl_grounding`, then coalesces
- *      through to `implementation` (PR 4a wiring).
- *   4. An unrecognized or empty answer repeats the policy-shaped question.
- *
- * source: design-phases-3-5.md §2.2, §3 "implementation_gate".
- */
+/** The legacy-named gate ends specification generation and preserves its verification evidence. */
 
 import { expectOptionRetry } from "./expect-option-retry.js";
 import { describe, expect, it } from "vitest";
@@ -39,7 +23,7 @@ function stateAtGate(): PipelineState {
 }
 
 describe("implementation_gate — ask_user", () => {
-  it("emits ask_user with exactly PRD-only/Implement options on entry", () => {
+  it("emits ask_user with exactly the safe specification options on entry", () => {
     const out = step({ state: stateAtGate() });
 
     expect(out.action.kind).toBe("ask_user");
@@ -48,7 +32,7 @@ describe("implementation_gate — ask_user", () => {
     expect(out.action.options).not.toBeNull();
     const labels = out.action.options?.map((o) => o.label) ?? [];
     expect(labels).toContain("PRD only");
-    expect(labels).toContain("Implement");
+    expect(labels).toContain("Review verification findings");
     expect(labels.length).toBe(2);
 
     // pending_completion carried forward untouched.
@@ -71,33 +55,11 @@ describe("implementation_gate — PRD only branch (zero regression)", () => {
 
     expect(out.state.current_step).toBe("finalize");
     expect(out.state.post_specs?.decision).toBe("prd_only");
+    expect(out.messages).toContainEqual({ level: "info", text: "Specification finalized." });
     // The exact payload finalize() computed is unmodified.
     expect(out.state.pending_completion).toEqual(seed.pending_completion);
     // pre_impl_grounding never runs on this branch.
     expect(out.action.kind).not.toBe("call_pipeline_tool");
-  });
-});
-
-describe("implementation_gate — Implement branch", () => {
-  it('routes through pre_impl_grounding into implementation, decision="implement"', () => {
-    const out = step({
-      state: stateAtGate(),
-      result: {
-        kind: "user_answer",
-        question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-        selected: ["Implement"],
-      },
-    });
-
-    expect(out.state.post_specs?.decision).toBe("implement");
-    // Coalesces into pre_impl_grounding, which (no graph/no affected-symbols
-    // sidecar in this fixture) immediately advances to implementation (see
-    // pre-impl-grounding.test.ts for the grounding loop itself when a graph
-    // and claims ARE present); implementation then emits a SUBSTANTIVE
-    // spawn_subagents action, which stops the coalescing chain.
-    expect(out.state.current_step).toBe("implementation");
-    expect(out.state.post_specs?.impact_queries.done).toBe(true);
-    expect(out.action.kind).toBe("spawn_subagents");
   });
 });
 
@@ -124,51 +86,6 @@ describe.each([
   },
 );
 
-describe("multiple selections at the blocked implementation gate", () => {
-  const override = "Override policy (explicit)";
-  it.each(["PRD only", override, "not an option"])("counts an override plus %s without recording a derogation", (extra) => {
-    const issued = step({ state: stateAtGateWithJudgeVerdicts() });
-    const answer = { kind: "user_answer" as const, question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [override, extra] };
-    let saved = issued.state;
-    for (const count of [1, 2]) {
-      const out = step({ state: saved, result: answer });
-      expectOptionRetry(out.action, issued.action);
-      expect(out.state.unmatched_answers).toEqual({ implementation_gate: count });
-      expect(out.state.post_specs).toMatchObject({ decision: "pending", policy_derogation: null });
-      saved = out.state;
-    }
-    const third = step({ state: saved, result: answer });
-    expect(third.state.post_specs).toMatchObject({ decision: "prd_only", policy_derogation: null });
-    expect(third.messages).toContainEqual({ level: "warn", text: 'implementation_gate: 3 unmatched answers. Using "PRD only".' });
-  });
-
-  it.each(["", " \t "])("records an explicit override accompanied by %j", (blank) => {
-    const out = step({ state: stateAtGateWithJudgeVerdicts(), result: {
-      kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [override, blank],
-    } });
-    expect(out.action.kind).toBe("write_file");
-    expect(out.state.post_specs).toMatchObject({ decision: "implement", policy_derogation: { policy_status: "blocked" } });
-  });
-});
-
-it("re-asks for a bare Implement when the policy is blocked", () => {
-  const issued = step({ state: stateAtGateWithJudgeVerdicts() });
-  const out = step({ state: issued.state, result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: ["Implement"] } });
-  expectOptionRetry(out.action, issued.action);
-  expect(out.state.post_specs?.policy_derogation).toBeNull();
-});
-
-/**
- * A run directory is derivable (state.written_files carries 01-prd.md) —
- * this is the case buildVerificationReportFile actually produces a file for.
- * stateAtGate() alone (no written_files) exercises the graceful degrade
- * already proven by the "ask_user on entry" test above.
- *
- * Module-scope (not nested inside a describe): shared by both the
- * report-content describe block and the write-protocol describe block below
- * (split to keep each describe under coding-standards.md §4.2's 50-line
- * function cap — craftsmanship-checker.sh FUNCTION_TOO_LONG).
- */
 function stateAtGateWithExportedPrd(): PipelineState {
   const base = stateAtGate();
   return {
@@ -214,7 +131,7 @@ it("revalidates an old pending checkpoint and replaces its optimistic report", (
     state,
     result: { kind: "user_answer", question_id: IMPLEMENTATION_GATE_QUESTION_ID, selected: [option] },
   });
-  const rejected = answer(state, "Implement");
+  const rejected = step({ state });
   expect(rejected.action).toMatchObject({
     kind: "ask_user",
     description: expect.stringContaining("The requirements section must define"),
@@ -226,7 +143,7 @@ it("revalidates an old pending checkpoint and replaces its optimistic report", (
     "Deterministic violations: 1",
     "Multi-judge claims: 2",
   ].join("\n"));
-  const approved = answer(rejected.state, "Override policy (explicit)");
+  const approved = answer(rejected.state, "PRD only");
   expect(approved.action).toMatchObject({
     kind: "write_file",
     path,
@@ -235,7 +152,7 @@ it("revalidates an old pending checkpoint and replaces its optimistic report", (
   expect(approved.state.pending_completion).toBe(rejected.state.pending_completion);
   const acknowledged = step({ state: approved.state, result: { kind: "file_written", path } });
   expect(acknowledged.state.written_files.filter(file => file === path)).toHaveLength(1);
-  expect(acknowledged.state.current_step).toBe("implementation");
+  expect(acknowledged.state.current_step).toBe("finalize");
 });
 
 it("refreshes only a stale implementation question with a current Define blocker", () => {
@@ -248,10 +165,10 @@ it("refreshes only a stale implementation question with a current Define blocker
   const provided: PipelineState["sections"][number] = { section_type: "requirements", status: "passed", content: "ok",
     attempt: 1, violation_count: 0, last_violations: [], attempt_log: [] };
   const blocked = { ...seed, sections: [provided] };
-  expect(refreshImplementationGateQuestion(seed, stale)).toBe(stale);
+  expect(refreshImplementationGateQuestion(seed, stale)).toMatchObject({ header: "Specification verification" });
   expect(refreshImplementationGateQuestion(blocked, null)).toBeNull();
   expect(refreshImplementationGateQuestion(blocked, { ...stale, options: null })).toMatchObject({
-    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Review verification findings" })],
   });
   const other: NextAction = { ...stale, question_id: "other" };
   expect(refreshImplementationGateQuestion(blocked, other)).toBe(other);
@@ -259,9 +176,9 @@ it("refreshes only a stale implementation question with a current Define blocker
   const current = refreshImplementationGateQuestion(blocked, stale);
   expect(current).toMatchObject({
     description: expect.stringContaining("The requirements section must define"),
-    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+    options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Review verification findings" })],
   });
-  expect(refreshImplementationGateQuestion(blocked, current)).toBe(current);
+  expect(refreshImplementationGateQuestion(blocked, current)).toEqual(current);
 });
 
 describe("implementation_gate — verification-report export (root-cause fix)", () => {
@@ -324,7 +241,7 @@ function stateAtGateWithJudgeVerdicts(): PipelineState {
 }
 
 describe("implementation_gate — verification-report per-claim judge verdicts (follow-up, e2e run_mrlqa0aj_u2rh15)", () => {
-  it("blocks on entry (a FAIL verdict is present — default policy block_on), then renders real per-claim verdict rows after the override", () => {
+  it("blocks on entry (a FAIL verdict is present — default policy block_on), then renders real per-claim verdict rows before finishing", () => {
     const seed = stateAtGateWithJudgeVerdicts();
 
     // Entry: a FAIL verdict is present -> default policy (block_on:["FAIL"])
@@ -336,14 +253,14 @@ describe("implementation_gate — verification-report per-claim judge verdicts (
     if (asked.action.kind !== "ask_user") return;
     expect(asked.action.description).toContain("FR-002");
     const labels = asked.action.options?.map((o) => o.label) ?? [];
-    expect(labels).toEqual(["PRD only", "Override policy (explicit)"]);
+    expect(labels).toEqual(["PRD only", "Review verification findings"]);
 
     const answered = step({
       state: asked.state,
       result: {
         kind: "user_answer",
         question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-        selected: ["Override policy (explicit)"],
+        selected: ["PRD only"],
       },
     });
     expect(answered.action.kind).toBe("write_file");
@@ -363,9 +280,7 @@ describe("implementation_gate — verification-report per-claim judge verdicts (
     expect(answered.action.content).toContain(
       "No falsifiable acceptance criterion given.",
     );
-    // The recorded derogation is rendered in the same report.
-    expect(answered.action.content).toContain("derogation granted by user at gate");
-    expect(answered.state.post_specs?.policy_derogation?.policy_status).toBe("blocked");
+    expect(answered.state.post_specs?.policy_derogation).toBeNull();
 
     const advanced = step({
       state: answered.state,
@@ -375,10 +290,7 @@ describe("implementation_gate — verification-report per-claim judge verdicts (
         bytes: answered.action.content.length,
       },
     });
-    expect(advanced.state.post_specs?.decision).toBe("implement");
-    // Coalesces through pre_impl_grounding (no graph/sidecar in this
-    // fixture) into implementation — mirrors the "Implement branch" test.
-    expect(advanced.state.current_step).toBe("implementation");
+    expect(advanced.state.current_step).toBe("finalize");
   });
 });
 
@@ -442,31 +354,6 @@ function stateAtGateWithUnsampledRatio(): PipelineState {
 }
 
 describe("implementation_gate — policy-shaped gate (needs_attention)", () => {
-  it("offers the derogation-framed options and records the derogation on 'Implement anyway'", () => {
-    const asked = step({ state: stateAtGateWithUnsampledRatio() });
-    expect(asked.action.kind).toBe("ask_user");
-    if (asked.action.kind !== "ask_user") return;
-    const labels = asked.action.options?.map((o) => o.label) ?? [];
-    expect(labels).toEqual(["Implement anyway (dérogation explicite)", "PRD only"]);
-    expect(asked.action.description).toContain("0%");
-
-    const answered = step({
-      state: asked.state,
-      result: {
-        kind: "user_answer",
-        question_id: IMPLEMENTATION_GATE_QUESTION_ID,
-        selected: ["Implement anyway (de\u0301rogation explicite)"],
-      },
-    });
-    expect(answered.action.kind).toBe("write_file");
-    if (answered.action.kind !== "write_file") return;
-    expect(answered.action.content).toContain("derogation granted by user at gate");
-    expect(answered.state.post_specs?.policy_derogation?.policy_status).toBe(
-      "needs_attention",
-    );
-    expect(answered.state.post_specs?.decision).toBe("implement");
-  });
-
   it("choosing 'PRD only' under needs_attention records NO derogation, but the (still non-'pass') decision is written to the report before advancing", () => {
     const asked = step({ state: stateAtGateWithUnsampledRatio() });
     const answered = step({

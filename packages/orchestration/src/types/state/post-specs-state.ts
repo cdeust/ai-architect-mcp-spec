@@ -179,6 +179,8 @@ export const PolicyDerogationSchema = z.object({
 export type PolicyDerogation = z.infer<typeof PolicyDerogationSchema>;
 
 export const PostSpecsStateSchema = z.object({
+  /** Set when migrating a pending legacy question that refused ordinary implementation. */
+  legacy_define_refusal: z.literal(true).optional(),
   /**
    * Set by `implementation_gate`'s ask_user answer. `"pending"` is the
    * pre-gate default (self_check's finalize() initializes post_specs but

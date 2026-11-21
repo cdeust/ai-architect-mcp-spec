@@ -181,27 +181,13 @@ it.each<{ name: string; pilot: Pilot; finding?: string }>([
     expect(recovered).toMatchObject({ run_id, action });
     expect(await readState(server)).toEqual(before);
     if (finding) {
-      const answer = (selected: string) => call<Envelope>(server!, "submit_action_result", {
-        run_id,
-        result: { kind: "user_answer", question_id: "implementation_gate", selected: [selected] },
+      const rejected = await server.call("submit_action_result", {
+        run_id, result: { kind: "user_answer", question_id: "implementation_gate", selected: ["Implement"] },
       });
-      const rejected = await answer("Implement");
-      expect(rejected).toMatchObject({
-        current_step: "implementation_gate",
-        action: { kind: "ask_user", question_id: "implementation_gate", options: action.options },
-      });
-      expect(await readState(server)).toMatchObject({ post_specs: { decision: "pending" } });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.parse(rejected.text)).toMatchObject({ error: { code: "architect_os_required" } });
+      expect(await readState(server)).toEqual(before);
 
-      const overridden = await answer("Override policy (explicit)");
-      expect(overridden.current_step).toBe("implementation_gate");
-      const report = NextActionSchema.parse(overridden.action);
-      expect(report).toMatchObject({
-        kind: "write_file",
-        content: expect.stringContaining("Computed status: blocked"),
-      });
-      expect(await readState(server)).toMatchObject({
-        post_specs: { decision: "implement", policy_derogation: { policy_status: "blocked" } },
-      });
     }
   } finally {
     await server?.close();
@@ -223,7 +209,7 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
       pending_completion: { outcome: { status: "passed" }, verification: expect.any(Object) },
       post_specs: { decision: "pending" },
     } });
-    expect(action.options?.map(option => option.label)).toEqual(["PRD only", "Implement"]);
+    expect(action.options?.map(option => option.label)).toEqual(["PRD only", "Review verification findings"]);
     expect((await server.call("get_pipeline_state", { run_id, format: "define_handoff_v2" })).isError).toBe(true);
     const ready = await call(server, "get_pipeline_state", args);
     expect(ready).toMatchObject({
@@ -248,6 +234,43 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
     server = await start();
     expect(await call(server, "get_pipeline_state", args)).toEqual(ready);
     expect(await call(server, "get_pipeline_state", { run_id, format: "action" })).toMatchObject({ action });
+    const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+    const assertRefusedHandoff = async () => {
+      const response = await server!.call("get_pipeline_state", args);
+      expect(response.isError).toBe(true);
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready" } });
+    };
+    for (const withReport of [true, false]) {
+      await server.close();
+      new RunFiles(join(output, ".prd-gen", "runs")).write({
+        ...state,
+        written_files: withReport ? state.written_files : state.written_files.filter(path => !path.endsWith("10-verification-report.md")),
+      }, { ...action, options: [{ label: "PRD only" }, { label: "Override policy (explicit)" }] });
+      server = await start();
+      await assertRefusedHandoff();
+
+      const inspected = await call<Envelope>(server, "submit_action_result", {
+        run_id, result: { kind: "user_answer", question_id: "implementation_gate", selected: ["Review verification findings"] },
+      });
+      const pending = NextActionSchema.parse(inspected.action);
+      expect(pending.kind).toBe(withReport ? "ask_user" : "write_file");
+      await server.close();
+      server = await start();
+      if (pending.kind === "write_file") {
+        writeFileSync(join(output, basename(pending.path)), pending.content);
+        await call(server, "submit_action_result", {
+          run_id, result: { kind: "file_written", path: pending.path, bytes: Buffer.byteLength(pending.content) },
+        });
+      }
+      await assertRefusedHandoff();
+      await call(server, "submit_action_result", {
+        run_id, result: { kind: "user_answer", question_id: "implementation_gate", selected: ["unrecognized choice"] },
+      });
+      await server.close();
+      server = await start();
+      await assertRefusedHandoff();
+    }
+
   } finally {
     await server?.close();
     rmSync(output, { recursive: true, force: true });
@@ -282,9 +305,8 @@ it("reports quantity and publication contradictions through the MCP validator", 
 }, 120_000);
 
 it.each([
-  { savedOption: "Implement", answer: "PRD only" },
-  { savedOption: "Implement anyway (dérogation explicite)", answer: "Override policy (explicit)" },
-])("updates the old $savedOption choice and accepts $answer", async ({ savedOption, answer }) => {
+  "Implement", "Implement anyway (dérogation explicite)", "Override policy (explicit)",
+])("retires %s from an old saved gate", async (savedOption) => {
   const home = mkdtempSync(join(tmpdir(), "prd-gen-define-legacy-"));
   const run_id = "run_legacy_define";
   const formerReport = `prd-output/${run_id}/10-verification-report.md`;
@@ -316,10 +338,16 @@ it.each([
     expect(recovered.action).toMatchObject({
       kind: "ask_user",
       description: expect.stringContaining("The requirements section must define"),
-      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Override policy (explicit)" })],
+      options: [expect.objectContaining({ label: "PRD only" }), expect.objectContaining({ label: "Review verification findings" })],
     });
     const submit = (result: ActionResult) => call<Envelope>(server!, "submit_action_result", { run_id, result });
-    const choice = await submit({ kind: "user_answer", question_id: "implementation_gate", selected: [answer] });
+    const rejected = await server.call("submit_action_result", {
+      run_id, result: { kind: "user_answer", question_id: "implementation_gate", selected: [], freeform: savedOption },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.parse(rejected.text)).toMatchObject({ error: { code: "architect_os_required" } });
+    expect(await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" })).toEqual(recovered);
+    const choice = await submit({ kind: "user_answer", question_id: "implementation_gate", selected: ["PRD only"] });
     const report = NextActionSchema.parse(choice.action);
     expect(report).toMatchObject({
       kind: "write_file",
@@ -328,10 +356,6 @@ it.each([
     });
 
     const acknowledged = await submit({ kind: "file_written", path: formerReport, bytes: 1 });
-    if (answer === "Override policy (explicit)") {
-      expect(acknowledged.current_step).toBe("implementation");
-      return;
-    }
     const dispatch = makeCannedDispatcher();
     const next = NextActionSchema.parse(acknowledged.action);
     const done = next.kind === "done" ? next : NextActionSchema.parse((await submit(dispatch(next)!)).action);
@@ -418,6 +442,46 @@ it("reuses sourced decisions across drafts and retry, then rechecks saved decisi
     }, ["Conflicting user publication decisions", "user-request", `clarification:${source.round}:${index + 1}`]);
   } finally {
     await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("does not reissue or acknowledge saved execution after restarting the manifest launcher", async () => {
+  const home = mkdtempSync(join(tmpdir(), "prd-gen-legacy-execution-"));
+  const files = new RunFiles(join(home, ".prd-gen", "runs"));
+  const run_id = "run_legacy_execution";
+  const seed = newPipelineState({ run_id, feature_description: "Legacy implementation" });
+  const retired: NextAction = {
+    kind: "spawn_subagents", purpose: "implement", batch_id: "implementation_engineer",
+    invocations: [{ invocation_id: "implementation_engineer", model: "haiku", description: "Legacy",
+      prompt: "Historical action must not be exposed", subagent_type: "engineer", isolation: "worktree" }],
+  };
+  let server: StdioServer | undefined;
+  try {
+    for (const current_step of ["implementation", "input_analysis"] as const) {
+      files.write({ ...seed, current_step }, retired);
+      const path = files.pathOf(run_id)!;
+      const before = readFileSync(path);
+      server = await startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
+      const full = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+      expect(full.state.current_step).toBe(current_step);
+      for (const invocation_offset of [0, 1]) {
+        const recovered = await server.call("get_pipeline_state", { run_id, format: "action", invocation_offset });
+        expect(recovered.isError).toBe(true);
+        expect(JSON.parse(recovered.text)).toMatchObject({ error: { code: "architect_os_required" } });
+      }
+      const late = await server.call("submit_action_result", { run_id, result: {
+        kind: "subagent_batch_result", batch_id: retired.batch_id,
+        responses: [{ invocation_id: "implementation_engineer", raw_text: "late legacy result" }],
+      } });
+      expect(late.isError).toBe(true);
+      expect(JSON.parse(late.text)).toMatchObject({ error: { code: "architect_os_required" } });
+      expect(readFileSync(path)).toEqual(before);
+      await server.close();
+      server = undefined;
+    }
+  } finally {
+    await server?.close();
     rmSync(home, { recursive: true, force: true });
   }
 }, 120_000);
