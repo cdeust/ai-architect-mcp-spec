@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 594" width="780" height="594" role="img" aria-labelledby="title description" data-surface="paper">
+  <title id="title">From specification to delivery</title>
+  <desc id="description">Ready on main: Spec analyzes, drafts and verifies the PRD, then exports validated Define data and a verified proposal for one Step. The host passes both to architect-os. Architect-os prepares an execution manifest with the operator policy. The owner approves the manifest before materialization. The host runs Step and Deliver separately to build, check and publish the commit. Next: architect-os supplies results for each acceptance criterion on that commit, then Spec reviews the pinned diff and acceptance evidence against the approved plan.</desc>
+  <style>
+    /* Readme SVGs must be self-contained. Semantic tokens from the AI Architect
+       Design System, styles.css → tokens/colors.css, surfaces.css and typography.css. */
+    /* sRGB fallback, converted from the same tokens for static SVG renderers. */
+    text { font-family: 'Inter Tight', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; fill: rgb(38, 29, 23); }
+    .canvas { fill: rgb(241, 238, 231); stroke: rgba(59, 49, 41, 0.42); }
+    .card { fill: rgb(248, 247, 242); stroke: rgba(59, 49, 41, 0.42); }
+    .next-card { stroke: rgb(0, 97, 133); stroke-dasharray: 5 4; }
+    .heading { font-family: 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif; font-size: 31px; }
+    .owner { font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600; }
+    .label { font-size: 17px; font-weight: 650; }
+    .note { font-size: 14px; fill: rgb(75, 64, 56); }
+    .pill-box { fill: rgb(230, 225, 215); }
+    .pill-ready { stroke: rgb(10, 105, 60); }
+    .pill-next { stroke: rgb(0, 97, 133); }
+    .pill-text { font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace; font-size: 12px; text-anchor: middle; }
+    .ready-text { fill: rgb(10, 105, 60); }
+    .next-text { fill: rgb(0, 97, 133); }
+    .flow { fill: none; stroke: rgb(75, 64, 56); stroke-width: 1.7; }
+    .future { stroke: rgb(0, 97, 133); stroke-dasharray: 5 4; }
+    .arrow { fill: rgb(75, 64, 56); }
+    .future-arrow { fill: rgb(0, 97, 133); }
+    @media (prefers-color-scheme: dark) {
+      text { fill: rgb(243, 241, 238); }
+      .canvas { fill: rgb(18, 12, 8); stroke: rgba(63, 57, 53, 0.22); }
+      .card { fill: rgb(28, 20, 15); stroke: rgba(63, 57, 53, 0.22); }
+      .next-card { stroke: rgb(126, 201, 237); }
+      .note { fill: rgb(192, 189, 186); }
+      .pill-box { fill: rgb(37, 29, 24); }
+      .pill-ready { stroke: rgb(127, 217, 148); }
+      .pill-next { stroke: rgb(126, 201, 237); }
+      .ready-text { fill: rgb(127, 217, 148); }
+      .next-text { fill: rgb(126, 201, 237); }
+      .flow { stroke: rgb(192, 189, 186); }
+      .future { stroke: rgb(126, 201, 237); }
+      .arrow { fill: rgb(192, 189, 186); }
+      .future-arrow { fill: rgb(126, 201, 237); }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path class="arrow" d="M0 0L10 5L0 10Z"/>
+    </marker>
+    <marker id="future-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path class="future-arrow" d="M0 0L10 5L0 10Z"/>
+    </marker>
+    <g id="ready">
+      <rect class="pill-box pill-ready" width="52" height="23" rx="11.5"/>
+      <text class="pill-text ready-text" x="26" y="15.5">ready</text>
+    </g>
+    <g id="next">
+      <rect class="pill-box pill-next" width="52" height="23" rx="11.5"/>
+      <text class="pill-text next-text" x="26" y="15.5">next</text>
+    </g>
+  </defs>
+
+  <rect class="canvas" x=".5" y=".5" width="779" height="593" rx="14"/>
+  <text class="heading" x="32" y="46">From specification to delivery</text>
+  <use href="#ready" x="32" y="62"/>
+  <text class="note" x="95" y="78">Available on main</text>
+  <use href="#next" x="253" y="62"/>
+  <text class="note" x="316" y="78">Work still to ship</text>
+
+  <g class="flow" marker-end="url(#arrow)">
+    <path d="M370 174H407"/>
+    <path d="M578 225V265H202V300"/>
+    <path d="M370 351H407"/>
+  </g>
+  <g class="flow future" marker-end="url(#future-arrow)">
+    <path d="M578 402V477"/>
+    <path d="M410 528H373"/>
+  </g>
+
+  <text class="owner" x="32" y="113">ai-architect-mcp-spec</text>
+  <rect class="card" x="32" y="124" width="338" height="101" rx="9"/>
+  <use href="#ready" x="302" y="136"/>
+  <text class="label" x="48" y="153">Analyse and verify the PRD</text>
+  <text class="note" x="48" y="184">Analyse the request and draft the specification.</text>
+  <text class="note" x="48" y="205">Check structure, traceability and claims.</text>
+
+  <rect class="card" x="410" y="124" width="338" height="101" rx="9"/>
+  <use href="#ready" x="680" y="136"/>
+  <text class="label" x="426" y="153">Export the verified plan</text>
+  <text class="note" x="426" y="184">Validated Define and a proposal for one Step.</text>
+  <text class="note" x="426" y="205">Criteria, requirement links and hashes.</text>
+
+  <text class="note" x="236" y="254">The host passes Define and the proposal</text>
+
+  <text class="owner" x="32" y="292">architect-os</text>
+  <rect class="card" x="32" y="301" width="338" height="101" rx="9"/>
+  <use href="#ready" x="302" y="313"/>
+  <text class="label" x="48" y="330">Approve execution</text>
+  <text class="note" x="48" y="361">Add the operator policy to the manifest.</text>
+  <text class="note" x="48" y="382">The owner approves before materialization.</text>
+
+  <rect class="card" x="410" y="301" width="338" height="101" rx="9"/>
+  <use href="#ready" x="680" y="313"/>
+  <text class="label" x="426" y="330">Build, test and deliver</text>
+  <text class="note" x="426" y="361">The host invokes Step and Deliver separately.</text>
+  <text class="note" x="426" y="382">Gate and CI are tied to the delivered commit.</text>
+
+  <text class="owner" x="32" y="467">ai-architect-mcp-spec</text>
+  <rect class="card next-card" x="32" y="478" width="338" height="92" rx="9"/>
+  <use href="#next" x="302" y="490"/>
+  <text class="label" x="48" y="507">Review implementation</text>
+  <text class="note" x="48" y="535">Compare the exact diff with the approved plan.</text>
+  <text class="note" x="48" y="556">Check evidence for each acceptance criterion.</text>
+
+  <text class="owner" x="410" y="467">architect-os</text>
+  <rect class="card next-card" x="410" y="478" width="338" height="92" rx="9"/>
+  <use href="#next" x="680" y="490"/>
+  <text class="label" x="426" y="507">Return acceptance evidence</text>
+  <text class="note" x="426" y="535">Link each result to an acceptance criterion</text>
+  <text class="note" x="426" y="556">and the exact delivered commit.</text>
+</svg>
