@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, beforeAll } from "vitest";
 import { z } from "zod";
-import { MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
+import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -135,30 +135,49 @@ describe("get_pipeline_state format:'action'", () => {
 
 it("preserves the existing state formats when the v1 selector is added", () => {
   const args = z.object(schemas.get("get_pipeline_state")!);
-  for (const format of ["full", "summary", "grounding", "validation", "action", "define_handoff_v1"]) {
+  for (const format of ["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"]) {
     expect(args.parse({ run_id: "run_define_small", format }).format).toBe(format);
   }
   expect(args.parse({ run_id: "run_define_small" }).format).toBe("summary");
+  expect(schemas.get("get_pipeline_state")?.plan_step).toHaveProperty("description", expect.stringContaining("Step name"));
 });
 
-it.each([MAX_RESPONSE_CHARS, MAX_RESPONSE_CHARS + 1])("enforces the complete Define response at %s chars", async size => {
-  expect(descriptions.get("get_pipeline_state")).toEqual(expect.stringContaining("format:'define_handoff_v1'"));
+it.each([
+  { format: "define_handoff_v1", size: MAX_RESPONSE_CHARS },
+  { format: "define_handoff_v1", size: MAX_RESPONSE_CHARS + 1 },
+  { format: "verified_plan_v1", size: MAX_RESPONSE_CHARS },
+  { format: "verified_plan_v1", size: MAX_RESPONSE_CHARS + 1 },
+  { format: "verified_plan_v1", size: MAX_RESPONSE_CHARS + 1, oversizedSource: true },
+])("enforces the complete $format response at $size chars (oversized source: $oversizedSource)", async ({ format, size, oversizedSource }) => {
+  expect(descriptions.get("get_pipeline_state")).toEqual(expect.stringContaining(`format:'${format}'`));
   const oversized = size > MAX_RESPONSE_CHARS;
-  const run_id = oversized ? "run_define_large" : "run_define_small";
-  const requirement = "Retain the verified receipt.";
-  const criterion = "Verify the saved receipt (FR-001).";
-  const fixed = JSON.stringify({ handoff: {
-    version: 1, run_id, requirements: [{ id: "FR-001", text: requirement }],
-    acceptance: [{ id: "AC-001", text: criterion, requirement_ids: ["FR-001"] }],
-  } }).length;
-  const text = requirement + "x".repeat(size - fixed);
+  const plan = format === "verified_plan_v1";
+  const run_id = oversizedSource ? "run_plan_cross" : `run_${plan ? "plan" : "define"}_${oversized ? "large" : "small"}`;
+  const intent = "Verify the saved receipt";
+  const plan_step = "delivery";
+  const requirements = Array.from({ length: oversizedSource ? 32 : 1 }, (_, index) => ({
+    id: `FR-${String(index + 1).padStart(3, "0")}`,
+    text: `Retain the verified receipt for record ${index + 1}.`,
+  }));
+  const acceptance = requirements.map(({ id }, index) => ({
+    id: `AC-${String(index + 1).padStart(3, "0")}`,
+    text: `Verify the saved receipt for record ${index + 1} (${id}).`,
+    requirement_ids: [id],
+  }));
+  const handoff = { version: 1 as const, run_id, requirements, acceptance };
+  const baseline = plan && !oversizedSource ? buildVerifiedPlan(handoff, intent, plan_step) : { handoff };
+  requirements[0]!.text += "x".repeat(size - JSON.stringify(baseline).length);
   const sections = [
-    ["requirements", `- FR-001: ${text}`],
-    ["acceptance_criteria", `- AC-001: ${criterion}`],
-    ["testing", "Replay AC-001."],
+    ["requirements", requirements.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
+    ["acceptance_criteria", acceptance.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
+    ["testing", acceptance.map(({ id }) => `Replay ${id}.`).join("\n")],
   ] as const;
+  if (oversizedSource) {
+    expect(JSON.stringify({ handoff })).toHaveLength(MAX_RESPONSE_CHARS + 1);
+    expect(JSON.stringify(buildVerifiedPlan(handoff, intent, plan_step)).length).toBeLessThan(MAX_RESPONSE_CHARS);
+  }
   new RunFiles(RUNS_DIR).write({
-    ...newPipelineState({ run_id, feature_description: "Verify the saved receipt" }),
+    ...newPipelineState({ run_id, feature_description: intent }),
     current_step: "implementation_gate",
     sections: sections.map(([section_type, content]) => ({
       section_type, content, status: "passed", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
@@ -180,16 +199,31 @@ it.each([MAX_RESPONSE_CHARS, MAX_RESPONSE_CHARS + 1])("enforces the complete Def
     kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
     description: "Decide", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
   });
-  const response = await handlers.get("get_pipeline_state")!({ run_id, format: "define_handoff_v1" });
+  const response = await handlers.get("get_pipeline_state")!({ run_id, format, plan_step: plan ? plan_step : undefined });
   expect(response.isError).toBe(oversized);
   if (oversized) {
     expect(parse(response)).toEqual({
-      error: { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
+      error: plan && !oversizedSource
+        ? { code: "plan_response_too_large", message: "The complete verified plan exceeds the MCP response budget." }
+        : { code: "define_response_too_large", message: "The complete Define result exceeds the MCP response budget." },
     });
   } else {
     expect(response.content[0]?.text).toHaveLength(MAX_RESPONSE_CHARS);
-    expect(parse(response)).toMatchObject({ handoff: { version: 1, run_id } });
+    expect(parse(response)).toMatchObject({ [plan ? "verified_plan" : "handoff"]: { version: 1, run_id } });
+    if (plan) {
+      const missingStep = await handlers.get("get_pipeline_state")!({ run_id, format });
+      expect(missingStep.isError).toBe(true);
+      expect(parse(missingStep)).toMatchObject({ error: { code: "plan_step_invalid" } });
+    }
   }
+});
+
+it("preserves a Define refusal when a verified plan is requested before the gate", async () => {
+  const run_id = "run_plan_pending";
+  new RunFiles(RUNS_DIR).write(newPipelineState({ run_id, feature_description: "Verify receipts" }), null);
+  const response = await handlers.get("get_pipeline_state")!({ run_id, format: "verified_plan_v1", plan_step: "delivery" });
+  expect(response.isError).toBe(true);
+  expect(parse(response)).toMatchObject({ error: { code: "define_not_pending" } });
 });
 
 it.each([

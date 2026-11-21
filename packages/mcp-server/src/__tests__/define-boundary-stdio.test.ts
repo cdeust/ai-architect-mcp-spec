@@ -204,6 +204,9 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
     server = await start();
     const { run_id, action } = await driveToGate(server, host);
     const args = { run_id, format: "define_handoff_v1" };
+    const planArgs = { run_id, format: "verified_plan_v1", plan_step: "delivery" };
+    const checkpoint = new RunFiles(join(output, ".prd-gen", "runs")).pathOf(run_id)!;
+    const savedBytes = readFileSync(checkpoint);
     const before = await call(server, "get_pipeline_state", { run_id, format: "full" });
     expect(before).toMatchObject({ state: {
       pending_completion: { outcome: { status: "passed" }, verification: expect.any(Object) },
@@ -229,16 +232,30 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
       },
     });
     expect(await call(server, "get_pipeline_state", args)).toEqual(ready);
+    const plan = await call(server, "get_pipeline_state", planArgs);
+    expect(plan).toMatchObject({ verified_plan: {
+      run_id,
+      proposal: { step: "delivery", acceptance_ids: ["AC-001", "AC-002", "AC-003"] },
+    } });
+    expect(await call(server, "get_pipeline_state", planArgs)).toEqual(plan);
+    expect(readFileSync(checkpoint)).toEqual(savedBytes);
+    const missingStep = await server.call("get_pipeline_state", { run_id, format: "verified_plan_v1" });
+    expect(missingStep.isError).toBe(true);
+    expect(JSON.parse(missingStep.text)).toMatchObject({ error: { code: "plan_step_invalid" } });
     expect(await call(server, "get_pipeline_state", { run_id, format: "full" })).toEqual(before);
     await server.close();
     server = await start();
     expect(await call(server, "get_pipeline_state", args)).toEqual(ready);
+    expect(await call(server, "get_pipeline_state", planArgs)).toEqual(plan);
+    expect(readFileSync(checkpoint)).toEqual(savedBytes);
     expect(await call(server, "get_pipeline_state", { run_id, format: "action" })).toMatchObject({ action });
     const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
     const assertRefusedHandoff = async () => {
-      const response = await server!.call("get_pipeline_state", args);
-      expect(response.isError).toBe(true);
-      expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready" } });
+      for (const request of [args, planArgs]) {
+        const response = await server!.call("get_pipeline_state", request);
+        expect(response.isError).toBe(true);
+        expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready" } });
+      }
     };
     for (const withReport of [true, false]) {
       await server.close();
