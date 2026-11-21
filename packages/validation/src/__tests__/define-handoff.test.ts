@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { projectDefineDocument } from "../index.js";
+import { isNormativeDefineQuote, projectDefineDocument } from "../index.js";
 
 it("extracts definitions and resolvable lexical references without counting examples or comments", () => {
   const projected = projectDefineDocument([
@@ -85,4 +85,44 @@ it("keeps a missing reference distinguishable from an absent criterion", () => {
     requirements: [],
     acceptance: [{ id: "AC-001", text: "Record the result.", requirement_ids: [] }],
   });
+});
+
+it("only recognizes visible prose inside a normative definition", () => {
+  const section = { type: "requirements" as const, content: [
+    "Background notes.",
+    "",
+    "- FR-001: Use the **approved** policy. `example-only` <!-- Hidden note. -->",
+    "",
+    "- NFR-006: Preserve the prior receipt.",
+    "",
+    "> - FR-002: Quoted definition.",
+    "",
+    "```md",
+    "- FR-003: Fenced definition.",
+    "```",
+  ].join("\n") };
+  expect(isNormativeDefineQuote(section, "approved")).toBe(true);
+  for (const quote of ["", " ", "Background notes.", "example-only", "Hidden note.", "Quoted definition.", "Fenced definition."]) {
+    expect(isNormativeDefineQuote(section, quote), quote).toBe(false);
+  }
+});
+
+it("recognizes only parsed acceptance criteria and excludes their traceability metadata", () => {
+  const content = [
+    "- AC-001: Renew the local receipt (FR-001).",
+    "- AC-002: Surface the clipboard failure (FR-002).",
+    "- AC-003: Keep the report locally.",
+    "- FR-003: This is not an acceptance criterion.",
+  ].join("\n");
+  const section = { type: "acceptance_criteria", content };
+  expect(isNormativeDefineQuote(section, "Surface the clipboard failure")).toBe(true);
+  expect(isNormativeDefineQuote(section, "Keep the report locally.")).toBe(true);
+  for (const quote of [
+    "This is not an acceptance criterion.",
+    "FR-002",
+    "Surface the clipboard failure (FR-002).",
+  ]) {
+    expect(isNormativeDefineQuote(section, quote)).toBe(false);
+  }
+  expect(isNormativeDefineQuote({ type: "overview", content }, "Surface the clipboard failure")).toBe(false);
 });

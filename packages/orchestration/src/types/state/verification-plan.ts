@@ -1,4 +1,22 @@
 import { z } from "zod";
+
+const SemanticReviewAxisSchema = z.strictObject({
+  status: z.enum(["clear", "finding", "inconclusive"]),
+  // The review protocol asks for an anchor and, when applicable, its counterpart.
+  citations: z.array(z.strictObject({ source_id: z.string(), quote: z.string() })).max(2),
+});
+
+export const SemanticReviewAxisNameSchema = z.enum(["scope_creep", "missing_edge_case"]);
+export const SemanticReviewAxesSchema = z.record(SemanticReviewAxisNameSchema, SemanticReviewAxisSchema);
+
+export const SemanticReviewStateFields = {
+  semantic_review_requested: z.literal(true).optional(),
+  semantic_review: z.strictObject({
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    axes: SemanticReviewAxesSchema.optional(),
+    operator_decisions: z.partialRecord(SemanticReviewAxisNameSchema, z.enum(["confirmed", "unresolved"])).optional(),
+  }).optional(),
+};
 import { AgentIdentitySchema } from "@prd-gen/core";
 
 /**

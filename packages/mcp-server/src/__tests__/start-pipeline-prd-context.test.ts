@@ -79,7 +79,7 @@ async function refusal(args: Record<string, unknown>): Promise<string | null> {
 }
 
 describe("start_pipeline: the kind and the size a host declares, over MCP (#119)", () => {
-  it("lists both inputs as optional, and describes each input of the tool", async () => {
+  it("keeps context, size and semantic review optional in the public input", async () => {
     const { tools } = await client.listTools();
     const tool = tools.find((t) => t.name === "start_pipeline");
     const schema = tool?.inputSchema as {
@@ -92,12 +92,14 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
       "feature_description",
       "prd_context",
       "request_size",
+      "semantic_review",
       "skip_preflight",
     ]);
     expect(schema.required).toEqual(["feature_description"]);
     expect(schema.properties.feature_description.description).toMatch(/What the PRD is about/);
     expect(schema.properties.codebase_path.description).toMatch(/Absolute path/);
     expect(schema.properties.skip_preflight.description).toMatch(/skip the preflight/);
+    expect(schema.properties.semantic_review.description).toMatch(/scope and declared edge-case coverage/);
     expect(schema.properties.prd_context.description).toMatch(/^The kind of PRD the request calls for, declared by the host/);
     // A size is not a kind.
     expect(schema.properties.prd_context.enum).not.toContain("tiny");

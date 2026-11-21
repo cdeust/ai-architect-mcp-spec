@@ -12,12 +12,16 @@ function hasVisibleProse(text: string): boolean {
     token.type === "text" && hasDefineStatementText(token.content));
 }
 
+function defineDefinitions(content: string, prefixes?: readonly string[]) {
+  return requirementDefinitions(content, prefixes, DEFINE_REQUIREMENT_OPTIONS)
+    .map(({ id, text }) => ({ id, text: text.replace(/^:(?:\*\*)?/, "").trim() }));
+}
+
 /** Reuse the CommonMark definition parser used by the document rules. */
 export function projectDefineDocument(sections: Sections): Pick<DefineHandoffV1, "requirements" | "acceptance"> {
   const definitions = (type: SectionType, prefixes?: readonly string[]) => sections
     .filter(section => section.type === type)
-    .flatMap(section => requirementDefinitions(section.content, prefixes, DEFINE_REQUIREMENT_OPTIONS))
-    .map(({ id, text }) => ({ id, text: text.replace(/^:(?:\*\*)?/, "").trim() }));
+    .flatMap(section => defineDefinitions(section.content, prefixes));
 
   return {
     requirements: definitions("requirements").map(({ id, text }) => ({ id, text: hasVisibleProse(text) ? text : "" })),
@@ -30,4 +34,23 @@ export function projectDefineDocument(sections: Sections): Pick<DefineHandoffV1,
       };
     }),
   };
+}
+
+/** Cite visible prose in a parsed definition, never an example or its Markdown delimiters. */
+export function isNormativeDefineQuote(
+  section: { type: string; content: string },
+  quote: string,
+): boolean {
+  if (!hasDefineStatementText(quote)) return false;
+  const containsQuote = (text: string) =>
+    inline.parseInline(text, {})[0]!.children!.some(token => token.type === "text" && token.content.includes(quote));
+  switch (section.type) {
+    case "requirements":
+      return defineDefinitions(section.content).some(({ text }) => containsQuote(text));
+    case "acceptance_criteria":
+      return defineDefinitions(section.content, ["AC"])
+        .some(({ text }) => containsQuote(text.slice(0, ACCEPTANCE_REFERENCES.exec(text)?.index)));
+    default:
+      return false;
+  }
 }

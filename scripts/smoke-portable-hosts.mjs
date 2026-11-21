@@ -40,6 +40,24 @@ const HOSTS = [
 const readJson = (relative) =>
   JSON.parse(readFileSync(join(ROOT, relative), "utf8"));
 
+const VALIDATORS = ["validate_prd_document", "validate_prd_section"];
+const SYMBOLS = "Use `parseConfig()` and `Ghost.run()`.";
+const PERFORMANCE = "## Verification\n\np95 <= 200 ms\n\nVerdict: ";
+const VERIFICATION_CASES = [
+  { type: "technical_specification", content: SYMBOLS },
+  { type: "technical_specification", content: SYMBOLS, known_symbols: ["parseConfig"] },
+  { type: "technical_specification", content: SYMBOLS, known_symbols: ["parseConfig", "Ghost.run"] },
+  { type: "performance_requirements", content: PERFORMANCE + "PASS" },
+  { type: "performance_requirements", content: PERFORMANCE + "NEEDS-RUNTIME" },
+];
+
+function validationArguments(tool, { type, content, known_symbols }) {
+  const input = tool === "validate_prd_section"
+    ? { section_type: type, content }
+    : { sections: [{ type, content }] };
+  return known_symbols === undefined ? input : { ...input, known_symbols };
+}
+
 function responseById(stdout, id) {
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
@@ -52,6 +70,40 @@ function responseById(stdout, id) {
     }
   }
   return null;
+}
+
+function readReport(stdout, id, label) {
+  const response = responseById(stdout, id);
+  assert.ok(response?.result, `${label}: missing tool result for call ${id}\n${stdout}`);
+  assert.equal(response.result.isError, undefined, `${label}: tool error for call ${id}`);
+  const report = JSON.parse(response.result.content[0].text);
+  assert.equal(report.__page.next_offset, null, `${label}: fixture exceeded one report page`);
+  return report;
+}
+
+function checkReports([noCatalog, partialCatalog, completeCatalog, pass, needsRuntime], label) {
+  assert.equal(Object.hasOwn(noCatalog, "symbolExistence"), false, `${label}: catalog must be opt-in`);
+  assert.deepEqual(partialCatalog.symbolExistence, {
+    checkedSymbols: 2,
+    knownSymbols: 1,
+    unresolvedSymbols: [{ symbol: "Ghost.run", occurrences: 1 }],
+  }, `${label}: only the missing symbol should be reported`);
+  assert.deepEqual(completeCatalog.symbolExistence, {
+    checkedSymbols: 2, knownSymbols: 2, unresolvedSymbols: [],
+  }, `${label}: both symbols should resolve`);
+  for (const report of [partialCatalog, completeCatalog]) {
+    assert.equal(report.totalScore, noCatalog.totalScore, `${label}: symbols must not change the score`);
+    assert.deepEqual(report.violations, noCatalog.violations, `${label}: symbols must stay advisory`);
+  }
+  const verdictFindings = report =>
+    report.violations.filter(({ rule }) => rule === "honest_verification_verdicts");
+  const findings = verdictFindings(pass);
+  assert.ok(findings.length > 0, `${label}: a single PASS must produce a verdict finding`);
+  for (const finding of findings) {
+    assert.notEqual(finding.isAdvisory, true, `${label}: the verdict finding must be blocking`);
+    assert.match(finding.offendingContent, /\b1x PASS\b/, `${label}: the finding must name the single PASS`);
+  }
+  assert.deepEqual(verdictFindings(needsRuntime), [], `${label}: NEEDS-RUNTIME must be accepted by the verdict rule`);
 }
 
 for (const host of HOSTS) {
@@ -86,19 +138,18 @@ for (const host of HOSTS) {
     },
     { jsonrpc: "2.0", method: "notifications/initialized" },
     { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
-    {
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: {
-        name: "validate_prd_section",
-        arguments: {
-          section_type: "overview",
-          content: "# Overview\nA portable verifier smoke test.",
-        },
-      },
-    },
   ];
+  const queries = VALIDATORS.map(tool => ({
+    tool,
+    ids: VERIFICATION_CASES.map(scenario => {
+      const id = requests.length;
+      requests.push({
+        jsonrpc: "2.0", id, method: "tools/call",
+        params: { name: tool, arguments: validationArguments(tool, scenario) },
+      });
+      return id;
+    }),
+  }));
 
   try {
     const run = spawnSync(command, args, {
@@ -130,18 +181,17 @@ for (const host of HOSTS) {
     const list = responseById(run.stdout, 2);
     assert.deepEqual(
       list?.result?.tools?.map((tool) => tool.name).sort(),
-      ["validate_prd_document", "validate_prd_section"],
+      VALIDATORS,
       `${host.name}: verifier profile exposed the wrong tools`,
     );
 
-    const call = responseById(run.stdout, 3);
-    assert.equal(call?.error, undefined, `${host.name}: verifier call failed`);
-    assert.equal(call?.result?.isError, undefined, `${host.name}: tool returned isError`);
-    const report = JSON.parse(call.result.content[0].text);
-    assert.equal(typeof report, "object", `${host.name}: verifier returned no report`);
+    for (const { tool, ids } of queries) {
+      const label = `${host.name} ${tool}`;
+      checkReports(ids.map(id => readReport(run.stdout, id, label)), label);
+    }
     console.log(
       `PORTABLE HOST SMOKE OK: ${host.name}, ${initialize.result.serverInfo.version}, ` +
-        `${list.result.tools.length} tools, validate_prd_section completed`,
+        `${list.result.tools.length} tools, symbol catalog and performance verdicts checked`,
     );
   } finally {
     chmodSync(join(portableRoot, "mcp-server"), 0o755);

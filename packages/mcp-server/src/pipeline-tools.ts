@@ -283,6 +283,8 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       feature_description: z
         .string()
         .describe("What the PRD is about — passed to all prompts"),
+      semantic_review: z.boolean().optional()
+        .describe("Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks."),
       codebase_path: z
         .string()
         .optional()
@@ -305,7 +307,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         ),
     },
     { destructiveHint: true },
-    async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size }) => {
+    async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size, semantic_review }) => {
       // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
       // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
       // structured, retryable error rather than hang or grow unbounded — the
@@ -347,6 +349,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         skip_preflight: skip_preflight ?? false,
         prd_context: prd_context ?? null,
         request_size: request_size ?? REQUEST_SIZE_DEFAULT,
+        semantic_review,
       });
 
       // B1 — Wire retry_policy from composition root (Curie A7).
