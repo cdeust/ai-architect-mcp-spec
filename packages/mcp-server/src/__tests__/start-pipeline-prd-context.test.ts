@@ -20,7 +20,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { REQUEST_SIZE_CONFIGS } from "@prd-gen/core";
 
 import { registerPipelineTools } from "../pipeline-tools.js";
@@ -147,6 +147,8 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
   it("reads the kind, and no size, from the description when nothing is declared", async () => {
     // start_pipeline steps through context_detection before it answers.
     const run = await started({});
+    expect(run).not.toHaveProperty("semantic_review_requested");
+    expect(run).not.toHaveProperty("semantic_review_model");
     expect(run.prd_context).toBe("feature");
     expect(run.request_size).toBe("standard");
     expect(run.messages).toContain("PRD context detected: Feature (from trigger words)");
@@ -170,4 +172,19 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
     expect(await refusal({ request_size: "bug" })).toContain("request_size");
     expect(await refusal({ prd_context: "bug", request_size: "tiny" })).toBeNull();
   });
+});
+
+it.each([
+  [" gemini-argon ", false, true, "gemini-argon"],
+  ["   ", undefined, undefined, undefined],
+  [undefined, true, true, undefined],
+] as const)("activates the configured reviewer for %s with request flag %s", async (model, flag, enabled, reviewer) => {
+  vi.stubEnv("PRD_GEN_SEMANTIC_REVIEW_MODEL", model);
+  try {
+    const state = await started({ semantic_review: flag });
+    expect(Reflect.get(state, "semantic_review_requested")).toBe(enabled);
+    expect(Reflect.get(state, "semantic_review_model")).toBe(reviewer);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

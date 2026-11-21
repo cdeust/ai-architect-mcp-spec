@@ -56,7 +56,7 @@ function semanticFixtureResult(action: ReviewInvocation, scenario: string) {
     ? { status: "finding", citations: [cite(DECLARED_EXCLUSION), cite(CLOUD_REQUIREMENT)] } : clear;
   const edge: ReviewEvidence = scenario === "missing_edge_case"
     ? { status: "finding", citations: [cite(DECLARED_EDGE)] }
-    : scenario.startsWith("operator_") ? { status: "inconclusive", citations: [] }
+    : scenario === "inconclusive" ? { status: "inconclusive", citations: [] }
     : scenario === "covered" ? { status: "clear", citations: [cite(DECLARED_EDGE), cite(EDGE_HANDLING)] } : clear;
   const raw = JSON.stringify({
     scope_creep: scenario === "invented_quote"
@@ -68,9 +68,9 @@ function semanticFixtureResult(action: ReviewInvocation, scenario: string) {
     responses: [{ invocation_id: action.invocations[0]!.invocation_id, raw_text: raw }] };
 }
 
-async function finishSemanticSelfCheck(server: StdioServer, envelope: Envelope) {
+async function finishSemanticSelfCheck(server: StdioServer, envelope: Envelope, scenario: string) {
   const canned = makeCannedDispatcher();
-  while (envelope.current_step === "self_check" || NextActionSchema.parse(envelope.action).kind === "write_file") {
+  while (["self_check", "finalize"].includes(envelope.current_step) || NextActionSchema.parse(envelope.action).kind === "write_file") {
     const action = NextActionSchema.parse(envelope.action);
     if (action.kind === "write_file") {
       envelope = await call<Envelope>(server, "submit_action_result", {
@@ -80,6 +80,12 @@ async function finishSemanticSelfCheck(server: StdioServer, envelope: Envelope) 
       expect(action.kind === "spawn_subagents" && action.batch_id.startsWith("self_check_scope_coverage_")).toBe(false);
       const result = canned(action);
       if (!result) throw new Error("Unhandled self-check action " + action.kind);
+      if (scenario === "panel_fails" && result.kind === "subagent_batch_result") {
+        for (const reply of result.responses) {
+          const verdicts = JSON.parse(reply.raw_text!) as { verdict: string }[];
+          reply.raw_text = JSON.stringify(verdicts.map(verdict => ({ ...verdict, verdict: "FAIL" })));
+        }
+      }
       envelope = await call<Envelope>(server, "submit_action_result", { run_id: envelope.run_id, result });
     }
   }
@@ -94,18 +100,21 @@ const SEMANTIC_ISSUE_CASES = [
   ["invented_quote", "current, complete scope and edge-case evidence is required", false],
   ["clean", null, false],
   ["covered", null, false],
-  ["operator_confirms", null, false],
-  ["operator_declines", "missing_edge_case (inconclusive)", false],
+  ["inconclusive", "missing_edge_case (inconclusive)", false],
+  ["panel_fails", "carry a blocked verdict", false],
 ] as const;
 
-it("persists the public semantic review opt-in", async () => {
+it("starts automatic semantic review using the configured host model", async () => {
   const home = mkdtempSync(join(tmpdir(), "prd-gen-semantic-start-"));
   let server: StdioServer | undefined;
   try {
-    server = await startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
-    const { run_id } = await call<Envelope>(server, "start_pipeline", { ...fixture.request, semantic_review: true });
+    server = await startDefineServer({ cwd: home, env: {
+      HOME: home, USERPROFILE: home, PRD_GEN_SEMANTIC_REVIEW_MODEL: "gemini-argon",
+    } });
+    const { run_id } = await call<Envelope>(server, "start_pipeline", fixture.request);
     const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
     expect(state.semantic_review_requested).toBe(true);
+    expect(state.semantic_review_model).toBe("gemini-argon");
     expect(state.semantic_review).toBeUndefined();
   } finally {
     await server?.close();
@@ -122,6 +131,7 @@ it.each(SEMANTIC_ISSUE_CASES)("validates host scope review evidence for %s (%s, 
     ...seed, current_step: "self_check",
     clarifications: [{ round: 1, question: "Should copying stay local?", answer: "Yes.", asked_at: seed.started_at }],
     sections: semanticSections(scenario, raw),
+    written_files: [`prd-output/${run_id}/01-prd.md`],
   } });
   expect(action.kind).toBe("spawn_subagents");
   const start = () => startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
@@ -134,36 +144,30 @@ it.each(SEMANTIC_ISSUE_CASES)("validates host scope review evidence for %s (%s, 
     if (judge.kind !== "spawn_subagents") throw new Error("Expected semantic review");
     expect(judge.batch_id).toMatch(/^self_check_scope_coverage_/);
     const result = semanticFixtureResult(judge, scenario);
-    let response = await call<Envelope>(server, "submit_action_result", { run_id, result });
-    if (scenario.startsWith("operator_")) {
-      const pending = NextActionSchema.parse(response.action);
-      if (pending.kind !== "ask_user") throw new Error("Expected manual edge-case validation");
-      await server.close();
-      server = await start();
-      expect((await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" })).action).toEqual(pending);
-      response = await call<Envelope>(server, "submit_action_result", {
-        run_id,
-        result: {
-          kind: "user_answer", question_id: pending.question_id,
-          selected: [scenario === "operator_confirms" ? "Confirm after checking" : "Leave unresolved"],
-        },
-      });
-    }
-    const gate = await finishSemanticSelfCheck(server, response);
-    expect(gate).toMatchObject({ kind: "ask_user", question_id: "implementation_gate" });
-    if (failure) expect(gate).toMatchObject({ description: expect.stringContaining(failure) });
+    const response = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    const completion = await finishSemanticSelfCheck(server, response, scenario);
+    expect(completion).toMatchObject({ kind: "done" });
+    if (completion.kind !== "done") throw new Error("Expected autonomous review completion");
+    if (failure) expect(completion.outcome).toMatchObject({
+      status: "needs_attention", reasons: expect.arrayContaining([expect.stringContaining(failure)]),
+    });
     await server.close();
     server = await start();
+    const replay = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    expect(replay.action).toEqual(completion);
     const define = await server.call("get_pipeline_state", { run_id, format: "define_handoff_v1" });
     expect(define.isError, define.text).toBe(failure !== null);
     if (raw) expect(JSON.parse(define.text)).toMatchObject({ error: { code: "define_document_invalid" } });
-    else if (failure) expect(JSON.parse(define.text)).toMatchObject({ error: { code: "define_not_ready", message: expect.stringContaining(failure) } });
+    else if (failure) expect(JSON.parse(define.text)).toMatchObject({ error: {
+      code: "define_not_ready",
+      message: expect.stringContaining(scenario === "panel_fails" ? "detailed verification evidence" : failure),
+    } });
     else expect(JSON.parse(define.text)).toMatchObject({ handoff: { run_id } });
-    if (scenario === "operator_confirms") {
+    if (scenario === "clean") {
       const full = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
       await server.close();
       const changed = full.state.clarifications.map(turn => ({ ...turn, question: "Should copies be saved remotely?" }));
-      files.write({ ...full.state, clarifications: changed }, gate);
+      files.write({ ...full.state, clarifications: changed }, completion);
       server = await start();
       const stale = await server.call("get_pipeline_state", { run_id, format: "define_handoff_v1" });
       expect(stale.isError).toBe(true);
@@ -293,6 +297,51 @@ async function driveToGate(
     envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
   }
   throw new Error(`Run did not reach implementation_gate. Trace: ${trace.join(", ")}`);
+}
+
+it("drives the configured reviewer from start to a read-only Define handoff", async () => {
+  const output = mkdtempSync(join(tmpdir(), "prd-gen-automatic-define-"));
+  const server = await startDefineServer({ cwd: output, env: {
+    HOME: output, USERPROFILE: output, PRD_GEN_SEMANTIC_REVIEW_MODEL: "gemini-argon",
+  } });
+  try {
+    const host = makeHost(output, "ready");
+    let envelope = await call<Envelope>(server, "start_pipeline", fixture.request);
+    const { run_id } = envelope;
+    const reviewed: string[] = [];
+    for (let turn = 0; turn < 300; turn++) {
+      const action = NextActionSchema.parse(envelope.action);
+      if (action.kind === "done") {
+        expect(action.outcome?.status, action.summary).toBe("passed");
+        expect(reviewed).toHaveLength(1);
+        const response = await call<{ handoff: { run_id: string } }>(server, "get_pipeline_state", {
+          run_id, format: "define_handoff_v1",
+        });
+        expect(response.handoff.run_id).toBe(run_id);
+        return;
+      }
+      if (envelope.current_step === "self_check" || envelope.current_step === "implementation_gate") {
+        expect(action.kind).not.toBe("ask_user");
+      }
+      const result = action.kind === "spawn_subagents" && action.batch_id.startsWith("self_check_scope_coverage_")
+        ? dispatchConfiguredReview(action, reviewed)
+        : host.respond(action);
+      if (!result) throw new Error("Unexpected action: " + actionLabel(action));
+      envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    }
+    throw new Error("Automatic Define never reached done");
+  } finally {
+    await server.close();
+    rmSync(output, { force: true, recursive: true });
+  }
+}, 120_000);
+
+function dispatchConfiguredReview(action: ReviewInvocation, reviewed: string[]) {
+  expect(action.invocations).toHaveLength(1);
+  expect(action.invocations[0]?.model).toBe("gemini-argon");
+  expect(reviewed).not.toContain(action.batch_id);
+  reviewed.push(action.batch_id);
+  return semanticFixtureResult(action, "clean");
 }
 
 it.each<{ name: string; pilot: Pilot; finding?: string }>([

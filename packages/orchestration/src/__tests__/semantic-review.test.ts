@@ -133,6 +133,9 @@ describe("scope and edge-case evidence", () => {
       expect(schema.safeParse({ ...record, digest: badDigest }).success).toBe(false);
     }
     expect(schema.safeParse({ ...record, operator_decisions: { scope_creep: "yes" } }).success).toBe(false);
+    const model = SemanticReviewStateFields.semantic_review_model;
+    expect(model.parse("gemini-argon")).toBe("gemini-argon");
+    expect(model.safeParse("").success).toBe(false);
   });
 
   it("binds to the exact run, sources and responses across checkpoint recovery", () => {
@@ -141,6 +144,8 @@ describe("scope and edge-case evidence", () => {
     const foreign = { ...input, run_id: "another-run" };
     expect(request(foreign).action.batch_id).not.toBe(action.batch_id);
     expect(request(stale).action.batch_id).not.toBe(action.batch_id);
+    expect(request({ ...input, semantic_review_model: "gemini-argon" }).action.batch_id)
+      .not.toBe(action.batch_id);
     expect(reviewSemanticCoverage(input, { ...result(), batch_id: "wrong" }).action).toEqual(action);
     expect(reviewSemanticCoverage(stale, result()).action).toEqual(request(stale).action);
 
@@ -148,6 +153,7 @@ describe("scope and edge-case evidence", () => {
     expect(reviewSemanticCoverage(done, undefined)).toEqual({ state: done });
     expect(semanticReviewFindings(done)).toEqual([]);
     expect(semanticReviewFindings({ ...done, feature_description: stale.feature_description })).not.toEqual([]);
+    expect(semanticReviewFindings({ ...done, semantic_review_model: "gemini-argon" })).not.toEqual([]);
   });
 
   it("preserves valid citations and records both findings without replacing other results", () => {
@@ -322,77 +328,22 @@ describe("scope and edge-case evidence", () => {
       .action.batch_id).not.toEqual(action.batch_id);
   });
 
-  it("binds explicit human decisions to the unresolved axis and the reviewed inputs", () => {
-    const { input, result } = request();
+  it("reports an inconclusive verdict without requesting or accepting human clearance", () => {
+    const { input, result, action } = request({ ...state(), semantic_review_model: "gemini-argon" });
+    expect(action.invocations[0]?.model).toBe("gemini-argon");
     const uncertain = { status: "inconclusive", citations: [cite("section-0", edge)] };
-    const requested = reviewSemanticCoverage(input, result(output(clear, uncertain)));
-    const question = requested.action;
-    if (question?.kind !== "ask_user") throw new Error("Expected the operator question");
-    expect(semanticReviewFindings(requested.state)).toEqual([
+    const completed = reviewSemanticCoverage(input, result(output(clear, uncertain)));
+    expect(completed.action).toBeUndefined();
+    const saved = completed.state.semantic_review!;
+    const legacy = { ...completed.state, semantic_review: {
+      ...saved, operator_decisions: { missing_edge_case: "confirmed" as const },
+    } };
+    expect(semanticReviewFindings(legacy)).toEqual([
       { message: "semantic_review: missing_edge_case (inconclusive)" },
     ]);
-    expect(question).toEqual({
-      kind: "ask_user",
-      question_id: "semantic_review_confirm_missing_edge_case_" + requested.state.semantic_review?.digest,
-      header: "Review edge cases",
-      description: "Inspect the request and current PRD. Confirm only if the requirements and acceptance criteria cover the declared edge cases.\n\nsection-0: " + edge,
-      multi_select: false,
-      options: [
-        { label: "Confirm after checking", description: "I checked the current specification and confirmed this item." },
-        { label: "Leave unresolved", description: "Keep this item open and block the Define handoff." },
-      ],
-    });
-    const answer = {
-      kind: "user_answer" as const, question_id: question.question_id, selected: ["Confirm after checking"],
-    };
-    expect(reviewSemanticCoverage(requested.state, { ...answer, question_id: "stale" }).action).toEqual(question);
-    expect(reviewSemanticCoverage(requested.state, { ...answer, selected: ["yes"] }).action).toEqual(question);
-    expect(reviewSemanticCoverage(requested.state, {
-      ...answer, selected: ["Confirm after checking", "Leave unresolved"],
-    }).action).toEqual(question);
-    expect(reviewSemanticCoverage(requested.state, { ...answer, freeform: "Leave unresolved" }).action).toEqual(question);
-    const confirmed = reviewSemanticCoverage(requested.state, answer);
-    expect(confirmed.action).toBeUndefined();
-    expect(confirmed.state.semantic_review?.operator_decisions).toEqual({ missing_edge_case: "confirmed" });
-    expect(semanticReviewFindings(confirmed.state)).toEqual([]);
-    const rejected = reviewSemanticCoverage(requested.state, { ...answer, selected: ["Leave unresolved"] });
-    expect(rejected.action).toBeUndefined();
-    expect(semanticReviewFindings(rejected.state)).toEqual([{ message: "semantic_review: missing_edge_case (inconclusive)" }]);
-  });
-
-  it("keeps an established defect blocked after the operator confirms the other axis", () => {
-    const { input, result } = request();
-    const scope = finding([cite("request", boundary), cite("section-1", requirementText)]);
-    const requested = reviewSemanticCoverage(input, result(output(scope, { status: "inconclusive", citations: [] })));
-    const action = requested.action;
-    if (action?.kind !== "ask_user") throw new Error("Expected the operator question");
-    const confirmed = reviewSemanticCoverage(requested.state, {
-      kind: "user_answer", question_id: action.question_id, selected: ["Confirm after checking"],
-    });
-    expect(semanticReviewFindings(confirmed.state)).toEqual([{ message: "semantic_review: scope_creep (finding)" }]);
-    const review = confirmed.state.semantic_review!;
-    const contradictoryCheckpoint: PipelineState = {
-      ...confirmed.state,
-      semantic_review: { ...review, operator_decisions: { ...review.operator_decisions, scope_creep: "confirmed" } },
-    };
-    expect(semanticReviewFindings(contradictoryCheckpoint))
-      .toEqual([{ message: "semantic_review: scope_creep (finding)" }]);
-  });
-
-  it("asks about each inconclusive axis exactly once after a decision", () => {
-    const { input, result } = request();
-    const uncertain = { status: "inconclusive", citations: [] };
-    const first = reviewSemanticCoverage(input, result(output(uncertain, uncertain)));
-    const scope = first.action;
-    if (scope?.kind !== "ask_user") throw new Error("Expected the scope question");
-    expect(scope.header).toBe("Review scope");
-    expect(scope.description).toContain("scope exclusions");
-    const next = reviewSemanticCoverage(first.state, {
-      kind: "user_answer", question_id: scope.question_id, selected: ["Confirm after checking"],
-    });
-    expect(next.action).toMatchObject({ kind: "ask_user", header: "Review edge cases" });
-    expect(semanticReviewFindings(next.state)).toEqual([
-      { message: "semantic_review: missing_edge_case (inconclusive)" },
-    ]);
+    expect(reviewSemanticCoverage(legacy, {
+      kind: "user_answer", question_id: "semantic_review_confirm_missing_edge_case_" + saved.digest,
+      selected: ["Confirm after checking"],
+    })).toEqual({ state: legacy });
   });
 });

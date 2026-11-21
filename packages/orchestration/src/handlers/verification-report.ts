@@ -204,7 +204,7 @@ function renderGraphValidation(
  *                `state.pending_completion?.verification`, and
  *                `state.post_specs?.decision`/`policy_derogation`.
  */
-function renderPolicySection(state: PipelineState): string {
+function renderPolicySection(state: PipelineState, outcome: NonNullable<PipelineState["pending_completion"]>["outcome"]): string {
   const policy = resolveVerificationPolicy(state.verification_policy);
   const verdict = evaluateRunPolicy(state);
 
@@ -222,7 +222,12 @@ function renderPolicySection(state: PipelineState): string {
   const decision = state.post_specs?.decision ?? "pending";
   const derogation = state.post_specs?.policy_derogation;
   let decisionLine: string;
-  if (decision === "pending") {
+  if (state.post_specs?.automatic_define && outcome) {
+    decisionLine = [
+      `Automatic Define outcome: ${outcome.status}.`,
+      ...outcome.reasons.map(reason => `- ${reason}`),
+    ].join("\n");
+  } else if (decision === "pending") {
     decisionLine = "Human decision: pending (gate not yet answered).";
   } else if (derogation) {
     decisionLine = `Human decision: ${decision} — derogation granted by user at gate (policy status was "${derogation.policy_status}").`;
@@ -270,7 +275,7 @@ export function buildVerificationReportFile(state: PipelineState): PrdFile | nul
         "",
         "## Verification Policy",
         "",
-        renderPolicySection(state),
+        renderPolicySection(state, pending.outcome),
         "",
         "## Section Statuses & Violations",
         "",

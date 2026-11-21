@@ -7,7 +7,6 @@ import { SemanticReviewAxesSchema, SemanticReviewAxisNameSchema } from "./types/
 import type { ActionResult, NextAction } from "./types/actions.js";
 import type { PipelineState } from "./types/state.js";
 import { resolveVerifyBudget } from "./handlers/self-check-verify-budget.js";
-import { matchOfferedOption } from "./handlers/match-offered-option.js";
 
 function reviewSources(state: PipelineState) {
   return [
@@ -26,7 +25,7 @@ function reviewSources(state: PipelineState) {
 
 function snapshot(state: PipelineState) {
   const sources = reviewSources(state);
-  const serialized = JSON.stringify({ run_id: state.run_id, sources });
+  const serialized = JSON.stringify({ run_id: state.run_id, review_model: state.semantic_review_model, sources });
   const digest = createHash("sha256").update(serialized).digest("hex");
   const planned = prdSections(state.sections);
   const types = new Set(planned.map(section => section.section_type));
@@ -66,7 +65,7 @@ function semanticAction(
       description: "Review scope and declared edge-case coverage",
       prompt,
       isolation: "none",
-      model: budget.judge_model,
+      model: state.semantic_review_model ?? budget.judge_model,
       effort: budget.judge_effort,
     }],
   };
@@ -119,53 +118,11 @@ function parseAxes(raw: string | undefined, sources: readonly ReviewSource[]) {
   return parsed.data;
 }
 
-const CONFIRM = "Confirm after checking";
-const LEAVE_UNRESOLVED = "Leave unresolved";
-type SemanticAxis = "scope_creep" | "missing_edge_case";
-
-function operatorQuestionId(axis: SemanticAxis, digest: string): `semantic_review_confirm_${SemanticAxis}_${string}` {
-  return `semantic_review_confirm_${axis}_${digest}`;
-}
-
-function operatorReview(state: PipelineState, result: ActionResult | undefined): { state: PipelineState; action?: NextAction } {
-  // Called only with a review bound to the current snapshot.
-  const review = state.semantic_review!;
-  if (!review.axes) return { state };
-  const axes = review.axes;
-  const axis = SemanticReviewAxisNameSchema.options.find(name =>
-    axes[name].status === "inconclusive" && !review.operator_decisions?.[name]);
-  if (!axis) return { state };
-  const subject = axis === "scope_creep"
-    ? "the requirements respect the documented scope exclusions"
-    : "the requirements and acceptance criteria cover the declared edge cases";
-  const citations = axes[axis].citations.map(({ source_id, quote }) => source_id + ": " + quote);
-  const options = [
-    { label: CONFIRM, description: "I checked the current specification and confirmed this item." },
-    { label: LEAVE_UNRESOLVED, description: "Keep this item open and block the Define handoff." },
-  ];
-  const action: NextAction = {
-    kind: "ask_user",
-    question_id: operatorQuestionId(axis, review.digest),
-    header: axis === "scope_creep" ? "Review scope" : "Review edge cases",
-    description: ["Inspect the request and current PRD. Confirm only if " + subject + ".", ...citations].join("\n\n"),
-    multi_select: false,
-    options,
-  };
-  if (result?.kind !== "user_answer" || result.question_id !== action.question_id) return { state, action };
-  const option = matchOfferedOption(options, result);
-  if (option !== CONFIRM && option !== LEAVE_UNRESOLVED) return { state, action };
-  return operatorReview({ ...state, semantic_review: {
-    ...review, operator_decisions: {
-      ...review.operator_decisions, [axis]: option === CONFIRM ? "confirmed" : "unresolved",
-    },
-  } }, undefined);
-}
-
 export function reviewSemanticCoverage(state: PipelineState, result: ActionResult | undefined) {
   if (!state.semantic_review_requested) return { state };
   const current = snapshot(state);
   if (!current.complete) return { state: { ...state, semantic_review: { digest: current.digest } } };
-  if (state.semantic_review?.digest === current.digest) return operatorReview(state, result);
+  if (state.semantic_review?.digest === current.digest) return { state };
   // A single oversized invocation cannot be paged without losing the evidence for an omission.
   const prompt = REVIEW_INSTRUCTIONS + "\n\n" + current.serialized;
   if (JSON.stringify(prompt).length > MAX_RESPONSE_CHARS / 2) {
@@ -178,7 +135,7 @@ export function reviewSemanticCoverage(state: PipelineState, result: ActionResul
   const reply = result.responses[0]!;
   const axes = result.responses.length === 1 && reply.invocation_id === action.batch_id && !reply.error
     ? parseAxes(reply.raw_text, current.sources) : undefined;
-  return operatorReview({ ...state, semantic_review: { digest: current.digest, axes } }, undefined);
+  return { state: { ...state, semantic_review: { digest: current.digest, axes } } };
 }
 
 export function semanticReviewFindings(state: PipelineState): readonly { message: string }[] {
@@ -191,7 +148,6 @@ export function semanticReviewFindings(state: PipelineState): readonly { message
   const axes = result.axes;
   return SemanticReviewAxisNameSchema.options.flatMap(axis => {
     const { status } = axes[axis];
-    const confirmed = status === "inconclusive" && result.operator_decisions?.[axis] === "confirmed";
-    return status === "clear" || confirmed ? [] : [{ message: "semantic_review: " + axis + " (" + status + ")" }];
+    return status === "clear" ? [] : [{ message: "semantic_review: " + axis + " (" + status + ")" }];
   });
 }

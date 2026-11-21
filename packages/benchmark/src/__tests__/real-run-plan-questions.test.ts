@@ -2,7 +2,7 @@ import { readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tempDirectory } from "./real-run-cli-harness.js";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { API, type Type } from "typescript/unstable/sync";
+import { API } from "typescript/unstable/sync";
 import { isBinaryExpression, isPropertyAccessExpression, isPropertyAssignment, isShorthandPropertyAssignment, SyntaxKind, type Node } from "typescript/unstable/ast";
 import { expect, it } from "vitest";
 import { step } from "@prd-gen/orchestration";
@@ -15,19 +15,7 @@ const unreachable = new Map([
   ["prd_context", "Both plans declare the PRD kind."],
   ["feasibility_focus", "The OAuth feature description does not trigger the epic gate."],
   ["pr_gate", "Both plans select PRD only at the implementation gate."],
-  ["semantic_review_confirm_scope_creep_*", "Neither benchmark requests semantic review."],
-  ["semantic_review_confirm_missing_edge_case_*", "Neither benchmark requests semantic review."],
 ]);
-
-function questionPatterns(type: Type): string[] {
-  if (type.isStringLiteralType()) return [type.value];
-  if (type.isUnionType()) {
-    const members = type.getTypes().map(questionPatterns);
-    return members.some(patterns => patterns.length === 0) ? [] : members.flat();
-  }
-  if (type.isTemplateLiteralType()) return [type.texts.join("*")];
-  return [];
-}
 
 function assignedQuestion(node: Node) {
   if (isPropertyAssignment(node) && node.name.getText() === "question_id") return node.initializer;
@@ -56,9 +44,8 @@ function emittedQuestionIds(root = orchestration) {
           if (!schema && !echo) {
             const binding = isShorthandPropertyAssignment(node) && project.checker.getShorthandAssignmentValueSymbol(node);
             const type = binding ? project.checker.getTypeOfSymbol(binding) : project.checker.getTypeAtLocation(value);
-            const patterns = type ? questionPatterns(type) : [];
-            if (patterns.length === 0) throw new Error(`${file}: resolve question_id ${spelling}`);
-            for (const pattern of patterns) ids.add(pattern);
+            if (!type?.isStringLiteralType()) throw new Error(`${file}: resolve question_id ${spelling}`);
+            ids.add(type.value);
           }
         }
         node.forEachChild(visit);
@@ -76,17 +63,12 @@ it.each(["pilot", "smoke"])("%s arms register all reachable handler questions", 
   const emitted = emittedQuestionIds();
   const question_id = "self_check_verify_budget";
   expect(emitted).toContain(question_id);
-  expect(emitted).toContain("semantic_review_confirm_scope_creep_*");
-  expect(emitted).toContain("semantic_review_confirm_missing_edge_case_*");
   const pending = step({ state: selfCheckState(28, true) });
   expect(pending.action).toMatchObject({ kind: "ask_user", question_id });
   for (const { plan } of arms) {
     for (const [id, reason] of unreachable) expect(plan.answers, reason).not.toHaveProperty(id);
     for (const id of emitted) {
-      if (!unreachable.has(id)) {
-        expect(id, "A reachable dynamic question needs a benchmark answer resolver.").not.toContain("*");
-        expect(plan.answers, id).toHaveProperty(id);
-      }
+      if (!unreachable.has(id)) expect(plan.answers, id).toHaveProperty(id);
     }
     const answer = plan.answers[question_id];
     expect(answer).toEqual({ selected: ["Reduced sample"] });

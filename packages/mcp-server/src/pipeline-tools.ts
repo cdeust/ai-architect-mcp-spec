@@ -342,6 +342,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
       }
 
       const run_id = generateRunId();
+      const reviewModel = process.env.PRD_GEN_SEMANTIC_REVIEW_MODEL?.trim() || undefined;
       const initial = newPipelineState({
         run_id,
         feature_description,
@@ -349,7 +350,8 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         skip_preflight: skip_preflight ?? false,
         prd_context: prd_context ?? null,
         request_size: request_size ?? REQUEST_SIZE_DEFAULT,
-        semantic_review,
+        semantic_review: semantic_review || Boolean(reviewModel),
+        semantic_review_model: reviewModel,
       });
 
       // B1 — Wire retry_policy from composition root (Curie A7).
@@ -438,7 +440,10 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         if (found.kind !== "found") return runNotFound(run_id, found);
         if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) ||
             isRetiredImplementationAnswer(found.run.state, result)) return architectOsRequired();
-        const out = step({ state: recordLegacyDefineRefusal(found.run.state, found.run.action), result });
+        const { state, action } = found.run;
+        const out = state.semantic_review_requested && state.current_step === "complete" && action
+          ? { state, action, messages: [] }
+          : step({ state: recordLegacyDefineRefusal(state, action), result });
         // Drain the evidence queues BEFORE the state is kept: a state on
         // disk has empty queues, so a run that comes back after a restart
         // writes nothing twice. drainEvidenceQueues is a no-op when the
@@ -482,7 +487,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
     "next_offset is the invocation_offset to read them from. It is " +
     "paged under the same budget: each page holds whole invocations from " +
     "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-    "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. " +
+    "page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. " +
     "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
     "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.",
     {

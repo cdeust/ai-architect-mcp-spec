@@ -11,6 +11,7 @@ export const SemanticReviewAxesSchema = z.record(SemanticReviewAxisNameSchema, S
 
 export const SemanticReviewStateFields = {
   semantic_review_requested: z.literal(true).optional(),
+  semantic_review_model: z.string().min(1).optional(),
   semantic_review: z.strictObject({
     digest: z.string().regex(/^[a-f0-9]{64}$/),
     axes: SemanticReviewAxesSchema.optional(),

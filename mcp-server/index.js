@@ -53293,6 +53293,7 @@ var SemanticReviewAxisNameSchema = external_exports.enum(["scope_creep", "missin
 var SemanticReviewAxesSchema = external_exports.record(SemanticReviewAxisNameSchema, SemanticReviewAxisSchema);
 var SemanticReviewStateFields = {
   semantic_review_requested: external_exports.literal(true).optional(),
+  semantic_review_model: external_exports.string().min(1).optional(),
   semantic_review: external_exports.strictObject({
     digest: external_exports.string().regex(/^[a-f0-9]{64}$/),
     axes: SemanticReviewAxesSchema.optional(),
@@ -53402,6 +53403,8 @@ var PolicyDerogationSchema = external_exports.object({
 var PostSpecsStateSchema = external_exports.object({
   /** Set when migrating a pending legacy question that refused ordinary implementation. */
   legacy_define_refusal: external_exports.literal(true).optional(),
+  /** Set by the autonomous verification gate before terminal finalization. */
+  automatic_define: external_exports.literal(1).optional(),
   /**
    * Set by `implementation_gate`'s ask_user answer. `"pending"` is the
    * pre-gate default (self_check's finalize() initializes post_specs but
@@ -54239,7 +54242,7 @@ function newPipelineState(input2) {
     prd_context: input2.prd_context ?? null,
     request_size: input2.request_size ?? REQUEST_SIZE_DEFAULT,
     feature_description: input2.feature_description,
-    ...input2.semantic_review ? { semantic_review_requested: true } : {},
+    ...input2.semantic_review ? { semantic_review_requested: true, semantic_review_model: input2.semantic_review_model } : {},
     codebase_path: input2.codebase_path ?? null,
     codebase_graph_path: null,
     codebase_output_dir: null,
@@ -54666,7 +54669,7 @@ function reviewSources(state) {
 }
 function snapshot(state) {
   const sources = reviewSources(state);
-  const serialized = JSON.stringify({ run_id: state.run_id, sources });
+  const serialized = JSON.stringify({ run_id: state.run_id, review_model: state.semantic_review_model, sources });
   const digest = createHash("sha256").update(serialized).digest("hex");
   const planned = prdSections(state.sections);
   const types = new Set(planned.map((section) => section.section_type));
@@ -54699,7 +54702,7 @@ function semanticAction(state, digest, prompt) {
       description: "Review scope and declared edge-case coverage",
       prompt,
       isolation: "none",
-      model: budget.judge_model,
+      model: state.semantic_review_model ?? budget.judge_model,
       effort: budget.judge_effort
     }]
   };
@@ -54747,46 +54750,6 @@ function parseAxes(raw, sources) {
     return void 0;
   return parsed.data;
 }
-var CONFIRM = "Confirm after checking";
-var LEAVE_UNRESOLVED = "Leave unresolved";
-function operatorQuestionId(axis, digest) {
-  return `semantic_review_confirm_${axis}_${digest}`;
-}
-function operatorReview(state, result) {
-  const review = state.semantic_review;
-  if (!review.axes)
-    return { state };
-  const axes = review.axes;
-  const axis = SemanticReviewAxisNameSchema.options.find((name323) => axes[name323].status === "inconclusive" && !review.operator_decisions?.[name323]);
-  if (!axis)
-    return { state };
-  const subject = axis === "scope_creep" ? "the requirements respect the documented scope exclusions" : "the requirements and acceptance criteria cover the declared edge cases";
-  const citations = axes[axis].citations.map(({ source_id, quote }) => source_id + ": " + quote);
-  const options = [
-    { label: CONFIRM, description: "I checked the current specification and confirmed this item." },
-    { label: LEAVE_UNRESOLVED, description: "Keep this item open and block the Define handoff." }
-  ];
-  const action = {
-    kind: "ask_user",
-    question_id: operatorQuestionId(axis, review.digest),
-    header: axis === "scope_creep" ? "Review scope" : "Review edge cases",
-    description: ["Inspect the request and current PRD. Confirm only if " + subject + ".", ...citations].join("\n\n"),
-    multi_select: false,
-    options
-  };
-  if (result?.kind !== "user_answer" || result.question_id !== action.question_id)
-    return { state, action };
-  const option = matchOfferedOption(options, result);
-  if (option !== CONFIRM && option !== LEAVE_UNRESOLVED)
-    return { state, action };
-  return operatorReview({ ...state, semantic_review: {
-    ...review,
-    operator_decisions: {
-      ...review.operator_decisions,
-      [axis]: option === CONFIRM ? "confirmed" : "unresolved"
-    }
-  } }, void 0);
-}
 function reviewSemanticCoverage(state, result) {
   if (!state.semantic_review_requested)
     return { state };
@@ -54794,7 +54757,7 @@ function reviewSemanticCoverage(state, result) {
   if (!current.complete)
     return { state: { ...state, semantic_review: { digest: current.digest } } };
   if (state.semantic_review?.digest === current.digest)
-    return operatorReview(state, result);
+    return { state };
   const prompt = REVIEW_INSTRUCTIONS + "\n\n" + current.serialized;
   if (JSON.stringify(prompt).length > MAX_RESPONSE_CHARS / 2) {
     return { state: { ...state, semantic_review: { digest: current.digest } } };
@@ -54804,7 +54767,7 @@ function reviewSemanticCoverage(state, result) {
     return { state, action };
   const reply = result.responses[0];
   const axes = result.responses.length === 1 && reply.invocation_id === action.batch_id && !reply.error ? parseAxes(reply.raw_text, current.sources) : void 0;
-  return operatorReview({ ...state, semantic_review: { digest: current.digest, axes } }, void 0);
+  return { state: { ...state, semantic_review: { digest: current.digest, axes } } };
 }
 function semanticReviewFindings(state) {
   if (!state.semantic_review_requested)
@@ -54817,8 +54780,7 @@ function semanticReviewFindings(state) {
   const axes = result.axes;
   return SemanticReviewAxisNameSchema.options.flatMap((axis) => {
     const { status } = axes[axis];
-    const confirmed = status === "inconclusive" && result.operator_decisions?.[axis] === "confirmed";
-    return status === "clear" || confirmed ? [] : [{ message: "semantic_review: " + axis + " (" + status + ")" }];
+    return status === "clear" ? [] : [{ message: "semantic_review: " + axis + " (" + status + ")" }];
   });
 }
 
@@ -58131,6 +58093,16 @@ function handleSelfCheckPhaseA(state, result) {
     return finalize2(state, mechanicalVerdicts, totalSubjectiveClaims);
   }
   if (reduced.length > config6.invocation_cap) {
+    if (state.semantic_review_requested) {
+      return {
+        state: { ...state, current_step: "complete" },
+        action: {
+          kind: "failed",
+          step: "self_check",
+          reason: `review_budget_exceeded: ${reduced.length} judge invocations exceed the configured cap of ${config6.invocation_cap}`
+        }
+      };
+    }
     const question = buildBudgetGateQuestion(reduced.length, config6);
     if (result?.kind !== "user_answer" || result.question_id !== VERIFY_BUDGET_QUESTION_ID) {
       return { state, action: question };
@@ -58213,6 +58185,61 @@ function parseVerdictsFromSnapshot(snapshot2, state, batchResult) {
   return out;
 }
 
+// packages/orchestration/dist/define-handoff.js
+import { isDeepStrictEqual } from "node:util";
+function refusal(code2, message) {
+  return { error: { code: code2, message } };
+}
+function readDefineHandoff(state, action) {
+  const automatic = state.semantic_review_requested && state.post_specs?.automatic_define === 1 && state.current_step === "complete" && state.post_specs.decision === "prd_only" && action?.kind === "done";
+  const legacy = state.current_step === "implementation_gate" && action?.kind === "ask_user" && action.question_id === IMPLEMENTATION_GATE_QUESTION_ID && (!state.post_specs || state.post_specs.decision === "pending");
+  if (!automatic && !legacy) {
+    return refusal("define_not_pending", "Define requires a pending implementation decision.");
+  }
+  const projection = projectVerifiedDefine(state);
+  if ("error" in projection)
+    return projection;
+  if (automatic && (action.outcome?.status !== "passed" || !isDeepStrictEqual(action.verification, state.pending_completion.verification))) {
+    return refusal("define_not_ready", "The completed verification action and retained evidence disagree.");
+  }
+  if (legacy && !permitsDefineHandoff(action)) {
+    return refusal("define_not_ready", "The pending question does not permit a verified planning handoff.");
+  }
+  return projection;
+}
+function projectVerifiedDefine(state) {
+  const sections = documentSections(state.sections);
+  const parsed = DefineHandoffV1Schema.safeParse({ version: 1, run_id: state.run_id, ...projectDefineDocument(sections) });
+  if (!parsed.success) {
+    return refusal("define_document_invalid", external_exports.prettifyError(parsed.error));
+  }
+  const failure2 = validateDocument(sections).violations.find(isBlockingViolation);
+  if (failure2) {
+    return refusal("define_document_invalid", `${failure2.rule}: ${failure2.message}`);
+  }
+  const dispute = findDefineDecisionConflicts(state, sections)[0];
+  if (dispute) {
+    return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
+  }
+  const semanticFinding = semanticReviewFindings(state)[0];
+  if (semanticFinding)
+    return refusal("define_not_ready", semanticFinding.message);
+  const completion = state.pending_completion;
+  const verification = completion?.verification;
+  const judged = new Set(verification?.judge_verdicts?.map(({ claim_id }) => claim_id));
+  if (completion?.outcome?.status !== "passed" || !verification || judged.size === 0 || judged.size !== verification.claims_evaluated || prdSections(state.sections).some((section) => section.status !== "passed")) {
+    return refusal("define_not_ready", "Define requires passed PRD sections, a passed self-check and detailed verification evidence.");
+  }
+  const policy = evaluatePolicy(verification, resolveVerificationPolicy(state.verification_policy));
+  if (policy.status !== "pass") {
+    return refusal("define_not_ready", "The current verification policy requires attention.");
+  }
+  if (state.post_specs?.legacy_define_refusal) {
+    return refusal("define_not_ready", "The pending question does not permit a verified planning handoff.");
+  }
+  return { handoff: parsed.data };
+}
+
 // packages/orchestration/dist/handlers/verification-report.js
 var VERIFICATION_REPORT_FILENAME = "10-verification-report.md";
 function escapeTableCell(value) {
@@ -58293,7 +58320,7 @@ function renderGraphValidation(verification) {
   }
   return ["```json", JSON.stringify(report, null, 2), "```"].join("\n");
 }
-function renderPolicySection(state) {
+function renderPolicySection(state, outcome) {
   const policy = resolveVerificationPolicy(state.verification_policy);
   const verdict = evaluateRunPolicy(state);
   const policyLine = `Policy in force: block_on=[${policy.block_on.join(", ")}], min_subjective_sampled_ratio=${(policy.min_subjective_sampled_ratio * 100).toFixed(0)}%, on_unsampled_below_ratio=${policy.on_unsampled_below_ratio}, on_cross_model_disagreement=${policy.on_cross_model_disagreement}`;
@@ -58301,7 +58328,12 @@ function renderPolicySection(state) {
   const decision = state.post_specs?.decision ?? "pending";
   const derogation = state.post_specs?.policy_derogation;
   let decisionLine;
-  if (decision === "pending") {
+  if (state.post_specs?.automatic_define && outcome) {
+    decisionLine = [
+      `Automatic Define outcome: ${outcome.status}.`,
+      ...outcome.reasons.map((reason) => `- ${reason}`)
+    ].join("\n");
+  } else if (decision === "pending") {
     decisionLine = "Human decision: pending (gate not yet answered).";
   } else if (derogation) {
     decisionLine = `Human decision: ${decision} \u2014 derogation granted by user at gate (policy status was "${derogation.policy_status}").`;
@@ -58334,7 +58366,7 @@ function buildVerificationReportFile(state) {
       "",
       "## Verification Policy",
       "",
-      renderPolicySection(state),
+      renderPolicySection(state, pending.outcome),
       "",
       "## Section Statuses & Violations",
       "",
@@ -58394,11 +58426,36 @@ function finishAnswer(state, postSpecs, policyVerdict) {
   }
   return finish(state, decided);
 }
+function finishAutomatic(state, postSpecs, policy) {
+  if (!state.pending_completion) {
+    return {
+      state: { ...state, current_step: "complete" },
+      action: {
+        kind: "failed",
+        step: "implementation_gate",
+        reason: "Define requires saved self-check evidence."
+      }
+    };
+  }
+  if (postSpecs.automatic_define && hasVerificationReport(state))
+    return finish(state, postSpecs);
+  const projection = projectVerifiedDefine(state);
+  const checked = "error" in projection ? refreshDefineOutcome(state, [
+    ...policy.reasons.map((message) => ({ message })),
+    { message: projection.error.message }
+  ]) : state;
+  const adjudicated = { ...postSpecs, automatic_define: 1, decision: "prd_only" };
+  const settled = { ...checked, post_specs: adjudicated };
+  const action = writeReportAction(settled);
+  return action ? { state: settled, action } : finish(settled, adjudicated);
+}
 var handleImplementationGate = ({ state, result }) => {
   const findings = defineFindings(state);
   const stateAfterReportWrite = recordReportWrite(refreshDefineOutcome(state, findings), result);
   const postSpecs = ensurePostSpecs(stateAfterReportWrite);
   const policyVerdict = evaluateRunPolicy(stateAfterReportWrite, findings);
+  if (state.semantic_review_requested)
+    return finishAutomatic(stateAfterReportWrite, postSpecs, policyVerdict);
   if (result?.kind === "file_written" && postSpecs.decision !== "pending") {
     return finish(stateAfterReportWrite, postSpecs);
   }
@@ -58502,7 +58559,7 @@ function doneAction(state, pending) {
 function emitRememberOrDone(state, pending) {
   if (state.run_remembered) {
     return {
-      state: { ...state, current_step: "complete", pending_completion: null },
+      state: { ...state, current_step: "complete", pending_completion: state.post_specs?.automatic_define ? pending : null },
       action: doneAction(state, pending)
     };
   }
@@ -59074,46 +59131,6 @@ function makeCannedDispatcher(opts = {}) {
       }
     }
   };
-}
-
-// packages/orchestration/dist/define-handoff.js
-function refusal(code2, message) {
-  return { error: { code: code2, message } };
-}
-function readDefineHandoff(state, action) {
-  if (state.current_step !== "implementation_gate" || action?.kind !== "ask_user" || action.question_id !== IMPLEMENTATION_GATE_QUESTION_ID || state.post_specs && state.post_specs.decision !== "pending") {
-    return refusal("define_not_pending", "Define requires a pending implementation decision.");
-  }
-  const sections = documentSections(state.sections);
-  const parsed = DefineHandoffV1Schema.safeParse({ version: 1, run_id: state.run_id, ...projectDefineDocument(sections) });
-  if (!parsed.success) {
-    return refusal("define_document_invalid", external_exports.prettifyError(parsed.error));
-  }
-  const failure2 = validateDocument(sections).violations.find(isBlockingViolation);
-  if (failure2) {
-    return refusal("define_document_invalid", `${failure2.rule}: ${failure2.message}`);
-  }
-  const dispute = findDefineDecisionConflicts(state, sections)[0];
-  if (dispute) {
-    return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
-  }
-  const semanticFinding = semanticReviewFindings(state)[0];
-  if (semanticFinding)
-    return refusal("define_not_ready", semanticFinding.message);
-  const completion = state.pending_completion;
-  const verification = completion?.verification;
-  const judged = new Set(verification?.judge_verdicts?.map(({ claim_id }) => claim_id));
-  if (completion?.outcome?.status !== "passed" || !verification || judged.size === 0 || judged.size !== verification.claims_evaluated || prdSections(state.sections).some((section) => section.status !== "passed")) {
-    return refusal("define_not_ready", "Define requires passed PRD sections, a passed self-check and detailed verification evidence.");
-  }
-  const policy = evaluatePolicy(verification, resolveVerificationPolicy(state.verification_policy));
-  if (policy.status !== "pass") {
-    return refusal("define_not_ready", "The current verification policy requires attention.");
-  }
-  if (state.post_specs?.legacy_define_refusal || !permitsDefineHandoff(action)) {
-    return refusal("define_not_ready", "The pending question does not permit a verified planning handoff.");
-  }
-  return { handoff: parsed.data };
 }
 
 // packages/orchestration/dist/verified-plan.js
@@ -106133,6 +106150,7 @@ function registerPipelineTools(server2) {
       };
     }
     const run_id = generateRunId();
+    const reviewModel = process.env.PRD_GEN_SEMANTIC_REVIEW_MODEL?.trim() || void 0;
     const initial = newPipelineState({
       run_id,
       feature_description,
@@ -106140,7 +106158,8 @@ function registerPipelineTools(server2) {
       skip_preflight: skip_preflight ?? false,
       prd_context: prd_context ?? null,
       request_size: request_size ?? REQUEST_SIZE_DEFAULT,
-      semantic_review
+      semantic_review: semantic_review || Boolean(reviewModel),
+      semantic_review_model: reviewModel
     });
     const arm = getRetryArmForRun(run_id);
     const maxAttempts = getMaxAttemptsForRun(run_id, MAX_ATTEMPTS_BASELINE);
@@ -106186,7 +106205,8 @@ function registerPipelineTools(server2) {
         return runNotFound(run_id, found);
       if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) || isRetiredImplementationAnswer(found.run.state, result))
         return architectOsRequired();
-      const out = step({ state: recordLegacyDefineRefusal(found.run.state, found.run.action), result });
+      const { state, action } = found.run;
+      const out = state.semantic_review_requested && state.current_step === "complete" && action ? { state, action, messages: [] } : step({ state: recordLegacyDefineRefusal(state, action), result });
       const drained = drainEvidenceQueues(out.state);
       runs.keep(drained, out.action);
       return {
@@ -106201,7 +106221,7 @@ function registerPipelineTools(server2) {
       inFlight.delete(run_id);
     }
   });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
+  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
     run_id: external_exports.string(),
     format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"]).default("summary"),
     invocation_offset: external_exports.number().int().min(0).default(0),

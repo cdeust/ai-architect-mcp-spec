@@ -30,6 +30,7 @@ export function newPipelineState(input: {
    */
   request_size?: RequestSize;
   semantic_review?: boolean;
+  semantic_review_model?: string;
 }): PipelineState {
   const now = new Date().toISOString();
   return PipelineStateSchema.parse({
@@ -38,7 +39,7 @@ export function newPipelineState(input: {
     prd_context: input.prd_context ?? null,
     request_size: input.request_size ?? REQUEST_SIZE_DEFAULT,
     feature_description: input.feature_description,
-    ...(input.semantic_review ? { semantic_review_requested: true } : {}),
+    ...(input.semantic_review ? { semantic_review_requested: true, semantic_review_model: input.semantic_review_model } : {}),
     codebase_path: input.codebase_path ?? null,
     codebase_graph_path: null,
     codebase_output_dir: null,

@@ -3,6 +3,7 @@
  * Define remains readable while the verification question is pending.
  * Any implementation decision is made in architect-os after plan approval.
  */
+import { projectVerifiedDefine } from "../define-handoff.js";
 import { specVerificationQuestion, presentSpecAction } from "../architect-os-boundary.js";
 import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
@@ -67,11 +68,35 @@ function finishAnswer(state: PipelineState, postSpecs: PostSpecsState, policyVer
   return finish(state, decided);
 }
 
+function finishAutomatic(state: PipelineState, postSpecs: PostSpecsState, policy: PolicyVerdict) {
+  if (!state.pending_completion) {
+    return {
+      state: { ...state, current_step: "complete" as const },
+      action: { kind: "failed" as const, step: "implementation_gate" as const,
+        reason: "Define requires saved self-check evidence." },
+    };
+  }
+  if (postSpecs.automatic_define && hasVerificationReport(state)) return finish(state, postSpecs);
+  const projection = projectVerifiedDefine(state);
+  const checked = "error" in projection
+    ? refreshDefineOutcome(state, [
+      ...policy.reasons.map(message => ({ message })),
+      { message: projection.error.message },
+    ])
+    : state;
+  const adjudicated = { ...postSpecs, automatic_define: 1 as const, decision: "prd_only" as const };
+  const settled = { ...checked, post_specs: adjudicated };
+  const action = writeReportAction(settled);
+  return action ? { state: settled, action } : finish(settled, adjudicated);
+}
+
 export const handleImplementationGate: StepHandler = ({ state, result }) => {
   const findings = defineFindings(state);
   const stateAfterReportWrite = recordReportWrite(refreshDefineOutcome(state, findings), result);
   const postSpecs = ensurePostSpecs(stateAfterReportWrite);
   const policyVerdict = evaluateRunPolicy(stateAfterReportWrite, findings);
+
+  if (state.semantic_review_requested) return finishAutomatic(stateAfterReportWrite, postSpecs, policyVerdict);
 
   // (A) The gate answer was already processed on a PRIOR call (postSpecs.decision
   // left "pending" only until handleGateAnswer runs) and this file_written is

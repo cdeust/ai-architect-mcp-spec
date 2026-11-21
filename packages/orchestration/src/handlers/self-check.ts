@@ -270,6 +270,13 @@ function handleSelfCheckPhaseA(
   }
 
   if (reduced.length > config.invocation_cap) {
+    if (state.semantic_review_requested) {
+      return {
+        state: { ...state, current_step: "complete" as const },
+        action: { kind: "failed" as const, step: "self_check" as const,
+          reason: `review_budget_exceeded: ${reduced.length} judge invocations exceed the configured cap of ${config.invocation_cap}` },
+      };
+    }
     const question = buildBudgetGateQuestion(reduced.length, config);
     if (result?.kind !== "user_answer" || result.question_id !== VERIFY_BUDGET_QUESTION_ID) {
       return { state, action: question };

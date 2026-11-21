@@ -9,7 +9,7 @@ argument-hint: "[feature-description] [optional-codebase-path]"
 
 You are the host. Drive the pipeline by:
 
-1. Calling `start_pipeline`.
+1. Calling `start_pipeline` with `semantic_review: true`.
 2. For each envelope returned: display every entry in `messages`, then execute `action`.
 3. Calling `submit_action_result(run_id, result)` with the result.
 4. Looping until `action.kind === "done"` or `"failed"`.
@@ -41,6 +41,7 @@ Example: `/generate-prd build OAuth login` →
 Call:
 ```
 start_pipeline({
+  semantic_review: true,
   feature_description: "<parsed description>",
   codebase_path: "<parsed path, or omit>",
   prd_context: "<the kind of PRD you declare, see SKILL.md step 1, or omit>",
