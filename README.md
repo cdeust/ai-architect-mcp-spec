@@ -36,6 +36,12 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 **AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
 
+### From specification to delivery
+
+![Spec analyses and verifies the PRD, using the codebase graph when provided, then hands a verified one-Step plan to architect-os for owner approval, build, tests and delivery. Next, evidence per criterion returns from the delivered commit to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
+
+**Ready** marks capabilities available on each repository’s `main`. With `codebase_path`, Spec uses the graph for analysis and checks the PRD against it at self-check. The graph findings are advisory. The host transfers the Define and proposal files, then invokes architect-os commands separately. A measured replay from the approved plan through delivery remains **next**, along with acceptance evidence on the delivered commit and Spec’s conformity review. [Spec pipeline](#the-pipeline) · [Codebase MCP](https://github.com/cdeust/ai-architect-mcp-codebase) · [Architect-os Plan](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/docs/plan.md) · [Architect-os delivery](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/tools/deliver/src/application/deliver.ts)
+
 ### What you get
 
 - **A spec checked against your code.** With a codebase (`codebase_path`), self-check sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report. That check is advisory: it does not block the run.

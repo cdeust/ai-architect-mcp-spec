@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1048 414" width="1048" height="414" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">From specification to delivery</title>
+  <desc id="d">A left-to-right sequence shows Spec analysis, PRD verification and export of a verified proposal for one Step, then architect-os approval, build and checks, and delivery. With codebase_path, ai-architect-mcp-codebase supplies the graph and checks the PRD against it. The check is advisory. The host passes Define and the verified proposal. The owner approves the execution manifest before materialization. Above the ready stages, blue dashed cards show what is next: conformity review in Spec, a measured end-to-end replay, and acceptance results tied to the delivered commit. The planned evidence arrow returns from architect-os to Spec.</desc>
+  <!-- Visual reference: architect-os 3fd73fd7, docs/diagrams/architecture.svg. -->
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#57606a"/>
+    </marker>
+    <marker id="n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#0969da"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="1047" height="413" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="24" y="38" font-size="20" fill="#1f2328" font-weight="600">From specification to delivery</text>
+  <rect x="24" y="52" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="47.0" y="64.5" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <text x="78" y="64" font-size="12" fill="#57606a">built and on main</text>
+  <rect x="210" y="52" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="230.0" y="64.5" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
+  <text x="258" y="64" font-size="12" fill="#57606a">work to ship, above the stage it will join</text>
+  <line x1="24" y1="78" x2="1024" y2="78" stroke="#d0d7de"/>
+  <polyline points="949,108 949,91 439,91 439,107" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#n)"/>
+  <polyline points="99,201 99,249" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="269,201 269,249" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="439,201 439,249" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <polyline points="779,201 779,249" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <polyline points="949,249 949,202" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#n)"/>
+  <polyline points="174,301 193,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="344,301 363,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="514,301 533,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="684,301 703,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="854,301 873,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="24" y="108" width="320" height="93" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="35" y="130" font-size="12.5" fill="#1f2328" font-weight="600">ai-architect-mcp-codebase · optional</text>
+  <text x="35" y="148.0" font-size="11.5" fill="#57606a">With codebase_path, index the repository.</text>
+  <text x="35" y="163.5" font-size="11.5" fill="#57606a">Supply its graph and check the PRD at self-check.</text>
+  <text x="35" y="179.0" font-size="11.5" fill="#57606a">Graph findings are advisory.</text>
+  <rect x="288" y="99.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="311.0" y="112.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="364" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
+  <text x="375" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Conformity review</text>
+  <text x="375" y="148.0" font-size="11.5" fill="#57606a">Spec compares the diff</text>
+  <text x="375" y="163.5" font-size="11.5" fill="#57606a">and acceptance evidence</text>
+  <text x="375" y="179.0" font-size="11.5" fill="#57606a">with the approved plan.</text>
+  <rect x="464" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="484.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
+  <rect x="704" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
+  <text x="715" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Measured replay</text>
+  <text x="715" y="148.0" font-size="11.5" fill="#57606a">Replay the approved</text>
+  <text x="715" y="163.5" font-size="11.5" fill="#57606a">plan through Step and</text>
+  <text x="715" y="179.0" font-size="11.5" fill="#57606a">Deliver.</text>
+  <rect x="804" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="824.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
+  <rect x="874" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
+  <text x="885" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Acceptance evidence</text>
+  <text x="885" y="148.0" font-size="11.5" fill="#57606a">Attach each criterion’s</text>
+  <text x="885" y="163.5" font-size="11.5" fill="#57606a">result to the exact</text>
+  <text x="885" y="179.0" font-size="11.5" fill="#57606a">delivered commit.</text>
+  <rect x="974" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="994.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
+  <rect x="24" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="35" y="273" font-size="12.5" fill="#1f2328" font-weight="600">1 · Analyse</text>
+  <text x="35" y="291.0" font-size="11.5" fill="#57606a">Read the request and</text>
+  <text x="35" y="306.5" font-size="11.5" fill="#57606a">clarify scope. Ground it</text>
+  <text x="35" y="322.0" font-size="11.5" fill="#57606a">with the graph if given.</text>
+  <rect x="118" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="141.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="194" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="205" y="273" font-size="12.5" fill="#1f2328" font-weight="600">2 · Verify the PRD</text>
+  <text x="205" y="291.0" font-size="11.5" fill="#57606a">Draft, check structure</text>
+  <text x="205" y="306.5" font-size="11.5" fill="#57606a">and traceability, then</text>
+  <text x="205" y="322.0" font-size="11.5" fill="#57606a">review claims.</text>
+  <rect x="288" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="311.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="364" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="375" y="273" font-size="12.5" fill="#1f2328" font-weight="600">3 · Define and Plan</text>
+  <text x="375" y="291.0" font-size="11.5" fill="#57606a">Export validated Define</text>
+  <text x="375" y="306.5" font-size="11.5" fill="#57606a">and one verified Step</text>
+  <text x="375" y="322.0" font-size="11.5" fill="#57606a">proposal, with hashes.</text>
+  <rect x="458" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="481.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="534" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="545" y="273" font-size="12.5" fill="#1f2328" font-weight="600">4 · Approve</text>
+  <text x="545" y="291.0" font-size="11.5" fill="#57606a">Add the operator policy.</text>
+  <text x="545" y="306.5" font-size="11.5" fill="#57606a">The owner approves the</text>
+  <text x="545" y="322.0" font-size="11.5" fill="#57606a">execution manifest.</text>
+  <rect x="628" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="651.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="704" y="251" width="150" height="96" rx="6" fill="#ffffff" stroke="#bf8700"/>
+  <text x="715" y="273" font-size="12.5" fill="#1f2328" font-weight="600">5 · Build and check</text>
+  <text x="715" y="291.0" font-size="11.5" fill="#57606a">Materialize the Step.</text>
+  <text x="715" y="306.5" font-size="11.5" fill="#57606a">Invoke Step separately</text>
+  <text x="715" y="322.0" font-size="11.5" fill="#57606a">to build and test.</text>
+  <rect x="798" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="821.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="874" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="885" y="273" font-size="12.5" fill="#1f2328" font-weight="600">6 · Deliver</text>
+  <text x="885" y="291.0" font-size="11.5" fill="#57606a">Run Deliver separately.</text>
+  <text x="885" y="306.5" font-size="11.5" fill="#57606a">Gate and CI are tied</text>
+  <text x="885" y="322.0" font-size="11.5" fill="#57606a">to the delivered commit.</text>
+  <rect x="968" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="991.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <line x1="24" y1="366" x2="514" y2="366" stroke="#d0d7de"/>
+  <line x1="534" y1="366" x2="1024" y2="366" stroke="#d0d7de"/>
+  <text x="24" y="387" font-size="12.5" fill="#1f2328" font-weight="600">ai-architect-mcp-spec</text>
+  <text x="534" y="387" font-size="12.5" fill="#1f2328" font-weight="600">architect-os</text>
+  <text x="616" y="387" font-size="11.5" fill="#57606a">The host passes Define and the proposal to architect-os.</text>
+</svg>
