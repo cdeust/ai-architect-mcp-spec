@@ -68,7 +68,10 @@ const tampering: Record<string, (value: Authority) => void> = {
   },
   "missing mandatory digest": value => { delete value.manifest.files_sha256["step.json"]; },
   "path-like revision": value => { value.reviewed_revision = "refs/heads/main"; },
-  "discarded reserved key": value => { Object.defineProperty(value.files, "__proto__", { value: "hidden", enumerable: true }); },
+  "discarded reserved key": value => {
+    value.files = { ...value.files, ...JSON.parse('{"__proto__":"hidden"}') };
+    expect(Object.hasOwn(value.files, "__proto__")).toBe(true);
+  },
 };
 
 it.each(Object.entries(tampering))("refuses %s even with a refreshed manifest approval", (_case, alter) => {

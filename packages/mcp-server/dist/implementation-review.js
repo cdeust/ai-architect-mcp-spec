@@ -1,12 +1,15 @@
 import { execFile } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
-import { devNull } from "node:os";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { MAX_RESPONSE_CHARS, readReviewAuthority, reviewDigest } from "@prd-gen/orchestration";
 const execute = promisify(execFile);
+// Git for Windows translates this literal, and Git uses it to reset diff.orderFile.
+const GIT_NULL_PATH = "/dev/null";
 // Four bytes is the maximum length of a UTF-8 code point (RFC 3629).
 const MAX_REVIEW_BYTES = 4 * MAX_RESPONSE_CHARS;
+// Source: Git v2.56.1, setup.c, read_gitfile_raw caps the metadata pointer at 1 MiB.
+const MAX_GIT_MARKER_BYTES = 1 << 20;
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 function sameFile(left, right) {
     return left.dev === right.dev && left.ino === right.ino;
@@ -32,7 +35,7 @@ async function git({ executable, repository }, ...args) {
 async function runGit(executable, repository, args, attributes) {
     const { stdout } = await execute(executable, [
         "--no-pager", "--no-replace-objects", "-C", repository,
-        "-c", "core.fsmonitor=false", "-c", "core.quotePath=true", "-c", `core.attributesFile=${devNull}`,
+        "-c", "core.fsmonitor=false", "-c", "core.quotePath=true", "-c", `core.attributesFile=${GIT_NULL_PATH}`,
         ...(attributes ? [`--attr-source=${attributes}`] : []), ...args,
     ], {
         cwd: dirname(executable),
@@ -42,10 +45,10 @@ async function runGit(executable, repository, args, attributes) {
             SystemRoot: process.env.SystemRoot,
             GIT_CONFIG_NOSYSTEM: "1",
             GIT_ATTR_NOSYSTEM: "1",
-            GIT_CONFIG_GLOBAL: devNull,
+            GIT_CONFIG_GLOBAL: GIT_NULL_PATH,
             GIT_NO_LAZY_FETCH: "1",
             GIT_ALLOW_PROTOCOL: "",
-            GIT_GRAFT_FILE: devNull,
+            GIT_GRAFT_FILE: GIT_NULL_PATH,
             GIT_OPTIONAL_LOCKS: "0",
             LC_ALL: "C",
         },
@@ -61,11 +64,14 @@ async function verifyRevisions(repository, base, head) {
     await git(repository, "merge-base", "--is-ancestor", base, head);
     return true;
 }
-function readAuthorityFile(path) {
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+function openReadOnly(path) {
+    return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+}
+/** Takes ownership of the descriptor. Undefined denotes a failed validation. */
+function readRegularFile(fd, maxBytes, singleLink) {
     try {
         const info = fstatSync(fd);
-        if (!info.isFile() || info.nlink !== 1 || info.size > MAX_REVIEW_BYTES)
+        if (!info.isFile() || info.size > maxBytes || (singleLink && info.nlink !== 1))
             return undefined;
         // A regular file may return a short read. Accumulate to EOF, with one extra
         // byte to reject growth after fstat without ever allocating additional space.
@@ -81,17 +87,28 @@ function readAuthorityFile(path) {
         }
         if (length !== info.size)
             return undefined;
-        const text = utf8.decode(content.subarray(0, length));
-        return text.length <= MAX_RESPONSE_CHARS ? JSON.parse(text) : undefined;
+        return utf8.decode(content.subarray(0, length));
     }
     finally {
         closeSync(fd);
     }
 }
+/** Null denotes an absent marker. Other open failures abort the review. */
+function readGitMarker(path) {
+    let fd;
+    try {
+        fd = openReadOnly(path);
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return null;
+        throw error;
+    }
+    return readRegularFile(fd, MAX_GIT_MARKER_BYTES, false);
+}
 function gitPathLine(text) {
     // Git terminates its path records with line breaks. Spaces are part of the path.
-    const path = text.replace(/[\r\n]+$/, "");
-    return path && !/[\r\n]/.test(path) ? path : undefined;
+    return /^([^\r\n]+)[\r\n]*$/.exec(text)?.[1];
 }
 function gitMetadata(repository) {
     const dotGit = join(repository, ".git");
@@ -100,17 +117,20 @@ function gitMetadata(repository) {
     if (!info.isDirectory()) {
         if (!info.isFile())
             return undefined;
-        const marker = gitPathLine(utf8.decode(readFileSync(dotGit)));
+        const marker = readGitMarker(dotGit);
         const prefix = "gitdir: ";
-        if (!marker?.startsWith(prefix) || marker.length === prefix.length)
+        if (!marker?.startsWith(prefix))
             return undefined;
-        directory = resolve(repository, marker.slice(prefix.length));
+        const path = gitPathLine(marker.slice(prefix.length));
+        if (!path)
+            return undefined;
+        directory = resolve(repository, path);
     }
     const gitDir = realpathSync(directory);
-    const commonMarker = join(gitDir, "commondir");
-    if (!existsSync(commonMarker))
+    const data = readGitMarker(join(gitDir, "commondir"));
+    if (data === null)
         return [gitDir];
-    const common = gitPathLine(utf8.decode(readFileSync(commonMarker)));
+    const common = data === undefined ? undefined : gitPathLine(data);
     return common ? [gitDir, realpathSync(resolve(gitDir, common))] : undefined;
 }
 async function reviewTarget(repositoryPath, gitPath, source) {
@@ -132,6 +152,13 @@ async function reviewTarget(repositoryPath, gitPath, source) {
     return target;
 }
 const refusal = (reason) => ({ error: { code: reason, message: "The implementation review dossier could not be prepared." } });
+function loadReviewAuthority(source, reviewId, plan) {
+    const text = readRegularFile(openReadOnly(source), MAX_REVIEW_BYTES, true);
+    if (text === undefined || text.length > MAX_RESPONSE_CHARS)
+        return refusal("review_authority_invalid");
+    const authority = readReviewAuthority(JSON.parse(text), reviewId, plan);
+    return authority ?? refusal("review_authority_invalid");
+}
 export async function prepareImplementationReview(paths, reviewId, plan, define) {
     const { authority: path, repository: repositoryPath, repositoryId, git: gitPath } = paths;
     if (!path || !repositoryPath || !repositoryId || !gitPath || !reviewId ||
@@ -143,9 +170,9 @@ export async function prepareImplementationReview(paths, reviewId, plan, define)
         const target = await reviewTarget(repositoryPath, gitPath, source);
         if ("error" in target)
             return target;
-        const authority = readReviewAuthority(readAuthorityFile(source), reviewId, plan);
-        if (!authority)
-            return refusal("review_authority_invalid");
+        const authority = loadReviewAuthority(source, reviewId, plan);
+        if ("error" in authority)
+            return authority;
         if (authority.repository_id !== repositoryId)
             return refusal("review_repository_invalid");
         const { base_revision: base, reviewed_revision: head } = authority;
@@ -161,8 +188,8 @@ export async function prepareImplementationReview(paths, reviewId, plan, define)
         const diff = await runGit(target.executable, target.repository, [
             "diff", "--binary", "--full-index", "--find-renames",
             "--no-ext-diff", "--no-textconv", "--no-color", "--src-prefix=a/", "--dst-prefix=b/",
-            "--no-relative", "--ignore-submodules=none", "--submodule=short", `-O${devNull}`, base, head, "--",
-        ], head);
+            "--no-relative", "--ignore-submodules=none", "--submodule=short", `-O${GIT_NULL_PATH}`, base, head, "--",
+        ], base);
         return { implementation_review: {
                 version: 1,
                 status: "ready_for_review",

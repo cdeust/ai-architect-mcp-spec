@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction, type PipelineState } from "@prd-gen/orchestration";
 import { startStdioServer, type StdioServer, type StdioServerOptions } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
-import { digest, makeReviewAuthority, makeReviewRepo, reviewGitPath } from "./fixtures/review-dossier.js";
+import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
 import { RunFiles } from "../run-files.js";
 
 interface Envelope {
@@ -311,7 +311,7 @@ it("prepares a review of the operator-approved revisions through the packaged to
     HOME: output, USERPROFILE: output,
     PRD_GEN_REVIEW_REPOSITORY: candidate.repo,
     PRD_GEN_REVIEW_REPOSITORY_ID: "fixture/review",
-    PRD_GEN_REVIEW_GIT: reviewGitPath(),
+    PRD_GEN_REVIEW_GIT: candidate.gitExecutable,
   };
   const start = (path: string, overrides?: Record<string, string>) => startDefineServer({
     cwd: output, env: { ...env, PRD_GEN_REVIEW_AUTHORITY: path, ...overrides },

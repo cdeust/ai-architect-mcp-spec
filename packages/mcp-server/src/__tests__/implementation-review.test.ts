@@ -1,16 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { DefineHandoffV1Schema } from "@prd-gen/core";
 import { buildVerifiedPlan, MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
 import { prepareImplementationReview } from "../implementation-review.js";
-import { digest, makeReviewAuthority, makeReviewRepo, reviewGitPath } from "./fixtures/review-dossier.js";
+import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
 
 vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
-  return { ...fs, openSync: vi.fn(fs.openSync), readFileSync: vi.fn(fs.readFileSync), readSync: vi.fn(fs.readSync), statSync: vi.fn(fs.statSync) };
+  return { ...fs, fstatSync: vi.fn(fs.fstatSync), openSync: vi.fn(fs.openSync), readSync: vi.fn(fs.readSync), statSync: vi.fn(fs.statSync) };
 });
 
 const define = DefineHandoffV1Schema.parse({
@@ -34,7 +34,7 @@ beforeAll(() => {
     authority: join(root, "approval.json"),
     repository: candidate.repo,
     repositoryId: authority.repository_id,
-    git: reviewGitPath(),
+    git: candidate.gitExecutable,
   };
 });
 
@@ -72,6 +72,44 @@ it("reports pinned changes in a read-only dossier, with evidence still required"
   expect(await review()).toEqual(reply);
 });
 
+it("resets the repository's diff ordering file for the pinned comparison", async () => {
+  save();
+  const baseline = await review();
+  expect(baseline).toHaveProperty("implementation_review.diff");
+  candidate.git("config", "diff.orderFile", "missing-review-order");
+  try {
+    expect(() => candidate.git("diff", candidate.base, candidate.head, "--")).toThrow(/missing-review-order/);
+    expect(await review()).toEqual(baseline);
+  } finally {
+    candidate.git("config", "--unset", "diff.orderFile");
+  }
+});
+
+it("uses the approved baseline rules when the revision updates tracked Git attributes", async () => {
+  const policyRepo = join(root, "attribute-policy");
+  candidate.git("worktree", "add", "--quiet", "--detach", policyRepo, candidate.head);
+  const inPolicyRepo = (...args: string[]) => candidate.git("-C", policyRepo, ...args);
+
+  const policy = join(policyRepo, ".gitattributes");
+  const record = join(policyRepo, "record.dat");
+  writeFileSync(policy, "record.dat binary\n");
+  writeFileSync(record, "Archived receipt\n");
+  inPolicyRepo("add", ".gitattributes", "record.dat");
+  inPolicyRepo("commit", "-qm", "track archived receipt with binary attributes");
+  const base = inPolicyRepo("rev-parse", "HEAD");
+
+  inPolicyRepo("rm", "-q", ".gitattributes");
+  writeFileSync(record, "Revised receipt\n");
+  inPolicyRepo("add", "record.dat");
+  inPolicyRepo("commit", "-qm", "migrate receipt to the new format");
+  save({ ...authority, base_revision: base, reviewed_revision: inPolicyRepo("rev-parse", "HEAD") });
+
+  const reply = await review({ ...paths, repository: policyRepo });
+  if (!("implementation_review" in reply)) throw new Error("Dossier expected");
+  expect(reply.implementation_review.diff).toContain("GIT binary patch");
+  expect(reply.implementation_review.diff).toContain("-record.dat binary");
+});
+
 it.each([
   { authority: undefined }, { repository: undefined }, { repositoryId: undefined }, { git: undefined },
   { authority: "relative.json" }, { repository: "relative-repo" }, { git: "git" },
@@ -86,6 +124,20 @@ it("refuses an absent review identifier and missing approval bytes", async () =>
   expect(await review({ ...paths, authority: join(root, "missing") })).toMatchObject({
     error: { code: "review_evidence_unavailable" },
   });
+
+  save();
+  const source = realpathSync(paths.authority!);
+  const open = vi.mocked(openSync);
+  const original = open.getMockImplementation()!;
+  open.mockImplementation((path, flags, mode) => {
+    if (path === source) throw Object.assign(new Error("Approval was removed"), { code: "ENOENT" });
+    return original(path, flags, mode);
+  });
+  try {
+    expect(await review()).toMatchObject({ error: { code: "review_evidence_unavailable" } });
+  } finally {
+    open.mockImplementation(original);
+  }
 });
 
 it("distinguishes repository identity, dossier identity and revision refusals", async () => {
@@ -160,13 +212,13 @@ it("runs only the pinned host Git commands with the isolated comparison environm
   const response = await review({ ...paths, git });
   if (!("implementation_review" in response)) throw new Error("Dossier expected");
   expect(response.implementation_review.status).toBe("ready_for_review");
-  expect(readFileSync(git + ".env", "utf8")).toBe(`1|1|${devNull}|1||${devNull}|0|C\n`);
+  expect(readFileSync(git + ".env", "utf8")).toBe("1|1|/dev/null|1||/dev/null|0|C\n");
   expect(readFileSync(git + ".cwd", "utf8")).toBe(realpathSync(root) + "\n");
   const args = readFileSync(git + ".args", "utf8").split("\n");
   expect(args).toEqual(expect.arrayContaining([
-    "--no-pager", "--no-replace-objects", "core.fsmonitor=false", "core.quotePath=true", `core.attributesFile=${devNull}`,
-    `--attr-source=${candidate.head}`, "--no-ext-diff", "--no-textconv", "--binary", "--full-index",
-    "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--ignore-submodules=none", "--submodule=short", `-O${devNull}`,
+    "--no-pager", "--no-replace-objects", "core.fsmonitor=false", "core.quotePath=true", "core.attributesFile=/dev/null",
+    `--attr-source=${candidate.base}`, "--no-ext-diff", "--no-textconv", "--binary", "--full-index",
+    "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--ignore-submodules=none", "--submodule=short", "-O/dev/null",
   ]));
 });
 
@@ -232,12 +284,22 @@ it("refuses malformed and non-regular Git markers", async () => {
   expect(await review({ ...paths, repository: broken })).toMatchObject({ error: { code: "review_repository_invalid" } });
 
   const regular = statSync(marker);
-  vi.mocked(readFileSync).mockClear();
+  const open = vi.mocked(openSync);
+  open.mockClear();
   vi.mocked(statSync).mockReturnValueOnce({
     ...regular, isDirectory: () => false, isFile: () => false,
   } as ReturnType<typeof statSync>);
   expect(await review({ ...paths, repository: broken })).toMatchObject({ error: { code: "review_repository_invalid" } });
-  expect(readFileSync).not.toHaveBeenCalledWith(marker);
+  expect(open).not.toHaveBeenCalled();
+
+  const read = vi.mocked(readSync);
+  read.mockClear();
+  vi.mocked(fstatSync).mockReturnValueOnce({
+    ...regular, isFile: () => false,
+  } as ReturnType<typeof fstatSync>);
+  expect(await review({ ...paths, repository: broken })).toMatchObject({ error: { code: "review_repository_invalid" } });
+  expect(open).toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
 });
 
 it("refuses an incomplete authority read and closes the opened descriptor", async () => {
@@ -384,10 +446,16 @@ it("does not join an embedded newline into a valid metadata path", async () => {
   const executable = join(metadata, "untrusted-git");
   mkdirSync(executable);
   const splitAt = metadata.lastIndexOf("-");
-  writeFileSync(join(checkout, ".git"), `gitdir: ${metadata.slice(0, splitAt)}\n${metadata.slice(splitAt)}`);
-  expect(await review({ ...paths, git: executable, repository: checkout })).toMatchObject({
-    error: { code: "review_repository_invalid" },
-  });
+  const malformed = [
+    `gitdir: ${metadata.slice(0, splitAt)}\n${metadata.slice(splitAt)}`,
+    `\ngitdir: ${metadata}\n`,
+  ];
+  for (const pointer of malformed) {
+    writeFileSync(join(checkout, ".git"), pointer);
+    expect(await review({ ...paths, git: executable, repository: checkout })).toMatchObject({
+      error: { code: "review_repository_invalid" },
+    });
+  }
 });
 
 it("accepts a linked checkout whose Git pointer ends in CRLF", async () => {
@@ -400,4 +468,57 @@ it("accepts a linked checkout whose Git pointer ends in CRLF", async () => {
   expect(await review({ ...paths, repository: linked })).toMatchObject({
     implementation_review: { status: "ready_for_review", reviewed_revision: candidate.head },
   });
+});
+
+it("applies Git's gitfile size limit without rejecting valid linked markers", async () => {
+  save();
+  const linked = join(root, "bounded-marker-linked");
+  candidate.git("worktree", "add", "--quiet", "--detach", linked, candidate.head);
+  const marker = join(linked, ".git");
+  linkSync(marker, join(root, "linked-marker-copy"));
+  const pointer = readFileSync(marker, "utf8").replace(/[\r\n]+$/, "");
+  // Git v2.56.1 read_gitfile_raw trims trailing line endings within its 1 MiB limit.
+  const atLimit = pointer + "\n".repeat((1 << 20) - Buffer.byteLength(pointer));
+  writeFileSync(marker, atLimit);
+  expect(await review({ ...paths, repository: linked })).toMatchObject({
+    implementation_review: { status: "ready_for_review", reviewed_revision: candidate.head },
+  });
+  writeFileSync(marker, atLimit + "\n");
+  expect(await review({ ...paths, repository: linked })).toMatchObject({
+    error: { code: "review_repository_invalid" },
+  });
+});
+
+it("refuses a non-regular common directory marker", async () => {
+  save();
+  const linked = join(root, "directory-common-linked");
+  candidate.git("worktree", "add", "--quiet", "--detach", linked, candidate.head);
+  const common = join(candidate.repo, ".git", "worktrees", "directory-common-linked", "commondir");
+  const previous = readFileSync(common);
+  rmSync(common);
+  mkdirSync(common);
+  try {
+    expect(await review({ ...paths, repository: linked })).toMatchObject({
+      error: { code: "review_repository_invalid" },
+    });
+  } finally {
+    rmSync(common, { recursive: true });
+    writeFileSync(common, previous);
+  }
+});
+
+it("distinguishes an unreadable common directory marker from an absent one", async () => {
+  save();
+  const common = join(realpathSync(join(candidate.repo, ".git")), "commondir");
+  const open = vi.mocked(openSync);
+  const original = open.getMockImplementation()!;
+  open.mockImplementation((path, flags, mode) => {
+    if (path === common) throw Object.assign(new Error("Access denied"), { code: "EACCES" });
+    return original(path, flags, mode);
+  });
+  try {
+    expect(await review()).toMatchObject({ error: { code: "review_evidence_unavailable" } });
+  } finally {
+    open.mockImplementation(original);
+  }
 });

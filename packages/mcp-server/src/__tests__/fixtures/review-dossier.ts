@@ -1,24 +1,25 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { devNull } from "node:os";
 import { join } from "node:path";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
-export function reviewGitPath(): string {
+function reviewGitPath(): string {
   const windows = process.platform === "win32";
   const command = windows ? "where.exe" : "/bin/sh";
-  const args = windows ? ["git"] : ["-c", "command -v git"];
+  const args = windows ? ["git.exe"] : ["-c", "command -v git"];
   return execFileSync(command, args, { encoding: "utf8" }).trim().split(/\r?\n/)[0]!;
 }
 
 export function makeReviewRepo(root: string) {
   const repo = join(root, "candidate");
+  const gitExecutable = reviewGitPath();
   mkdirSync(repo);
-  const git = (...args: string[]) => execFileSync("git", ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], {
+  const git = (...args: string[]) => execFileSync(gitExecutable, ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { SystemRoot: process.env.SystemRoot, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
   }).trim();
   const revision = (message: string) => {
     git("add", "--all");
@@ -37,7 +38,7 @@ export function makeReviewRepo(root: string) {
   writeFileSync(join(repo, "large.txt"), "large line\n".repeat(50_000));
   const large = revision("later");
   writeFileSync(join(repo, "receipt.txt"), "uncommitted change\n");
-  return { repo, base, head, moderate, large, git };
+  return { repo, base, head, moderate, large, git, gitExecutable };
 }
 
 export function makeReviewAuthority(

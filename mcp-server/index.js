@@ -38999,7 +38999,7 @@ var StdioServerTransport = class {
 };
 
 // packages/mcp-server/dist/index.js
-import { readFileSync as readFileSync7, existsSync as existsSync8 } from "node:fs";
+import { readFileSync as readFileSync6, existsSync as existsSync7 } from "node:fs";
 import { join as join14, dirname as dirname7 } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59609,12 +59609,13 @@ function getMaxAttemptsForRun(runId, calibratedValue) {
 
 // packages/mcp-server/dist/implementation-review.js
 import { execFile } from "node:child_process";
-import { closeSync, constants, existsSync as existsSync5, fstatSync, openSync, readFileSync as readFileSync3, readSync, realpathSync, statSync } from "node:fs";
-import { devNull } from "node:os";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { dirname as dirname4, isAbsolute as isAbsolute2, join as join5, resolve } from "node:path";
 import { promisify } from "node:util";
 var execute = promisify(execFile);
+var GIT_NULL_PATH = "/dev/null";
 var MAX_REVIEW_BYTES = 4 * MAX_RESPONSE_CHARS;
+var MAX_GIT_MARKER_BYTES = 1 << 20;
 var utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 function sameFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
@@ -59647,7 +59648,7 @@ async function runGit(executable, repository, args, attributes) {
     "-c",
     "core.quotePath=true",
     "-c",
-    `core.attributesFile=${devNull}`,
+    `core.attributesFile=${GIT_NULL_PATH}`,
     ...attributes ? [`--attr-source=${attributes}`] : [],
     ...args
   ], {
@@ -59658,10 +59659,10 @@ async function runGit(executable, repository, args, attributes) {
       SystemRoot: process.env.SystemRoot,
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_ATTR_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: devNull,
+      GIT_CONFIG_GLOBAL: GIT_NULL_PATH,
       GIT_NO_LAZY_FETCH: "1",
       GIT_ALLOW_PROTOCOL: "",
-      GIT_GRAFT_FILE: devNull,
+      GIT_GRAFT_FILE: GIT_NULL_PATH,
       GIT_OPTIONAL_LOCKS: "0",
       LC_ALL: "C"
     }
@@ -59677,11 +59678,13 @@ async function verifyRevisions(repository, base, head) {
   await git(repository, "merge-base", "--is-ancestor", base, head);
   return true;
 }
-function readAuthorityFile(path) {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+function openReadOnly(path) {
+  return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+}
+function readRegularFile(fd, maxBytes, singleLink) {
   try {
     const info = fstatSync(fd);
-    if (!info.isFile() || info.nlink !== 1 || info.size > MAX_REVIEW_BYTES)
+    if (!info.isFile() || info.size > maxBytes || singleLink && info.nlink !== 1)
       return void 0;
     const content = Buffer.alloc(info.size + 1);
     let length = 0;
@@ -59695,15 +59698,24 @@ function readAuthorityFile(path) {
     }
     if (length !== info.size)
       return void 0;
-    const text2 = utf8.decode(content.subarray(0, length));
-    return text2.length <= MAX_RESPONSE_CHARS ? JSON.parse(text2) : void 0;
+    return utf8.decode(content.subarray(0, length));
   } finally {
     closeSync(fd);
   }
 }
+function readGitMarker(path) {
+  let fd;
+  try {
+    fd = openReadOnly(path);
+  } catch (error62) {
+    if (error62.code === "ENOENT")
+      return null;
+    throw error62;
+  }
+  return readRegularFile(fd, MAX_GIT_MARKER_BYTES, false);
+}
 function gitPathLine(text2) {
-  const path = text2.replace(/[\r\n]+$/, "");
-  return path && !/[\r\n]/.test(path) ? path : void 0;
+  return /^([^\r\n]+)[\r\n]*$/.exec(text2)?.[1];
 }
 function gitMetadata(repository) {
   const dotGit = join5(repository, ".git");
@@ -59712,17 +59724,20 @@ function gitMetadata(repository) {
   if (!info.isDirectory()) {
     if (!info.isFile())
       return void 0;
-    const marker = gitPathLine(utf8.decode(readFileSync3(dotGit)));
+    const marker = readGitMarker(dotGit);
     const prefix = "gitdir: ";
-    if (!marker?.startsWith(prefix) || marker.length === prefix.length)
+    if (!marker?.startsWith(prefix))
       return void 0;
-    directory = resolve(repository, marker.slice(prefix.length));
+    const path = gitPathLine(marker.slice(prefix.length));
+    if (!path)
+      return void 0;
+    directory = resolve(repository, path);
   }
   const gitDir = realpathSync(directory);
-  const commonMarker = join5(gitDir, "commondir");
-  if (!existsSync5(commonMarker))
+  const data = readGitMarker(join5(gitDir, "commondir"));
+  if (data === null)
     return [gitDir];
-  const common = gitPathLine(utf8.decode(readFileSync3(commonMarker)));
+  const common = data === void 0 ? void 0 : gitPathLine(data);
   return common ? [gitDir, realpathSync(resolve(gitDir, common))] : void 0;
 }
 async function reviewTarget(repositoryPath, gitPath, source) {
@@ -59744,6 +59759,13 @@ async function reviewTarget(repositoryPath, gitPath, source) {
   return target;
 }
 var refusal2 = (reason) => ({ error: { code: reason, message: "The implementation review dossier could not be prepared." } });
+function loadReviewAuthority(source, reviewId, plan) {
+  const text2 = readRegularFile(openReadOnly(source), MAX_REVIEW_BYTES, true);
+  if (text2 === void 0 || text2.length > MAX_RESPONSE_CHARS)
+    return refusal2("review_authority_invalid");
+  const authority = readReviewAuthority(JSON.parse(text2), reviewId, plan);
+  return authority ?? refusal2("review_authority_invalid");
+}
 async function prepareImplementationReview(paths, reviewId, plan, define2) {
   const { authority: path, repository: repositoryPath, repositoryId, git: gitPath } = paths;
   if (!path || !repositoryPath || !repositoryId || !gitPath || !reviewId || !isAbsolute2(path) || !isAbsolute2(repositoryPath) || !isAbsolute2(gitPath)) {
@@ -59754,9 +59776,9 @@ async function prepareImplementationReview(paths, reviewId, plan, define2) {
     const target = await reviewTarget(repositoryPath, gitPath, source);
     if ("error" in target)
       return target;
-    const authority = readReviewAuthority(readAuthorityFile(source), reviewId, plan);
-    if (!authority)
-      return refusal2("review_authority_invalid");
+    const authority = loadReviewAuthority(source, reviewId, plan);
+    if ("error" in authority)
+      return authority;
     if (authority.repository_id !== repositoryId)
       return refusal2("review_repository_invalid");
     const { base_revision: base, reviewed_revision: head } = authority;
@@ -59781,11 +59803,11 @@ async function prepareImplementationReview(paths, reviewId, plan, define2) {
       "--no-relative",
       "--ignore-submodules=none",
       "--submodule=short",
-      `-O${devNull}`,
+      `-O${GIT_NULL_PATH}`,
       base,
       head,
       "--"
-    ], head);
+    ], base);
     return { implementation_review: {
       version: 1,
       status: "ready_for_review",
@@ -59829,7 +59851,7 @@ function drainQualityScores(state, repo) {
 }
 
 // packages/benchmark/dist/calibration/mismatch-fire-rate.js
-import { readFileSync as readFileSync4, readdirSync as readdirSync2, existsSync as existsSync6 } from "node:fs";
+import { readFileSync as readFileSync3, readdirSync as readdirSync2, existsSync as existsSync5 } from "node:fs";
 import { join as join6 } from "node:path";
 
 // packages/benchmark/dist/calibration/clopper-pearson.js
@@ -60030,12 +60052,12 @@ function runPreflightInjectionCheck() {
   }
 }
 function loadDataset(dataDir) {
-  if (!existsSync6(dataDir))
+  if (!existsSync5(dataDir))
     return [];
   const files = readdirSync2(dataDir).filter((f) => f.startsWith("mismatch-fire-rate.") && f.endsWith(".jsonl"));
   const out = [];
   for (const f of files) {
-    const text2 = readFileSync4(join6(dataDir, f), "utf-8");
+    const text2 = readFileSync3(join6(dataDir, f), "utf-8");
     for (const line of text2.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed)
@@ -105601,7 +105623,7 @@ var KeptRuns = class {
 };
 
 // packages/mcp-server/dist/run-files.js
-import { mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { join as join11 } from "node:path";
 var RUNS_DIR = join11(homedir5(), ".prd-gen", "runs");
@@ -105651,7 +105673,7 @@ var RunFiles = class {
       return { kind: "absent" };
     let text2;
     try {
-      text2 = readFileSync5(path, "utf8");
+      text2 = readFileSync4(path, "utf8");
     } catch (error62) {
       const code2 = error62.code;
       if (code2 === "ENOENT" || code2 === "ENOTDIR")
@@ -105763,7 +105785,7 @@ function parseRunFile(runId, text2) {
 }
 function isFinishedRunFile(path) {
   try {
-    const doc = JSON.parse(readFileSync5(path, "utf8"));
+    const doc = JSON.parse(readFileSync4(path, "utf8"));
     const step2 = doc?.state?.current_step;
     return typeof step2 === "string" && isTerminalRun({ current_step: step2 });
   } catch {
@@ -106253,13 +106275,13 @@ function instructions(profile) {
 }
 
 // packages/mcp-server/dist/server-version.js
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 import { join as join12 } from "node:path";
 var UNRESOLVED_VERSION = "0.0.0-unresolved";
 function readVersion(manifestPath) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync6(manifestPath, "utf-8"));
+    parsed = JSON.parse(readFileSync5(manifestPath, "utf-8"));
   } catch {
     return null;
   }
@@ -106284,10 +106306,10 @@ function healthStatus(components) {
 }
 
 // packages/mcp-server/dist/plugin-root.js
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { dirname as dirname6, join as join13 } from "node:path";
 var DEEPEST_ENTRY_LEVELS = 3;
-function resolvePluginRoot(runtimeDir, env, exists = existsSync7) {
+function resolvePluginRoot(runtimeDir, env, exists = existsSync6) {
   if (env.CLAUDE_PLUGIN_ROOT !== void 0)
     return env.CLAUDE_PLUGIN_ROOT;
   let dir = runtimeDir;
@@ -106310,8 +106332,8 @@ function loadSkillConfig() {
     join14(PLUGIN_ROOT, "packages", "skill", "skill-config.json")
   ].filter(Boolean);
   for (const p of configPaths) {
-    if (existsSync8(p)) {
-      return JSON.parse(readFileSync7(p, "utf-8"));
+    if (existsSync7(p)) {
+      return JSON.parse(readFileSync6(p, "utf-8"));
     }
   }
   return { version: "2.0.0", status: CONFIG_NOT_FOUND };
@@ -106319,8 +106341,8 @@ function loadSkillConfig() {
 function loadSkillMd() {
   const skillPaths = [join14(PLUGIN_ROOT, "packages", "skill", "SKILL.md")];
   for (const p of skillPaths) {
-    if (existsSync8(p)) {
-      return readFileSync7(p, "utf-8");
+    if (existsSync7(p)) {
+      return readFileSync6(p, "utf-8");
     }
   }
   return "SKILL.md not found";
