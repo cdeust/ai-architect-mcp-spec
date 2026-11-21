@@ -10,10 +10,13 @@
  *
  * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15).
  */
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi } from "vitest";
 import { z } from "zod";
 import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
+import { prepareImplementationReview } from "../implementation-review.js";
+
+vi.mock("../implementation-review.js", () => ({ prepareImplementationReview: vi.fn() }));
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
@@ -135,12 +138,48 @@ describe("get_pipeline_state format:'action'", () => {
 
 it("preserves the existing state formats when the v1 selector is added", () => {
   const args = z.object(schemas.get("get_pipeline_state")!);
-  for (const format of ["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1"]) {
+  for (const format of ["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"]) {
     expect(args.parse({ run_id: "run_define_small", format }).format).toBe(format);
   }
   expect(args.parse({ run_id: "run_define_small" }).format).toBe("summary");
   expect(schemas.get("get_pipeline_state")?.plan_step).toHaveProperty("description", expect.stringContaining("Step name"));
+  expect(schemas.get("get_pipeline_state")?.review_id).toHaveProperty("description", expect.stringContaining("review dossier"));
+  expect(descriptions.get("get_pipeline_state")).toEqual(expect.stringContaining("format:'implementation_review_v1'"));
 });
+
+function saveReadyDefine(
+  run_id: string, intent: string, requirements: { id: string; text: string }[],
+  acceptance: { id: string; text: string; requirement_ids: string[] }[],
+) {
+  const sections = [
+    ["requirements", requirements.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
+    ["acceptance_criteria", acceptance.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
+    ["testing", acceptance.map(({ id }) => `Replay ${id}.`).join("\n")],
+  ] as const;
+  new RunFiles(RUNS_DIR).write({
+    ...newPipelineState({ run_id, feature_description: intent }),
+    current_step: "implementation_gate",
+    sections: sections.map(([section_type, content]) => ({
+      section_type, content, status: "passed", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+    })),
+    pending_completion: {
+      summary: "Passed",
+      artifacts: [],
+      outcome: { status: "passed", reasons: [] },
+      verification: {
+        claims_evaluated: 2, distribution_suspicious: false, total_subjective_claims: 0,
+        distribution: { PASS: 2, FAIL: 0, INCONCLUSIVE: 0, "NEEDS-RUNTIME": 0, "SPEC-COMPLETE": 0 },
+        judge_verdicts: ["FR-001", "AC-001"].map(claim_id => ({
+          claim_id, judge: { kind: "genius", name: "dijkstra" }, verdict: "PASS",
+          confidence: 0.9, rationale: "Synthetic evidence.", caveats: [],
+        })),
+      },
+    },
+  }, {
+    kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
+    description: "Decide", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
+  });
+}
 
 it.each([
   { format: "define_handoff_v1", size: MAX_RESPONSE_CHARS },
@@ -167,38 +206,11 @@ it.each([
   const handoff = { version: 1 as const, run_id, requirements, acceptance };
   const baseline = plan && !oversizedSource ? buildVerifiedPlan(handoff, intent, plan_step) : { handoff };
   requirements[0]!.text += "x".repeat(size - JSON.stringify(baseline).length);
-  const sections = [
-    ["requirements", requirements.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
-    ["acceptance_criteria", acceptance.map(({ id, text }) => `- ${id}: ${text}`).join("\n")],
-    ["testing", acceptance.map(({ id }) => `Replay ${id}.`).join("\n")],
-  ] as const;
+  saveReadyDefine(run_id, intent, requirements, acceptance);
   if (oversizedSource) {
     expect(JSON.stringify({ handoff })).toHaveLength(MAX_RESPONSE_CHARS + 1);
     expect(JSON.stringify(buildVerifiedPlan(handoff, intent, plan_step)).length).toBeLessThan(MAX_RESPONSE_CHARS);
   }
-  new RunFiles(RUNS_DIR).write({
-    ...newPipelineState({ run_id, feature_description: intent }),
-    current_step: "implementation_gate",
-    sections: sections.map(([section_type, content]) => ({
-      section_type, content, status: "passed", attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
-    })),
-    pending_completion: {
-      summary: "Passed",
-      artifacts: [],
-      outcome: { status: "passed", reasons: [] },
-      verification: {
-        claims_evaluated: 2, distribution_suspicious: false, total_subjective_claims: 0,
-        distribution: { PASS: 2, FAIL: 0, INCONCLUSIVE: 0, "NEEDS-RUNTIME": 0, "SPEC-COMPLETE": 0 },
-        judge_verdicts: ["FR-001", "AC-001"].map(claim_id => ({
-          claim_id, judge: { kind: "genius", name: "dijkstra" }, verdict: "PASS",
-          confidence: 0.9, rationale: "Synthetic evidence.", caveats: [],
-        })),
-      },
-    },
-  }, {
-    kind: "ask_user", question_id: "implementation_gate", header: "Implement?",
-    description: "Decide", multi_select: false, options: [{ label: "PRD only" }, { label: "Implement" }],
-  });
   const response = await handlers.get("get_pipeline_state")!({ run_id, format, plan_step: plan ? plan_step : undefined });
   expect(response.isError).toBe(oversized);
   if (oversized) {
@@ -215,6 +227,64 @@ it.each([
       expect(missingStep.isError).toBe(true);
       expect(parse(missingStep)).toMatchObject({ error: { code: "plan_step_invalid" } });
     }
+  }
+});
+
+it("bounds the implementation review response independently from its plan", async () => {
+  const run_id = "run_review_budget";
+  const intent = "Keep receipts";
+  const requirements = [{ id: "FR-001", text: "Keep a receipt." }];
+  const acceptance = [{ id: "AC-001", text: "Find it (FR-001).", requirement_ids: ["FR-001"] }];
+  saveReadyDefine(run_id, intent, requirements, acceptance);
+  const request = { run_id, plan_step: "delivery", format: "implementation_review_v1", review_id: "candidate" };
+  const dossier = {
+    implementation_review: {
+      version: 1, status: "ready_for_review", review_id: "candidate", run_id, step: "delivery",
+      repository_id: "fixture/review", base_revision: "a".repeat(40), reviewed_revision: "b".repeat(40),
+      plan_sha256: "1".repeat(64), approval_sha256: "2".repeat(64), diff_sha256: "3".repeat(64),
+      acceptance: [{ ...acceptance[0]!, status: "evidence_required" }], diff: "",
+    },
+  };
+  const prepare = vi.mocked(prepareImplementationReview);
+  const keys = {
+    PRD_GEN_REVIEW_AUTHORITY: "/owner/approval.json", PRD_GEN_REVIEW_REPOSITORY: "/checkout",
+    PRD_GEN_REVIEW_REPOSITORY_ID: "fixture/review", PRD_GEN_REVIEW_GIT: "/trusted/git",
+  };
+  for (const [key, value] of Object.entries(keys)) vi.stubEnv(key, value);
+  try {
+    const fixed = JSON.stringify(dossier).length;
+    dossier.implementation_review.diff = "x".repeat(MAX_RESPONSE_CHARS - fixed);
+    prepare.mockResolvedValueOnce(dossier);
+    const fits = await handlers.get("get_pipeline_state")!(request);
+    expect(fits.isError).toBe(false);
+    expect(fits.content[0]?.text).toBe(JSON.stringify(dossier));
+    expect(prepare).toHaveBeenLastCalledWith({
+      authority: keys.PRD_GEN_REVIEW_AUTHORITY, repository: keys.PRD_GEN_REVIEW_REPOSITORY,
+      repositoryId: keys.PRD_GEN_REVIEW_REPOSITORY_ID, git: keys.PRD_GEN_REVIEW_GIT,
+    }, "candidate", expect.objectContaining({ run_id, proposal: expect.objectContaining({ step: "delivery" }) }),
+    expect.objectContaining({ run_id, requirements, acceptance }));
+
+    dossier.implementation_review.diff += "x";
+    prepare.mockResolvedValueOnce(dossier);
+    const tooLarge = await handlers.get("get_pipeline_state")!(request);
+    expect(tooLarge.isError).toBe(true);
+    expect(parse(tooLarge)).toEqual({ error: {
+      code: "review_response_too_large", message: "The complete implementation review exceeds the MCP response budget.",
+    } });
+
+    const invalidPlan = await handlers.get("get_pipeline_state")!({ ...request, plan_step: "" });
+    expect(invalidPlan.isError).toBe(true);
+    expect(parse(invalidPlan)).toMatchObject({ error: { code: "plan_step_invalid" } });
+    expect(prepare).toHaveBeenCalledTimes(2);
+
+    const error = { code: "review_authority_unavailable", message: "The implementation review dossier could not be prepared." };
+    prepare.mockResolvedValueOnce({ error });
+    const refused = await handlers.get("get_pipeline_state")!(request);
+    expect(refused.isError).toBe(true);
+    expect(parse(refused)).toEqual({ error });
+  } finally {
+    vi.unstubAllEnvs();
+    prepare.mockReset();
   }
 });
 
