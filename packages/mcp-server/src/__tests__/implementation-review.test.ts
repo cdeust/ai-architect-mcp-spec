@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, ftruncateSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -42,6 +42,18 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 function save(value: unknown = authority) {
   writeFileSync(paths.authority!, JSON.stringify(value) + "\n");
+}
+
+function rewriteGitPointer(path: string, value: string) {
+  // Git for Windows hides its existing .git files. Node's default "w" fails on them.
+  const bytes = Buffer.from(value);
+  const fd = openSync(path, "r+");
+  try {
+    writeFileSync(fd, bytes);
+    ftruncateSync(fd, bytes.length);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function review(overrides: typeof paths = paths, id: string | undefined = authority.review_id) {
@@ -451,7 +463,7 @@ it("does not join an embedded newline into a valid metadata path", async () => {
     `\ngitdir: ${metadata}\n`,
   ];
   for (const pointer of malformed) {
-    writeFileSync(join(checkout, ".git"), pointer);
+    rewriteGitPointer(join(checkout, ".git"), pointer);
     expect(await review({ ...paths, git: executable, repository: checkout })).toMatchObject({
       error: { code: "review_repository_invalid" },
     });
@@ -464,7 +476,7 @@ it("accepts a linked checkout whose Git pointer ends in CRLF", async () => {
   candidate.git("worktree", "add", "--quiet", "--detach", linked, candidate.head);
   const marker = join(linked, ".git");
   const pointer = readFileSync(marker, "utf8").replace(/[\r\n]+$/, "");
-  writeFileSync(marker, pointer + "\r\n");
+  rewriteGitPointer(marker, pointer + "\r\n");
   expect(await review({ ...paths, repository: linked })).toMatchObject({
     implementation_review: { status: "ready_for_review", reviewed_revision: candidate.head },
   });
@@ -479,11 +491,11 @@ it("applies Git's gitfile size limit without rejecting valid linked markers", as
   const pointer = readFileSync(marker, "utf8").replace(/[\r\n]+$/, "");
   // Git v2.56.1 read_gitfile_raw trims trailing line endings within its 1 MiB limit.
   const atLimit = pointer + "\n".repeat((1 << 20) - Buffer.byteLength(pointer));
-  writeFileSync(marker, atLimit);
+  rewriteGitPointer(marker, atLimit);
   expect(await review({ ...paths, repository: linked })).toMatchObject({
     implementation_review: { status: "ready_for_review", reviewed_revision: candidate.head },
   });
-  writeFileSync(marker, atLimit + "\n");
+  rewriteGitPointer(marker, atLimit + "\n");
   expect(await review({ ...paths, repository: linked })).toMatchObject({
     error: { code: "review_repository_invalid" },
   });
