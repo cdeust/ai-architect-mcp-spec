@@ -38,9 +38,9 @@ Every AI agent that drafts a PRD eventually invents a function that doesn't exis
 
 ### From specification to delivery
 
-![The ready path runs from Spec analysis and a verified one-Step plan to owner approval, build, tests and delivery in architect-os. Next, architect-os returns evidence per criterion on the delivered commit, and Spec reviews it against the approved plan.](docs/diagrams/spec-delivery-flow.svg)
+![Spec analyses and verifies the PRD, using the codebase graph when provided, then hands a verified one-Step plan to architect-os for owner approval, build, tests and delivery. Next, evidence per criterion returns from the delivered commit to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
 
-**Ready** marks capabilities available on each repository’s `main`. The host transfers the Define and proposal files, then invokes architect-os commands separately. A measured replay from the approved plan through delivery remains **next**, along with acceptance evidence on the delivered commit and Spec’s conformity review. [Spec pipeline](#the-pipeline) · [Architect-os Plan](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/docs/plan.md) · [Architect-os delivery](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/tools/deliver/src/application/deliver.ts)
+**Ready** marks capabilities available on each repository’s `main`. With `codebase_path`, Spec uses the graph for analysis and checks the PRD against it at self-check. The graph findings are advisory. The host transfers the Define and proposal files, then invokes architect-os commands separately. A measured replay from the approved plan through delivery remains **next**, along with acceptance evidence on the delivered commit and Spec’s conformity review. [Spec pipeline](#the-pipeline) · [Codebase MCP](https://github.com/cdeust/ai-architect-mcp-codebase) · [Architect-os Plan](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/docs/plan.md) · [Architect-os delivery](https://github.com/cdeust/architect-os/blob/3fd73fd772b64eaaca9c09fa7bdf9b653cf7080a/tools/deliver/src/application/deliver.ts)
 
 ### What you get
 
