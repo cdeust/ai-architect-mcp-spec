@@ -430,6 +430,8 @@ To prepare an implementation review, keep the Define checkpoint pending and call
 
 Spec checks the approved manifest and input digests against the saved plan and matches the repository identity. It reads the commit-to-commit Git diff using tracked attributes from the base revision recorded by the operator. Keep the operator-controlled Git metadata stable throughout the review. A complete dossier reports `ready_for_review`, with the diff and its digest, both revisions, both approval and plan digests, and `evidence_required` for every acceptance criterion. Evidence for behavioral conformity must link each criterion to a result on the reviewed revision.
 
+To review scope and declared edge cases before Define, pass `semantic_review: true` to `start_pipeline`. You authorize one additional judge invocation through the host. It examines the request, clarification answers and the PRD, with operator decisions kept distinct from draft text. A scope finding cites the exclusion and the contradictory requirement or acceptance criterion. A missing edge-case finding cites the declared condition. Spec checks the citations against the exact reviewed inputs. When the judge reports an inconclusive check, the host asks you to verify that item against the current specification. A finding, an unresolved item, an incomplete response or a stale review blocks the Define handoff. [Semantic review contract](packages/orchestration/src/semantic-review.ts)
+
 
 Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
 

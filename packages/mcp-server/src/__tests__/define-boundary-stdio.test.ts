@@ -2,11 +2,180 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
-import { makeCannedDispatcher, newPipelineState, NextActionSchema, type ActionResult, type NextAction, type PipelineState } from "@prd-gen/orchestration";
+import { makeCannedDispatcher, newPipelineState, NextActionSchema, step, type ActionResult, type NextAction, type PipelineState } from "@prd-gen/orchestration";
+import { CLEAN_CONTROL, SEEDED_DEFECTS } from "../../../validation/src/__tests__/seeded-defects.fixture.js";
 import { startStdioServer, type StdioServer, type StdioServerOptions } from "./stdio-server.js";
 import fixture from "./fixtures/define-delivery-command.json";
 import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
 import { RunFiles } from "../run-files.js";
+
+type ReviewInvocation = Extract<NextAction, { kind: "spawn_subagents" }>;
+type ReviewEvidence = { status: "clear" | "inconclusive" | "finding"; citations: { source_id: string; quote: string }[] };
+const DECLARED_EDGE = "Some browsers deny clipboard access to pages that are not focused.";
+const DECLARED_EXCLUSION = "no request leaves the page and nothing is stored.";
+const CLOUD_REQUIREMENT = "Every copied snippet is saved to the reader's cloud account history.";
+const EDGE_HANDLING = "If the browser denies clipboard access, show an error and preserve the current clipboard.";
+
+function semanticFixture(scenario: string) {
+  if (scenario === "scope_creep" || scenario === "missing_edge_case") {
+    return SEEDED_DEFECTS.find(({ category }) => category === scenario)!.sections;
+  }
+  if (scenario !== "covered") return CLEAN_CONTROL;
+  return SEEDED_DEFECTS.find(({ category }) => category === "missing_edge_case")!.sections.map(({ type, content }) => ({
+    type,
+    content: type === "requirements" ? content + "\n| FR-004 | " + EDGE_HANDLING + " | Must | Design review |"
+      : type === "acceptance_criteria" ? content + "\n- AC-004 (FR-004): Denied clipboard access shows an error."
+      : type === "testing" ? content + "\n| T-004 | AC-004 | Deny clipboard access and check the error. |" : content,
+  }));
+}
+
+function semanticSections(scenario: string, raw: boolean) {
+  return semanticFixture(scenario).map(({ type, content }) => ({
+    section_type: type,
+    // The historical fixture used leading references. Canonical handoff cases
+    // put the same references after the statement as required by Define v1.
+    content: type === "acceptance_criteria" && !raw
+      ? content.replace(/^- (AC-\d+) \((FR-\d+)\): (.+)$/gm, "- $1: $3 ($2).")
+      : content,
+    status: "passed" as const, attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+  }));
+}
+
+function semanticFixtureResult(action: ReviewInvocation, scenario: string) {
+  const prompt = action.invocations[0]!.prompt;
+  const { sources } = JSON.parse(prompt.slice(prompt.indexOf("\n\n") + 2)) as {
+    sources: { source_id: string; text: string }[];
+  };
+  const cite = (quote: string) => {
+    const source = sources.find(x => x.text.includes(quote));
+    expect(source, quote).toBeDefined();
+    return { source_id: source!.source_id, quote };
+  };
+  const clear: ReviewEvidence = { status: "clear", citations: [] };
+  const scope: ReviewEvidence = scenario === "scope_creep"
+    ? { status: "finding", citations: [cite(DECLARED_EXCLUSION), cite(CLOUD_REQUIREMENT)] } : clear;
+  const edge: ReviewEvidence = scenario === "missing_edge_case"
+    ? { status: "finding", citations: [cite(DECLARED_EDGE)] }
+    : scenario.startsWith("operator_") ? { status: "inconclusive", citations: [] }
+    : scenario === "covered" ? { status: "clear", citations: [cite(DECLARED_EDGE), cite(EDGE_HANDLING)] } : clear;
+  const raw = JSON.stringify({
+    scope_creep: scenario === "invented_quote"
+      ? { status: "finding", citations: [{ source_id: "request", quote: "invented" }, cite(DECLARED_EXCLUSION)] }
+      : scope,
+    missing_edge_case: edge,
+  });
+  return { kind: "subagent_batch_result", batch_id: action.batch_id,
+    responses: [{ invocation_id: action.invocations[0]!.invocation_id, raw_text: raw }] };
+}
+
+async function finishSemanticSelfCheck(server: StdioServer, envelope: Envelope) {
+  const canned = makeCannedDispatcher();
+  while (envelope.current_step === "self_check" || NextActionSchema.parse(envelope.action).kind === "write_file") {
+    const action = NextActionSchema.parse(envelope.action);
+    if (action.kind === "write_file") {
+      envelope = await call<Envelope>(server, "submit_action_result", {
+        run_id: envelope.run_id, result: { kind: "file_written", path: action.path, bytes: Buffer.byteLength(action.content) },
+      });
+    } else {
+      expect(action.kind === "spawn_subagents" && action.batch_id.startsWith("self_check_scope_coverage_")).toBe(false);
+      const result = canned(action);
+      if (!result) throw new Error("Unhandled self-check action " + action.kind);
+      envelope = await call<Envelope>(server, "submit_action_result", { run_id: envelope.run_id, result });
+    }
+  }
+  return NextActionSchema.parse(envelope.action);
+}
+
+const SEMANTIC_ISSUE_CASES = [
+  ["scope_creep", "scope_creep (finding)", true],
+  ["missing_edge_case", "missing_edge_case (finding)", true],
+  ["scope_creep", "scope_creep (finding)", false],
+  ["missing_edge_case", "missing_edge_case (finding)", false],
+  ["invented_quote", "current, complete scope and edge-case evidence is required", false],
+  ["clean", null, false],
+  ["covered", null, false],
+  ["operator_confirms", null, false],
+  ["operator_declines", "missing_edge_case (inconclusive)", false],
+] as const;
+
+it("persists the public semantic review opt-in", async () => {
+  const home = mkdtempSync(join(tmpdir(), "prd-gen-semantic-start-"));
+  let server: StdioServer | undefined;
+  try {
+    server = await startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
+    const { run_id } = await call<Envelope>(server, "start_pipeline", { ...fixture.request, semantic_review: true });
+    const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+    expect(state.semantic_review_requested).toBe(true);
+    expect(state.semantic_review).toBeUndefined();
+  } finally {
+    await server?.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it.each(SEMANTIC_ISSUE_CASES)("validates host scope review evidence for %s (%s, raw %s) on MCP stdio", async (scenario, failure, raw) => {
+  const home = mkdtempSync(join(tmpdir(), "prd-gen-semantic-review-"));
+  const files = new RunFiles(join(home, ".prd-gen", "runs"));
+  const run_id = "run_semantic_issue";
+  const seed = newPipelineState({ run_id, feature_description: "Copy button for browser documentation.", semantic_review: true });
+  const { state, action } = step({ state: {
+    ...seed, current_step: "self_check",
+    clarifications: [{ round: 1, question: "Should copying stay local?", answer: "Yes.", asked_at: seed.started_at }],
+    sections: semanticSections(scenario, raw),
+  } });
+  expect(action.kind).toBe("spawn_subagents");
+  const start = () => startDefineServer({ cwd: home, env: { HOME: home, USERPROFILE: home } });
+  let server: StdioServer | undefined;
+  try {
+    files.write(state, action);
+    server = await start();
+    const recovered = await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" });
+    const judge = NextActionSchema.parse(recovered.action);
+    if (judge.kind !== "spawn_subagents") throw new Error("Expected semantic review");
+    expect(judge.batch_id).toMatch(/^self_check_scope_coverage_/);
+    const result = semanticFixtureResult(judge, scenario);
+    let response = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    if (scenario.startsWith("operator_")) {
+      const pending = NextActionSchema.parse(response.action);
+      if (pending.kind !== "ask_user") throw new Error("Expected manual edge-case validation");
+      await server.close();
+      server = await start();
+      expect((await call<Envelope>(server, "get_pipeline_state", { run_id, format: "action" })).action).toEqual(pending);
+      response = await call<Envelope>(server, "submit_action_result", {
+        run_id,
+        result: {
+          kind: "user_answer", question_id: pending.question_id,
+          selected: [scenario === "operator_confirms" ? "Confirm after checking" : "Leave unresolved"],
+        },
+      });
+    }
+    const gate = await finishSemanticSelfCheck(server, response);
+    expect(gate).toMatchObject({ kind: "ask_user", question_id: "implementation_gate" });
+    if (failure) expect(gate).toMatchObject({ description: expect.stringContaining(failure) });
+    await server.close();
+    server = await start();
+    const define = await server.call("get_pipeline_state", { run_id, format: "define_handoff_v1" });
+    expect(define.isError, define.text).toBe(failure !== null);
+    if (raw) expect(JSON.parse(define.text)).toMatchObject({ error: { code: "define_document_invalid" } });
+    else if (failure) expect(JSON.parse(define.text)).toMatchObject({ error: { code: "define_not_ready", message: expect.stringContaining(failure) } });
+    else expect(JSON.parse(define.text)).toMatchObject({ handoff: { run_id } });
+    if (scenario === "operator_confirms") {
+      const full = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+      await server.close();
+      const changed = full.state.clarifications.map(turn => ({ ...turn, question: "Should copies be saved remotely?" }));
+      files.write({ ...full.state, clarifications: changed }, gate);
+      server = await start();
+      const stale = await server.call("get_pipeline_state", { run_id, format: "define_handoff_v1" });
+      expect(stale.isError).toBe(true);
+      expect(JSON.parse(stale.text)).toMatchObject({
+        error: { code: "define_not_ready", message: expect.stringContaining("semantic_review") },
+      });
+    }
+  } finally {
+    await server?.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 120_000);
 
 interface Envelope {
   readonly run_id: string;

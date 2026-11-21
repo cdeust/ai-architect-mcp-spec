@@ -236,11 +236,17 @@ it("preserves both requirements and traced criteria when their normative text su
   expect(readDefineHandoff(checkpoint, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
 });
 
-
 it("preserves the Define payload for the new gate and honors a persisted legacy refusal", () => {
   const state = ready();
   const safe = { ...pending, options: [{ label: "PRD only" }, { label: "Review verification findings" }] };
   expect(readDefineHandoff(state, safe)).toEqual(readDefineHandoff(state, pending));
   expect(readDefineHandoff({ ...state, post_specs: { ...initialPostSpecs(), legacy_define_refusal: true } }, safe))
     .toMatchObject({ error: { code: "define_not_ready" } });
+});
+
+it("blocks a ready-looking implementation checkpoint with missing semantic evidence", () => {
+  const state = { ...ready(), semantic_review_requested: true as const };
+  const message = "semantic_review: current, complete scope and edge-case evidence is required";
+  expect(readDefineHandoff(state, pending)).toEqual({ error: { code: "define_not_ready", message } });
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "blocked", reasons: [message] });
 });

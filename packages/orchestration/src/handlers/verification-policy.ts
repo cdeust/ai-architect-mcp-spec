@@ -15,6 +15,7 @@ import type { JudgeVerdict } from "@prd-gen/core";
 import { validateDefineReadiness, validateDocument } from "@prd-gen/validation";
 import { findDefineDecisionConflicts } from "../define-decisions.js";
 import { documentSections } from "../section-plan.js";
+import { semanticReviewFindings } from "../semantic-review.js";
 import type { VerificationSummary } from "../types/actions.js";
 import type { PipelineState } from "../types/state.js";
 import type { VerificationPolicyConfig } from "../types/state/verification-policy.js";
@@ -205,6 +206,7 @@ export function defineFindings(state: PipelineState) {
   return [
     ...validateDefineReadiness(sections),
     ...findDefineDecisionConflicts(state, sections).map(message => ({ message })),
+    ...semanticReviewFindings(state),
   ];
 }
 

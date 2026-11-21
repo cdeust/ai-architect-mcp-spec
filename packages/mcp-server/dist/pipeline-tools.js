@@ -218,6 +218,8 @@ export function registerPipelineTools(server) {
         feature_description: z
             .string()
             .describe("What the PRD is about — passed to all prompts"),
+        semantic_review: z.boolean().optional()
+            .describe("Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks."),
         codebase_path: z
             .string()
             .optional()
@@ -232,7 +234,7 @@ export function registerPipelineTools(server) {
         request_size: RequestSizeSchema
             .optional()
             .describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`),
-    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size }) => {
+    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size, semantic_review }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
         // structured, retryable error rather than hang or grow unbounded — the
@@ -268,6 +270,7 @@ export function registerPipelineTools(server) {
             skip_preflight: skip_preflight ?? false,
             prd_context: prd_context ?? null,
             request_size: request_size ?? REQUEST_SIZE_DEFAULT,
+            semantic_review,
         });
         // B1 — Wire retry_policy from composition root (Curie A7).
         // The reducer (section-generation.ts) reads state.retry_policy and never

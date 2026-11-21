@@ -1,5 +1,6 @@
 import { permitsDefineHandoff } from "./architect-os-boundary.js";
 import { findDefineDecisionConflicts } from "./define-decisions.js";
+import { semanticReviewFindings } from "./semantic-review.js";
 import { z } from "zod";
 import { DefineHandoffV1Schema, isBlockingViolation, type DefineHandoffV1 } from "@prd-gen/core";
 import { projectDefineDocument, validateDocument } from "@prd-gen/validation";
@@ -39,6 +40,8 @@ export function readDefineHandoff(state: PipelineState, action: NextAction | nul
   if (dispute) {
     return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
   }
+  const semanticFinding = semanticReviewFindings(state)[0];
+  if (semanticFinding) return refusal("define_not_ready", semanticFinding.message);
   const completion = state.pending_completion;
   const verification = completion?.verification;
   const judged = new Set(verification?.judge_verdicts?.map(({ claim_id }) => claim_id));

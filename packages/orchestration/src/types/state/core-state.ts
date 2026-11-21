@@ -10,7 +10,7 @@ import { ExecutionResultSchema } from "@prd-gen/strategy";
 import { ASK_USER_MAX_OPTIONS, ASK_USER_MIN_OPTIONS, DoneOutcomeSchema, VerificationSummarySchema } from "../actions.js";
 import { PipelineStepSchema } from "./pipeline-step.js";
 import { SectionStatusSchema } from "./section-status.js";
-import { VerificationPlanSnapshotSchema } from "./verification-plan.js";
+import { SemanticReviewStateFields, VerificationPlanSnapshotSchema } from "./verification-plan.js";
 import {
   CLARIFICATION_TURN_CHARS,
   MAX_CLARIFICATION_TURNS,
@@ -66,6 +66,7 @@ export const ClarificationTurnSchema = z.object({
 export type ClarificationTurn = z.infer<typeof ClarificationTurnSchema>;
 
 export const PipelineStateSchema = z.object({
+  ...SemanticReviewStateFields,
   /** Unmatched decision answers by question ID, persisted across host round trips. */
   unmatched_answers: z.record(z.string(), z.number().int().nonnegative()).default({}),
   run_id: z.string(),
