@@ -17,9 +17,12 @@ runs:
     - name: Install the verified Claude CLI
       shell: bash
       run: |
-        npm install --global --prefix "$RUNNER_TEMP/claude-quota-cli" @anthropic-ai/claude-code@2.1.328
-        echo "$RUNNER_TEMP/claude-quota-cli/bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/claude-quota-cli/bin/claude" --version | grep -Fx '2.1.328 (Claude Code)'
+        install_dir="$RUNNER_TEMP/claude-quota-cli"
+        mkdir -p "$install_dir"
+        cp "$GITHUB_ACTION_PATH/package.json" "$GITHUB_ACTION_PATH/package-lock.json" "$install_dir/"
+        npm ci --prefix "$install_dir" --no-audit --no-fund
+        echo "$install_dir/node_modules/.bin" >> "$GITHUB_PATH"
+        "$install_dir/node_modules/.bin/claude" --version | grep -Fx '2.1.328 (Claude Code)'
         tmux -V
     - name: Read subscription windows
       id: usage

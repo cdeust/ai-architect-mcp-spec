@@ -16,7 +16,7 @@ ACTION = ROOT / ".github/actions/claude-subscription-quota/read.py"
 
 
 class ClaudeQuotaDiagnosticTest(unittest.TestCase):
-    def probe(self, percentage, counters, details=""):
+    def probe(self, percentage="", counters="", details="", *, auth=None, terminal_error=None):
         screens = iter([
             "Claude Code\nSafe mode:\n❯",
             "Show session cost, plan usage",
@@ -26,7 +26,11 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
         def native(argv, **_kwargs):
             output = ""
             if argv[:3] == ["claude", "auth", "status"]:
+                if auth is not None:
+                    return auth
                 output = json.dumps({"loggedIn": True, "authMethod": "oauth_token", "apiProvider": "firstParty"})
+            elif "capture-pane" in argv and terminal_error is not None:
+                raise terminal_error
             elif "capture-pane" in argv:
                 output = next(screens)
             return subprocess.CompletedProcess(argv, 0, stdout=output)
@@ -43,7 +47,26 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
             receipt = json.loads(captured.getvalue())
             outputs = dict(line.split("=", 1) for line in output_file.read_text().splitlines())
         self.assertEqual(str(receipt["review_eligible"]).lower(), outputs["eligible"])
+        self.assertEqual("unknown" if receipt["remaining_percent"] is None else str(receipt["remaining_percent"]),
+                         outputs["remaining"])
         return int(exit_status.exception.code), receipt
+
+    def test_auth_and_terminal_failures_emit_the_refusal_signals(self):
+        for kwargs, reason in [
+            ({"auth": subprocess.CompletedProcess([], 1, stdout="")}, "authentication_status_failed"),
+            ({"auth": subprocess.CompletedProcess([], 0, stdout="bad json")}, "unrecognized_authentication_status"),
+            ({"auth": subprocess.CompletedProcess([], 0, stdout='{"loggedIn":false}')}, "expected_first_party_oauth_not_confirmed"),
+            ({"terminal_error": OSError("private details")}, "native_cli_or_terminal_failed"),
+            ({"terminal_error": subprocess.CalledProcessError(1, "tmux")}, "native_cli_or_terminal_failed"),
+            ({"terminal_error": subprocess.TimeoutExpired("tmux", 1)}, "native_cli_or_terminal_failed"),
+        ]:
+            with self.subTest(reason=reason, failure=kwargs):
+                code, receipt = self.probe(**kwargs)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(receipt["reason"], reason)
+                self.assertEqual(receipt["status"], "inconclusive")
+                self.assertFalse(receipt["review_eligible"])
+                self.assertIsNone(receipt["remaining_percent"])
 
     def test_exhaustion_is_a_successful_read_with_unknown_credits(self):
         code, receipt = self.probe("100% used", "0 input, 0 output")
@@ -85,11 +108,9 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
                 self.assertEqual(remaining, receipt["remaining_percent"])
                 self.assertEqual(eligible, receipt["review_eligible"])
 
-    def test_review_depends_on_trusted_admission_after_budget(self):
-        workflow = (ROOT / ".github/workflows/claude-review.yml").read_text()
-        admission, review = workflow.split("  admission:\n", 1)[1].split("  review:\n", 1)
-        self.assertIn("needs: budget", admission)
-        self.assertIn("if: needs.budget.outputs.skip == 'false'", admission)
-        self.assertLess(admission.index("ref: main"), admission.index("uses: ./.github/actions/claude-subscription-quota"))
-        self.assertIn("needs: [budget, admission]", review)
-        self.assertIn("needs.admission.outputs.reviewer == 'claude'", review)
+    def test_quota_runs_on_the_default_branch_after_the_review_budget(self):
+        trusted = (ROOT / ".github/workflows/review-subscription.yml").read_text()
+        self.assertIn("workflow_run:", trusted)
+        self.assertLess(trusted.index("ref: ${{ github.sha }}"), trusted.index("uses: ./.github/actions/claude-subscription-quota"))
+        self.assertIn("if: steps.budget.outputs.admitted == 'true'", trusted)
+        self.assertNotIn("pull_request.head.sha", trusted.split("actions/checkout@", 1)[1])

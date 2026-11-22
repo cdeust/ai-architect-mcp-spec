@@ -137,6 +137,15 @@ API. An agent whose machine cannot run the sandbox does not go around
 the gate: it holds under rule 3 of the next section (an access it does not
 have), naming the sandbox.
 
+### Installing trusted review actions
+
+A PR that introduces a composite action cannot use it from a checkout of
+`main` until the action has landed there. Install the action, its locked
+dependencies, and its read-only workflow before activating the PR job that
+consumes it. The owner-branch diagnostic exercises the candidate on GitHub
+Actions. The credential-bearing production workflow always reads the default
+branch. [Installation failure on #391](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45016524062)
+
 ## Issues: no issue waits for the owner
 
 Owner instruction of 12 November 2026: the owner does not answer questions on issues and

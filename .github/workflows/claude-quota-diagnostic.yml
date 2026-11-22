@@ -8,6 +8,10 @@ on:
     paths:
       - .github/workflows/claude-quota-diagnostic.yml
       - .github/actions/claude-subscription-quota/**
+      - .github/workflows/review-subscription.yml
+      - scripts/ci_review_subscription.py
+      - scripts/ci_review_codex.py
+      - scripts/ci_native_verdict.py
 
 permissions: {}
 
@@ -19,6 +23,8 @@ jobs:
       && github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      remaining: ${{ steps.claude.outputs.remaining }}
     permissions:
       contents: read
     steps:
@@ -26,6 +32,42 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/claude-subscription-quota
+      - id: claude
+        uses: ./.github/actions/claude-subscription-quota
         with:
           oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      - name: Evaluate the actual Claude measurement with an unreported OpenAI meter
+        env:
+          CLAUDE_ELIGIBLE: ${{ steps.claude.outputs.eligible }}
+          CLAUDE_REMAINING: ${{ steps.claude.outputs.remaining }}
+        run: python3 -I scripts/ci_review_subscription.py
+
+  native-api:
+    needs: read-quota
+    # Explicit integration trial on the owner's diagnostic branch only. A
+    # subsequent push cannot spend another review without this opt-in trailer.
+    if: >-
+      github.repository == 'cdeust/ai-architect-mcp-spec' && github.actor_id == '3167767'
+      && github.run_attempt == 1 && needs.read-quota.outputs.remaining == '0'
+      && contains(github.event.head_commit.message, '[verify-native-review]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Exercise the GitHub App from Actions on the diagnostic PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA/pulls" |
+            jq -er --arg sha "$GITHUB_SHA" --arg repo "$GH_REPO" --arg ref "$GITHUB_REF_NAME" '
+              [.[] | select(.state == "open" and .draft == false and .head.sha == $sha and
+               .head.repo.full_name == $repo and .head.ref == $ref)] | select(length == 1) | .[0].number')
+          PR="$pr" HEAD_SHA="$GITHUB_SHA" REVIEWER=codex python3 -I scripts/ci_review_codex.py
