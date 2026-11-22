@@ -16,7 +16,7 @@ ACTION = ROOT / ".github/actions/claude-subscription-quota/read.py"
 
 
 class ClaudeQuotaDiagnosticTest(unittest.TestCase):
-    def probe(self, percentage="", counters="", details="", *, auth=None, terminal_error=None):
+    def probe(self, percentage="", counters="", details="", *, auth=None, terminal_error=None, recovers=False):
         screens = iter([
             "Claude Code\nSafe mode:\n❯",
             "Show session cost, plan usage",
@@ -24,13 +24,17 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
         ])
 
         def native(argv, **_kwargs):
+            nonlocal terminal_error
             output = ""
             if argv[:3] == ["claude", "auth", "status"]:
                 if auth is not None:
                     return auth
                 output = json.dumps({"loggedIn": True, "authMethod": "oauth_token", "apiProvider": "firstParty"})
             elif "capture-pane" in argv and terminal_error is not None:
-                raise terminal_error
+                failure = terminal_error
+                if recovers:
+                    terminal_error = None
+                raise failure
             elif "capture-pane" in argv:
                 output = next(screens)
             return subprocess.CompletedProcess(argv, 0, stdout=output)
@@ -39,7 +43,9 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             scratch = stack.enter_context(tempfile.TemporaryDirectory())
             output_file = Path(scratch) / "action-output"
-            stack.enter_context(patch("tempfile.TemporaryDirectory", return_value=contextlib.nullcontext(scratch)))
+            new_directory = tempfile.TemporaryDirectory
+            stack.enter_context(patch("tempfile.TemporaryDirectory",
+                                      side_effect=lambda **kw: new_directory(prefix=kw["prefix"], dir=scratch)))
             with patch.dict(os.environ, GITHUB_SHA="fixture", GITHUB_RUN_ID="fixture", GITHUB_OUTPUT=str(output_file), CLAUDE_CODE_OAUTH_TOKEN="fixture"):
                 with patch("subprocess.run", side_effect=native), contextlib.redirect_stdout(captured):
                     with self.assertRaises(SystemExit) as exit_status:
@@ -67,6 +73,13 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
                 self.assertEqual(receipt["status"], "inconclusive")
                 self.assertFalse(receipt["review_eligible"])
                 self.assertIsNone(receipt["remaining_percent"])
+
+    def test_a_lost_terminal_can_recover_without_reassigning_the_review(self):
+        code, receipt = self.probe("100% used", "0 input, 0 output",
+                                   terminal_error=subprocess.CalledProcessError(1, "private command"),
+                                   recovers=True)
+        self.assertEqual((code, receipt["remaining_percent"], receipt["terminal_attempts"]), (0, 0, 2))
+        self.assertEqual(receipt["terminal_failure"], "capture-pane exit 1")
 
     def test_exhaustion_is_a_successful_read_with_unknown_credits(self):
         code, receipt = self.probe("100% used", "0 input, 0 output")

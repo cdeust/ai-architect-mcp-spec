@@ -75,27 +75,44 @@ class SubscriptionTests(unittest.TestCase):
         data["code_review_rate_limit"]["limit_reached"] = True
         self.assertEqual(quota.review_remaining(data, "owner", 100), 0)
 
-    def test_measurement_requires_admission_from_the_source_attempt(self):
-        def jobs(status, conclusion, step):
-            return {"jobs": [{"name": "Claude review budget", "status": status, "conclusion": conclusion,
-                              "steps": [{"name": "Admit a subscription review round", "conclusion": step}]}]}
-        self.assertIsNone(route.admitted(jobs("in_progress", None, None)))
-        self.assertFalse(route.admitted(jobs("completed", "failure", "success")))
-        self.assertFalse(route.admitted(jobs("completed", "success", "skipped")))
-        self.assertTrue(route.admitted(jobs("completed", "success", "success")))
+    def test_only_the_nominated_wakeup_can_measure(self):
+        job = {"name": "Claude review budget", "run_id": 42, "run_attempt": 2, "status": "in_progress",
+               "conclusion": "success", "steps": [{"name": "Subscription decision run 45", "conclusion": "success"}]}
+        jobs = {"jobs": [job]}
+        self.assertIsNone(route.admitted(jobs, 42, 2, 45))
+        job["status"] = "completed"
+        self.assertEqual([route.admitted(jobs, 42, 2, n) for n in (44, 45, 46)], [False, True, False])
+        self.assertIsNone(route.admitted(jobs, 42, 3, 45))
+        job["steps"].append(dict(job["steps"][0]))
+        self.assertFalse(route.admitted(jobs, 42, 2, 45))
+        job["steps"].clear()
+        self.assertFalse(route.admitted(jobs, 42, 2, 45))
 
-    def test_trusted_workflow_source_attempt_is_required(self):
-        def lookup(*args):
-            if "jobs" in args[0]:
-                return {"jobs": [{"conclusion": "success", "steps": [
-                    {"name": "Reuse Codex", "conclusion": "success"},
-                    {"name": "Select Claude", "conclusion": "skipped"}]}]}
-            run = {"display_title": "Route PR Review 42 attempt 2", "event": "workflow_run",
-                   "head_branch": "main", "head_repository": {"full_name": "o/r"},
-                   "status": "completed", "conclusion": "success", "id": 45, "run_attempt": 1}
-            return [{"workflow_runs": [run, dict(run, id=46, event="pull_request")]}]
-        self.assertEqual(route.decision("o/r", 42, 2, "date", lookup), "codex-existing")
-        self.assertIsNone(route.decision("o/r", 42, 1, "date", lookup))
+    def test_nomination_and_decision_cannot_switch_after_a_failed_measurement(self):
+        run = {"id": 45, "run_attempt": 1, "display_title": "Route PR Review 42 attempt 2",
+               "path": route.WORKFLOW, "event": "workflow_run", "head_branch": "main",
+               "repository": {"full_name": "o/r"}, "head_repository": {"full_name": "o/r"},
+               "head_sha": SHA, "status": "in_progress", "conclusion": None}
+        copies = [dict(run, id=n) for n in (47, 46)]
+        pages = [{"workflow_runs": [dict(run, id=9, head_branch="candidate"), *copies, run]}]
+        self.assertEqual(route.nominate("o/r", 42, 2, "date", lambda *args: pages), 45)
+        self.assertIsNone(route.nominate("o/r", 42, 1, "date", lambda *args: pages))
+        def read(path):
+            if path.endswith("/runs/45"):
+                return run
+            self.assertTrue(path.endswith("/runs/45/attempts/1/jobs"))
+            return {"jobs": [{"name": "select", "run_id": 45, "run_attempt": 1, "head_sha": SHA,
+                              "conclusion": "success", "steps": [{"name": "Reuse Codex", "conclusion": "success"}]}]}
+        self.assertIsNone(route.decision("o/r", 42, 2, 45, read))
+        run.update(status="completed", conclusion="failure")
+        with self.assertRaisesRegex(ValueError, "did not succeed"):
+            route.decision("o/r", 42, 2, 45, read)
+        run.update(conclusion="success")
+        self.assertEqual(route.decision("o/r", 42, 2, 45, read), "codex-existing")
+        for key, other in (("run_attempt", 2), ("display_title", "Route PR Review 42 attempt 1"),
+                           ("event", "pull_request"), ("head_branch", "feature"), ("id", 47)):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "identity"):
+                route.decision("o/r", 42, 2, 45, lambda path: dict(run, **{key: other}))
 
 
 class NativeTests(unittest.TestCase):
