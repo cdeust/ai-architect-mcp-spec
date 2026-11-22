@@ -9,6 +9,24 @@ import time
 class Inconclusive(Exception):
     pass
 
+
+class TerminalUnavailable(Exception):
+    """Only the tmux operation name and exit code may be written to the receipt."""
+
+
+def measure(token, receipt):
+    # The first terminal on run 45021598029 failed before returning any
+    # measurement. A new terminal on 45021610848 read the weekly window.
+    for attempt in (1, 2):
+        receipt["terminal_attempts"] = attempt
+        try:
+            with tempfile.TemporaryDirectory(prefix="quota-", dir="/tmp") as temp:
+                return read_usage(Path(temp), token)
+        except TerminalUnavailable as error:
+            receipt["terminal_failure"] = str(error)
+            if attempt == 2:
+                raise Inconclusive("native_cli_or_terminal_failed") from None
+
 def read_usage(home, token):
     workspace = home / "empty-workspace"
     workspace.mkdir()
@@ -49,25 +67,24 @@ def read_usage(home, token):
     socket = str(home / "tmux")
 
     def tmux(*args):
-        return subprocess.run(
-            ["tmux", "-f", "/dev/null", "-S", socket, *args],
-            env=env, cwd=workspace, capture_output=True, text=True, check=True,
-        ).stdout
-
-    billing_banner = False
+        try:
+            return subprocess.run(
+                ["tmux", "-f", "/dev/null", "-S", socket, *args],
+                env=env, cwd=workspace, capture_output=True, text=True, check=True,
+            ).stdout
+        except subprocess.CalledProcessError as error:
+            raise TerminalUnavailable(f"{args[0]} exit {error.returncode}") from None
 
     def wait_for(predicate, reason):
-        nonlocal billing_banner
         # A slow or unfamiliar screen is inconclusive.
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             screen = tmux("capture-pane", "-p", "-t", "quota")
-            billing_banner |= "API Usage Billing" in screen or "Claude Console" in screen
+            if "API Usage Billing" in screen or "Claude Console" in screen:
+                raise Inconclusive("ambiguous_subscription_and_console_billing")
             if predicate(screen):
                 return screen
             time.sleep(0.25)
-        if billing_banner:
-            raise Inconclusive("console_billing_banner_and_no_subscription_quota")
         raise Inconclusive(reason)
 
     try:
@@ -97,8 +114,6 @@ def read_usage(home, token):
             usage_panel,
             "subscription_usage_panel_missing",
         )
-        if billing_banner:
-            raise Inconclusive("ambiguous_subscription_and_console_billing")
         credits = re.findall(r"Usage credits are (off|on)\b", screen)
         credits_state = credits[0] if len(credits) == 1 else "unknown"
         zero_use = bool(re.search(r"Total duration \(API\):\s+0s\b", screen)
@@ -135,7 +150,7 @@ def read_usage(home, token):
     finally:
         try:
             tmux("kill-server")
-        except subprocess.CalledProcessError:
+        except TerminalUnavailable:
             pass
 
 def remaining_percent(receipt):
@@ -160,8 +175,7 @@ def main():
         token = os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", "")
         if not token:
             raise Inconclusive("missing_ci_oauth_secret")
-        with tempfile.TemporaryDirectory(prefix="quota-", dir="/tmp") as temp:
-            receipt.update(read_usage(Path(temp), token))
+        receipt.update(measure(token, receipt))
     except Inconclusive as failure:
         receipt.update(status="inconclusive", reason=str(failure))
     except (OSError, subprocess.SubprocessError):
