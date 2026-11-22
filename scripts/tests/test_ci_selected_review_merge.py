@@ -74,11 +74,12 @@ class ReviewApi:
 
 
 class RetryApi(ReviewApi):
-    def __init__(self):
-        super().__init__("codex", attempt=2, route_id=300)
-        self.previous = ReviewApi("claude")
+    def __init__(self, latest="codex"):
+        super().__init__(latest, attempt=2, route_id=300)
+        self.previous = ReviewApi("claude" if latest == "codex" else "codex")
         self.previous.source["conclusion"] = "failure"
-        self.comments = []
+        if latest == "codex":
+            self.comments = []
 
     def records(self, path, key=None):
         if path.endswith(("/runs/100/attempts/1/jobs", "/runs/200/attempts/1/jobs")):
@@ -152,6 +153,7 @@ class SelectedReviewMergeTests(unittest.TestCase):
         api = RetryApi()
         api.previous.review["conclusion"] = "failure"
         api.previous.verifier["conclusion"] = "skipped"
+        api.previous.verifier["steps"] = []
         self.assertEqual(self.merge(api), OLD_HEAD)
         self.assertEqual(api.merges, [{"sha": HEAD, "merge_method": "squash"}])
 
@@ -181,3 +183,17 @@ class SelectedReviewMergeTests(unittest.TestCase):
         api.comments = api.previous.comments
         api.jobs.remove(api.verifier)
         self.held(api)
+
+    def test_a_pending_admitted_native_review_cannot_be_superseded_by_claude(self):
+        for status in ("queued", "running"):
+            with self.subTest(status=status):
+                api = RetryApi(latest="claude")
+                api.page = pages(status=status)[0]
+                self.held(api)
+
+    def test_successful_historical_check_requires_a_readable_verdict(self):
+        for provider in ("claude", "codex"):
+            with self.subTest(latest=provider):
+                api = RetryApi(latest=provider)
+                api.page = pages(sha=OLD_HEAD)[0] if provider == "claude" else pages()[0]
+                self.held(api)
