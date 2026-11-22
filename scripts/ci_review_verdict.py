@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Fail the review run when no verdict of it that the resolver can read is found (#361).
 
-Meant to run in claude-review.yml right after the `PR Review` step, from the
-trusted default-branch checkout; the step that calls it is a follow-up (#361),
-because the change that adds it must touch .github/workflows. A review that
+Runs in a separate job of claude-review.yml after a successful review, from a
+fresh default-branch checkout. A review that
 posts no verdict is not a review: the resolver holds the merge ("Claude has
 not posted a verdict on this head") and only a new review run brings one. Run 44351841638 on #360 ended as a success
 with only its progress list, so the budget counted it as one of the three
@@ -14,7 +13,7 @@ The run passes when a comment of `claude[bot]` (type Bot) links this run
 `Verdict: approve` or `Verdict: block`: the same comment test the resolver
 applies in pipeline-post-merge.yml (`_review_approves`), which also requires the
 run to succeed and its `PR Review` step to succeed. It exits non-zero
-otherwise; once the step is wired, such a run concludes as a failure,
+otherwise, so such a run concludes as a failure,
 ci_review_budget.py (successful runs only) does not count it, and the next
 push is admitted as the same round. Any API or protocol error also exits
 non-zero. A verdict that links another reviewed run of the same head, which
