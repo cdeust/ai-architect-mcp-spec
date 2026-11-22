@@ -38,11 +38,17 @@ A PRD can name a function that does not exist, assert a latency limit without ev
 
 ### From specification to delivery
 
-![Spec analyses and verifies the PRD, using the codebase graph when provided, then hands a verified one-Step plan to architect-os for owner approval, build, tests and delivery. Next, evidence per criterion returns from the delivered commit to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
+![The existing flow from Spec analysis and verification to Architect OS approval, implementation, checks and delivery. Results for each criterion return to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
 
-**Ready** marks capabilities available on each repository’s `main`. With `codebase_path`, Spec uses the graph for analysis and runs an advisory check of the PRD against it. The host transfers Define and the verified one-Step proposal to architect-os, which prepares the execution manifest, verifies operator approval, and owns implementation, checks, and delivery. For the canonical verified plan, Spec can already prepare a read-only dossier bound to the approved plan, with the diff between the recorded Git revisions. [Spec pipeline](#the-pipeline) · [Codebase MCP](https://github.com/cdeust/ai-architect-mcp-codebase) · [Architect OS Plan](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/docs/plan.md) · [Spec review dossier](https://github.com/cdeust/ai-architect-mcp-spec/pull/385)
+In the paired profile, [Architect OS](https://github.com/cdeust/architect-os) drives the local Spec server over MCP stdio. Spec verifies Define, drafts a one-Step plan and automatically sends that exact plan to a reviewer from another provider. The host selects the account and model for each role and checks the subscription and run budget before dispatch. A clarification can suspend the run for an operator. Only a clear, current review yields `reviewed_plan_v1`. A plan marked `needs_attention` stays in Spec.
 
-**Next** is the measured replay from approval through Step and Deliver back to Spec. Architect OS must return the delivered revision and observed results for each acceptance criterion. The current dossier marks every criterion `evidence_required`. Conformity review needs a result tied to the reviewed revision. Review of an externally drafted proposal also needs a handoff that binds the exact approved proposal bytes. [Architect OS Deliver](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/tools/deliver/src/application/deliver.ts) · [Review interface](#the-pipeline)
+| Status | Flow |
+| --- | --- |
+| `ready` | Spec produces checked planning inputs. The existing standalone `codebase_path` profile can check the PRD against the code graph. Architect OS owns approval, sandboxed implementation, checks and delivery. |
+| `next` | The pair has replayed a pinned Spec bundle with two deterministic model fixtures. Architect OS verified the exact Define and Plan files, then `plan prepare` returned `pending`. Resuming that run issued zero additional model calls. |
+| `next` | Validate the signed-in model adapters and prompts on specimens before a real Step. After delivery, send the revision and an observed result for each acceptance criterion to Spec for conformity review against the approved plan. |
+
+The [Spec pipeline](#the-pipeline) documents the planning profile, the legacy traceability projection and the implementation review dossier. See [Architect OS Plan](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/docs/plan.md) for the host’s approval and preparation contract.
 
 #### Reference model setup for trials
 
