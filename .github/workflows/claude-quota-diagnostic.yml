@@ -138,7 +138,8 @@ jobs:
                       "usage_credits": credits_state,
                       "zero_model_usage_verified": zero_use,
                   }
-                  # Report the measurement even when a separate gate rejects admission.
+                  # Subscription windows and a gateway spend_limit have different meanings.
+                  # https://code.claude.com/docs/en/statusline#spend-limit-fields
                   def window(label):
                       matches = re.findall(
                           rf"^ *{re.escape(label)}[^\S\n]*\n[^\n]*?\b(\d{{1,3}})% used\b",
@@ -183,5 +184,6 @@ jobs:
           except (OSError, subprocess.SubprocessError):
               receipt.update(status="inconclusive", reason="native_cli_or_terminal_failed")
           print(json.dumps(receipt, sort_keys=True))
-          raise SystemExit(receipt["status"] != "weekly_quota_read" or not receipt["charging_guard_passed"])
+          # This job measures quota before generation. Review admission is a separate decision.
+          raise SystemExit(receipt["status"] != "weekly_quota_read" or not receipt["zero_model_usage_verified"])
           PY
