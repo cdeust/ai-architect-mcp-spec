@@ -130,27 +130,37 @@ jobs:
                   )
                   if billing_banner:
                       raise Inconclusive("ambiguous_subscription_and_console_billing")
-                  if "Usage credits are off" not in screen:
-                      raise Inconclusive("usage_credits_off_not_confirmed")
-                  if not (re.search(r"Total duration \(API\):\s+0s\b", screen)
-                          and re.search(r"\b0 input, 0 output\b", screen)):
-                      raise Inconclusive("zero_model_usage_not_confirmed")
-                  weekly = re.search(
-                      r"Current week \(all models\)\s*\n[^\n]*?(\d{1,3})% used\s*\n"
-                      r"\s*Resets ([A-Z][a-z]{2} \d{1,2} at \d{1,2}(?::\d{2})?"
-                      r"(?:am|pm) \([A-Za-z0-9_+/-]+\))\s*$",
+                  credits = re.findall(r"Usage credits are (off|on)\b", screen)
+                  credits_state = credits[0] if len(credits) == 1 else "unknown"
+                  zero_use = bool(re.search(r"Total duration \(API\):\s+0s\b", screen)
+                                  and re.search(r"\b0 input, 0 output\b", screen))
+                  measurement = {
+                      "usage_credits": credits_state,
+                      "zero_model_usage_verified": zero_use,
+                  }
+                  # Report the measurement even when a separate gate rejects admission.
+                  def window(label):
+                      matches = re.findall(
+                          rf"^ *{re.escape(label)}[^\S\n]*\n[^\n]*?\b(\d{{1,3}})% used\b",
+                          screen, re.MULTILINE,
+                      )
+                      return int(matches[0]) if len(matches) == 1 and int(matches[0]) <= 100 else None
+
+                  weekly = window("Current week (all models)")
+                  if weekly is None:
+                      return {**measurement, "status": "inconclusive",
+                              "reason": "weekly_all_models_percentage_not_recognized"}
+                  measurement.update(status="weekly_quota_read", weekly_all_models_used_percent=weekly,
+                                     current_session_used_percent=window("Current session"))
+                  reset = re.search(
+                      r"Current week \(all models\)[^\n]*\n[^\n]*% used[^\n]*\n"
+                      r"[^\S\n]*Resets ([A-Z][a-z]{2} \d{1,2} at \d{1,2}(?::\d{2})?"
+                      r"(?:am|pm)(?: \([A-Za-z0-9_+/-]+\))?)\s*$",
                       screen, re.MULTILINE,
                   )
-                  if not weekly or int(weekly[1]) > 100:
-                      raise Inconclusive("weekly_all_models_window_not_recognized")
-                  return {
-                      "status": "weekly_quota_read",
-                      "weekly_all_models_used_percent": int(weekly[1]),
-                      "reset_display": weekly[2],
-                      "usage_credits": "off",
-                      "model_input_tokens": 0,
-                      "model_output_tokens": 0,
-                  }
+                  measurement["weekly_reset_display"] = reset[1] if reset else None
+                  measurement["charging_guard_passed"] = credits_state == "off" and zero_use
+                  return measurement
               finally:
                   try:
                       tmux("kill-server")
@@ -173,5 +183,5 @@ jobs:
           except (OSError, subprocess.SubprocessError):
               receipt.update(status="inconclusive", reason="native_cli_or_terminal_failed")
           print(json.dumps(receipt, sort_keys=True))
-          raise SystemExit(receipt["status"] != "weekly_quota_read")
+          raise SystemExit(receipt["status"] != "weekly_quota_read" or not receipt["charging_guard_passed"])
           PY
