@@ -124,7 +124,7 @@ class ReviewDictatesMergeTests(unittest.TestCase):
         body = text.split("def _merge_open_pr", 1)[1].split("def _confirm_pr_merge", 1)[
             0
         ]
-        self.assertLess(body.index("_review_approves("), body.index('"PUT"'))
+        self.assertLess(body.index("_selected_review_approves("), body.index('"PUT"'))
 
 
 if __name__ == "__main__":

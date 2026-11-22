@@ -60,6 +60,15 @@ WAITS = (
     "merge held: no Claude review ran on this head",
     "merge held: Claude has not posted a verdict on this head",
     "merge held: Claude review verdict is block",
+    "merge held: native Codex review verdict is block",
+    "merge held: native Codex verdict is pending",
+    "merge held: historical native Codex verdict evidence is missing",
+    "merge held: historical Claude verdict evidence is missing",
+    "merge held: latest review admission is unverified",
+    "merge held: no admitted Claude review ran on this head",
+    "merge held: no admitted native Codex review ran on this head",
+    "merge held: no candidate review run on this PR head",
+    "merge held: no verdict from an admitted Claude attempt",
     "PR head advanced after testing",
 )
 

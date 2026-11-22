@@ -31,10 +31,12 @@ a scheduled routine, the local manager. It follows the contract of `cdeust/Corte
 source of truth for CI. Where the prompt of a routine says otherwise, this section wins:
 the prompt was written before the contract, and the repository's own standards apply.
 
-1. **The review verdict decides the merge.** The `PR Review` workflow posts a comment by
-   `claude[bot]` that ends with `Verdict: approve` or `Verdict: block`. The resolver merges
-   a pull request whose last verdict covers its head, reads approve, and whose required
-   checks are green. No agent merges by hand or enables auto-merge.
+1. **The selected review decides the merge.** The default-branch quota workflow identifies
+   the provider for this review run and attempt. Claude posts a run-linked verdict. Codex
+   publishes an authenticated GitHub App receipt on the current head. A separate read-only
+   CI job verifies the selected provider's verdict. The protected resolver checks the
+   admission, successful run, and verdict again before merging. See the
+   [subscription review contract](review-subscriptions.md).
 2. **Three reviews per branch.** A push to a pull request ready for review triggers review
    admission. The budget counts successful workflow runs for that pull request and branch
    whose review action step succeeded. Push once per verdict, with every blocker of that
@@ -136,6 +138,15 @@ it knows (`CONTRIBUTING.md` lists what it does not read): no forced push, no
 API. An agent whose machine cannot run the sandbox does not go around
 the gate: it holds under rule 3 of the next section (an access it does not
 have), naming the sandbox.
+
+### Installing trusted review actions
+
+A PR that introduces a composite action cannot use it from a checkout of
+`main` until the action has landed there. Install the action, its locked
+dependencies, and its read-only workflow before activating the PR job that
+consumes it. The owner-branch diagnostic exercises the candidate on GitHub
+Actions. The credential-bearing production workflow always reads the default
+branch. [Installation failure on #391](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45016524062)
 
 ## Issues: no issue waits for the owner
 

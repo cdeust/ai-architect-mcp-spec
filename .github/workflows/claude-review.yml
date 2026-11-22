@@ -37,6 +37,7 @@ jobs:
       cap: ${{ steps.count.outputs.cap }}
       skip: ${{ steps.count.outputs.skip }}
       reviewed_sha: ${{ steps.count.outputs.reviewed_sha }}
+      route_run: ${{ steps.nominate.outputs.id }}
     steps:
       - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,10 +55,72 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python3 -I scripts/ci_review_budget.py
+      - name: Admit a subscription review round
+        if: steps.count.outputs.skip == 'false'
+        run: echo "Review round admitted"
+      - name: Choose one protected quota workflow for this attempt
+        id: nominate
+        if: steps.count.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 -I scripts/ci_review_route.py nominate
+      - name: Subscription decision run ${{ steps.nominate.outputs.id }}
+        if: steps.nominate.outputs.id != ''
+        run: echo "Subscription decision recorded"
+
+  admission:
+    name: Review subscription quota
+    needs: budget
+    if: needs.budget.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # Includes the independent base-branch quota workflow.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reviewer: ${{ steps.select.outputs.reviewer }}
+    steps:
+      - name: Checkout trusted review policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Read the subscription decision for this PR event
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ROUTE_RUN: ${{ needs.budget.outputs.route_run }}
+        run: python3 -I scripts/ci_review_route.py
+
+  codex:
+    name: Codex GitHub review
+    needs: [budget, admission]
+    if: needs.admission.outputs.reviewer == 'codex' || needs.admission.outputs.reviewer == 'codex-existing'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # Operational limit on waiting for the external review.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: PR Review
+        id: native
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER: ${{ needs.admission.outputs.reviewer }}
+        run: python3 -I scripts/ci_review_codex.py
 
   review:
     name: Claude review
-    needs: budget
+    needs: [budget, admission]
     # Dependabot-triggered pull_request events receive Dependabot secrets only,
     # so secrets.CLAUDE_CODE_OAUTH_TOKEN is empty there and the action aborts with
     # "Environment variable validation failed" (run 41180098727, PR #844).
@@ -67,6 +130,7 @@ jobs:
       && !github.event.pull_request.draft
       && github.actor != 'dependabot[bot]'
       && needs.budget.outputs.skip != 'true'
+      && needs.admission.outputs.reviewer == 'claude'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -125,7 +189,7 @@ jobs:
             The commit reviewed by the previous review is "${{ needs.budget.outputs.reviewed_sha }}" (empty on the first review). If it is not empty: first check that each earlier Blocker is fixed, then review only the commits pushed after it (gh pr view --json commits) and do not re-audit unchanged code.
             On the last review, say which part of the PR is accepted and which files or commits carry the open Blockers, so the author can merge the accepted part and send the rest to a refinement PR.
             End with exactly one line: "Verdict: approve" or "Verdict: block".
-            The resolver reads a verdict only from a comment that links this run (ADR-1130): in every comment that carries the verdict line, the `gh pr comment` review included, put the line "[View job run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" just before it.
+            The resolver reads a verdict only from a comment that links this run (ADR-1130): in every comment that carries the verdict line, the `gh pr comment` review included, put the line "[View job run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }})" just before it.
           # Scoped gh permissions are from upstream docs/solutions.md.
           claude_args: |
             --strict-mcp-config
@@ -153,4 +217,33 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: python3 -I scripts/ci_review_verdict.py
+
+  verdict-codex:
+    name: Verify native Codex review verdict
+    needs: codex
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Read the OpenAI verdict from GitHub again
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER: codex-existing
+        run: python3 -I scripts/ci_review_codex.py
+      - name: Enforce the code review
+        env:
+          VERDICT: ${{ steps.proof.outputs.verdict }}
+        run: test "$VERDICT" = approve

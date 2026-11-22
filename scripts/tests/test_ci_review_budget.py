@@ -96,6 +96,13 @@ class CountTests(unittest.TestCase):
         out = self.count(runs, jobs)
         self.assertEqual((out["round"], out["reviewed_sha"]), (2, SHA))
 
+    def test_native_block_counts_and_rereading_one_receipt_does_not_spend_a_round(self):
+        head = "b" * 40
+        runs = [run(1, 1, head, conclusion="failure"), run(2, 2, head), run(3, 3, SHA)]
+        jobs = {1: ["native-receipt"], 2: ["native-receipt"], 3: ["native-receipt"]}
+        result = self.count(runs, jobs)
+        self.assertEqual((result["round"], result["reviewed_sha"]), (3, SHA))
+
     def test_skipped_runs_do_not_move_the_reviewed_commit(self):
         reviewed, skipped = "b" * 40, "c" * 40
         runs = [run(1, 1, reviewed), run(2, 2, skipped)]
@@ -135,7 +142,7 @@ class JqFilterTests(unittest.TestCase):
     def test_job_filter_selects_the_action_step_only(self):
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.ran_the_action(record, "o/r", {"id": 1})
+        budget.review_source(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         steps = [
             {"name": "Checkout repository", "conclusion": "success"},
@@ -152,13 +159,33 @@ class JqFilterTests(unittest.TestCase):
         # the whole budget and the pull request could never be merged.
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.ran_the_action(record, "o/r", {"id": 1})
+        budget.review_source(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         done = [{"name": budget.ACTION_STEP, "conclusion": "success"}]
         old = {"jobs": [{"name": "Claude review", "steps": done}]}
         self.assertEqual(json.loads(self.jq(expr, old)), [])
         new = {"jobs": [{"name": budget.BUDGET_JOB, "steps": []}, *old["jobs"]]}
         self.assertEqual(json.loads(self.jq(expr, new)), ["success"])
+
+    def test_native_round_requires_a_successful_independent_read_even_for_a_block(self):
+        workflow = yaml.safe_load(REVIEW.read_text())
+        job = workflow["jobs"]["verdict-codex"]
+        proof, enforce = job["steps"][-2:]
+        for read_status, expected in (("success", "codex"), ("failure", None)):
+            with self.subTest(read_status=read_status):
+                jobs = [
+                    {"name": budget.BUDGET_JOB, "steps": []},
+                    {"name": workflow["jobs"]["codex"]["name"], "steps": [
+                        {"name": budget.ACTION_STEP, "conclusion": "success"},
+                    ]},
+                    {"name": job["name"], "steps": [
+                        {"name": proof["name"], "conclusion": read_status},
+                        {"name": enforce["name"], "conclusion": "failure" if read_status == "success" else "skipped"},
+                    ]},
+                ]
+                actual = budget.review_source(lambda args: self.jq(args[-1], {"jobs": jobs}),
+                                              "o/r", run(1, 1, conclusion="failure"))
+                self.assertEqual(actual, expected)
 
     def test_the_budget_job_name_is_the_workflow_s(self):
         workflow = yaml.safe_load(REVIEW.read_text())
@@ -245,8 +272,23 @@ class WorkflowWiringTests(unittest.TestCase):
                 "GH_REPO": "${{ github.repository }}",
                 "PR": "${{ github.event.pull_request.number }}",
                 "RUN_ID": "${{ github.run_id }}",
+                "RUN_ATTEMPT": "${{ github.run_attempt }}",
             },
         )
+
+    def test_native_verification_has_its_own_read_only_job(self):
+        job = self.jobs["verdict-codex"]
+        self.assertEqual(job["needs"], "codex")
+        self.assertNotIn("continue-on-error", job)
+        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
+        checkout, read, enforce = job["steps"]
+        self.assertEqual(checkout["with"]["ref"], "main")
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertEqual(read["env"]["HEAD_SHA"], "${{ github.event.pull_request.head.sha }}")
+        self.assertEqual(read["env"]["REVIEWER"], "codex-existing")
+        self.assertEqual(read["run"], "python3 -I scripts/ci_review_codex.py")
+        self.assertEqual(enforce["env"]["VERDICT"], "${{ steps.proof.outputs.verdict }}")
+        self.assertEqual(enforce["run"], 'test "$VERDICT" = approve')
 
     def test_reviews_of_one_pr_are_admitted_one_at_a_time(self):
         self.assertEqual(
@@ -264,9 +306,17 @@ class WorkflowWiringTests(unittest.TestCase):
         job = self.jobs["budget"]
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("secrets.", yaml.safe_dump(job))
-        self.assertEqual(
-            job["steps"][-1]["run"], "python3 -I scripts/ci_review_budget.py"
-        )
+        count, admit, nominate, marker = job["steps"][-4:]
+        self.assertEqual(count["run"], "python3 -I scripts/ci_review_budget.py")
+        self.assertEqual(admit["name"], "Admit a subscription review round")
+        self.assertEqual(admit["if"], "steps.count.outputs.skip == 'false'")
+        self.assertEqual(nominate["if"], admit["if"])
+        self.assertEqual(nominate["run"], "python3 -I scripts/ci_review_route.py nominate")
+        self.assertEqual(marker["name"], "Subscription decision run ${{ steps.nominate.outputs.id }}")
+        self.assertEqual(marker["if"], "steps.nominate.outputs.id != ''")
+        self.assertEqual(job["outputs"]["route_run"], "${{ steps.nominate.outputs.id }}")
+        self.assertEqual(self.jobs["admission"]["steps"][-1]["env"]["ROUTE_RUN"],
+                         "${{ needs.budget.outputs.route_run }}")
 
     def test_budget_checks_out_main_and_keeps_no_credentials(self):
         checkout = self.jobs["budget"]["steps"][0]
@@ -275,7 +325,9 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_review_waits_for_the_budget_and_honours_its_skip(self):
         review = self.jobs["review"]
-        self.assertEqual(review["needs"], "budget")
+        self.assertEqual(set(review["needs"]), {"budget", "admission"})
+        self.assertEqual(self.jobs["admission"]["needs"], "budget")
+        self.assertIn("needs.admission.outputs.reviewer == 'claude'", review["if"])
         self.assertIn("needs.budget.outputs.skip != 'true'", review["if"])
 
     def test_budget_and_review_share_the_same_event_predicate(self):
@@ -308,7 +360,7 @@ class WorkflowWiringTests(unittest.TestCase):
         prompt = self.action()["with"]["prompt"]
         link = (
             '"[View job run](${{ github.server_url }}/${{ github.repository }}'
-            '/actions/runs/${{ github.run_id }})"'
+            '/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }})"'
         )
         self.assertIn(link, prompt)
         self.assertIn("in every comment that carries the verdict line", prompt)
