@@ -88,7 +88,7 @@ class CountTests(unittest.TestCase):
         runs = [
             run(1, 1),
             run(2, 2),  # cap run: success, but the action step was skipped
-            run(3, 3, conclusion="failure"),
+            run(3, 3, "c" * 40, conclusion="failure"),  # review ran but its verdict check failed
             run(4, 4, prs=(8,)),
             run(99, 5),  # the current run
         ]
@@ -223,6 +223,29 @@ class WorkflowWiringTests(unittest.TestCase):
             step
             for step in self.jobs["review"]["steps"]
             if step.get("uses", "").startswith("anthropics/claude-code-action@")
+        )
+
+    def test_verdict_is_verified_after_a_successful_review_in_a_fresh_job(self):
+        job = self.jobs["verdict"]
+        self.assertEqual(job["needs"], "review")
+        self.assertNotIn("if", job)  # The default success condition excludes failed and skipped reviews.
+        self.assertNotIn("continue-on-error", job)
+        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
+        checkout, check = job["steps"]
+        self.assertEqual(checkout["uses"], self.jobs["budget"]["steps"][0]["uses"])
+        self.assertEqual(
+            checkout["with"], {"ref": "main", "fetch-depth": 1, "persist-credentials": False}
+        )
+        self.assertNotIn("continue-on-error", check)
+        self.assertEqual(check["run"], "python3 -I scripts/ci_review_verdict.py")
+        self.assertEqual(
+            check["env"],
+            {
+                "GH_TOKEN": "${{ github.token }}",
+                "GH_REPO": "${{ github.repository }}",
+                "PR": "${{ github.event.pull_request.number }}",
+                "RUN_ID": "${{ github.run_id }}",
+            },
         )
 
     def test_reviews_of_one_pr_are_admitted_one_at_a_time(self):
