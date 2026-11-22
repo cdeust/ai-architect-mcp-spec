@@ -1,449 +1,46 @@
 <!-- mcp-name: io.github.cdeust/ai-architect-mcp-spec -->
 
-<p align="center">
-  <img src="assets/banner.svg" alt="AI Architect MCP Spec — verified PRDs for agentic delivery pipelines" width="100%"/>
-</p>
+# AI Architect MCP Spec
 
-<p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/TypeScript-7.0+-3178c6.svg" alt="TypeScript 7.0+">
-  <img src="https://img.shields.io/badge/Node-20.x_·_22.x-339933.svg" alt="Node 20/22">
-  <img src="https://img.shields.io/badge/Tests-1903_passing-brightgreen" alt="1903 passing">
-  <img src="https://img.shields.io/badge/Packages-10-orange" alt="10 packages">
-  <img src="https://img.shields.io/badge/MCP_Tools-16-8A2BE2" alt="16 MCP tools">
-  <img src="https://img.shields.io/badge/Validators-Hard_Output_Rules-red" alt="Hard Output Rules">
-  <img src="https://img.shields.io/badge/Calibration-Closed_Loop-success" alt="Closed-loop reliability calibration">
-  <a href="https://www.bestpractices.dev/projects/13832"><img src="https://www.bestpractices.dev/projects/13832/badge" alt="OpenSSF Best Practices"></a>
-</p>
+Check requirements, acceptance criteria and test traceability before a specification becomes code. AI Architect MCP Spec is a local MCP server with a deterministic verifier and a host-driven PRD workflow. You can run the verifier on an existing document or use the full profile to generate and verify a PRD.
 
-<p align="center">
-  <strong>Check your specification before it becomes code.</strong><br>
-  Deterministic checks find structural defects, including broken requirement links and performance sections whose only verdicts are PASS. Supply a codebase symbol catalog to receive advisory findings for unmatched inline-code references.<br>
-  <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
-</p>
+## What works today
 
-<p align="center">
-  <a href="#what-an-agent-can-ask-it">What An Agent Asks</a> · <a href="#getting-started">Getting Started</a> · <a href="#the-pipeline">Pipeline</a> · <a href="#the-mcp-tools">Tools</a> · <a href="#multi-judge-verification">Verification</a> · <a href="#calibration--falsification">Calibration</a> · <a href="#architecture">Architecture</a> · <a href="#the-zetetic-standard">Zetetic Standard</a>
-</p>
+| Capability | Behavior | Evidence |
+| --- | --- | --- |
+| Portable verifier | `validate_prd_section` checks one Markdown section. `validate_prd_document` adds cross-section checks for requirement IDs, acceptance criteria and test links. | [MCP handlers](packages/mcp-server/src/index.ts) · [Portable runtime smoke test](scripts/smoke-portable-hosts.mjs) |
+| Symbol references | Supply `known_symbols` to report unresolved inline-code references as advisory findings. The optional graph integration belongs to the full workflow. | [Validation handlers](packages/mcp-server/src/index.ts) · [Symbol check](packages/mcp-server/src/symbol-check.ts) |
+| Full PRD workflow | The server emits the next action and records the result. The host runs model calls, asks questions and writes exported artifacts. The packaged `/generate-prd` command requests a model review of scope and declared edge cases. | [Host command](packages/skill/commands/generate-prd.md) · [MCP stdio scenarios](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) |
+| Planning handoff | An eligible checkpoint exposes validated requirements and acceptance criteria. Spec derives a proposal for one Step and binds it to the Define data with SHA-256. Architect OS prepares the preview and owns approval and execution. | [Define contract](packages/orchestration/src/define-handoff.ts) · [Plan projection](packages/orchestration/src/verified-plan.ts) · [Architect OS Plan](https://github.com/cdeust/architect-os/blob/227768523d7a586acb40c39e254bf98d988a9e56/docs/plan.md) |
+| Implementation review dossier | With an operator-approved record, Spec returns a Git comparison for the pinned revisions and marks each acceptance criterion `evidence_required`. | [Review contract](packages/mcp-server/src/implementation-review.ts) · [MCP stdio scenarios](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) |
 
-<p align="center">
-  <sub>One of three MCP servers that each run standalone — memory, code graph, spec verification. <a href="#how-it-composes-with-the-rest-of-the-ecosystem">How they compose ↓</a></sub>
-</p>
-
----
-
-A PRD can name a function that does not exist, assert a latency limit without evidence, or lose the links between requirements and acceptance criteria. These defects can carry into code generation, ticket import, and sprint planning. Check the document and its code references before handing it to the implementation team.
-
-**AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
-
-### From specification to delivery
-
-![The existing flow from Spec analysis and verification to Architect OS approval, implementation, checks and delivery. Results for each criterion return to Spec for conformity review.](docs/diagrams/spec-delivery-flow.svg)
-
-In the paired profile, [Architect OS](https://github.com/cdeust/architect-os) drives the local Spec server over MCP stdio. Spec verifies Define, drafts a one-Step plan and automatically sends that exact plan to a reviewer from another provider. The host selects the account and model for each role and checks the subscription and run budget before dispatch. A clarification can suspend the run for an operator. Only a clear, current review yields `reviewed_plan_v1`. A plan marked `needs_attention` stays in Spec.
-
-| Status | Flow |
-| --- | --- |
-| `ready` | Spec produces checked planning inputs. The existing standalone `codebase_path` profile can check the PRD against the code graph. Architect OS owns approval, sandboxed implementation, checks and delivery. |
-| `next` | The pair has replayed a pinned Spec bundle with two deterministic model fixtures. Architect OS verified the exact Define and Plan files, then `plan prepare` returned `pending`. Resuming that run issued zero additional model calls. |
-| `next` | Validate the signed-in model adapters and prompts on specimens before a real Step. After delivery, send the revision and an observed result for each acceptance criterion to Spec for conformity review against the approved plan. |
-
-The [Spec pipeline](#the-pipeline) documents the planning profile, the legacy traceability projection and the implementation review dossier. See [Architect OS Plan](https://github.com/cdeust/architect-os/blob/d620b4fc7f1b6fcc88ed45c22f51241cad5ab13b/docs/plan.md) for the host’s approval and preparation contract.
-
-#### Reference model setup for trials
-
-Choose the model for each role on the host. Review the Plan before operator approval and implementation, then review the delivered code against the approved Plan.
-
-| Role | Reference choices |
-| --- | --- |
-| Plan orchestration | Astra 6.2 or Fable 5.2 |
-| Implementation | Opus 5.5 or Sol 6.2 |
-| Plan review before implementation | Gemini Argon |
-| Code review after implementation | Fable 5.2 or Astra 6.2 |
-
-This is a proposed configuration for trials. The first integration replay uses the canonical plan offline. Compare later model runs on the same case before changing the reference choices. For Gemini Argon, use the personal Antigravity subscription with **Use AI Credits** set to **Off**. Pause the run if the included quota runs out. Do not fall back to a paid API for these trials. [Antigravity CLI credits](https://antigravity.google/docs/cli/credits/)
-
-### What you get
-
-- **A spec checked against your code.** With a codebase (`codebase_path`), self-check sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report. That check is advisory: it does not block the run.
-- **Traceability that is actually checked.** Every acceptance criterion must tie back to a requirement; numbering gaps are caught, not assumed away.
-- **Performance verdict checks.** When the validator recognizes a performance target, it flags a verification section with one or more verdicts that all say PASS. An observed measurement belongs in runtime verification. [Verdict regression tests](packages/validation/src/__tests__/quality-rules.test.ts)
-- **A guard against agreeable judges.** A panel that agrees 100% of the time over 5+ claims raises `distribution_suspicious` rather than being read as consensus.
-- **It works where you work.** The deterministic verifier travels to Codex, Gemini CLI, Claude Code and CI; the full generation pipeline runs on hosts that can execute its orchestration actions.
-
-### Sovereign verification, eco-responsible by intent
-
-**Sovereign is what it is today.** The server is a stateless reducer — `step(state, result?) → next_state, action`. It emits actions; your host executes them. It runs on your machine, and it never phones home for a verdict.
-
-**Eco-responsible is what we're aiming at.** This one's lever is different from its siblings': it is *avoided rework*. A hallucinated PRD is inherited by code generation, ticket import and sprint planning before anyone notices — and every stage that consumed it has to be redone. The spec stage is the cheapest place in the pipeline to catch that, and three design choices keep the catching itself cheap:
-
-- **The checks run no model.** Hard Output Rules and cross-section traceability are deterministic; finding a broken FR-AC link costs zero inference.
-- **Sections fail before they are finished.** Each is validated before the host ever sees it, instead of being generated in full and then discarded.
-- **Retry budgets are derived, not guessed.** `MAX_ATTEMPTS` comes from Kaplan-Meier survival math, and `map_failure_to_retrieval` sends a *corrective* query before a retry — a retry that reuses the context that just failed is waste with a receipt.
-
-As in the sibling repos, we publish **no energy or CO₂ figure**: this repository measures no joules, and avoided rework is a design argument rather than a measurement.
-
-**10 packages. 16 MCP tools. 11 PRD-generation steps followed by specification verification and finalization. Multi-judge verification with consensus. Closed-loop calibration with externally-grounded falsifiers. 1903 tests. Every numeric constant traces to a citation, a benchmark, or a `// source: provisional heuristic` admission.**
-
----
-
-## Closed-loop reliability calibration
-
-Verification is not a one-shot pass/fail report. Every claim resolution can flush an observation back to a calibration repository, every consensus run can pull calibrated posteriors from history, and every closed loop runs an external control arm so the calibration's effect is *measured*, not assumed.
-
-- **Per-judge Bayesian reliability calibration** — Beta(7,3) prior with sensitivity / specificity split per `claim_type`. Posteriors stored in a SQLite-backed `ReliabilityRepository`; observations flushed by `conclude_verification` when it is given `claim_types`, and by the self-check of a pipeline run that concludes on judge verdicts, for the claims at least two judges ruled on: a judge alone on a claim would be compared with its own verdict. Nothing is flushed without `better-sqlite3`. A verdict that stands for a failed invocation or an unparsed answer is not an observation. The posteriors are read by `conclude_verification`; the pipeline's own consensus uses the prior.
-- **MAX_ATTEMPTS retry calibration** — Kaplan-Meier survival math (`kmEstimate` / `kmMedianAttempts` / `logRankTest` with Greenwood + Brookmeyer-Crowley CIs); Schoenfeld sample-size derivation event-rate-corrected to ~519 (was 823) against the measured `event_rate=0.4762`, CP CI `[0.4456, 0.5069]`.
-- **KPI gate tuning** — Clopper-Pearson exact CIs; per-machine-class wall_time normalization with 5-bucket `detectMachineClass`; frozen-baseline content-hash assertion; `loadCalibratedGates` + `hold_provisional` ratchet protection.
-- **Plan-mismatch fire-rate** — measured via XmR control charts (Wheeler 1995, Western Electric 1956) with a synthetic injection round-trip pre-flight that catches drift between the diagnostic prefix and the regex matcher.
-- **Externally-grounded held-out subsets** — Ajv schema oracle, mathjs oracle, `tsc` subprocess code oracle, `validateSection` spec oracle. `OracleUnavailableError` typed throw replaces stub-mode fabrication. This is the layer that breaks annotator-circularity — judges and oracles share no inference path.
-- **CC-3 forced-exploration control arms** — every closed loop carves out a 20% partition that reverts to the prior. Without it, calibration-on-calibration looks like progress whether or not it actually is.
-- **Cross-arm comparison metrics** — `computeAblationComparison` / `computeReliabilityComparison` / `computeKpiGateComparison` produce paired-bootstrap CIs (Efron & Tibshirani 1993 §16.4; deterministic mulberry32 RNG; 12-decimal reproducibility pin). Outcome is a falsifiable recommendation: `calibrated_helps`, `prior_helps`, or `inconclusive_underpowered`.
-- **Mechanically-enforced held-out partition seals** — three sealed lock files (`maxattempts-heldout.lock.json`, `kpigates-heldout.lock.json`, `heldout-partition.lock.json`) commit a sha256 of the partition before evaluation. The `SEAL_VERIFIED` typeof sentinel is the only way to compute cross-arm metrics on a sealed partition; passing anything else is a type error at the boundary.
-- **Production-mode dispatcher** — `makeProductionDispatcher` + `AgentInvoker` interface. The CLI `--mode production|canned` flag selects whether calibration sees real verdicts or canned ones; the canned arm is preserved for offline reproducibility.
-
----
-
-## What an agent can ask it
-
-```
-start_pipeline(feature_description, codebase_path?, prd_context?, request_size?)
-  → returns the first NextAction; the host executes it and feeds the result
-    back via submit_action_result. Eleven steps later the PRD files are
-    written: 9 for a feature of standard size, 5 for a run declared tiny.
-    The host declares what it knows and the server does not: prd_context,
-    the kind of PRD (omitted, it is read from the words of the description
-    or asked), and request_size ("tiny" is the fast path for a small change:
-    4 sections, 4 to 5 clarification rounds, whatever the kind but an
-    incident; declare prd_context with it, a kind read from the words can
-    miss an incident). The server never reads a size from the description.
-
-submit_action_result(run_id, result)
-  → drives the reducer one more step. The host sees only SUBSTANTIVE actions
-    (ask_user, call_pipeline_tool, call_cortex_tool, spawn_subagents,
-     write_file, done, failed). emit_message is coalesced into the
-     messages array; the host never has to "advance past" a banner.
-  → a run is kept in ~/.prd-gen/runs/<run_id>.json and survives a restart
-    of the server: get_pipeline_state(run_id, format:"action") returns the
-    action the run is waiting on, and the loop goes on from there.
-
-validate_prd_section(content, section_type, known_symbols?, item_offset?)
-  → deterministic Hard Output Rules — zero LLM calls, pure regex/parsing.
-  → returns: violations[], hasCriticalViolations, totalScore, and with
-    known_symbols the unresolved symbols (symbolExistence).
-  → paged under the 100,000-char budget by whole items, the violations
-    and then the unresolved symbols: __page.next_offset is the next
-    item_offset, null on the last page.
-
-validate_prd_document(sections[], known_symbols?, item_offset?)
-  → cross-section checks: SP arithmetic, AC numbering, FR-AC coverage,
-    test traceability. Catches what per-section validation misses.
-  → paged like validate_prd_section.
-
-map_failure_to_retrieval(violations[])
-  → closes the validation→retrieval feedback loop. When a section fails
-    validation, this returns the corrective Cortex query that would
-    have prevented the failure.
-```
-
----
-
-## Getting started
-
-<sub><strong>A note on naming.</strong> This is published as <code>ai-architect-mcp-spec</code> across its Claude Code, Codex, Gemini, MCPB, PyPI/npm and MCP Registry surfaces. <code>0.7.0</code> moved the Registry entry and primary bundle to that identity; <code>0.8.0</code> completed the migration, so no <code>prd-spec-generator</code> plugin or release alias is retained anywhere. The former <code>io.github.cdeust/prd-spec-generator</code> Registry versions are deprecated with a pointer to the canonical entry rather than left active and frozen.</sub>
-
-### Requirements
-
-The rule-based checking tools (`validate_prd_section`, `validate_prd_document`, `map_failure_to_retrieval`) run on their own. The verification tools (`plan_section_verification`, `plan_document_verification`, `conclude_verification`) need zetetic-team-subagents, because the host spawns the judges they select. The full `/generate-prd` pipeline needs the companions below; its preflight checks each one it needs before the run depends on it.
-
-| Companion (for `/generate-prd`) | Required? | Checked by preflight? |
-|---|---|---|
-| [Cortex](https://github.com/cdeust/Cortex) (`hypermnesia-mcp`) | Yes, unless `skip_preflight: true` | Yes |
-| [zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents) | Yes, no degraded mode | Yes, by starting one subagent |
-| [ai-architect-mcp-codebase](https://github.com/cdeust/ai-architect-mcp-codebase) | Only with `codebase_path` | Yes, when `codebase_path` is set |
-
-- **Cortex** provides the run-level recall in input analysis, the per-section recall during section generation, and the `remember` of the run summary at the end. Without it the run stops at `preflight` with "Cortex MCP not reachable". `skip_preflight: true` lets the run continue without that context.
-- **zetetic-team-subagents** provides the subagent types of the PRD-generation and verification steps: `zetetic-team-subagents:engineer` for clarification, section drafts and JIRA tickets, the `zetetic-team-subagents:genius:*` and team judges (for example `zetetic-team-subagents:code-reviewer`) for verification, and `zetetic-team-subagents:git-historian` when a codebase is given. The preflight starts one `zetetic-team-subagents:engineer` subagent (a one-line prompt, model `haiku`, effort `low`: one small model call per run); if the host answers with an error or no text, the run stops at `preflight` with the host's answer and the install commands. That message does not tell a missing plugin from another failure to start a subagent. With `skip_preflight: true` the probe is skipped, and a missing plugin does not stop the run cleanly: the git-history step fails and the run continues without it, clarification shows the host's spawn error as the question, and each section draft is marked failed without a retry and left out of the exported files, so no JIRA ticket is generated either.
-- **`skip_preflight: true`** skips every probe, including the ai-architect-mcp-codebase and zetetic-team-subagents ones. It does not make ai-architect-mcp-codebase optional when `codebase_path` is set: if it is missing, the run stops at `input_analysis` when `analyze_codebase` fails.
-
-Install commands for all three are in [Companion ecosystem](#companion-ecosystem).
-
-### Install (marketplace — recommended)
-
-```bash
-claude plugin marketplace add cdeust/ai-architect-mcp-spec
-claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
-```
-
-Restart your Claude Code session. The 16 MCP tools register on first
-stdio handshake. `/generate-prd` also needs Cortex and zetetic-team-subagents
-installed: without them it stops at `preflight` or produces no section (see
-[Requirements](#requirements) and [Companion ecosystem](#companion-ecosystem)).
-Then:
-
-```
-/generate-prd build OAuth login for the admin console
-```
-
-The plugin's bundled MCP server at `mcp-server/index.js` is self-contained
-(only `better-sqlite3` is an optional native dependency for the evidence
-repository — gracefully degrades to in-memory mode when absent).
-
-#### Supported platforms
-
-<!-- This table is checked against the CI matrix by scripts/portable-distribution.test.mjs. -->
-`manifest.json` declares `darwin`, `win32` and `linux`. What CI proves on each,
-on a pull request (`.github/workflows/pipeline.yml`) and again on the merge
-commit (`.github/workflows/pipeline-post-merge.yml`). A pull request that
-changes only `docs/` or `CHANGELOG.md` runs the `environment` and `install`
-jobs on Linux alone; the macOS and Windows rows then run on its merge commit:
-
-| Platform | CI runner | What runs there |
-|---|---|---|
-| Linux | `ubuntu-latest` | unit, regression, e2e (including the `.mcpb` smoke), environment, install |
-| macOS | `macos-latest` | environment (plugin launch, then the test suite, the bundle and the `.mcpb` smoke), install |
-| Windows | `windows-latest` | environment (plugin launch with no bash on `PATH`, then the test suite, the bundle and the `.mcpb` smoke), install |
-
-The workflow files are the ones every repository of the fleet shares, so the
-unit and e2e jobs stay on Linux; on macOS and Windows the same steps run inside
-the `environment` command of `ci.json`: `pnpm install --frozen-lockfile`,
-`pnpm build`, `pnpm test`, `pnpm bundle`, the portable-host checks and
-`scripts/release/smoke-mcpb.sh`.
-
-The environment and install jobs start the server with the command `.mcp.json`
-declares, `node bin/ensure-deps.mjs`, and call `check_health` over stdio
-(`scripts/check-health-stdio.mjs`); the install job does so from a real
-`claude plugin install`. The launcher is a node script: the plugin needs node
-and npm on `PATH` and no bash, on any platform. The CI's own shell is Git Bash
-on Windows, so there the health check removes every directory that holds a
-bash from `PATH` before it starts the server (the Windows directory stays: its
-`bash.exe` is the WSL launcher, not a shell for a native program).
-
-#### What the `.mcpb` carries
-
-<!-- This paragraph is checked against scripts/release/smoke-mcpb.sh by scripts/portable-distribution.test.mjs. -->
-The `.mcpb` ships the MCP server and its configuration. It does not ship
-`SKILL.md` and the commands, which the plugin provides and a `.mcpb` host does
-not load, nor `better-sqlite3`, a native addon that a release runner cannot
-build for every platform: the evidence store is off there and consensus uses
-its prior. On the `.mcpb`, `check_health` therefore answers `degraded`, with
-`skillAvailable` and `evidenceDbHealthy` false and `configAvailable` true, and
-`scripts/release/smoke-mcpb.sh` fails on any other state of the built archive.
-
-#### Migrating from `prd-spec-generator`
-
-The old plugin and marketplace are deprecated publications, not aliases. Remove
-them before installing the canonical package:
-
-```bash
-claude plugin uninstall prd-spec-generator@prd-spec-generator-marketplace
-claude plugin marketplace remove prd-spec-generator-marketplace
-claude plugin marketplace add cdeust/ai-architect-mcp-spec
-claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
-```
-
-Callers that used `prd-spec-generator:generate-prd` must use
-`ai-architect-mcp-spec:generate-prd`. The `prd-gen` MCP server name,
-`@prd-gen/*` private workspace packages, `PRD_GEN_*` environment variables,
-and `.prd-gen` local data directory remain stable internal interfaces; they do
-not keep the deprecated publication installed.
-
-Plugin-scoped MCP tool names include both the publication name and the stable
-server key, so prompts, automation, and allowlists must migrate the complete
-prefix:
-
-- old: `mcp__plugin_prd-spec-generator_prd-gen__<tool>` <!-- mcp-prefix-allow-legacy -->
-- new: `mcp__plugin_ai-architect-mcp-spec_prd-gen__<tool>`
-
-Gemini CLI also keys installed extensions by the manifest name. Replace an
-installed extension under the former identity instead of updating it in place:
-
-```bash
-gemini extensions uninstall prd-spec-generator
-gemini extensions install https://github.com/cdeust/ai-architect-mcp-spec
-```
-
-### Companion ecosystem
-
-Cortex (unless `skip_preflight: true`) and zetetic-team-subagents are required by the full pipeline;
-ai-architect-mcp-codebase is needed only when you pass `codebase_path`
-(see [Requirements](#requirements)):
-
-```bash
-claude plugin marketplace add cdeust/ai-architect-mcp-codebase  # codebase graph intel
-claude plugin marketplace add cdeust/Cortex                  # persistent memory
-claude plugin marketplace add cdeust/zetetic-team-subagents  # the genius + team agents
-
-claude plugin install ai-architect-mcp-codebase@ai-architect-mcp-codebase-marketplace
-claude plugin install hypermnesia-mcp@cortex-plugins
-claude plugin install zetetic-team-subagents@zetetic-marketplace
-```
-
-Each install names its marketplace. `zetetic-team-subagents` is listed both in
-its own `zetetic-marketplace` and in Cortex's `cortex-plugins` (pinned to a
-release there), so an unqualified install would not say which one it takes.
-These are the commands the preflight prints when a probe fails.
-
-Each companion is also useful on its own outside this pipeline; together they are the ai-architect
-ecosystem.
-
-### Building from source
-
-For development or to run the audit cycle locally:
-
-```bash
-git clone https://github.com/cdeust/ai-architect-mcp-spec.git
-cd ai-architect-mcp-spec
-pnpm install --frozen-lockfile
-pnpm build      # builds all 9 buildable packages via tsc
-pnpm bundle     # produces the standalone mcp-server/index.js
-pnpm test       # 1903 tests (vitest workspace, all packages; the
-                # ai-architect-mcp-codebase wire contract is pinned
-                # unconditionally — see docs/INTEGRATION-TESTING.md)
-```
-
-`pnpm verify` runs all of the above (install + build + bundle + test) —
-same as CI.
-
-**Prerequisites for source builds:** Node.js 20.x or 22.x, pnpm v10+
-(`corepack enable && corepack prepare pnpm@10`).
-
-### Smoke-test offline
-
-```bash
-# Reducer end-to-end without a real host (uses the canned dispatcher):
-pnpm test --filter @prd-gen/orchestration smoke
-
-# Benchmark KPI run:
-pnpm test --filter @prd-gen/benchmark pipeline-kpis
-```
-
-Both run in <2s on an M-series Mac. No LLM calls, no MCP traffic — the
-reducer is fully driven by canned ActionResults so you can audit behaviour
-offline.
-
-### Use with other MCP hosts
-
-Honest scoping first. The **full pipeline is host-dependent**: the reducer
-returns actions (`ask_user`, `spawn_subagents`, `write_file`) that assume a
-host which executes them and feeds results back. Claude Code (via the plugin +
-`/generate-prd` skill) remains the only packaged host for that workflow.
-
-Codex and Gemini instead receive the portable **Spec Verifier**: a no-LLM
-surface with exactly two deterministic tools and the same `audit-prd` and
-`validate-spec` skills:
-
-- `validate_prd_section` — Hard Output Rules against a single section
-- `validate_prd_document` — cross-section checks (SP/AC/FR/test traceability)
-
-Install it in Codex from the repository marketplace:
-
-```bash
-codex plugin marketplace add cdeust/ai-architect-mcp-spec
-codex plugin add ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
-```
-
-Install the same package as a Gemini CLI extension:
-
-```bash
-gemini extensions install https://github.com/cdeust/ai-architect-mcp-spec
-```
-
-Both manifests launch `mcp-server/index.js` with `--profile verifier`. The
-existing Claude manifest passes no profile and therefore retains the default
-16-tool `full` surface.
-
-A zero-violation result means that the document satisfies the implemented
-structural rules. It does **not** prove factual accuracy, product value,
-implementation feasibility, security, or semantic correctness.
-
-For an un-packaged MCP host, clone the repository and select the same narrow
-profile explicitly. Replace `/abs/path` with the clone location.
-
-```bash
-git clone https://github.com/cdeust/ai-architect-mcp-spec.git /abs/path/ai-architect-mcp-spec
-cd /abs/path/ai-architect-mcp-spec/mcp-server
-npm ci --omit=dev
-```
-
-**OpenAI Codex CLI** (`~/.codex/config.toml`, shared with the ChatGPT
-desktop app and Codex IDE extension):
-
-```bash
-codex mcp add prd-spec -- node /abs/path/ai-architect-mcp-spec/mcp-server/index.js --profile verifier
-```
-
-**Cursor** (`.cursor/mcp.json`) and **Windsurf**
-(`~/.codeium/windsurf/mcp_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "prd-spec": {
-      "command": "node",
-      "args": [
-        "/abs/path/ai-architect-mcp-spec/mcp-server/index.js",
-        "--profile",
-        "verifier"
-      ]
-    }
-  }
-}
-```
-
-**VS Code** (`.vscode/mcp.json`):
-
-```json
-{
-  "servers": {
-    "prd-spec": {
-      "type": "stdio",
-      "command": "node",
-      "args": [
-        "/abs/path/ai-architect-mcp-spec/mcp-server/index.js",
-        "--profile",
-        "verifier"
-      ]
-    }
-  }
-}
-```
-
----
+The verifier reports whether the input satisfies its implemented rules. A report with no violations establishes structural conformance. Factual accuracy and implementation behavior require their own evidence. [Rule implementation](packages/validation/src/hard-output-rules/)
 
 ## The pipeline
 
-The reducer advances through PRD generation, specification verification and finalization. Each step emits at most one substantive action; the host executes it and feeds the result back. A typical trial-tier feature run (11 sections) takes ~62 host-visible iterations.
+![Six-stage workflow with ready and next badges. Spec analyses and verifies a PRD, then exports Define and a deterministic proposal for Architect OS approval, execution and delivery. Optional graph analysis and the pinned review dossier are ready. Independent Plan review, specimen replay and delivery evidence remain next for the paired loop.](docs/diagrams/spec-delivery-flow.svg)
 
-| # | Step | What it produces |
-|---|------|------------------|
-| **1** | `banner` | Welcome banner with run ID + feature description + capability summary |
-| **2** | `preflight` | Probes Cortex, ai-architect-mcp-codebase when `codebase_path` is set, then zetetic-team-subagents by starting one subagent, before the pipeline depends on them; skippable via `skip_preflight` (see [Requirements](#requirements)) |
-| **3** | `context_detection` | Keeps the PRD type the host declared at `start_pipeline`; else detects it from trigger words, and asks the user when none names one |
-| **4** | `input_analysis` | Calls `index_codebase` (ai-architect-mcp-codebase) when a path is provided; sets `codebase_graph_path` |
-| **5** | `feasibility_gate` | Detects epic-scope inputs (≥2 EPIC_SIGNALS); asks user to focus |
-| **6** | `clarification` | Compose-then-answer rounds (a minimum of 4 to 10 and a maximum of 5 to 12, by kind of PRD and request size); short-circuits on "proceed" once the minimum is reached |
-| **7** | `budget` | Checks that clarification ended cleanly, then moves to section generation. It allocates nothing: the name is kept for hosts and stored runs |
-| **8** | `section_generation` | One section at a time: Cortex recall → engineer draft → validate → (retry up to 3) |
-| **9** | `jira_generation` | Synthesises JIRA tickets from requirements + user_stories + acceptance_criteria |
-| **10** | `file_export` | Writes the PRD files of the run's context profile, plus `00-run-notes.md` for each skipped file or withheld failed section (see [Exported files per context profile](#exported-files-per-context-profile)) |
-| **11** | `self_check` | Two-phase multi-judge verification (see below); typed `verification` field on `done` |
+### Generate and verify a PRD
 
-For legacy runs, `implementation_gate` presents specification verification after self-check. Use `get_pipeline_state` with `format: "define_handoff_v1"` while the question is pending to read validated requirements and acceptance criteria for planning. `PRD only` finishes the run. Architect-os owns implementation, tests, and publication. With the updated launcher, an older execution checkpoint remains readable in state formats. Requesting its action or submitting a result returns `architect_os_required`.
+Call `start_pipeline`, execute the returned `NextAction`, and send the result with `submit_action_result`. Repeat until the server returns a terminal action. Use `get_pipeline_state` to recover the current action and inspect saved progress. When an action or report is paginated, follow `__page.next_offset` to the last page before acting on the complete result. [MCP protocol](packages/mcp-server/src/pipeline-tools.ts) · [Host dispatch rules](packages/skill/SKILL.md)
 
-At the same pending checkpoint, request `get_pipeline_state` with `format: "verified_plan_v1"` and `plan_step` set to an architect-os Step name. Spec derives one Step proposal from the saved intent, requirements and acceptance criteria, then verifies the proposal against that source. The result includes the proposal and the SHA-256 fingerprints of the Define and proposal JSON files (compact UTF-8 JSON with a terminating newline). The `plan_sha256` fingerprint covers the version, run ID and both file fingerprints. Architect-os prepares an execution manifest with the operator policy for the owner to approve. This projection covers a single Step. Both the Define source and plan must fit their MCP response budgets.
+The full packaged workflow uses the companion tools and model actions described in the host skill. Set `codebase_path` only when the host can execute the graph actions through [AI Architect MCP Codebase](https://github.com/cdeust/ai-architect-mcp-codebase). Scope and edge-case review checks model findings and citations against the saved review inputs. Findings, inconclusive results, stale evidence or missing evidence can block Define. [Semantic review](packages/orchestration/src/semantic-review.ts) · [Define gate](packages/orchestration/src/define-handoff.ts)
 
-To prepare an implementation review, keep the Define checkpoint pending and call `get_pipeline_state` with `format: "implementation_review_v1"`, `plan_step` and the operator's `review_id`. Configure `PRD_GEN_REVIEW_GIT` as the absolute path to a trusted host Git executable with `--attr-source` support, `PRD_GEN_REVIEW_REPOSITORY` as the absolute checkout root, `PRD_GEN_REVIEW_REPOSITORY_ID` as the operator’s identifier for that checkout, and `PRD_GEN_REVIEW_AUTHORITY` as an absolute path to an operator-controlled regular JSON file outside the checkout and its Git metadata, inaccessible to the implementation agent and without hard links. Keep the checkout’s Git metadata under operator control during review. The client supplies only identifiers. The file contains `version` (1), `review_id`, `repository_id`, the full `base_revision` recorded before work, the full `reviewed_revision` observed after delivery, the architect-os `manifest` and separate owner `decision`, the exact UTF-8 `policy` text, and the map of input file names to exact UTF-8 `files` text. The operator supplies this record in v1.
+### Read a planning handoff
 
-Spec checks the approved manifest and input digests against the saved plan and matches the repository identity. It reads the commit-to-commit Git diff using tracked attributes from the base revision recorded by the operator. Keep the operator-controlled Git metadata stable throughout the review. A complete dossier reports `ready_for_review`, with the diff and its digest, both revisions, both approval and plan digests, and `evidence_required` for every acceptance criterion. Evidence for behavioral conformity must link each criterion to a result on the reviewed revision.
+Use `get_pipeline_state` with the saved `run_id`. An eligible checkpoint is a successful automatic completion or a legacy checkpoint with a pending decision that permits a handoff.
 
-The shipped `generate-prd` dispatcher runs scope and declared edge-case review automatically. An MCP host can set `PRD_GEN_SEMANTIC_REVIEW_MODEL` in its trusted launcher configuration to select the reviewer and enable that review for all new runs. The reducer dispatches one judge action through the host, then validates the verdict and citations against the exact reviewed inputs. The host returns a provider error if its configured route cannot use the requested model. A finding, an inconclusive result, incomplete evidence or a stale review blocks Define. Successful automatic runs expose Define at `done` without a review question. Architect OS owns execution and its approval policy. [Semantic review contract](packages/orchestration/src/semantic-review.ts)
+| Format | Result |
+| --- | --- |
+| `define_handoff_v1` | Validated requirements and acceptance criteria with explicit requirement references. |
+| `verified_plan_v1` | A deterministic proposal for the `plan_step` you supply. The hashes bind the run, Define file and proposal file. The file format is compact UTF-8 JSON with a trailing newline. |
+| `implementation_review_v1` | A read-only dossier for the `plan_step` and `review_id` you supply. The trusted launcher config binds the approved manifest and exact Git revisions. The dossier can be `ready_for_review` while every criterion still needs behavioral evidence. |
 
-
-Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
+[Projection implementation](packages/mcp-server/src/pipeline-tools.ts) · [Review dossier setup](https://github.com/cdeust/ai-architect-mcp-spec/pull/385)
 
 ### Exported files per context profile
 
-The files a run writes depend on its PRD context: a companion file is written only when one of its sections was scheduled and passed. The table lists the most a run of each context writes, when every scheduled section passes and JIRA generation succeeds. A failed or skipped section only removes files; `00-run-notes.md` then names each missing file and each withheld failed draft with the reason.
+The table shows the files of a fully passed run with the standard request size. Failed or skipped sections can reduce the export. See `00-run-notes.md` for omissions.
 
 | Context | Files written |
 |---|---|
@@ -456,330 +53,92 @@ The files a run writes depend on its PRD context: a companion file is written on
 | `release` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
 | `cicd` | `00-run-notes.md`, `01-prd.md`, `04-security.md`, `05-testing.md`, `06-deployment.md`, `07-jira-tickets.md`, `10-verification-report.md`, `stage-5.affected_symbols.json` |
 
-- `00-run-notes.md` is in every row because no context schedules the `source_code` and `test_code` sections, so `08-source-code.md` and `09-test-code.md` are always skipped.
-- `stage-5.affected_symbols.json` is written when the `technical_specification` section passed with content, never from a failed draft; `proposal` does not schedule it.
-- A run declared `request_size: "tiny"` writes `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `07-jira-tickets.md` and `10-verification-report.md`, whatever its context: its sections are the four of the fast path. An incident is the exception: it writes the files of its row.
-- `10-verification-report.md` is written by `implementation_gate`, after `self_check`, not by `file_export`.
-- `packages/orchestration/src/__tests__/readme-export-files.test.ts` fails when this table and the exporter disagree.
+A run declared `request_size: "tiny"` writes `00-run-notes.md`, `01-prd.md`, `05-testing.md`, `07-jira-tickets.md` and `10-verification-report.md`, whatever its context except an incident. Incidents follow their table row.
 
----
+[Export regression](packages/orchestration/src/__tests__/readme-export-files.test.ts)
 
-## The MCP tools
+### Integration status
 
-Three surfaces. The reducer drives the full pipeline; the validation + verification
-+ feedback tools can be consumed directly by other systems without entering the
-pipeline; the diagnostics surface exposes config + health + history.
+- **Ready** on Spec `main`. The portable verifier, host-driven Define verification, deterministic proposal and revision-bound review dossier are implemented. [Verification and Define](https://github.com/cdeust/ai-architect-mcp-spec/pull/387) · [Deterministic proposal](https://github.com/cdeust/ai-architect-mcp-spec/pull/383) · [Review dossier](https://github.com/cdeust/ai-architect-mcp-spec/pull/385)
+- **Next** for the paired loop. The independent review handoff reached the Architect OS preview in an offline replay using a candidate Spec bundle and two model fixtures. Production evidence still needs signed-in adapters that attest the account and effective model, results on specimen inputs before Step, and results per criterion on the delivered revision. [Architect OS integration and replay](https://github.com/cdeust/architect-os/pull/123)
 
-```
-Reducer (3):
-  start_pipeline             Initialize a run; returns first NextAction
-  submit_action_result       Drive the reducer one step; returns next NextAction
-  get_pipeline_state         Read-only state snapshot for diagnostics
+### A recorded handoff
 
-Validation (2):
-  validate_prd_section       Hard Output Rules — single section
-  validate_prd_document      Cross-section checks (SP/AC/FR/test traceability)
+The delivery-command fixture drives an actual Spec process over stdio and compares the resulting dossier with the approved Git revisions. Its assertions cover `ready_for_review` and `evidence_required` for each acceptance criterion. [Input fixture](packages/mcp-server/src/__tests__/fixtures/define-delivery-command.json) · [Expected results](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts)
 
-Verification (3):
-  plan_section_verification  Extract claims + select judge panels (paged: request_offset)
-  plan_document_verification Same, document-wide (paged: request_offset)
-  conclude_verification      Aggregate JudgeVerdict[] → VerificationReport;
-                             accepts optional `claims` array carrying
-                             `external_grounding` so oracle-resolved ground
-                             truth can replace LLM-only consensus where
-                             schema/math/code/spec oracles are available
+A separate paired run used an experimental Spec bundle with two deterministic model fixtures. Architect OS accepted the exact reviewed Plan as `pending`, and a second admitted session resumed it with zero model calls. The PR records the tested Architect OS commit and the materialization refusal when specimen evidence was missing. [Recorded paired replay](https://github.com/cdeust/architect-os/pull/123)
 
-Feedback (1):
-  map_failure_to_retrieval   Validation failure → corrective Cortex query
+## Getting started
 
-Diagnostics (7):
-  get_config, read_skill_config, check_health, get_prd_context_info,
-  list_available_strategies, get_quality_history, get_strategy_effectiveness
-```
+### Portable verifier
 
-Each tool takes structured Zod-validated arguments and returns a typed response. No tool calls an LLM — section drafts and judge verdicts come back via the host's `spawn_subagents` action so the same pipeline runs against any agent runtime.
+The checked-in Codex and Gemini CLI manifests start `mcp-server/index.js --profile verifier` and expose the two deterministic validation tools. The verifier makes zero model calls. [Codex manifest](.codex-plugin/plugin.json) · [Gemini CLI manifest](gemini-extension.json)
 
----
-
-## Multi-judge verification
-
-The `self_check` step is a two-phase contract. Phase A plans the verification batch and persists a snapshot of `(claim_ids, judges)` to state. Phase B receives the verdicts, parses them against the snapshot, and aggregates via the consensus engine.
-
-```
-plan_document_verification(sections[])
-  → extracts atomic Claims (FR-001, AC-005, NFR-LATENCY-1, ...)
-  → selects a panel per claim type:
-      architecture        → liskov + alexander + dijkstra + architect
-      performance         → fermi + carnot + curie + erlang
-      security            → wu + ibnalhaytham + security-auditor
-      data_model          → mendeleev + dba + lavoisier
-      acceptance_criteria → toulmin + popper + test-engineer
-      ...
-
-  → returns the plan in pages under the 100,000-char response budget:
-      each page holds whole JudgeRequests from request_offset (default 0);
-      claims and mechanical_claims are on the first page only;
-      __page.next_offset is the next request_offset, null on the last page
-
-[host follows __page.next_offset to the last page, then spawns the panel;
- each agent returns a JSON verdict]
-
-conclude_verification(verdicts[])
-  → Per claim, runs consensus():
-      strategy: weighted_average (default) | bayesian
-      fail_threshold: 0.5  (≥50% confidence-weighted FAIL → forces FAIL)
-      precautionary tie-breaker: more-severe verdict wins
-  → distribution_suspicious flag fires when 100% PASS over ≥5 claims
-  → returns ConsensusVerdict[] with full distribution + dissenting list
-```
-
-`plan_section_verification` and `plan_document_verification` hold no state: a host reads the next page by calling the tool again with the same arguments and `request_offset` set to `__page.next_offset`. Every judge request carries the whole document as `context.prd_excerpt`, unchanged, so a page holds few requests when the document is long (one per page once the sections pass about half the budget), and a page goes over the budget only when a single request does not fit on its own (sections near the budget itself); the overshoot is then visible as `__page.final_chars` above `__page.budget_chars`.
-
-`validate_prd_section` and `validate_prd_document` are paged the same way, with `item_offset`: a page holds whole items, the violations first and then the unresolved symbols of `symbolExistence`, and the other fields of the report (`rulesChecked`, `rulesPassed`, `hasCriticalViolations`, `totalScore`) are on every page. A report that fits is one page.
-
-The verdict taxonomy is deliberately five-level — not binary. NFR claims (latency, fps, throughput, storage) **MUST NOT receive PASS**: they are SPEC-COMPLETE if a measurement method is specified, NEEDS-RUNTIME otherwise. Judges that default to PASS for everything are caught by the `distribution_suspicious` detector and flagged in the typed `done.verification` field.
-
----
-
-## Calibration & falsification
-
-The verification subsystem is itself a hypothesis: that *consensus weighted by historically-calibrated reliability* outperforms *consensus weighted by a uniform prior*. The closed loop below is what tests it.
-
-1. **Observe.** Each verification run can flush per-judge observations (claim_id, claim_type, judge_id, verdict, oracle_truth?) to a SQLite reliability repository. Observations carry an `external_grounding` field that propagates from `Claim` through the orchestrator to the oracle resolution path; when an external oracle (Ajv schema, mathjs, `tsc`, `validateSection`) can resolve the claim, its truth replaces LLM-only consensus.
-2. **Calibrate.** On subsequent runs, calibrated posteriors weight consensus per judge, per `claim_type`. A 20% control-arm partition is forced-explored using the prior (`getReliabilityForRun` / `getRetryArmForRun` decide which arm a given run lands in deterministically from `run_id`). Without the control arm, calibration-on-calibration looks like progress whether or not it actually is.
-3. **Compare.** Cross-arm metrics (`computeAblationComparison`, `computeReliabilityComparison`, `computeKpiGateComparison`) run paired-bootstrap CIs (Efron & Tibshirani 1993 §16.4; deterministic mulberry32 RNG; 12-decimal reproducibility pin) and emit one of three falsifiable recommendations: `calibrated_helps`, `prior_helps`, or `inconclusive_underpowered`.
-4. **Seal.** Held-out partitions are committed to lock files (`maxattempts-heldout.lock.json` for §4.2, `kpigates-heldout.lock.json` for §4.5, `heldout-partition.lock.json` for the §4.1 50-claim externally-grounded corpus) with a sha256 hash of the partition. The cross-arm metric functions accept a `SEAL_VERIFIED` typeof sentinel as a parameter; the only way to obtain that sentinel is to verify the seal first. Peeking at a held-out partition before evaluation is a type error.
-5. **Ground.** Where an external oracle can resolve a claim deterministically, it does. Where it cannot, `OracleUnavailableError` is thrown rather than fabricating a stub-mode truth. This is the line that breaks annotator-circularity: judges trained against (or biased toward) LLM-style reasoning cannot poison calibration that uses non-LLM truth.
-
-The lock files, the seal-verification dance, and the control-arm partition together mean: when a cross-arm comparison says "calibrated_helps with 95% CI excluding zero," the claim is *measured*, not vibes-checked. When it says "inconclusive_underpowered," that is also a falsifiable claim — you need more data, not more confidence.
-
----
-
-## Architecture
-
-Ten workspace packages, each independently buildable, with strict Clean Architecture layering enforced by package boundaries.
-
-```
-core              ← domain types, schemas, agent identities
-                    │  no I/O, no infrastructure dependency
-                    │  Zod-validated; the only place where verdict /
-                    │  section_type / capability shapes are defined
-                    ▼
-validation        ← Hard Output Rules (per-section + cross-section)
-                    │  pure functions; no I/O
-                    ▼
-strategy          ← thinking-strategy selector (genius pattern routing)
-                    │
-meta-prompting    ← prompt builders for clarification / draft / jira
-                    │  pure string composition
-                    ▼
-verification      ← claim extraction + judge selection +
-                    │  consensus engine (weighted_average + Bayesian)
-                    │  + buildJudgePrompt
-                    ▼
-orchestration     ← stateless reducer, 20 step handlers, runner
-                    │  step(state, result?) → next_state, action
-                    │  emit_message coalescing; canned-dispatcher utility
-                    ▼
-ecosystem-adapters← StdioMcpClient, AiArchitectCodebaseClient, CortexClient
-                    │  the only package allowed to do I/O
-                    ▼
-mcp-server        ← composition root; 16 tools registered;
-                    │  evidence repository (better-sqlite3, optional)
-                    ▼
-benchmark         ← pipeline KPI measurements + golden-fixture HOR scoring
-                    │  + calibration/ subtree:
-                    │    · ReliabilityRepository (SQLite, observation flush)
-                    │    · Kaplan-Meier + log-rank + Schoenfeld N
-                    │    · Clopper-Pearson exact CI + XmR control charts
-                    │    · paired-bootstrap (Efron-Tibshirani 1993 §16.4)
-                    │    · external oracles (Ajv / mathjs / tsc / validate)
-                    │    · machine-class detector + frozen-baseline gates
-                    │    · sealed held-out lock files (sha256 + SEAL_VERIFIED)
-                    │    · production-mode dispatcher + AgentInvoker seam
-                    │  Audit lineage: JSONL + .xmr sidecars per run.
-skill             ← SKILL.md + slash-command definitions for Claude Code
-```
-
-### Dependency rule (absolute)
-
-Every package's `package.json` is checked: `core` depends only on `zod`; `verification` depends only on `core`; `orchestration` depends on `core`/`validation`/`verification`/`meta-prompting` (NOT on `ecosystem-adapters`); `ecosystem-adapters` depends on `core` + `verification`; `mcp-server` is the only place where everything composes.
-
-A cross-audit found and fixed two layer violations:
-- `orchestration` was importing `extractJsonObject` and `buildJudgePrompt` from `ecosystem-adapters` — pure utilities lived in the wrong package; moved to `core` and `verification` respectively.
-- Pure domain types (`Claim`, `JudgeVerdict`, `JudgeRequest`, `AgentIdentity`) lived in `ecosystem-adapters/contracts/subagent.ts`; moved to `core/domain/agent.ts`. The infrastructure package now re-exports them as a backward-compat shim.
-
----
-
-## What this fixes that previous PRD generators don't
-
-| Failure mode | What we do |
-|---|---|
-| **Section drift between turns** | Single immutable `PipelineState` snapshot per step; reducer is pure; host can replay any step |
-| **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list. With a codebase graph (`codebase_path`), self-check also sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report, advisory (#118) |
-| **Performance sections with only PASS verdicts** | The deterministic validator flags all-PASS verdicts on recognized performance targets, including a single PASS. Runtime verification establishes the measured result. |
-| **Confirmatory bias (every judge says PASS)** | `distribution_suspicious` flag fires at 100% PASS over ≥5 claims; surfaced in typed `done.verification.distribution_suspicious` |
-| **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
-| **Tests claiming "comprehensive" without listing what they cover** | Test-traceability rule: every section's claimed test must reference an FR or AC ID |
-| **Retries that use the same context as the failure** | `map_failure_to_retrieval` closes the validator→Cortex feedback loop; corrective queries before retry |
-
-The reconstructed defect fixture records where structural validation stops. Its scope-creep and missing-edge-case examples still require semantic review. [Seeded defect regression](packages/validation/src/__tests__/seeded-defects-regression.test.ts)
-
----
-
-## How it composes with the rest of the ecosystem
-
-```
-                            ┌────────────────────────────────────┐
-                            │         Claude Code (host)         │
-                            └────────────────────┬───────────────┘
-                                                 │ stdio MCP
-              ┌──────────────────────────────────┼──────────────────────────────────┐
-              ▼                                  ▼                                  ▼
-   ┌───────────────────┐              ┌────────────────────┐              ┌───────────────────┐
-   │   ai-architect-   │   graph_path │   ai-architect-    │  recall      │      Cortex       │
-   │   mcp-codebase    │ ───────────► │   mcp-spec         │ ◄─────────── │   (memory engine) │
-   │   (Rust MCP)      │              │   (TS MCP)         │              │   (Python MCP)    │
-   │                   │   symbols    │                    │  excerpts    │                   │
-   │   read-only       │ ◄──────────► │   stateless        │ ───────────► │   thermodynamic   │
-   │   intelligence    │              │   reducer          │              │   memory          │
-   └───────────────────┘              └─────────┬──────────┘              └───────────────────┘
-                                                │
-                                                │ spawn_subagents
-                                                ▼
-                                  ┌─────────────────────────────┐
-                                  │   zetetic-team-subagents    │
-                                  │   97 genius + 19 team       │
-                                  │   Each judge cites its      │
-                                  │   primary paper.            │
-                                  └─────────────────────────────┘
-```
-
-Each project owns one concern. `ai-architect-mcp-codebase` knows what's true about the code. Cortex knows what we already decided. zetetic-team-subagents knows how to reason about a specific shape of claim. **AI Architect MCP Spec** is the deterministic glue that turns those three signals into a PRD an agent can act on.
-
----
-
-## The Zetetic Standard
-
-Every load-bearing constant in this codebase carries a `// source:` annotation. Three forms are accepted:
-
-```typescript
-// source: <citation>          // a paper, a spec, a referenced design doc
-// source: benchmark <path>    // a committed benchmark whose output produced this value
-// source: provisional heuristic — <calibration plan>
-                               // honest admission; tells the next reader
-                               // (a) why the value is what it is today and
-                               // (b) what evidence would change it
-```
-
-The cross-audit found and tagged every previously bare constant. Examples:
-
-```typescript
-// pipeline-kpis.ts
-const KPI_GATES = {
-  /** source: provisional heuristic. Smoke baseline = 62 iterations on
-   *  trial+codebase; cap is 100 (~60% headroom). dijkstra cross-audit
-   *  derived a structural max of 9 emit_message hops; the substantive-
-   *  action count builds on that. Replace with measured P95 + 1σ once
-   *  the calibrated baseline has enough runs. */
-  iteration_count_max: 100,
-  ...
-};
-
-// verification/consensus.ts
-/** source: provisional heuristic — Beta(7,3) (mean 0.7, ESS=10,
- *  moderately informative toward reliability). Replaced per agent by
- *  Beta(α+correct, β+incorrect) once calibrated from history. */
-const DEFAULT_RELIABILITY_PRIOR_MEAN = 0.7;
-```
-
-The four pillars (consistent / true / useful / necessary) and the seven rules of zetetic inquiry are inherited from the [zetetic-team-subagents standard](https://github.com/cdeust/zetetic-team-subagents#the-zetetic-standard). Provisional values are not silently propagated as truth.
-
----
-
-## What this system does not do
-
-The same standard applied to itself.
-
-1. **The pipeline produces and verifies the specification.** The host follows the emitted analysis, drafting and verification actions. It hands validated planning data to architect-os, where an independent decision authorizes execution.
-
-2. **It does not validate prose quality.** Hard Output Rules check structural invariants (FR numbering, AC traceability, NFR shape, cross-references). They do not check whether a sentence is well-written or persuasive. That is what the multi-judge phase is for, and even there the judges return verdicts on *claims* — atomic assertions — not on style.
-3. **The judge phase is end-to-end testable but the judges are not deterministic.** In tests we use a canned dispatcher that returns 100% PASS by construction; the `distribution_suspicious` detector exists precisely because real judge panels can also degenerate into confirmatory consensus, and we do not pretend otherwise.
-4. **The KPI gates are calibrated, not hand-picked.** `iteration_count_max`, `wall_time_ms_max`, and `mean_section_attempts_max` are calibrated against the K=100 frozen baseline with Clopper-Pearson exact CIs, per-machine-class wall_time normalization, and `loadCalibratedGates` + `hold_provisional` ratchet protection. The lock file commits a content-hash of the baseline; mutating it post hoc fails the seal verification. Where data is still thin, gates remain `hold_provisional` rather than locked. See [docs/PHASE_4_PLAN.md](docs/PHASE_4_PLAN.md) for the full pre-registration.
-5. **Citation presence ≠ citation validity.** A `// source: Knuth 1998` comment satisfies the convention whether or not Knuth 1998 exists or supports the value. We enforce that the citation IS THERE; the cross-audit cycle (genius + team review every phase) is what keeps it honest.
-
----
-
-## Reproducing the audit cycle
-
-The repo ships a multi-agent cross-audit workflow. After every non-trivial phase:
+For any stdio MCP host, clone the repository and install the bundled server dependencies. Use Node 20 or later for the launcher.
 
 ```bash
-# Engineering team review:
-#   architect, code-reviewer, refactorer, test-engineer, security-auditor,
-#   devops-engineer, dba (when relevant)
-
-# Genius team review:
-#   feynman (integrity), curie (measurement), popper (falsifiability),
-#   dijkstra (correctness), shannon (signal), deming (variation),
-#   poincare (qualitative), ...
+git clone https://github.com/cdeust/ai-architect-mcp-spec.git
+cd ai-architect-mcp-spec/mcp-server
+npm ci --omit=dev
 ```
 
-Each agent reads the current state of the code (not from memory) and produces a ranked finding list, severity-ranked. Findings are closed in the cycle that raised them; anything that cannot be closed without new measurement is carried with the evidence required to close it written down, so a deferral is a stated obligation rather than a silence.
+Configure the host to start `node /absolute/path/to/ai-architect-mcp-spec/mcp-server/index.js --profile verifier`. Call `validate_prd_section` with `section_type` and `content`. To check cross-section traceability, pass `sections` as an array of objects with `type` and `content` to `validate_prd_document`. [Request schemas](packages/mcp-server/src/index.ts)
 
----
+### Full profile in Claude Code
 
-## Project layout
-
-```
-packages/
-├── core/                  Domain types · schemas · agent identities · evidence repo
-├── validation/            Hard Output Rules · per-section + cross-section validators
-├── verification/          Claim extraction · judge selection · consensus engine
-├── meta-prompting/        Prompt builders (clarification / draft / jira)
-├── strategy/              Thinking-strategy selector
-├── orchestration/         Stateless reducer · 20 step handlers · runner · canned-dispatcher
-├── ecosystem-adapters/    StdioMcpClient · AiArchitectCodebaseClient · CortexClient
-├── mcp-server/            Composition root · 16 MCP tools registered
-├── benchmark/             Pipeline KPI measurement · golden-fixture HOR scoring
-│   └── calibration/       ReliabilityRepository · KM survival ·
-│                          Clopper-Pearson · XmR · paired-bootstrap ·
-│                          external oracles · sealed held-out partitions ·
-│                          production-mode dispatcher
-└── skill/                 SKILL.md · slash-command definitions
+```bash
+claude plugin marketplace add cdeust/ai-architect-mcp-spec
+claude plugin install ai-architect-mcp-spec@ai-architect-mcp-spec-marketplace
 ```
 
----
+Start a fresh session, configure the companions required by the [host skill](packages/skill/SKILL.md), then run `/generate-prd` with a feature description. The plugin uses Node and npm to start its bundled server. The host supplies the model and companion tools. [Plugin launcher](.mcp.json) · [Generate PRD command](packages/skill/commands/generate-prd.md)
 
-## License
+#### Supported platforms
 
-MIT — see [LICENSE](LICENSE).
+The CI matrix runs these jobs. It probes the plugin launcher, `node bin/ensure-deps.mjs`, over stdio. On macOS and Windows, the environment command then runs `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm test`, `pnpm bundle`, the portable checks and `scripts/release/smoke-mcpb.sh`.
 
-**Project documents:** [ROADMAP](docs/ROADMAP.md) (what the project intends to
-do, and what it will not do, for the next year) ·
-[CONTRIBUTING](CONTRIBUTING.md) (how to propose a change,
-and the testing policy) · [GOVERNANCE](GOVERNANCE.md) (who decides, and what
-happens to the project if the maintainer stops) · [SECURITY](SECURITY.md) (how
-to report a vulnerability, and the supply-chain guarantees) ·
-[Assurance case](docs/ASSURANCE-CASE.md) (the security argument and where it
-stops) · [CODE OF CONDUCT](CODE_OF_CONDUCT.md) · [CHANGELOG](CHANGELOG.md).
+| Platform | CI runner | Jobs |
+|---|---|---|
+| Linux | `ubuntu-latest` | unit, regression, e2e, environment, install |
+| macOS | `macos-latest` | environment (plugin launch, the test suite and the `.mcpb` smoke), install |
+| Windows | `windows-latest` | environment (plugin launch, the test suite and the `.mcpb` smoke), install |
 
-This software is the independent work of Clément Deust. It was developed
-outside any employment relationship and is not affiliated with, endorsed by,
-or owned by any past or present employer. It is part of the ai-architect
-ecosystem ([Cortex](https://github.com/cdeust/Cortex),
-[ai-architect-mcp-codebase](https://github.com/cdeust/ai-architect-mcp-codebase),
-[zetetic-team-subagents](https://github.com/cdeust/zetetic-team-subagents)).
+[Platform contract](scripts/portable-distribution.test.mjs) · [CI commands](ci.json) · [CI runs](https://github.com/cdeust/ai-architect-mcp-spec/actions/workflows/pipeline.yml)
 
-Citations and primary sources for algorithms and constants are documented
-inline in the code via `// source:` annotations per the project's
-source-discipline rules. Removing those annotations does not change the
-license terms but does forfeit attribution to the original research the
-code is built on.
+#### What the `.mcpb` carries
 
----
+The bundle carries the MCP server and its launch configuration. `check_health` reports `degraded` with `skillAvailable: false` and `evidenceDbHealthy: false` for the bundle. Use the Claude Code plugin for its packaged skill and commands. [Bundle manifest](manifest.json) · [Bundle smoke test](scripts/release/smoke-mcpb.sh)
 
-<p align="center">
-  <em>Check requirement links, code references, and performance verdicts before implementation.<br>
-  Ship one whose every claim was judged by Pearl, Curie, Liskov, and a panel of seven others, validated against the call graph, and grounded in what Cortex remembers from yesterday.</em>
-</p>
+### Companion ecosystem
+
+These are the plugin commands printed by the current full-profile preflight. The codebase companion applies when you supply `codebase_path`. The portable verifier is standalone.
+
+```bash
+claude plugin marketplace add cdeust/ai-architect-mcp-codebase
+claude plugin marketplace add cdeust/Cortex
+claude plugin marketplace add cdeust/zetetic-team-subagents
+
+claude plugin install ai-architect-mcp-codebase@ai-architect-mcp-codebase-marketplace
+claude plugin install hypermnesia-mcp@cortex-plugins
+claude plugin install zetetic-team-subagents@zetetic-marketplace
+```
+
+[Preflight contract](packages/orchestration/src/__tests__/preflight-install-advice.test.ts)
+
+## Reproduce the checks
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
+pnpm test:portable
+pnpm test:portable:runtime
+```
+
+The boundary scenarios drive MCP stdio with recorded fixture responses. The portable runtime smoke test checks the tool surface through the launchers declared in the host manifests. [Boundary scenarios](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) · [Portable smoke test](scripts/smoke-portable-hosts.mjs)
+
+## Contribute
+
+The [architecture and dependency rules](CONTRIBUTING.md) describe how the core, validation, orchestration and MCP layers fit together. See the [assurance case](docs/ASSURANCE-CASE.md) for the verification evidence and [release instructions](docs/RELEASING.md) for packaging.
+
+[MIT license](LICENSE) · [Privacy](PRIVACY.md) · [Security](SECURITY.md)

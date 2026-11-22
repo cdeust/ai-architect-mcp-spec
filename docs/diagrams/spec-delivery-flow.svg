@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1048 414" width="1048" height="414" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="t">From specification to delivery</title>
-  <desc id="d">A left-to-right sequence shows Spec analysis, PRD verification and export of a verified proposal for one Step, then architect-os approval, build and checks, and delivery. With codebase_path, ai-architect-mcp-codebase supplies the graph and checks the PRD against it. The check is advisory. The host passes Define and the verified proposal. The owner approves the execution manifest before materialization. Above the ready stages, blue dashed cards show what is next: conformity review in Spec, a measured end-to-end replay, and acceptance results tied to the delivered commit. The planned evidence arrow returns from architect-os to Spec.</desc>
+  <desc id="d">The six-stage workflow separates Spec analysis, verification and its deterministic Step proposal from Architect OS approval, build and delivery. The optional codebase graph supplies advisory findings. Spec can prepare a pinned Git dossier on request. Dashed blue cards show pending paired-loop work: independent Plan review, specimen replay and delivery evidence. The dashed return arrow marks a planned transfer.</desc>
   <!-- Visual reference: architect-os 3fd73fd7, docs/diagrams/architecture.svg. -->
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -14,15 +14,16 @@
   <text x="24" y="38" font-size="20" fill="#1f2328" font-weight="600">From specification to delivery</text>
   <rect x="24" y="52" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
   <text x="47.0" y="64.5" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
-  <text x="78" y="64" font-size="12" fill="#57606a">built and on main</text>
+  <text x="78" y="64" font-size="12" fill="#57606a">built in its repository</text>
   <rect x="210" y="52" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
   <text x="230.0" y="64.5" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
-  <text x="258" y="64" font-size="12" fill="#57606a">work to ship, above the stage it will join</text>
+  <text x="258" y="64" font-size="12" fill="#57606a">paired-loop evidence still to obtain</text>
   <line x1="24" y1="78" x2="1024" y2="78" stroke="#d0d7de"/>
   <polyline points="949,108 949,91 439,91 439,107" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#n)"/>
   <polyline points="99,201 99,249" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
   <polyline points="269,201 269,249" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
-  <polyline points="439,201 439,249" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <polyline points="439,249 439,202" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
+  <polyline points="609,201 609,249" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3"/>
   <polyline points="779,201 779,249" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3"/>
   <polyline points="949,249 949,202" fill="none" stroke="#0969da" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#n)"/>
   <polyline points="174,301 193,301" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#a)"/>
@@ -37,25 +38,32 @@
   <text x="35" y="179.0" font-size="11.5" fill="#57606a">Graph findings are advisory.</text>
   <rect x="288" y="99.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
   <text x="311.0" y="112.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
-  <rect x="364" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
-  <text x="375" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Conformity review</text>
-  <text x="375" y="148.0" font-size="11.5" fill="#57606a">Spec compares the diff</text>
-  <text x="375" y="163.5" font-size="11.5" fill="#57606a">and acceptance evidence</text>
-  <text x="375" y="179.0" font-size="11.5" fill="#57606a">with the approved plan.</text>
-  <rect x="464" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
-  <text x="484.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
+  <rect x="364" y="108" width="150" height="93" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="375" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Review dossier</text>
+  <text x="375" y="148.0" font-size="11.5" fill="#57606a">Pinned Git diff from</text>
+  <text x="375" y="163.5" font-size="11.5" fill="#57606a">an approved record.</text>
+  <text x="375" y="179.0" font-size="11.5" fill="#57606a">Evidence still required.</text>
+  <rect x="458" y="99.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="481.0" y="112.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
+  <rect x="534" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
+  <text x="545" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Independent review</text>
+  <text x="545" y="148.0" font-size="11.5" fill="#57606a">A second provider</text>
+  <text x="545" y="163.5" font-size="11.5" fill="#57606a">reviews the exact plan.</text>
+  <text x="545" y="179.0" font-size="11.5" fill="#57606a">Offline pilot passed.</text>
+  <rect x="634" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="654.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
   <rect x="704" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
   <text x="715" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Measured replay</text>
-  <text x="715" y="148.0" font-size="11.5" fill="#57606a">Replay the approved</text>
-  <text x="715" y="163.5" font-size="11.5" fill="#57606a">plan through Step and</text>
-  <text x="715" y="179.0" font-size="11.5" fill="#57606a">Deliver.</text>
+  <text x="715" y="148.0" font-size="11.5" fill="#57606a">Check specimen inputs,</text>
+  <text x="715" y="163.5" font-size="11.5" fill="#57606a">then replay through</text>
+  <text x="715" y="179.0" font-size="11.5" fill="#57606a">Step and Deliver.</text>
   <rect x="804" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
   <text x="824.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
   <rect x="874" y="108" width="150" height="93" rx="6" fill="#ffffff" stroke="#0969da" stroke-dasharray="5 4"/>
   <text x="885" y="130" font-size="12.5" fill="#1f2328" font-weight="600">Acceptance evidence</text>
-  <text x="885" y="148.0" font-size="11.5" fill="#57606a">Attach each criterion’s</text>
-  <text x="885" y="163.5" font-size="11.5" fill="#57606a">result to the exact</text>
-  <text x="885" y="179.0" font-size="11.5" fill="#57606a">delivered commit.</text>
+  <text x="885" y="148.0" font-size="11.5" fill="#57606a">Return evidence per</text>
+  <text x="885" y="163.5" font-size="11.5" fill="#57606a">criterion and review</text>
+  <text x="885" y="179.0" font-size="11.5" fill="#57606a">the delivered revision.</text>
   <rect x="974" y="99.5" width="40" height="17" rx="8.5" fill="#ddf4ff" stroke="#0969da"/>
   <text x="994.0" y="112.0" font-size="10.5" fill="#0969da" font-weight="600" text-anchor="middle">next</text>
   <rect x="24" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
@@ -75,7 +83,7 @@
   <rect x="364" y="251" width="150" height="96" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
   <text x="375" y="273" font-size="12.5" fill="#1f2328" font-weight="600">3 · Define and Plan</text>
   <text x="375" y="291.0" font-size="11.5" fill="#57606a">Export validated Define</text>
-  <text x="375" y="306.5" font-size="11.5" fill="#57606a">and one verified Step</text>
+  <text x="375" y="306.5" font-size="11.5" fill="#57606a">and a deterministic Step</text>
   <text x="375" y="322.0" font-size="11.5" fill="#57606a">proposal, with hashes.</text>
   <rect x="458" y="242.5" width="46" height="17" rx="8.5" fill="#dafbe1" stroke="#1a7f37"/>
   <text x="481.0" y="255.0" font-size="10.5" fill="#1a7f37" font-weight="600" text-anchor="middle">ready</text>
