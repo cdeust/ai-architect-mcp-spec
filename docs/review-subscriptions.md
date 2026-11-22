@@ -1,7 +1,11 @@
 # PR review subscriptions
 
-The PR workflow first enforces the review-round budget. The default-branch
-workflow reads the quota for that run and attempt. It selects from measured
+The PR workflow first enforces the review-round budget. Its budget job records
+one default-branch workflow run ID for that attempt. GitHub can send multiple
+`workflow_run` events as jobs start. Only the recorded workflow reads quota,
+and both admission and merge verify its identity. If its measurement fails,
+the round remains blocked. Rerunning all jobs creates a new source attempt
+with its own nomination. The default-branch workflow selects from measured
 eligible subscriptions using the remaining percentage in the tightest applicable
 window. Codex wins a tie. Claude runs through the official Claude Code action.
 Codex runs through the OpenAI GitHub App. OpenAI controls the model used by

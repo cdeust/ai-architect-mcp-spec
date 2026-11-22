@@ -306,13 +306,17 @@ class WorkflowWiringTests(unittest.TestCase):
         job = self.jobs["budget"]
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("secrets.", yaml.safe_dump(job))
-        self.assertEqual(
-            job["steps"][-2]["run"], "python3 -I scripts/ci_review_budget.py"
-        )
-
-        admit = job["steps"][-1]
+        count, admit, nominate, marker = job["steps"][-4:]
+        self.assertEqual(count["run"], "python3 -I scripts/ci_review_budget.py")
         self.assertEqual(admit["name"], "Admit a subscription review round")
         self.assertEqual(admit["if"], "steps.count.outputs.skip == 'false'")
+        self.assertEqual(nominate["if"], admit["if"])
+        self.assertEqual(nominate["run"], "python3 -I scripts/ci_review_route.py nominate")
+        self.assertEqual(marker["name"], "Subscription decision run ${{ steps.nominate.outputs.id }}")
+        self.assertEqual(marker["if"], "steps.nominate.outputs.id != ''")
+        self.assertEqual(job["outputs"]["route_run"], "${{ steps.nominate.outputs.id }}")
+        self.assertEqual(self.jobs["admission"]["steps"][-1]["env"]["ROUTE_RUN"],
+                         "${{ needs.budget.outputs.route_run }}")
 
     def test_budget_checks_out_main_and_keeps_no_credentials(self):
         checkout = self.jobs["budget"]["steps"][0]
