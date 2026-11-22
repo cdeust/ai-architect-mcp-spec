@@ -1,0 +1,157 @@
+name: Claude subscription quota diagnostic
+
+# Owner-only push experiment. workflow_dispatch is only available once a
+# workflow exists on the default branch.
+on:
+  push:
+    branches: [ci/claude-quota-diagnostic]
+    paths: [.github/workflows/claude-quota-diagnostic.yml]
+
+permissions: {}
+
+jobs:
+  read-quota:
+    if: >-
+      github.repository == 'cdeust/ai-architect-mcp-spec'
+      && github.actor_id == '3167767'
+      && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install the CLI version tested locally
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/claude-quota-cli" @anthropic-ai/claude-code@2.1.328
+          echo "$RUNNER_TEMP/claude-quota-cli/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/claude-quota-cli/bin/claude" --version | grep -Fx '2.1.328 (Claude Code)'
+          tmux -V
+      - name: Read native usage without a model turn
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          import time
+
+          class Inconclusive(Exception):
+              pass
+
+          def read_usage(home, token):
+              # The child receives only the existing bot OAuth credential.
+              env = {
+                  "PATH": os.environ["PATH"],
+                  "HOME": str(home),
+                  "TERM": "xterm-256color",
+                  "LANG": "C.UTF-8",
+                  "TZ": "UTC",
+                  "CLAUDE_CODE_OAUTH_TOKEN": token,
+                  "DISABLE_AUTOUPDATER": "1",
+                  "DISABLE_TELEMETRY": "1",
+              }
+              (home / ".claude.json").write_text(json.dumps({"hasCompletedOnboarding": True}))
+              auth = subprocess.run(
+                  ["claude", "auth", "status"], cwd=home, env=env,
+                  capture_output=True, text=True, timeout=20,
+              )
+              if auth.returncode:
+                  raise Inconclusive("authentication_status_failed")
+              try:
+                  status = json.loads(auth.stdout)
+              except ValueError:
+                  raise Inconclusive("unrecognized_authentication_status") from None
+              if (status.get("loggedIn") is not True
+                      or status.get("authMethod") != "oauth_token"
+                      or status.get("apiProvider") != "firstParty"):
+                  raise Inconclusive("expected_first_party_oauth_not_confirmed")
+
+              socket = str(home / "tmux")
+
+              def tmux(*args):
+                  return subprocess.run(
+                      ["tmux", "-f", "/dev/null", "-S", socket, *args],
+                      env=env, cwd=home, capture_output=True, text=True, check=True,
+                  ).stdout
+
+              billing_banner = False
+
+              def wait_for(predicate, reason):
+                  nonlocal billing_banner
+                  # A slow or unfamiliar screen is inconclusive.
+                  deadline = time.monotonic() + 25
+                  while time.monotonic() < deadline:
+                      screen = tmux("capture-pane", "-p", "-t", "quota")
+                      billing_banner |= "API Usage Billing" in screen or "Claude Console" in screen
+                      if predicate(screen):
+                          return screen
+                      time.sleep(0.25)
+                  if billing_banner:
+                      raise Inconclusive("console_billing_banner_and_no_subscription_quota")
+                  raise Inconclusive(reason)
+
+              try:
+                  tmux("new-session", "-d", "-x", "120", "-y", "45", "-s", "quota",
+                       "claude", "--safe-mode", "--strict-mcp-config", "--mcp-config",
+                       '{"mcpServers":{}}', "--tools", "", "--setting-sources", "",
+                       "--settings", '{"disableAllHooks":true}', "--permission-mode", "plan")
+                  wait_for(lambda s: all(marker in s for marker in ("Claude Code", "Safe mode:", "❯")),
+                           "native_prompt_not_recognized")
+                  tmux("send-keys", "-l", "-t", "quota", "/usage")
+                  wait_for(lambda s: "Show session cost, plan usage" in s,
+                           "native_usage_completion_not_recognized")
+                  tmux("send-keys", "-t", "quota", "Enter")
+                  screen = wait_for(
+                      lambda s: "Estimated cost" in s and "Current week (all models)" in s
+                      and "Refreshing usage" not in s,
+                      "subscription_usage_panel_missing",
+                  )
+                  if billing_banner:
+                      raise Inconclusive("ambiguous_subscription_and_console_billing")
+                  if "Usage credits are off" not in screen:
+                      raise Inconclusive("usage_credits_off_not_confirmed")
+                  if not (re.search(r"Total duration \(API\):\s+0s\b", screen)
+                          and re.search(r"\b0 input, 0 output\b", screen)):
+                      raise Inconclusive("zero_model_usage_not_confirmed")
+                  weekly = re.search(
+                      r"Current week \(all models\)\s*\n[^\n]*?(\d{1,3})% used\s*\n"
+                      r"\s*Resets ([A-Z][a-z]{2} \d{1,2} at \d{1,2}(?::\d{2})?"
+                      r"(?:am|pm) \([A-Za-z0-9_+/-]+\))\s*$",
+                      screen, re.MULTILINE,
+                  )
+                  if not weekly or int(weekly[1]) > 100:
+                      raise Inconclusive("weekly_all_models_window_not_recognized")
+                  return {
+                      "status": "weekly_quota_read",
+                      "weekly_all_models_used_percent": int(weekly[1]),
+                      "reset_display": weekly[2],
+                      "usage_credits": "off",
+                      "model_input_tokens": 0,
+                      "model_output_tokens": 0,
+                  }
+              finally:
+                  try:
+                      tmux("kill-server")
+                  except subprocess.CalledProcessError:
+                      pass
+
+          receipt = {
+              "sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "cli_version": "2.1.328",
+          }
+          try:
+              token = os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", "")
+              if not token:
+                  raise Inconclusive("missing_ci_oauth_secret")
+              with tempfile.TemporaryDirectory(prefix="quota-", dir="/tmp") as temp:
+                  receipt.update(read_usage(Path(temp), token))
+          except Inconclusive as failure:
+              receipt.update(status="inconclusive", reason=str(failure))
+          except (OSError, subprocess.SubprocessError):
+              receipt.update(status="inconclusive", reason="native_cli_or_terminal_failed")
+          print(json.dumps(receipt, sort_keys=True))
+          raise SystemExit(receipt["status"] != "weekly_quota_read")
+          PY
