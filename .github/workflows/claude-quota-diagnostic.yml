@@ -97,15 +97,46 @@ jobs:
                        "claude", "--safe-mode", "--strict-mcp-config", "--mcp-config",
                        '{"mcpServers":{}}', "--tools", "", "--setting-sources", "",
                        "--settings", '{"disableAllHooks":true}', "--permission-mode", "plan")
-                  wait_for(lambda s: all(marker in s for marker in ("Claude Code", "Safe mode:", "❯")),
-                           "native_prompt_not_recognized")
+                  def prompt_ready(screen):
+                      return ("Claude Code" in screen and "Safe mode:" in screen
+                              and any(line.strip() == "❯" for line in screen.splitlines()))
+
+                  def theme_menu(screen):
+                      return "To change this later, run /theme" in screen and "❯ ✔ Auto (match terminal)" in screen
+
+                  def trust_menu(screen):
+                      return ("Quick safety check:" in screen and "This is your home folder" in screen
+                              and "❯ No, exit" in screen and "Yes, I trust this folder" in screen)
+
+                  startup = wait_for(lambda s: prompt_ready(s) or theme_menu(s) or trust_menu(s),
+                                     "native_startup_screen_not_recognized")
+                  if theme_menu(startup):
+                      tmux("send-keys", "-t", "quota", "Enter")
+                      startup = wait_for(lambda s: prompt_ready(s) or trust_menu(s),
+                                         "native_post_theme_screen_not_recognized")
+                  if trust_menu(startup):
+                      # This is the disposable, empty HOME created by this job.
+                      tmux("send-keys", "-t", "quota", "Down")
+                      wait_for(lambda s: "Quick safety check:" in s
+                               and "This is your home folder" in s and "❯ Yes, I trust this folder" in s,
+                               "disposable_home_trust_choice_not_recognized")
+                      tmux("send-keys", "-t", "quota", "Enter")
+                      wait_for(prompt_ready, "native_prompt_not_recognized_after_trust")
                   tmux("send-keys", "-l", "-t", "quota", "/usage")
                   wait_for(lambda s: "Show session cost, plan usage" in s,
                            "native_usage_completion_not_recognized")
                   tmux("send-keys", "-t", "quota", "Enter")
+
+                  def usage_panel(screen):
+                      if "Refreshing usage" in screen:
+                          return False
+                      if ("No usage limits to show for this sign-in." in screen
+                              and "https://claude.ai/settings/usage" in screen):
+                          raise Inconclusive("oauth_sign_in_exposes_no_usage_limits")
+                      return "Estimated cost" in screen and "Current week (all models)" in screen
+
                   screen = wait_for(
-                      lambda s: "Estimated cost" in s and "Current week (all models)" in s
-                      and "Refreshing usage" not in s,
+                      usage_panel,
                       "subscription_usage_panel_missing",
                   )
                   if billing_banner:
