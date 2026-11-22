@@ -417,14 +417,25 @@ jobs:
       - name: Verify the registry now serves the published version
         run: |
           set -euo pipefail
-          VERSION=$(jq -r '.version' server.runtime.json)
+          VERSION=$(jq -ej '.version | strings | select(length > 0)' server.runtime.json)
           MAX_ATTEMPTS=12
           SLEEP_SECONDS=5
           ACTUAL=""
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             ACTUAL=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec" \
-              | python3 -c "import json, sys; d = json.load(sys.stdin); latest = next(s for s in d['servers'] if s['server']['name'] == 'io.github.cdeust/ai-architect-mcp-spec' and s['_meta']['io.modelcontextprotocol.registry/official']['isLatest']); print(latest['server']['version'])")
-            echo "Attempt ${attempt}/${MAX_ATTEMPTS}: registry reports latest version ${ACTUAL} (expected ${VERSION})"
+              | jq -ej '
+                if (.servers | type) != "array" then error("invalid registry response") else
+                  (first(.servers[] | select(
+                    .server.name == "io.github.cdeust/ai-architect-mcp-spec"
+                    and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true
+                  )) // null)
+                  | if . == null then ""
+                    elif (.server.version | type) == "string" and (.server.version | length) > 0
+                      then .server.version
+                    else error("invalid latest registry version")
+                    end
+                end')
+            echo "Attempt ${attempt}/${MAX_ATTEMPTS}: registry reports latest version ${ACTUAL:-<none>} (expected ${VERSION})"
             if [ "$ACTUAL" = "$VERSION" ]; then
               echo "Registry converged to ${VERSION} on attempt ${attempt}."
               exit 0
@@ -433,5 +444,5 @@ jobs:
               sleep "$SLEEP_SECONDS"
             fi
           done
-          echo "::error::MCP Registry still serves ${ACTUAL}, expected ${VERSION} after ${MAX_ATTEMPTS} attempts (~$((MAX_ATTEMPTS * SLEEP_SECONDS))s). This is a non-convergence failure, not a propagation delay."
+          echo "::error::MCP Registry still serves ${ACTUAL:-<none>}, expected ${VERSION} after ${MAX_ATTEMPTS} attempts (~$((MAX_ATTEMPTS * SLEEP_SECONDS))s). This is a non-convergence failure, not a propagation delay."
           exit 1

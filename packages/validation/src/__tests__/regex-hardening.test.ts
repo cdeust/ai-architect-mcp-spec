@@ -178,12 +178,119 @@ describe("placeholder-test detection", () => {
     expect(violations[0].offendingContent).toContain("testB");
   });
 
+  it("reads nested Swift parameters and preserves the finding for each placeholder", () => {
+    const pending = "func testInvoice(period: (Int, Int)) async throws { // TODO }";
+    const empty = "func testBalance(completion: (Int) -> Void) {  }";
+    const ready = "func testTotals() { XCTAssertEqual(total, expected) }";
+    expect(placeholderViolations([empty, ready, pending].join("\n")).map((v) => v.offendingContent))
+      .toEqual([pending, empty]);
+  });
+
+  it("keeps punctuation inside parameter comments and string defaults out of the signature", () => {
+    const tests = [
+      'func testCurrency(label: String = "(") { }',
+      "func testInvoice( // invoice group (draft\n  id: Int) { }",
+      "func testBalance(/* account group ( */ id: Int) { }",
+    ];
+    expect(placeholderViolations(tests.join("\n")).map((v) => v.offendingContent)).toEqual(tests);
+  });
+
+  it("keeps nested Swift comments in a parameter list opaque until the outer close", () => {
+    const pending = [
+      "func testInvoice(",
+      "  /* Accounting periods /* quarterly */ use the opening marker ( */",
+      "  id: Int",
+      ") { }",
+    ].join("\n");
+    expect(placeholderViolations(pending).map((v) => v.offendingContent)).toEqual([pending]);
+  });
+
+  it("leaves a declaration with an unclosed parameter comment unfinished", () => {
+    const draft = "func testDraft(/* account group /* quarterly */\nfunc testInvoice() { }";
+    expect(placeholderViolations(draft)).toEqual([]);
+  });
+
+  it("reads formatted signatures and keeps the documented legacy order of modifiers", () => {
+    const examples = [
+      "func  testLedger  (id: Int){ }",
+      "func testExport()  throws  async  { }",
+      "func testImport() async  throws  { }",
+      String.raw`func testReceipt(title: String = "quarter \"(draft") { }`,
+      String.raw`func testExportLabel(text: String = "quarter\n(draft") { }`,
+    ];
+    expect(placeholderViolations(examples.join("\n")).map((v) => v.offendingContent)).toEqual(examples);
+  });
+
+  it("reads copied PRD whitespace around Swift modifiers and inside the body", () => {
+    const plain = "func testDraft(){\u00a0\r\n\t}";
+    const modified = "func testInvoice()\r\nthrows\u00a0async\tthrows\n{\u2003}";
+    expect(placeholderViolations([plain, modified].join("\n")).map((v) => v.offendingContent))
+      .toEqual([plain, modified]);
+  });
+
+  it("requires separation and the start of a body after the recognized modifiers", () => {
+    const drafts = [
+      "func testDraft() throws{ }",
+      "func testSummary() asyncthrows { }",
+      "func testExport() async async { }",
+      "func testTotals() async",
+      "func testArchive()   ",
+    ];
+    expect(placeholderViolations(drafts.join("\n"))).toEqual([]);
+  });
+
+  it("discards incomplete Swift samples and keeps later tests independent", () => {
+    const complete = "func testLedger() { }";
+    const document = [
+      'func testDraft(label: String = "draft ) { }',
+      complete,
+      "func testReview() throwsSoon { }",
+      "func testTotals() { // TODO finish totals",
+    ].join("\n");
+    expect(placeholderViolations(document).map((v) => v.offendingContent)).toEqual([complete]);
+  });
+
+  it("leaves everyday conditional statements and default argument closures out of findings", () => {
+    const source = [
+      "if (invoice.isPaid) { }",
+      "func testInvoice(action: () -> Void = makeAction() { }) { assertPaid() }",
+    ].join("\n");
+    expect(placeholderViolations(source)).toEqual([]);
+  });
+
+  it("preserves the placeholder message and the 120-character excerpt reported to callers", () => {
+    const source = 'func testInvoice() { // TODO verify paid and unpaid invoices, tax adjustments, and the monthly billing summary against the ledger. }';
+    const [finding] = placeholderViolations(source);
+    expect(finding?.message).toBe("Found placeholder test with empty or TODO-only body");
+    expect(finding?.offendingContent).toBe(source.slice(0, 120));
+  });
+
+  it("keeps a declaration without a body from taking the next test's placeholder", () => {
+    const draft = "func testDraft()";
+    const pending = "func testInvoice() { // TODO }";
+    expect(placeholderViolations([draft, pending].join("\n")).map((v) => v.offendingContent)).toEqual([pending]);
+  });
+
+  it("attributes a complete test following an unfinished declaration to its own name", () => {
+    const pending = "func testInvoice() { // TODO }";
+    expect(placeholderViolations("func testDraft(\n" + pending).map((v) => v.offendingContent))
+      .toEqual([pending]);
+  });
+
   it.each([
     "| test_a | covers AC-1 | // TODO",
     "| test_a | covers AC-1 | ` // TODO",
     "| test_a | covers AC-1 |   `   // Setup",
   ])("flags the matrix row %s", (row) => {
     expect(placeholderViolations(row)).toHaveLength(1);
+  });
+
+  it("reads compact and indented table rows and leaves a pipe in narrative prose alone", () => {
+    const tight = "|testInvoice|invoice totals|//TODO";
+    const indented = "  |  testBalance  | current balance |   //   Setup";
+    const narrative = "Example row follows here: | testReceipt | receipt | // TODO";
+    expect(placeholderViolations([tight, narrative, indented].join("\n")).map((v) => v.offendingContent))
+      .toEqual([tight, indented]);
   });
 
   // The one behavioural delta the differential found: `\s` matched `\n`, so a

@@ -13,6 +13,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -25,14 +27,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   LOCK_NAME,
   MARKER_NAME,
-  NPM_CI_ARGS,
-  acquireLock,
-  launchPlan,
   lockfileDigest,
   needsProvisioning,
-  npmCiInvocation,
   processExists,
-} from "../bin/ensure-deps.mjs";
+} from "../bin/provision-runtime.mjs";
+import { NPM_CI_ARGS, launchPlan, npmCiInvocation } from "../bin/ensure-deps.mjs";
 import { isEntry } from "../bin/is-entry.mjs";
 import {
   holdsNativeBash,
@@ -86,8 +85,10 @@ function fakeNpm() {
       // As `npm ci` does: the previous tree goes first, then the install.
       'fs.rmSync("node_modules", { recursive: true, force: true });',
       'if (process.env.FAKE_NPM_FAIL) process.exit(7);',
-      'const ms = Number(process.env.FAKE_NPM_MS || 0);',
-      'if (ms) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);',
+      'if (process.env.FAKE_NPM_RELEASE) {',
+      '  console.error("install barrier ready");',
+      '  while (!fs.existsSync(process.env.FAKE_NPM_RELEASE)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
+      '}',
       'fs.mkdirSync("node_modules/ajv", { recursive: true });',
       "",
     ].join("\n"),
@@ -134,7 +135,7 @@ test("the launcher hands the server its arguments and a stdout that carries only
   assert.equal(run.stderr, "", "a provisioned launch says nothing");
 });
 
-test("a first launch runs `npm ci` in the server directory, keeps npm's output off stdout, then starts the server", () => {
+test("a first launch runs `npm ci` in private staging, keeps npm's output off stdout, then starts the server", () => {
   const { root, serverDir } = fakePlugin({ provisioned: false });
   const npm = fakeNpm();
   const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
@@ -143,11 +144,8 @@ test("a first launch runs `npm ci` in the server directory, keeps npm's output o
   const calls = readFileSync(npm.log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args, [...NPM_CI_ARGS]);
-  assert.equal(
-    calls[0].cwd.toLowerCase().replaceAll("\\", "/").endsWith("/mcp-server"),
-    true,
-    `npm ran in ${calls[0].cwd}, expected ${serverDir}`,
-  );
+  assert.equal(realpathSync(dirname(calls[0].cwd)), realpathSync(join(root, ".prd-gen-runtime")));
+  assert.notEqual(calls[0].cwd, serverDir);
   const lines = run.stdout.trim().split("\n");
   assert.equal(lines.length, 1, `stdout must hold the server's line only:\n${run.stdout}`);
   assert.equal(JSON.parse(lines[0]).ajv, true, "the server started after the install");
@@ -215,11 +213,34 @@ test("a completed install is recorded by a marker that names the lockfile it ins
   const npm = fakeNpm();
   assert.equal(needsProvisioning(serverDir), true);
   assert.equal(launch(root, [], withNpm(npm)).status, 0);
-  const marker = readFileSync(join(serverDir, "node_modules", MARKER_NAME), "utf8");
+  const cache = join(root, ".prd-gen-runtime");
+  const [published] = readdirSync(cache);
+  assert.match(published, /^[a-f0-9]{64}$/);
+  const marker = readFileSync(join(cache, published, "node_modules", MARKER_NAME), "utf8");
   assert.equal(marker, `${lockfileDigest(serverDir)}\n`);
   assert.match(marker, /^[0-9a-f]{64}\n$/);
   assert.equal(needsProvisioning(serverDir), false);
   assert.equal(existsSync(join(serverDir, LOCK_NAME)), false, "the lock is released");
+});
+
+test("a damaged published runtime is repaired once in a new directory", () => {
+  const { root } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  const env = withNpm(npm);
+  assert.equal(launch(root, [], env).status, 0);
+  const cache = join(root, ".prd-gen-runtime");
+  const [original] = readdirSync(cache);
+  const marker = join(cache, original, "node_modules", MARKER_NAME);
+  rmSync(marker);
+
+  for (let launchNumber = 0; launchNumber < 2; launchNumber++) {
+    const result = launch(root, [], env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).ajv, true);
+  }
+  assert.equal(npmCalls(npm), 2);
+  assert.equal(existsSync(marker), false);
+  assert.equal(readdirSync(cache).length, 2);
 });
 
 test("an install interrupted after ajv was written is repaired by the next launch", () => {
@@ -257,68 +278,131 @@ test("a failed install leaves no marker and no lock, so the next launch installs
   assert.equal(npmCalls(npm), 2);
 });
 
+function observeLaunch(root, environment, notice) {
+  const child = spawn(process.execPath, [LAUNCHER, root], {
+    env: { ...process.env, ...environment }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", data => { stdout += data; });
+  const ready = new Promise(resolve => {
+    child.stderr.on("data", data => {
+      stderr += data;
+      if (stderr.includes(notice)) resolve();
+    });
+  });
+  const done = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", status => resolve({ status, stdout, stderr }));
+  });
+  return { done, ready: Promise.race([ready, done.then(run => {
+    throw Error("launcher exited before " + notice + ": " + run.stderr);
+  })]) };
+}
+
 test("two launches at once install once, and both start the server on the installed tree", async () => {
+  const { root } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  const release = join(npm.dir, "release");
+  const env = withNpm(npm, { FAKE_NPM_RELEASE: release });
+  const first = observeLaunch(root, env, "install barrier ready");
+  let second;
+  try {
+    await first.ready;
+    second = observeLaunch(root, env, "another launch");
+    await second.ready;
+    assert.equal(npmCalls(npm), 1);
+  } finally {
+    writeFileSync(release, "");
+    const runs = await Promise.all(second ? [first.done, second.done] : [first.done]);
+    for (const run of runs) {
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(JSON.parse(run.stdout.trim()).ajv, true);
+    }
+  }
+  assert.equal(npmCalls(npm), 1);
+});
+
+test("unexpected errors probing an owner never relinquish its reservation", () => {
+  const denied = () => { throw Object.assign(new Error(), { code: "EPERM" }); };
+  assert.equal(processExists(process.pid), true);
+  assert.equal(processExists(1, denied), true);
+  assert.throws(() => processExists(1, () => { throw Error("probe unavailable"); }), /probe unavailable/);
+});
+
+test("a legacy install can finish without the new launcher replacing its lock", async () => {
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  const lock = join(serverDir, LOCK_NAME);
+  writeFileSync(lock, String(process.pid));
+  const child = spawn(process.execPath, [LAUNCHER, root], { stdio: ["ignore", "pipe", "pipe"] });
+  const done = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+  try {
+    const [notice] = await Promise.race([
+      new Promise(resolve => child.stderr.once("data", message => resolve([message]))),
+      done.then(code => { throw Error("launcher exited before waiting: " + code); }),
+    ]);
+    assert.match(String(notice), /another launch/);
+    assert.equal(readFileSync(lock, "utf8"), String(process.pid));
+    mkdirSync(join(serverDir, "node_modules", "ajv"), { recursive: true });
+    writeFileSync(join(serverDir, "node_modules", MARKER_NAME), lockfileDigest(serverDir));
+    rmSync(lock);
+    assert.equal(await done, 0);
+    assert.equal(existsSync(join(root, ".prd-gen-runtime")), false);
+  } finally {
+    child.kill();
+    await done;
+  }
+});
+
+test("abandoned legacy installations are isolated, including unpublished owner records", () => {
+  const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+  for (const record of [String(dead), "", "not a pid"]) {
+    const { root, serverDir } = fakePlugin({ provisioned: false });
+    const lock = join(serverDir, LOCK_NAME);
+    writeFileSync(lock, record);
+    const npm = fakeNpm();
+    const result = launch(root, [], withNpm(npm));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(lock, "utf8"), record);
+    assert.equal(existsSync(join(serverDir, "node_modules")), false);
+    assert.equal(needsProvisioning(serverDir), false);
+  }
+});
+
+test("a terminated provisioning owner leaves an isolated stage and two successors install once", async () => {
+  const { root, serverDir } = fakePlugin({ provisioned: false });
+  const provider = pathToFileURL(join(ROOT, "bin", "provision-runtime.mjs")).href;
+  const interrupted = spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { provisionRuntime } from ${JSON.stringify(provider)};
+     provisionRuntime(process.argv[1], dir => { console.log(dir); process.exit(24); });`, serverDir],
+    { encoding: "utf8" });
+  assert.equal(interrupted.status, 24, interrupted.stderr);
+  const abandoned = interrupted.stdout.trim();
+  assert.equal(existsSync(join(abandoned, "package-lock.json")), true);
+  const npm = fakeNpm();
+  const start = () => new Promise((resolve, reject) => {
+    const launcher = spawn(process.execPath, [LAUNCHER, root], { env: { ...process.env, ...withNpm(npm) } });
+    launcher.on("error", reject);
+    launcher.on("close", resolve);
+  });
+  assert.deepEqual(await Promise.all([start(), start()]), [0, 0]);
+  assert.equal(npmCalls(npm), 1);
+  // Late writes from the original npm child stay in its own working directory.
+  writeFileSync(join(abandoned, "index.js"), "throw Error('old installation');");
+  const next = launch(root, [], withNpm(npm));
+  assert.equal(next.status, 0, next.stderr);
+  assert.equal(JSON.parse(next.stdout).ajv, true);
+});
+
+test("a new server bundle uses its own runtime even with the same npm lock", () => {
   const { root, serverDir } = fakePlugin({ provisioned: false });
   const npm = fakeNpm();
-  const start = () =>
-    new Promise((done) => {
-      const child = spawn(process.execPath, [LAUNCHER, root], {
-        // The install outlasts the start of the second launcher by far.
-        env: { ...process.env, ...withNpm(npm, { FAKE_NPM_MS: "1500" }) },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk) => (stdout += chunk));
-      child.stderr.on("data", (chunk) => (stderr += chunk));
-      child.on("close", (status) => done({ status, stdout, stderr }));
-    });
-  const runs = await Promise.all([start(), start()]);
-  for (const run of runs) {
-    assert.equal(run.status, 0, run.stderr);
-    assert.equal(JSON.parse(run.stdout.trim()).ajv, true, "the server saw the installed tree");
-  }
-  assert.equal(npmCalls(npm), 1, "npm ci ran once for the two launches");
-  // At most one waited: under load the second may start after the first is
-  // done, and then finds the marker without ever seeing the lock.
-  assert.ok(runs.filter((run) => /another launch \(pid \d+\) is installing/.test(run.stderr)).length <= 1);
-  assert.equal(existsSync(join(serverDir, LOCK_NAME)), false);
-});
-
-test("a lock left by a launcher that no longer exists is taken over", () => {
-  const { serverDir } = fakePlugin({ provisioned: false });
-  const dead = spawnSync(process.execPath, ["-e", ""]).pid;
-  assert.equal(processExists(dead), false);
-  assert.equal(processExists(process.pid), true);
-  assert.equal(processExists(Number.NaN), false);
-  // EPERM: the process exists and is someone else's.
-  assert.equal(processExists(1, () => { throw Object.assign(new Error("x"), { code: "EPERM" }); }), true);
-  for (const content of [`${dead}\n`, "", "not a pid\n"]) {
-    writeFileSync(join(serverDir, LOCK_NAME), content);
-    const release = acquireLock(serverDir, { wait: () => {} });
-    assert.equal(readFileSync(join(serverDir, LOCK_NAME), "utf8"), `${process.pid}\n`);
-    release();
-    assert.equal(existsSync(join(serverDir, LOCK_NAME)), false);
-  }
-});
-
-test("a lock held by a live process is waited for, not broken", () => {
-  const { serverDir } = fakePlugin({ provisioned: false });
-  const lock = join(serverDir, LOCK_NAME);
-  writeFileSync(lock, "4242\n");
-  let polls = 0;
-  const release = acquireLock(serverDir, {
-    exists: (pid) => pid === 4242,
-    // The owner releases after three polls; until then the lock is its own.
-    wait: () => {
-      polls += 1;
-      assert.equal(readFileSync(lock, "utf8"), "4242\n");
-      if (polls === 3) rmSync(lock);
-    },
-  });
-  assert.equal(polls, 3);
-  assert.equal(readFileSync(lock, "utf8"), `${process.pid}\n`);
-  release();
+  assert.equal(launch(root, [], withNpm(npm)).status, 0);
+  writeFileSync(join(serverDir, "index.js"), "console.log('next version');");
+  assert.equal(launch(root, [], withNpm(npm)).stdout.trim(), "next version");
+  assert.equal(npmCalls(npm), 2);
 });
 
 test("one entry-point check serves every script, and holds through a linked directory", () => {

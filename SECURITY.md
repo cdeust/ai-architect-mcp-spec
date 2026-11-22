@@ -15,6 +15,11 @@ AI Architect MCP Spec is an MCP server that turns a feature description into a
     repository and installs nothing, so the launcher `bin/ensure-deps.mjs`
     runs `npm ci --omit=dev` against the committed
     `mcp-server/package-lock.json` on the first launch, on your machine.
+    The installer writes to a private staging directory. After npm exits successfully,
+    the launcher publishes the complete directory by rename. Concurrent launches
+    use the same installation for the same bundle, manifests, platform, architecture
+    and Node module ABI. An interrupted process can leave a private staging
+    directory in the plugin cache. A later installation uses its own directory.
   - *`.mcpb` bundle:* `scripts/release/stage-mcpb.sh` runs
     `npm ci --omit=dev --omit=optional` against the same lockfile when the
     release is built and packs the resulting `node_modules` (ajv and
@@ -77,7 +82,7 @@ control now exists, not because the alert was silenced:
 
 | check | control |
 |---|---|
-| `VulnerabilitiesID` | 39 advisories → 0, with `auditConfig.ignoreGhsas` (pnpm-workspace.yaml) emptied. Floors in `overrides` (pnpm-workspace.yaml) are each advisory's `first_patched_version`. |
+| `VulnerabilitiesID` | 39 advisories → 0, with `auditConfig.ignoreGhsas` (pnpm-workspace.yaml) emptied. Overrides in `pnpm-workspace.yaml` select patched releases at or above the applicable advisory floors and document scoped parent-range exceptions. |
 | `PinnedDependenciesID` | `bin/ensure-deps.mjs` runs `npm ci` against a committed `mcp-server/package-lock.json`, verifying integrity hashes on the user's machine. |
 | `TokenPermissionsID` | every workflow declares top-level `permissions:`. |
 | `DependencyUpdateToolID` | `.github/dependabot.yml`, covering `npm` **and** `github-actions` (SHA pins do not age out on their own). |

@@ -15,15 +15,29 @@ onlyBuiltDependencies:
   - better-sqlite3
 
 auditConfig:
-  # Issue #36: the ignore list is EMPTY and stays empty. Every GHSA it used to carry now has a published fix pinned in `overrides` below, so `pnpm audit --prod --audit-level high` blocks on real findings only. The former rationale claimed mathjs was 'absent from the shipped .mcpb' — that was false: `grep -c mathjs mcp-server/index.js` returns 709 on the bundle it described, so the 2-major bump was owed, not optional. Every override floor is the `first_patched_version` GitHub's advisory API reports for that GHSA, and each satisfies its declaring parent's own range (see SECURITY.md). Add an entry here only when an advisory has NO published fix, and only with the reproduction that shows it.
+  # Issue #36: the ignore list is EMPTY and stays empty. Every GHSA it used to carry now has a published fix pinned in `overrides` below, so `pnpm audit --prod --audit-level high` blocks on real findings only. The former rationale claimed mathjs was 'absent from the shipped .mcpb' — that was false: `grep -c mathjs mcp-server/index.js` returns 709 on the bundle it described, so the 2-major bump was owed, not optional. Overrides select patched releases at or above advisory floors. Parent-range exceptions are scoped and documented below (see SECURITY.md). Add an entry here only when an advisory has NO published fix, and only with the reproduction that shows it.
   ignoreGhsas: []
 
+# Zod's 4.6.6 fix a0ebf970 short-circuits oversized bounded collections.
+# Sandbox Runtime 0.0.83 explicitly imports zod/v3 in JS and .d.ts. Use the
+# fixed distribution and backport the same bounded checks to its v3 subpath
+# to retain those schemas. Remove this patch once Sandbox Runtime uses a
+# fixed parser without the v3 backport.
+patchedDependencies:
+  zod@4.6.7: patches/zod@4.6.7.patch
+
 overrides:
+  # source: GHSA-mrhx-c7xc-m3w5; 4.6.7 also ships the required zod/v3 API.
+  "@anthropic-ai/sandbox-runtime@0.0.83>zod": "4.6.7"
   "@hono/node-server": "^2.0.5"
   "body-parser": "^2.3.0"
   "fast-uri": "^3.1.8"
-  "hono": "^4.12.34"
+  # source: GHSA-46wx-v44x-9hh2 and four companion Hono advisories.
+  "hono": "^4.13.16"
   "ip-address": "^10.1.1"
+  # source: GHSA-g3hv-75wg-m249. Stryker 10.1.1 declares ~10.2.4 and
+  # uses the unchanged named minimatch and Minimatch API.
+  "@stryker-mutator/core@10.1.1>minimatch": "11.0.1"
   "postcss": "^8.5.18"
   "proxy-addr": "^2.0.8"
   # source: GHSA-6pq8-jhm2-2vcw; first patched release 6.16.1.

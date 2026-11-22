@@ -5,15 +5,22 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@anthropic-ai/sandbox-runtime@0.0.83>zod': 4.6.7
   '@hono/node-server': ^2.0.5
   body-parser: ^2.3.0
   fast-uri: ^3.1.8
-  hono: ^4.12.34
+  hono: ^4.13.16
   ip-address: ^10.1.1
+  '@stryker-mutator/core@10.1.1>minimatch': 11.0.1
   postcss: ^8.5.18
   proxy-addr: ^2.0.8
   qs: ^6.16.1
   vite: ^8.0.16
+
+patchedDependencies:
+  zod@4.6.7:
+    hash: ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed
+    path: patches/zod@4.6.7.patch
 
 importers:
 
@@ -66,7 +73,7 @@ importers:
         version: 15.2.0
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -85,7 +92,7 @@ importers:
         version: 12.11.1
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.0
@@ -104,7 +111,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
-        version: 1.32.2(zod@4.6.7)
+        version: 1.32.2(zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed))
       '@prd-gen/core':
         specifier: workspace:*
         version: link:../core
@@ -113,7 +120,7 @@ importers:
         version: link:../verification
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -126,7 +133,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
-        version: 1.32.2(zod@4.6.7)
+        version: 1.32.2(zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed))
       '@prd-gen/benchmark':
         specifier: workspace:*
         version: link:../benchmark
@@ -150,7 +157,7 @@ importers:
         version: link:../verification
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -169,7 +176,7 @@ importers:
         version: link:../strategy
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -200,7 +207,7 @@ importers:
         version: link:../verification
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -218,7 +225,7 @@ importers:
         version: link:../core
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -243,7 +250,7 @@ importers:
         version: 14.3.3
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/js-yaml':
         specifier: ^4.0.0
@@ -271,7 +278,7 @@ importers:
         version: link:../core
       zod:
         specifier: ^4.6.7
-        version: 4.6.7
+        version: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
     devDependencies:
       '@types/node':
         specifier: ^26.6.6
@@ -684,7 +691,7 @@ packages:
     resolution: {integrity: sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4.12.34
+      hono: ^4.13.16
 
   '@inquirer/ansi@2.1.0':
     resolution: {integrity: sha512-63GU5AD9KhNbWM0jlhHoMJTEFck2upFOPxHlnCKf3xYTV3rjTUUQfodihmTnfYQzMLS29oy8lK/gA1eJgu4bhA==}
@@ -819,6 +826,9 @@ packages:
     peerDependenciesMeta:
       '@types/node':
         optional: true
+
+  '@isaacs/nonrecursive-glob-match@1.1.0':
+    resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
 
   '@jridgewell/gen-mapping@0.4.0-beta.0':
     resolution: {integrity: sha512-JdGNkbE4GlNPYQhM0L95fBQr7ctLZJ276QXQLTad4t1oSdnnCI3fDq9DW3BqYAWv8Wc3+HS+4Gsii1oPMCfz1w==}
@@ -1547,8 +1557,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.13:
-    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
+  hono@4.13.20:
+    resolution: {integrity: sha512-xo6gecEJQ+CjTtOUUbcLHE8CdRKMeF4qITe+DT+OhFnSUmZR/ZBa9XavAfiGh4HlukmlaHFdaK4dz5tkTYFNmA==}
     engines: {node: '>=16.9.0'}
 
   http-errors@2.0.1:
@@ -1761,8 +1771,8 @@ packages:
   minimalistic-assert@1.0.1:
     resolution: {integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==}
 
-  minimatch@10.2.6:
-    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
+  minimatch@11.0.1:
+    resolution: {integrity: sha512-t+Vn6DX4wPCxS23y03C0uhF7S1jpi1GfqPrnlEipCJaA2ykiNbMkVlDutZtmvLfRcUN6R8AYVlzTsQrT4RZoLQ==}
     engines: {node: 18 || 20 || >=22}
 
   minimist@1.2.8:
@@ -2232,9 +2242,6 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -2245,7 +2252,7 @@ snapshots:
       '@pondwader/socks5-server': 1.0.10
       commander: 12.1.0
       node-forge: 1.4.3
-      zod: 3.25.76
+      zod: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
 
   '@babel/code-frame@8.0.6':
     dependencies:
@@ -2606,9 +2613,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@2.1.8(hono@4.13.13)':
+  '@hono/node-server@2.1.8(hono@4.13.20)':
     dependencies:
-      hono: 4.13.13
+      hono: 4.13.20
 
   '@inquirer/ansi@2.1.0': {}
 
@@ -2729,6 +2736,8 @@ snapshots:
     optionalDependencies:
       '@types/node': 26.6.6
 
+  '@isaacs/nonrecursive-glob-match@1.1.0': {}
+
   '@jridgewell/gen-mapping@0.4.0-beta.0':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -2743,9 +2752,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@modelcontextprotocol/sdk@1.32.2(zod@4.6.7)':
+  '@modelcontextprotocol/sdk@1.32.2(zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed))':
     dependencies:
-      '@hono/node-server': 2.1.8(hono@4.13.13)
+      '@hono/node-server': 2.1.8(hono@4.13.20)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -2755,13 +2764,13 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.6.0(express@5.2.1)
-      hono: 4.13.13
+      hono: 4.13.20
       jose: 6.2.4
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.6.7
-      zod-to-json-schema: 3.25.2(zod@4.6.7)
+      zod: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
+      zod-to-json-schema: 3.25.2(zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed))
     transitivePeerDependencies:
       - supports-color
 
@@ -2855,7 +2864,7 @@ snapshots:
       execa: 9.6.1
       json-rpc-2.0: 1.8.1
       lodash.groupby: 4.6.0
-      minimatch: 10.2.6
+      minimatch: 11.0.1
       mutation-server-protocol: 0.4.1
       mutation-testing-elements: 3.8.4
       mutation-testing-metrics: 3.8.4
@@ -3412,7 +3421,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.13: {}
+  hono@4.13.20: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -3576,8 +3585,9 @@ snapshots:
 
   minimalistic-assert@1.0.1: {}
 
-  minimatch@10.2.6:
+  minimatch@11.0.1:
     dependencies:
+      '@isaacs/nonrecursive-glob-match': 1.1.0
       brace-expansion: 5.0.13
 
   minimist@1.2.8: {}
@@ -3588,7 +3598,7 @@ snapshots:
 
   mutation-server-protocol@0.4.1:
     dependencies:
-      zod: 4.6.7
+      zod: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
 
   mutation-testing-elements@3.8.4: {}
 
@@ -4001,10 +4011,8 @@ snapshots:
 
   yoctocolors@2.2.0: {}
 
-  zod-to-json-schema@3.25.2(zod@4.6.7):
+  zod-to-json-schema@3.25.2(zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)):
     dependencies:
-      zod: 4.6.7
+      zod: 4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed)
 
-  zod@3.25.76: {}
-
-  zod@4.6.7: {}
+  zod@4.6.7(patch_hash=ebd3bacbfac345ad51035e8431c06b65a60c07160c4d5cb45ade9ccf1d0db2ed): {}

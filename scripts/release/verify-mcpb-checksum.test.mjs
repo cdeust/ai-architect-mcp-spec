@@ -8,7 +8,9 @@
  * reproduce exactly the blind spot #23 was.
  */
 
-import { cpSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -100,12 +102,7 @@ function copyWithEntryHelper(base) {
 // Windows, and for any path with a space, the two never match, so the release
 // step exited 0 having verified nothing.
 describe("run as a command", () => {
-  it("runs from a directory whose name holds a space", async () => {
-    const { spawnSync } = await import("node:child_process");
-    const { cpSync, mkdtempSync, rmSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+  it("runs from a directory whose name holds a space", () => {
     const dir = mkdtempSync(join(tmpdir(), "verify mcpb "));
     try {
       const script = copyWithEntryHelper(dir);
@@ -121,12 +118,7 @@ describe("run as a command", () => {
   // macOS tmpdir() sits under /var, a symlink to /private/var, so a URL guard
   // never matched there and the script exited 0. A linked directory gives the
   // same shape on every OS (a junction on Windows needs no privilege).
-  it("runs through a symlinked directory", async () => {
-    const { spawnSync } = await import("node:child_process");
-    const { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+  it("runs through a symlinked directory", () => {
     const dir = mkdtempSync(join(tmpdir(), "verify-mcpb-link-"));
     try {
       const real = join(dir, "real");
@@ -162,10 +154,7 @@ describe("never exits 0 without verifying", () => {
     expect(namesThisScript(SCRIPT_URL, undefined)).toBe(false);
   });
 
-  it("exits 0 with an OK line when it verified a matching pair", async () => {
-    const { spawnSync } = await import("node:child_process");
-    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
+  it("exits 0 with an OK line when it verified a matching pair", () => {
     const dir = mkdtempSync(join(tmpdir(), "verify-mcpb-ok-"));
     try {
       const bytes = Buffer.from("the bundle");
@@ -189,8 +178,7 @@ describe("never exits 0 without verifying", () => {
 
   // A program path that names the script but that the entry check cannot
   // resolve (here: it does not exist) is the shape of the #126 failures.
-  it("exits 2, not 0, when started as the command and the entry check misses", async () => {
-    const { spawnSync } = await import("node:child_process");
+  it("exits 2, not 0, when started as the command and the entry check misses", () => {
     const code =
       `process.argv[1] = "/no/such/dir/verify-mcpb-checksum.mjs";` +
       `await import(${JSON.stringify(SCRIPT_URL)});`;
