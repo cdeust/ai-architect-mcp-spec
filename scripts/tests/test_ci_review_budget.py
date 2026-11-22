@@ -167,6 +167,26 @@ class JqFilterTests(unittest.TestCase):
         new = {"jobs": [{"name": budget.BUDGET_JOB, "steps": []}, *old["jobs"]]}
         self.assertEqual(json.loads(self.jq(expr, new)), ["success"])
 
+    def test_native_round_requires_a_successful_independent_read_even_for_a_block(self):
+        workflow = yaml.safe_load(REVIEW.read_text())
+        job = workflow["jobs"]["verdict-codex"]
+        proof, enforce = job["steps"][-2:]
+        for read_status, expected in (("success", "codex"), ("failure", None)):
+            with self.subTest(read_status=read_status):
+                jobs = [
+                    {"name": budget.BUDGET_JOB, "steps": []},
+                    {"name": workflow["jobs"]["codex"]["name"], "steps": [
+                        {"name": budget.ACTION_STEP, "conclusion": "success"},
+                    ]},
+                    {"name": job["name"], "steps": [
+                        {"name": proof["name"], "conclusion": read_status},
+                        {"name": enforce["name"], "conclusion": "failure" if read_status == "success" else "skipped"},
+                    ]},
+                ]
+                actual = budget.review_source(lambda args: self.jq(args[-1], {"jobs": jobs}),
+                                              "o/r", run(1, 1, conclusion="failure"))
+                self.assertEqual(actual, expected)
+
     def test_the_budget_job_name_is_the_workflow_s(self):
         workflow = yaml.safe_load(REVIEW.read_text())
         self.assertEqual(workflow["jobs"]["budget"]["name"], budget.BUDGET_JOB)

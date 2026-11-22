@@ -45,6 +45,8 @@ EXHAUSTED = (
 )
 # The step of claude-review.yml that runs the action; the test pins this name.
 ACTION_STEP = "PR Review"
+NATIVE_PROOF_JOB = "Verify native Codex review verdict"
+NATIVE_PROOF_STEP = "Read the OpenAI verdict from GitHub again"
 # The job of claude-review.yml that runs this script; the test pins this name.
 # A run without it predates the review contract (the cap, then the verdict line
 # the merge waits for) and does not count: a pull request reviewed only under
@@ -112,9 +114,10 @@ def candidate_runs(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str):
 def review_source(gh: Gh, repo: str, run: Record) -> str | None:
     jq = (
         f'[select(any(.jobs[]; .name == "{BUDGET_JOB}")) | .jobs[] as $job | $job.steps[]? '
-        f'| select(.name == "{ACTION_STEP}") '
-        '| if $job.name == "Codex GitHub review" and .conclusion == "success" then "native-receipt" '
-        'elif $job.name == "Claude review" then .conclusion else empty end]'
+        f'| if $job.name == "{NATIVE_PROOF_JOB}" and .name == "{NATIVE_PROOF_STEP}" '
+        'and .conclusion == "success" then "native-receipt" '
+        f'elif $job.name == "Claude review" and .name == "{ACTION_STEP}" '
+        'then .conclusion else empty end]'
     )
     text = gh([f"repos/{repo}/actions/runs/{run['id']}/jobs", "--jq", jq])
     conclusions = json.loads(text)
