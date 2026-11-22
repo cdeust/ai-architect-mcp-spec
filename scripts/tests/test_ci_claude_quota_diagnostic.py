@@ -59,6 +59,14 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
         self.assertEqual("inconclusive", receipt["status"])
         self.assertNotEqual(0, code)
 
+    def test_unrecognized_exhaustion_cannot_admit_a_review(self):
+        for text in ("100.0% used", "0% used 100% used", "-1% used", "1000% used"):
+            with self.subTest(text=text):
+                code, receipt = self.probe(text, "0 input, 0 output",
+                                           "Current session\n▌ 10% used\nUsage credits are off")
+                self.assertNotEqual(0, code)
+                self.assertFalse(receipt["review_eligible"])
+
     def test_evidence_of_model_usage_fails(self):
         code, receipt = self.probe("24% used", "1 input, 1 output")
         self.assertFalse(receipt["zero_model_usage_verified"])

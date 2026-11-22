@@ -252,7 +252,9 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_review_waits_for_the_budget_and_honours_its_skip(self):
         review = self.jobs["review"]
-        self.assertEqual(review["needs"], "budget")
+        self.assertEqual(set(review["needs"]), {"budget", "admission"})
+        self.assertEqual(self.jobs["admission"]["needs"], "budget")
+        self.assertIn("needs.admission.outputs.reviewer == 'claude'", review["if"])
         self.assertIn("needs.budget.outputs.skip != 'true'", review["if"])
 
     def test_budget_and_review_share_the_same_event_predicate(self):

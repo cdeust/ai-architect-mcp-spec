@@ -110,11 +110,12 @@ def read_usage(home, token):
         # Subscription windows and a gateway spend_limit have different meanings.
         # https://code.claude.com/docs/en/statusline#spend-limit-fields
         def window(label):
-            matches = re.findall(
-                rf"^ *{re.escape(label)}[^\S\n]*\n[^\n]*?\b(\d{{1,3}})% used\b",
-                screen, re.MULTILINE,
-            )
-            return int(matches[0]) if len(matches) == 1 and int(matches[0]) <= 100 else None
+            lines = re.findall(rf"^ *{re.escape(label)}[^\S\n]*\n([^\n]*)", screen, re.MULTILINE)
+            if len(lines) != 1:
+                return None
+            # The pinned terminal uses Unicode block elements for the progress bar.
+            value = re.fullmatch(r"[\s\u2580-\u259f]*([0-9]{1,3})% used\s*", lines[0])
+            return int(value[1]) if value and int(value[1]) <= 100 else None
 
         weekly = window("Current week (all models)")
         if weekly is None:

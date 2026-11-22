@@ -9,7 +9,7 @@ outputs:
     description: Lowest remaining window percentage, or unknown
     value: ${{ steps.usage.outputs.remaining }}
   eligible:
-    description: All quota windows and subscription-only billing permit a review
+    description: Both measured windows have headroom and usage credits are off
     value: ${{ steps.usage.outputs.eligible }}
 runs:
   using: composite
