@@ -1,0 +1,75 @@
+name: Review subscription decision
+run-name: Route PR Review ${{ github.event.workflow_run.id }} attempt ${{ github.event.workflow_run.run_attempt }}
+
+# workflow_run executes from the default branch. Use the source run ID and
+# attempt as the rendezvous, even if another push starts on the same PR.
+on:
+  workflow_run:
+    workflows: [PR Review]
+    types: [in_progress]
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+jobs:
+  select:
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.path == '.github/workflows/claude-review.yml'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.actor.login != 'dependabot[bot]'
+      && github.event.workflow_run.pull_requests[0].number != null
+    environment: review-subscriptions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify this PR still needs admission
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          active=$(gh api "repos/$GH_REPO/pulls/$PR" | jq -r --arg sha "$HEAD_SHA" --arg repo "$GH_REPO" \
+            '(.head.sha == $sha and .head.repo.full_name == $repo and .base.ref == "main" and .state == "open" and .draft == false)')
+          echo "active=$active" >> "$GITHUB_OUTPUT"
+      - if: steps.current.outputs.active == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Await the source review budget
+        id: budget
+        if: steps.current.outputs.active == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          SOURCE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: python3 -I scripts/ci_review_route.py budget
+      - name: Measure Claude subscription quota
+        if: steps.budget.outputs.admitted == 'true'
+        id: claude
+        uses: ./.github/actions/claude-subscription-quota
+        with:
+          oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      - name: Compare subscription headroom
+        if: steps.budget.outputs.admitted == 'true'
+        id: choice
+        env:
+          CODEX_REVIEW_USAGE_TOKEN: ${{ secrets.CODEX_REVIEW_USAGE_TOKEN }}
+          CODEX_REVIEW_ACCOUNT_ID: ${{ vars.CODEX_REVIEW_ACCOUNT_ID }}
+          CLAUDE_ELIGIBLE: ${{ steps.claude.outputs.eligible }}
+          CLAUDE_REMAINING: ${{ steps.claude.outputs.remaining }}
+        run: python3 -I scripts/ci_review_subscription.py
+      - name: Select Claude
+        if: steps.choice.outputs.reviewer == 'claude'
+        run: echo "Claude selected"
+      - name: Request Codex
+        if: steps.choice.outputs.reviewer == 'codex'
+        run: echo "Codex selected"
+      - name: Reuse Codex
+        if: steps.choice.outputs.reviewer == 'codex-existing'
+        run: echo "Read an existing native review"

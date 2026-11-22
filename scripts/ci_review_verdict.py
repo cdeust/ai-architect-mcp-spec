@@ -98,7 +98,7 @@ def comments(gh: Gh, repo: str, pr: int) -> list[Record]:
     return rows
 
 
-def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
+def verdict_of_run(rows: list[Record], run_id: int, attempt_url: str | None = None) -> str | None:
     """The verdict the resolver would read for this run, or None.
 
     Of the reviewer comments that link this run, the last verdict line of each
@@ -110,7 +110,8 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
     gives the same verdict, or the same TypeError, here as there (note 2 of
     review 1 of #372).
     """
-    link = re.compile(re.escape(f"/actions/runs/{run_id}") + r"(?!\d)")
+    link = (re.compile(re.escape(f"]({attempt_url})")) if attempt_url else
+            re.compile(re.escape(f"/actions/runs/{run_id}") + r"(?!\d)"))
     found: list[tuple[str, str]] = []
     for row in rows:
         body = row.get("body") or ""
@@ -125,7 +126,8 @@ def verdict_of_run(rows: list[Record], run_id: int) -> str | None:
 
 
 def read_verdict(
-    read: Callable[[], list[Record]], run_id: int, sleep: Callable[[float], None]
+    read: Callable[[], list[Record]], run_id: int, sleep: Callable[[float], None],
+    attempt_url: str | None = None,
 ) -> tuple[str | None, int]:
     """The verdict of this run, read again while it is missing or the call fails.
 
@@ -141,7 +143,7 @@ def read_verdict(
     failed = 0
     for attempt in range(1, READ_ATTEMPTS):
         try:
-            found = verdict_of_run(read(), run_id)
+            found = verdict_of_run(read(), run_id, attempt_url)
         except TRANSIENT as error:
             failed += 1
             found, why = None, f"gh api failed: {type(error).__name__}"
@@ -151,14 +153,17 @@ def read_verdict(
             return found, failed
         print(f"Run {run_id}, read {attempt} of {READ_ATTEMPTS}: {why}; reading again.")
         sleep(READ_RETRY_SECONDS)
-    return verdict_of_run(read(), run_id), failed
+    return verdict_of_run(read(), run_id, attempt_url), failed
 
 
 def main() -> int:
     env = os.environ
     repo, pr, run_id = env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"])
+    attempt_url = None
+    if "RUN_ATTEMPT" in env:
+        attempt_url = f"https://github.com/{repo}/actions/runs/{run_id}/attempts/{int(env['RUN_ATTEMPT'])}"
     verdict, failed = read_verdict(
-        lambda: comments(gh_api, repo, pr), run_id, time.sleep
+        lambda: comments(gh_api, repo, pr), run_id, time.sleep, attempt_url
     )
     if verdict is None:
         print(
