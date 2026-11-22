@@ -34,9 +34,10 @@ therefore already hold on the release branch: run it locally first (below).
 
 Two consequences:
 
-- A plugin install runs no build (`bin/ensure-deps.mjs` only runs `npm ci` in
-  `mcp-server/`), so a stale committed bundle is what plugin users get. The
-  release commit carries a rebuilt bundle.
+- The launcher installs the committed npm manifests in a private staging directory
+  and publishes the matching bundle and dependencies together under
+  `.prd-gen-runtime/`. It reuses a completed legacy installation in
+  `mcp-server/node_modules/`. The release commit supplies the rebuilt bundle.
 - `release.yml` rebuilds and then runs
   `git diff --exit-code packages/mcp-server/dist/` ("Verify mcp-server bundle
   is current"). A committed `packages/mcp-server/dist` that is behind the

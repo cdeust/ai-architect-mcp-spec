@@ -3,6 +3,7 @@
  * quality ("fast", "user-friendly") with no number is a blocking,
  * non-critical finding of the document check.
  */
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { isBlockingViolation } from "@prd-gen/core";
 import { validateDocument } from "../index.js";
@@ -651,44 +652,23 @@ describe("measurable_requirements (#118)", () => {
   });
 
   it("ends a definition at the next one, reads an indented bold line, keeps a wrapped quantity of a numbered statement, and reads a bold line under an HTML tag (PR #299 review, Codex P2 and note 2)", () => {
-    // FR-001: the nested FR-002 is a definition of its own, so its `2` does
-    // not bound FR-001. FR-003: the heading body ends at the bold line below
-    // it, so NFR-004's `3` does not bound it. NFR-005: an indented
-    // continuation line is still a bold line. NFR-006: `2000.` is not the
-    // next marker of the statement's list (`1.`), so it is the bound.
-    const content = [
-      "## Requirements",
-      "",
-      ...["- FR-001: Search must be fast.", "  - FR-002: Export finishes within 2 seconds.", ""],
-      ...["### FR-003: Import must be fast.", "", "**NFR-004** Login within 3 seconds.", "", "## Next", ""],
-      ...["Intro", "  **NFR-005** Search must be fast.", ""],
-      ...["**NFR-006** 1. Search must be fast; the maximum count is", "    2000. Larger collections page.", "", "## Next", ""],
-      // NFR-007: with no blank line, `<div>` and the bold line are one HTML
-      // block, whose source is read again as markdown, so the bold line
-      // defines it.
-      ...["<div>", "**NFR-007** Search must be fast.", "", "## Next", ""],
-      // FR-008: the table's rows above FR-009's row are its body and hold its
-      // bound; FR-009 is a definition of its own (PR #300 review, Codex P2).
-      ...["### FR-008: Search must be fast.", "", "| Metric | Target |", "|---|---|", "| Search latency | 200 ms |", "| FR-009 | Export must be easy. |", "", "## Next", ""],
-      // FR-010: a definition inside an HTML comment is not read (PR #300
-      // review, note 1). FR-011: `FR-011-AC1` is no identifier of its own, so
-      // its 200 ms goes on with FR-011 and bounds it (PR #300 review, note 2).
-      ...["<!--", "- FR-010: Offline mode should be seamless.", "-->", ""],
-      ...["- FR-011: Search must be fast.", "  - FR-011-AC1: p95 under 200 ms.", "", "## Next", ""],
-      // FR-012: the digit of `FR-012-AC1` is part of an identifier, not a
-      // bound. FR-013 and FR-014: a list item or a heading right under an
-      // HTML line is read as one (PR #301 review, Codex P2).
-      ...["- FR-012: Search must be fast.", "  - FR-012-AC1: Results are listed.", ""],
-      ...["<div>", "- FR-013: Search must be fast.", "", "<div>", "### FR-014: Import must be fast.", "", "## Next", ""],
-      // FR-015: a comment inside an HTML block stays unread when the block
-      // is parsed again (PR #302 review, Codex P2).
-      ...["<div>", "<!--", "- FR-015: Search must be fast.", "-->", "</div>", ""],
-      // FR-016: a raw-text block (`<pre>`) defines nothing. NFR-017: the
-      // `500` of `NFR-017-500` is a number, so it bounds the requirement
-      // (PR #302 review, notes 1 and 2).
-      ...["<pre>", "- FR-016: Search must be fast.", "</pre>", ""],
-      ...["- NFR-017: Search must be fast for NFR-017-500 rows."],
-    ].join("\n");
+    // NFR-007: with no blank line, `<div>` and the bold line are one HTML
+    // block, whose source is read again as markdown, so the bold line
+    // defines it.
+    // FR-008: the table's rows above FR-009's row are its body and hold its
+    // bound; FR-009 is a definition of its own (PR #300 review, Codex P2).
+    // FR-010: a definition inside an HTML comment is not read (PR #300
+    // review, note 1). FR-011: `FR-011-AC1` is no identifier of its own, so
+    // its 200 ms goes on with FR-011 and bounds it (PR #300 review, note 2).
+    // FR-012: the digit of `FR-012-AC1` is part of an identifier, not a
+    // bound. FR-013 and FR-014: a list item or a heading right under an
+    // HTML line is read as one (PR #301 review, Codex P2).
+    // FR-015: a comment inside an HTML block stays unread when the block
+    // is parsed again (PR #302 review, Codex P2).
+    // FR-016: a raw-text block (`<pre>`) defines nothing. NFR-017: the
+    // `500` of `NFR-017-500` is a number, so it bounds the requirement
+    // (PR #302 review, notes 1 and 2).
+    const content = readFileSync(new URL("./fixtures/measurable-requirements/nested-definitions.md", import.meta.url), "utf8");
     expect(findings(content).map((v) => v.message)).toEqual([
       '8 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-003 ("fast"), NFR-005 ("fast"), NFR-007 ("fast"), FR-009 ("easy"), FR-012 ("fast"), FR-013 ("fast"), FR-014 ("fast")',
     ]);
@@ -719,51 +699,33 @@ describe("measurable_requirements (#118)", () => {
   });
 
   it("skips comment and raw-text openings in a code block of an HTML block, reads across its comment lines without joining them, and hides what an unclosed top-level `<!--` covers (PR #304 review, Codex P2 and notes 1 to 3)", () => {
-    const content = [
-      "## Requirements",
-      "",
-      // FR-001 and FR-002: a `<pre>` or a `<!--` in a fenced block of an
-      // HTML block is code, so the item under the fence is read.
-      ...["<div>", "```html", "<pre>", "```", "- FR-001: Search must be fast.", "</div>", ""],
-      ...["<div>", "```", "<!--", "```", "- FR-002: Import must be fast.", "-->", "</div>", ""],
-      // FR-003: the item under the comment line goes on with the paragraph,
-      // so its `2` bounds FR-003 (note 1).
-      ...["<div>", "**FR-003** Search is fast.", "<!-- reviewed -->", "- Results load in 2 s.", ""],
-      // FR-004: the `---` under the comment line is a thematic break, not a
-      // setext underline, so FR-004 is still defined (note 2).
-      ...["<div>", "**FR-004** Export is fast.", "<!-- end -->", "---", ""],
-      // FR-005: at the top level an unclosed `<!--` opens a comment block
-      // that runs to the section's end, so FR-005 is not read (note 3).
-      ...["<!-- open", "- FR-005: Login must be easy."],
-    ].join("\n");
+    // FR-001 and FR-002: a `<pre>` or a `<!--` in a fenced block of an
+    // HTML block is code, so the item under the fence is read.
+    // FR-003: the item under the comment line goes on with the paragraph,
+    // so its `2` bounds FR-003 (note 1).
+    // FR-004: the `---` under the comment line is a thematic break, not a
+    // setext underline, so FR-004 is still defined (note 2).
+    // FR-005: at the top level an unclosed `<!--` opens a comment block
+    // that runs to the section's end, so FR-005 is not read (note 3).
+    const content = readFileSync(new URL("./fixtures/measurable-requirements/fenced-html.md", import.meta.url), "utf8");
     expect(findings(content).map((v) => v.message)).toEqual([
       '3 requirement(s) state an unbounded quality with no number: FR-001 ("fast"), FR-002 ("fast"), FR-004 ("fast")',
     ]);
   });
 
   it("opens a comment or raw-text block of an HTML block where the parser opens a block, so a fence inside it opens nothing and an item keeps it (PR #305 review, two Codex P2 findings and note 2)", () => {
-    const fence = "```";
-    const content = [
-      "## Requirements",
-      "",
-      // FR-001: the fence inside the first comment opens no code block, so
-      // the second `<!--` opens a comment and FR-001 stays hidden.
-      ...["<div>", "<!--", fence, "-->", "<!--", "- FR-001: Search is fast.", "-->", "</div>", ""],
-      // FR-002: the same with a fence inside a `<pre>` block.
-      ...["<div>", "<pre>", fence, "</pre>", "<!--", "- FR-002: Import is fast.", "-->", "</div>", ""],
-      // FR-003: a comment inside a list item stays in it, so the nested item
-      // under it is a list item, not a code block, and defines FR-003.
-      ...["<div>", "- Notes", "  <!-- reviewed -->", "    - FR-003: Export is fast.", "</div>", ""],
-      // FR-004: the item's paragraph goes on under the comment, so `2`
-      // bounds FR-004 (note 2).
-      ...["<div>", "- **FR-004** Sync is fast.", "  <!-- x -->", "  within 2 s.", "</div>", ""],
-      // FR-005: a comment in the middle of a line is text, as at the top
-      // level, so FR-005 is defined.
-      ...["<div>", "- FR-005: Login is fast. <!-- x --> More text.", "</div>", ""],
-      // FR-006: an unclosed `<!--` hides the rest of its HTML block, as it
-      // hides the rest of the section at the top level.
-      ...["<div>", "<!-- open", "- FR-006: Upload is fast.", "", "- FR-007: Backup is fast."],
-    ].join("\n");
+    // FR-001: the fence inside the first comment opens no code block, so
+    // the second `<!--` opens a comment and FR-001 stays hidden.
+    // FR-002: the same with a fence inside a `<pre>` block.
+    // FR-003: a comment inside a list item stays in it, so the nested item
+    // under it is a list item, not a code block, and defines FR-003.
+    // FR-004: the item's paragraph goes on under the comment, so `2`
+    // bounds FR-004 (note 2).
+    // FR-005: a comment in the middle of a line is text, as at the top
+    // level, so FR-005 is defined.
+    // FR-006: an unclosed `<!--` hides the rest of its HTML block, as it
+    // hides the rest of the section at the top level.
+    const content = readFileSync(new URL("./fixtures/measurable-requirements/html-containers.md", import.meta.url), "utf8");
     expect(findings(content).map((v) => v.message)).toEqual([
       '3 requirement(s) state an unbounded quality with no number: FR-003 ("fast"), FR-005 ("fast"), FR-007 ("fast")',
     ]);

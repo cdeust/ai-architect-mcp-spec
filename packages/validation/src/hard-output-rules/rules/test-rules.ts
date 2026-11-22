@@ -4,87 +4,78 @@ import { findPatternViolations, makeViolation } from "./helpers.js";
 const PLACEHOLDER_MESSAGE =
   "Found placeholder test with empty or TODO-only body";
 
-/**
- * A body is "placeholder" when it carries a TODO/FIXME/PLACEHOLDER comment.
- * Applied ONCE to an already-extracted body, so it cannot backtrack: there is
- * no quantifier around it to re-split the input.
- */
 const PLACEHOLDER_COMMENT = /\/\/\s*(?:TODO|FIXME|PLACEHOLDER)/;
+const MATRIX_PLACEHOLDER = /^[ \t]*\|[ \t]*test\w+[ \t]*\|[^|\n]*\|[ \t]*(?:`[ \t]*)?\/\/[ \t]*(?:TODO|Setup)/gm;
+
+/**
+ * Read Swift test headers in source order. A new declaration starts fresh
+ * when a draft signature is unfinished. Parentheses in tuple and function
+ * parameter types belong to that signature.
+ */
+function* swiftTestHeaders(content: string) {
+  const headerTokens = /\bfunc\s+test\w+\s*\(|[()"]|\/\/|\/\*/g;
+  // Inside a signature, comments and string defaults can contain punctuation.
+  const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|$)/y;
+  const bodyOpening = /\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{/y;
+  let start = 0;
+  let depth = 0;
+
+  let token: RegExpExecArray | null;
+  while ((token = headerTokens.exec(content)) !== null) {
+    if (token[0].startsWith("func")) {
+      start = token.index;
+      depth = 1;
+    } else if (depth > 0) {
+      if (token[0] === "(") {
+        depth++;
+      } else if (token[0] === ")") {
+        if (--depth === 0) {
+          bodyOpening.lastIndex = headerTokens.lastIndex;
+          if (bodyOpening.test(content)) yield { start, bodyStart: bodyOpening.lastIndex };
+        }
+      } else {
+        parameterTrivia.lastIndex = token.index;
+        if (parameterTrivia.test(content)) headerTokens.lastIndex = parameterTrivia.lastIndex;
+      }
+    }
+  }
+}
 
 // Rule 7: No Placeholder Tests
 export function checkNoPlaceholderTests(
   content: string,
   sectionType: SectionType,
 ): HardOutputRuleViolation[] {
-  // The body pattern was
-  //   `…\{[^}]*\/\/\s*(?:TODO|FIXME|PLACEHOLDER)[^}]*\}`
-  // and was quadratic (js/polynomial-redos): with the closing brace absent,
-  // the leading `[^}]*` offers a split at every `//` and the trailing
-  // `[^}]*\}` rescans to end-of-input for each one. Measured 3.89x, 4.01x,
-  // 4.00x per doubling (11 ms at 12 KB, 713 ms at 96 KB).
-  //
-  // A brace-run is delimited, so capturing it once and testing the capture is
-  // both linear and exactly equivalent: `[^}]` cannot cross `}`, so the old
-  // pattern already required the comment to sit in the FIRST brace-run — the
-  // very text `([^}]*)` captures. A 30k-input differential (old regex vs this
-  // form, including nested-brace, missing-brace and multi-function cases)
-  // reported 0 differing inputs. Measured 1.98x per doubling after the change.
-  //
-  // Driven by `.exec`, so it is built per call rather than hoisted: `.exec`
-  // advances `lastIndex` on a /g regex, and a shared object would carry that
-  // state into the next call (same reason sp-rules.ts hoists only its
-  // `matchAll` pattern).
-  const testFuncBody =
-    /func\s+test\w+\s*\([^)]*\)\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{([^}]*)\}/g;
+  const comments: HardOutputRuleViolation[] = [];
+  const empty: HardOutputRuleViolation[] = [];
+  const emptyBody = /\s*\}/y;
+  let end = -1;
 
-  const violations: HardOutputRuleViolation[] = [];
+  const finding = (start: number, endExclusive: number) => makeViolation(
+    "no_placeholder_tests", sectionType, PLACEHOLDER_MESSAGE,
+    content.slice(start, endExclusive).substring(0, 120),
+  );
 
-  let bodyMatch: RegExpExecArray | null;
-  while ((bodyMatch = testFuncBody.exec(content)) !== null) {
-    if (!PLACEHOLDER_COMMENT.test(bodyMatch[1])) continue;
-    violations.push(
-      makeViolation(
-        "no_placeholder_tests",
-        sectionType,
-        PLACEHOLDER_MESSAGE,
-        bodyMatch[0].substring(0, 120),
-      ),
-    );
+  for (const { start, bodyStart } of swiftTestHeaders(content)) {
+    // The rule inspects the body up to its first closing brace. Process each
+    // such span once, including when it contains another declaration.
+    if (start > end) {
+      end = content.indexOf("}", bodyStart);
+      if (end === -1) break;
+      if (PLACEHOLDER_COMMENT.test(content.slice(bodyStart, end))) {
+        comments.push(finding(start, end + 1));
+      }
+    }
+    // An empty nested test is independently reportable. Its whitespace can
+    // only extend to the next token, so this check never rescans a body.
+    emptyBody.lastIndex = bodyStart;
+    if (emptyBody.test(content)) empty.push(finding(start, emptyBody.lastIndex));
   }
 
-  // The empty-body and matrix-row patterns stay declarative — neither has a
-  // quantifier pair that can re-split the same characters.
-  //
-  // The matrix row was `^\s*\|\s*test\w+\s*\|[^|]*\|\s*`?\s*\/\/\s*(?:TODO|Setup)`,
-  // quadratic through the ``\s*`?\s*`` pair: with the backtick absent, a run of
-  // spaces can be split between the two `\s*` in n+1 ways. Measured 3.95x,
-  // 3.99x, 4.04x per doubling. `[ \t]*(?:`[ \t]*)?` accepts the same language
-  // — whitespace, optionally a backtick, optionally more whitespace — with
-  // exactly one parse, and measured 1.97x after the change.
-  //
-  // The classes are narrowed to horizontal space in the same edit because the
-  // rule is about ONE matrix row: `\s` and `[^|]` both match `\n`, so the old
-  // pattern also accepted the `// TODO` on a LATER line than the row it
-  // belongs to. That is the single behavioural delta a 20k-input differential
-  // found, and it is pinned by a test.
-  const patterns: readonly RegExp[] = [
-    /func\s+test\w+\s*\([^)]*\)\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{\s*\}/g,
-    /^[ \t]*\|[ \t]*test\w+[ \t]*\|[^|\n]*\|[ \t]*(?:`[ \t]*)?\/\/[ \t]*(?:TODO|Setup)/gm,
+  return [
+    ...comments, ...empty,
+    ...findPatternViolations(MATRIX_PLACEHOLDER, content, "no_placeholder_tests", sectionType, PLACEHOLDER_MESSAGE),
   ];
-
-  for (const pattern of patterns) {
-    violations.push(
-      ...findPatternViolations(
-        pattern,
-        content,
-        "no_placeholder_tests",
-        sectionType,
-        PLACEHOLDER_MESSAGE,
-      ),
-    );
-  }
-
-  return violations;
 }
 
 // Rule 17: Test Traceability Integrity

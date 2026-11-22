@@ -423,7 +423,10 @@ jobs:
           ACTUAL=""
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             ACTUAL=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec" \
-              | python3 -c "import json, sys; d = json.load(sys.stdin); latest = next(s for s in d['servers'] if s['server']['name'] == 'io.github.cdeust/ai-architect-mcp-spec' and s['_meta']['io.modelcontextprotocol.registry/official']['isLatest']); print(latest['server']['version'])")
+              | jq -er 'first(.servers[] | select(
+                  .server.name == "io.github.cdeust/ai-architect-mcp-spec"
+                  and ._meta["io.modelcontextprotocol.registry/official"].isLatest == true
+                ) | .server.version) | strings | select(length > 0)')
             echo "Attempt ${attempt}/${MAX_ATTEMPTS}: registry reports latest version ${ACTUAL} (expected ${VERSION})"
             if [ "$ACTUAL" = "$VERSION" ]; then
               echo "Registry converged to ${VERSION} on attempt ${attempt}."

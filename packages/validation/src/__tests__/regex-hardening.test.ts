@@ -178,6 +178,29 @@ describe("placeholder-test detection", () => {
     expect(violations[0].offendingContent).toContain("testB");
   });
 
+  it("reads nested Swift parameters and preserves the finding for each placeholder", () => {
+    const pending = "func testInvoice(period: (Int, Int)) async throws { // TODO }";
+    const empty = "func testBalance(completion: (Int) -> Void) {  }";
+    const ready = "func testTotals() { XCTAssertEqual(total, expected) }";
+    expect(placeholderViolations([empty, ready, pending].join("\n")).map((v) => v.offendingContent))
+      .toEqual([pending, empty]);
+  });
+
+  it("keeps punctuation inside parameter comments and string defaults out of the signature", () => {
+    const tests = [
+      'func testCurrency(label: String = "(") { }',
+      "func testInvoice( // invoice group (draft\n  id: Int) { }",
+      "func testBalance(/* account group ( */ id: Int) { }",
+    ];
+    expect(placeholderViolations(tests.join("\n")).map((v) => v.offendingContent)).toEqual(tests);
+  });
+
+  it("attributes a complete test following an unfinished declaration to its own name", () => {
+    const pending = "func testInvoice() { // TODO }";
+    expect(placeholderViolations("func testDraft(\n" + pending).map((v) => v.offendingContent))
+      .toEqual([pending]);
+  });
+
   it.each([
     "| test_a | covers AC-1 | // TODO",
     "| test_a | covers AC-1 | ` // TODO",
