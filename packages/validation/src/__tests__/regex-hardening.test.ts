@@ -265,6 +265,12 @@ describe("placeholder-test detection", () => {
     expect(finding?.offendingContent).toBe(source.slice(0, 120));
   });
 
+  it("keeps a declaration without a body from taking the next test's placeholder", () => {
+    const draft = "func testDraft()";
+    const pending = "func testInvoice() { // TODO }";
+    expect(placeholderViolations([draft, pending].join("\n")).map((v) => v.offendingContent)).toEqual([pending]);
+  });
+
   it("attributes a complete test following an unfinished declaration to its own name", () => {
     const pending = "func testInvoice() { // TODO }";
     expect(placeholderViolations("func testDraft(\n" + pending).map((v) => v.offendingContent))
