@@ -223,6 +223,26 @@ test("a completed install is recorded by a marker that names the lockfile it ins
   assert.equal(existsSync(join(serverDir, LOCK_NAME)), false, "the lock is released");
 });
 
+test("a damaged published runtime is repaired once in a new directory", () => {
+  const { root } = fakePlugin({ provisioned: false });
+  const npm = fakeNpm();
+  const env = withNpm(npm);
+  assert.equal(launch(root, [], env).status, 0);
+  const cache = join(root, ".prd-gen-runtime");
+  const [original] = readdirSync(cache);
+  const marker = join(cache, original, "node_modules", MARKER_NAME);
+  rmSync(marker);
+
+  for (let launchNumber = 0; launchNumber < 2; launchNumber++) {
+    const result = launch(root, [], env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).ajv, true);
+  }
+  assert.equal(npmCalls(npm), 2);
+  assert.equal(existsSync(marker), false);
+  assert.equal(readdirSync(cache).length, 2);
+});
+
 test("an install interrupted after ajv was written is repaired by the next launch", () => {
   // The state the first launcher took for a finished install: the sentinel
   // package is there, the rest of the tree is not, and no install completed.

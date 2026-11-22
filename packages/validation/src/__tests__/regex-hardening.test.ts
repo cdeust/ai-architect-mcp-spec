@@ -195,6 +195,21 @@ describe("placeholder-test detection", () => {
     expect(placeholderViolations(tests.join("\n")).map((v) => v.offendingContent)).toEqual(tests);
   });
 
+  it("keeps nested Swift comments in a parameter list opaque until the outer close", () => {
+    const pending = [
+      "func testInvoice(",
+      "  /* Accounting periods /* quarterly */ use the opening marker ( */",
+      "  id: Int",
+      ") { }",
+    ].join("\n");
+    expect(placeholderViolations(pending).map((v) => v.offendingContent)).toEqual([pending]);
+  });
+
+  it("leaves a declaration with an unclosed parameter comment unfinished", () => {
+    const draft = "func testDraft(/* account group /* quarterly */\nfunc testInvoice() { }";
+    expect(placeholderViolations(draft)).toEqual([]);
+  });
+
   it("attributes a complete test following an unfinished declaration to its own name", () => {
     const pending = "func testInvoice() { // TODO }";
     expect(placeholderViolations("func testDraft(\n" + pending).map((v) => v.offendingContent))

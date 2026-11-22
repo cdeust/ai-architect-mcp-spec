@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
+import { holdsNativeBash } from "../check-health-stdio.mjs";
 
 const root = createRequire(new URL("../../package.json", import.meta.url));
 const sandbox = root.resolve("@anthropic-ai/sandbox-runtime/package.json");
@@ -56,22 +58,96 @@ test("bounded Zod v3 collections reject before visiting elements in both module 
   }
 });
 
-test("release reads the target latest version from JSON without executing the response", () => {
+const registryName = "io.github.cdeust/ai-architect-mcp-spec";
+const version = "0.9.0";
+const row = (name, version, isLatest) => ({
+  server: { name, version },
+  _meta: { "io.modelcontextprotocol.registry/official": { isLatest } },
+});
+
+function registryVerificationCommands(workflow) {
+  const lines = workflow.split(/\r?\n/u);
+  const step = lines.indexOf("      - name: Verify the registry now serves the published version");
+  expect(step).toBeGreaterThanOrEqual(0);
+  expect(lines[step + 1]).toBe("        run: |");
+  const commands = [];
+  for (const line of lines.slice(step + 2)) {
+    if (!line.startsWith("          ") && line.trim()) break;
+    commands.push(line.slice(10));
+  }
+  return commands.join("\n");
+}
+
+function fixtureBash() {
+  if (process.platform !== "win32") return "bash";
+  // Avoid the WSL launcher in System32, as in the Windows health check.
+  const path = process.env.Path ?? process.env.PATH ?? "";
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  const gitBash = join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin");
+  const native = [gitBash, ...path.split(delimiter)]
+    .find((directory) => directory && holdsNativeBash(directory, systemRoot)
+      && existsSync(join(directory, "bash.exe")));
+  expect(native, "Git Bash must be available on the Windows runner").toBeDefined();
+  return join(native, "bash.exe");
+}
+
+function runRegistryVerification(first, next = first) {
   const workflow = readFileSync(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
-  const step = workflow.split("- name: Verify the registry now serves the published version")[1];
-  const queryStart = step.indexOf("| jq -er '") + "| jq -er '".length;
-  const queryEnd = step.indexOf("')", queryStart);
-  expect(queryEnd).toBeGreaterThan(queryStart);
-  const query = step.slice(queryStart, queryEnd);
-  const row = (name, version, isLatest) => ({
-    server: { name, version },
-    _meta: { "io.modelcontextprotocol.registry/official": { isLatest } },
-  });
-  const name = "io.github.cdeust/ai-architect-mcp-spec";
-  const servers = [row("other", "9.0.0", true), row(name, "0.8.0", false), row(name, "0.9.0", true)];
-  const parse = (rows) => spawnSync("jq", ["-er", query], {
-    input: JSON.stringify({ servers: rows }), encoding: "utf8",
-  });
-  expect(parse(servers)).toMatchObject({ status: 0, stdout: "0.9.0\n" });
-  expect(parse(servers.slice(0, -1)).status).not.toBe(0);
+  const commands = registryVerificationCommands(workflow);
+  const work = mkdtempSync(join(tmpdir(), "registry-verification-"));
+  try {
+    const write = (file, contents, mode) => writeFileSync(join(work, file), contents, { mode });
+    write("server.runtime.json", JSON.stringify({ version }));
+    write("first.json", JSON.stringify(first));
+    write("next.json", JSON.stringify(next));
+    write("curl", '#!/usr/bin/env bash\nprintf "curl\\n" >> probes\nif [ -e started ]; then cat next.json; else touch started; cat first.json; fi\n', 0o755);
+    write("sleep", '#!/usr/bin/env bash\nprintf "sleep\\n" >> probes\n', 0o755);
+    // Git Bash converts the native cwd to its shell path; Node leaves PATH alone.
+    const fixturePath = 'export PATH="$PWD:$PATH"\n'
+      + '[[ $(type -P curl) == "$PWD/curl" && $(type -P sleep) == "$PWD/sleep" ]] || exit 97\n';
+    const result = spawnSync(fixtureBash(), ["-c", fixturePath + commands], {
+      cwd: work, encoding: "utf8",
+    });
+    expect(result.error).toBeUndefined();
+    return { ...result, probes: readFileSync(join(work, "probes"), "utf8") };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+test("release retries an empty registry, then selects the target latest version", () => {
+  const result = runRegistryVerification(
+    { servers: [] },
+    { servers: [row("other", "9.0.0", true), row(registryName, "0.8.0", false), row(registryName, version, true)] },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("registry reports latest version <none>");
+  expect(result.stdout).toContain("Registry converged to 0.9.0 on attempt 2.");
+  expect(result.probes).toBe("curl\nsleep\ncurl\n");
+});
+
+test("release exhausts its bounded retry when a valid registry still has no latest version", () => {
+  const result = runRegistryVerification({ servers: [row(registryName, version, false)] });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toContain("after 12 attempts");
+  expect(result.probes).toBe("curl\nsleep\n".repeat(11) + "curl\n");
+});
+
+test("release rejects a malformed registry response without polling", () => {
+  const result = runRegistryVerification({ servers: null });
+  expect(result.status).not.toBe(0);
+  expect(result.probes).toBe("curl\n");
+});
+
+
+test("release shell extraction stops before a later workflow sibling", () => {
+  const sample = [
+    "      - name: Verify the registry now serves the published version",
+    "        run: |",
+    "          echo actual step",
+    "",
+    "      - name: Later workflow step",
+    "        run: echo outside the fixture",
+  ].join("\n");
+  expect(registryVerificationCommands(sample).trim()).toBe("echo actual step");
 });

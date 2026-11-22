@@ -49398,9 +49398,21 @@ function checkFKReferencesExist(content, sectionType) {
 var PLACEHOLDER_MESSAGE = "Found placeholder test with empty or TODO-only body";
 var PLACEHOLDER_COMMENT = /\/\/\s*(?:TODO|FIXME|PLACEHOLDER)/;
 var MATRIX_PLACEHOLDER = /^[ \t]*\|[ \t]*test\w+[ \t]*\|[^|\n]*\|[ \t]*(?:`[ \t]*)?\/\/[ \t]*(?:TODO|Setup)/gm;
+function blockCommentEnd(content, afterOpening) {
+  const delimiter = /\/\*|\*\//g;
+  delimiter.lastIndex = afterOpening;
+  let depth = 1;
+  let token;
+  while ((token = delimiter.exec(content)) !== null) {
+    depth += token[0] === "/*" ? 1 : -1;
+    if (depth === 0)
+      return delimiter.lastIndex;
+  }
+  return content.length;
+}
 function* swiftTestHeaders(content) {
   const headerTokens = /\bfunc\s+test\w+\s*\(|[()"]|\/\/|\/\*/g;
-  const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|$)/y;
+  const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*/y;
   const bodyOpening = /\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{/y;
   let start = 0;
   let depth = 0;
@@ -49418,6 +49430,8 @@ function* swiftTestHeaders(content) {
           if (bodyOpening.test(content))
             yield { start, bodyStart: bodyOpening.lastIndex };
         }
+      } else if (token[0] === "/*") {
+        headerTokens.lastIndex = blockCommentEnd(content, headerTokens.lastIndex);
       } else {
         parameterTrivia.lastIndex = token.index;
         if (parameterTrivia.test(content))

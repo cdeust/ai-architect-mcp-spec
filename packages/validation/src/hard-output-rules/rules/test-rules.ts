@@ -7,6 +7,20 @@ const PLACEHOLDER_MESSAGE =
 const PLACEHOLDER_COMMENT = /\/\/\s*(?:TODO|FIXME|PLACEHOLDER)/;
 const MATRIX_PLACEHOLDER = /^[ \t]*\|[ \t]*test\w+[ \t]*\|[^|\n]*\|[ \t]*(?:`[ \t]*)?\/\/[ \t]*(?:TODO|Setup)/gm;
 
+// Swift's lexical grammar permits block comments to nest. The caller has
+// consumed the opening delimiter and resumes after the matching close.
+function blockCommentEnd(content: string, afterOpening: number): number {
+  const delimiter = /\/\*|\*\//g;
+  delimiter.lastIndex = afterOpening;
+  let depth = 1;
+  let token: RegExpExecArray | null;
+  while ((token = delimiter.exec(content)) !== null) {
+    depth += token[0] === "/*" ? 1 : -1;
+    if (depth === 0) return delimiter.lastIndex;
+  }
+  return content.length;
+}
+
 /**
  * Read Swift test headers in source order. A new declaration starts fresh
  * when a draft signature is unfinished. Parentheses in tuple and function
@@ -15,7 +29,7 @@ const MATRIX_PLACEHOLDER = /^[ \t]*\|[ \t]*test\w+[ \t]*\|[^|\n]*\|[ \t]*(?:`[ \
 function* swiftTestHeaders(content: string) {
   const headerTokens = /\bfunc\s+test\w+\s*\(|[()"]|\/\/|\/\*/g;
   // Inside a signature, comments and string defaults can contain punctuation.
-  const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|$)/y;
+  const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*/y;
   const bodyOpening = /\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{/y;
   let start = 0;
   let depth = 0;
@@ -33,6 +47,8 @@ function* swiftTestHeaders(content: string) {
           bodyOpening.lastIndex = headerTokens.lastIndex;
           if (bodyOpening.test(content)) yield { start, bodyStart: bodyOpening.lastIndex };
         }
+      } else if (token[0] === "/*") {
+        headerTokens.lastIndex = blockCommentEnd(content, headerTokens.lastIndex);
       } else {
         parameterTrivia.lastIndex = token.index;
         if (parameterTrivia.test(content)) headerTokens.lastIndex = parameterTrivia.lastIndex;

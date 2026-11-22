@@ -3,7 +3,7 @@
 // fs.link exclusively creates the claim for an installation attempt from an
 // already-written owner record. See https://nodejs.org/api/fs.html#fslinkexistingpath-newpath-callback
 import { createHash } from "node:crypto";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const MARKER_NAME = ".prd-gen-deps-installed";
@@ -57,13 +57,21 @@ function snapshot(serverDir) {
   return { files, lockHash: hashes[0], root, published: join(root, key) };
 }
 
-function ready({ published, lockHash }) {
-  return readOptional(join(published, "node_modules", MARKER_NAME)) === lockHash;
+// A published directory may have been damaged by an interrupted cache cleanup.
+function installation({ published, lockHash }) {
+  for (let generation = 0; ; generation++) {
+    const path = generation === 0 ? published : published + "-repair-" + generation;
+    const entry = lstatSync(path, { throwIfNoEntry: false });
+    if (!entry) return { path, complete: false };
+    if (entry.isDirectory() && readOptional(join(path, "node_modules", MARKER_NAME)) === lockHash) {
+      return { path, complete: true };
+    }
+  }
 }
 
 export function needsProvisioning(serverDir) {
   const hash = lockfileDigest(serverDir);
-  return !legacyReady(serverDir, hash) && (hash === null || !ready(snapshot(serverDir)));
+  return !legacyReady(serverDir, hash) && (hash === null || !installation(snapshot(serverDir)).complete);
 }
 
 // A dead owner can leave its npm child running. Its generation and private
@@ -71,7 +79,7 @@ export function needsProvisioning(serverDir) {
 // nobody unlinks a peer's claim, even on recovery after a crash.
 function reserve(runtime, ownerFile) {
   let announced = false;
-  for (let generation = 0; !ready(runtime);) {
+  for (let generation = 0; !installation(runtime).complete;) {
     const claim = runtime.published + ".owner-" + generation;
     try {
       linkSync(ownerFile, claim);
@@ -106,7 +114,8 @@ export function provisionRuntime(serverDir, install) {
   }
   if (legacyReady(serverDir, lockfileDigest(serverDir))) return serverDir;
   const runtime = snapshot(serverDir);
-  if (ready(runtime)) return runtime.published;
+  let target = installation(runtime);
+  if (target.complete) return target.path;
   mkdirSync(runtime.root, { recursive: true, mode: 0o700 });
   const stage = mkdtempSync(join(runtime.root, "install-"));
   const ownerFile = join(stage, ".owner");
@@ -116,15 +125,16 @@ export function provisionRuntime(serverDir, install) {
     writeFileSync(ownerFile, String(process.pid), { mode: 0o600 });
     claim = reserve(runtime, ownerFile);
     // A previous owner can publish and release between our probe and link.
-    if (claim && !ready(runtime)) {
+    target = installation(runtime);
+    if (claim && !target.complete) {
       for (const [name, bytes] of runtime.files) writeFileSync(join(stage, name), bytes);
       install(stage);
       writeFileSync(join(stage, "node_modules", MARKER_NAME), runtime.lockHash + "\n");
       unlinkSync(ownerFile);
-      renameSync(stage, runtime.published);
+      renameSync(stage, target.path);
       published = true;
     }
-    return runtime.published;
+    return target.path;
   } finally {
     if (claim) unlinkSync(claim);
     if (!published) rmSync(stage, { recursive: true, force: true });
