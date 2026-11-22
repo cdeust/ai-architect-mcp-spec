@@ -15,6 +15,11 @@ def api(*args):
     return json.loads(subprocess.check_output(["gh", "api", *args], timeout=60))
 
 
+def attempt_jobs(path, read):
+    pages = read(path, "--paginate", "--slurp")
+    return {"jobs": [job for page in pages for job in page["jobs"]]}
+
+
 def matches(run, repo, source, attempt):
     return (type(run.get("id")) is int and run["id"] > 0 and run.get("run_attempt") == 1
             and run.get("path") == WORKFLOW and run.get("event") == "workflow_run"
@@ -40,7 +45,7 @@ def decision(repo, source, attempt, selected, read=api):
         return None
     if run["conclusion"] != "success":
         raise ValueError("Selected quota decision did not succeed")
-    jobs = read(prefix + "/attempts/1/jobs")
+    jobs = attempt_jobs(prefix + "/attempts/1/jobs", read)
     choices = [ROUTES[step["name"]] for job in jobs["jobs"]
                if (job["name"] == "select" and job["run_id"] == selected
                    and job["run_attempt"] == 1 and job["head_sha"] == run["head_sha"]
@@ -54,10 +59,10 @@ def decision(repo, source, attempt, selected, read=api):
 def admitted(jobs, source, attempt, selected):
     budgets = [job for job in jobs["jobs"] if job["name"] == "Claude review budget"
                and job["run_id"] == source and job["run_attempt"] == attempt]
+    if len(budgets) > 1:
+        raise ValueError("Ambiguous review budget")
     if not budgets or budgets[0]["status"] != "completed":
         return None
-    if len(budgets) != 1:
-        raise ValueError("Ambiguous review budget")
     job = budgets[0]
     markers = [step for step in job.get("steps", []) if step["name"].startswith(MARKER)]
     return (job["conclusion"] == "success" and len(markers) == 1
@@ -82,7 +87,7 @@ def main():
     if sys.argv[1:] == ["budget"]:
         source, source_attempt = int(env["SOURCE_RUN"]), int(env["SOURCE_ATTEMPT"])
         path = f"repos/{repo}/actions/runs/{source}/attempts/{source_attempt}/jobs"
-        authorized = attempt == 1 and wait_for(lambda: admitted(api(path), source, source_attempt, run))
+        authorized = attempt == 1 and wait_for(lambda: admitted(attempt_jobs(path, api), source, source_attempt, run))
         publish("admitted", str(authorized).lower())
     elif sys.argv[1:] == ["nominate"]:
         created = api(f"repos/{repo}/actions/runs/{run}")["created_at"]

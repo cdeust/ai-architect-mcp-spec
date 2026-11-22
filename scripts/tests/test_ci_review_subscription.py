@@ -88,6 +88,16 @@ class SubscriptionTests(unittest.TestCase):
         job["steps"].clear()
         self.assertFalse(route.admitted(jobs, 42, 2, 45))
 
+    def test_a_second_budget_on_a_later_page_cannot_nominate_a_workflow(self):
+        budget = {"name": "Claude review budget", "run_id": 42, "run_attempt": 1,
+                  "status": "completed", "conclusion": "success",
+                  "steps": [{"name": "Subscription decision run 45", "conclusion": "success"}]}
+        def read(*args):
+            self.assertEqual(args, ("jobs", "--paginate", "--slurp"))
+            return [{"jobs": [budget]}, {"jobs": [dict(budget)]}]
+        with self.assertRaisesRegex(ValueError, "Ambiguous"):
+            route.admitted(route.attempt_jobs("jobs", read), 42, 1, 45)
+
     def test_nomination_and_decision_cannot_switch_after_a_failed_measurement(self):
         run = {"id": 45, "run_attempt": 1, "display_title": "Route PR Review 42 attempt 2",
                "path": route.WORKFLOW, "event": "workflow_run", "head_branch": "main",
@@ -97,12 +107,13 @@ class SubscriptionTests(unittest.TestCase):
         pages = [{"workflow_runs": [dict(run, id=9, head_branch="candidate"), *copies, run]}]
         self.assertEqual(route.nominate("o/r", 42, 2, "date", lambda *args: pages), 45)
         self.assertIsNone(route.nominate("o/r", 42, 1, "date", lambda *args: pages))
-        def read(path):
+        def read(path, *options):
             if path.endswith("/runs/45"):
                 return run
             self.assertTrue(path.endswith("/runs/45/attempts/1/jobs"))
-            return {"jobs": [{"name": "select", "run_id": 45, "run_attempt": 1, "head_sha": SHA,
-                              "conclusion": "success", "steps": [{"name": "Reuse Codex", "conclusion": "success"}]}]}
+            self.assertEqual(options, ("--paginate", "--slurp"))
+            return [{"jobs": [{"name": "select", "run_id": 45, "run_attempt": 1, "head_sha": SHA,
+                               "conclusion": "success", "steps": [{"name": "Reuse Codex", "conclusion": "success"}]}]}]
         self.assertIsNone(route.decision("o/r", 42, 2, 45, read))
         run.update(status="completed", conclusion="failure")
         with self.assertRaisesRegex(ValueError, "did not succeed"):

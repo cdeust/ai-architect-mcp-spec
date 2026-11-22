@@ -16,7 +16,8 @@ ACTION = ROOT / ".github/actions/claude-subscription-quota/read.py"
 
 
 class ClaudeQuotaDiagnosticTest(unittest.TestCase):
-    def probe(self, percentage="", counters="", details="", *, auth=None, terminal_error=None, recovers=False):
+    def probe(self, percentage="", counters="", details="", *, auth=None, terminal_error=None, recovers=False,
+              billing_banner=False):
         screens = iter([
             "Claude Code\nSafe mode:\n❯",
             "Show session cost, plan usage",
@@ -24,13 +25,16 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
         ])
 
         def native(argv, **_kwargs):
-            nonlocal terminal_error
+            nonlocal terminal_error, billing_banner
             output = ""
             if argv[:3] == ["claude", "auth", "status"]:
                 if auth is not None:
                     return auth
                 output = json.dumps({"loggedIn": True, "authMethod": "oauth_token", "apiProvider": "firstParty"})
             elif "capture-pane" in argv and terminal_error is not None:
+                if billing_banner:
+                    billing_banner = False
+                    return subprocess.CompletedProcess(argv, 0, stdout="Claude Console: API Usage Billing")
                 failure = terminal_error
                 if recovers:
                     terminal_error = None
@@ -80,6 +84,15 @@ class ClaudeQuotaDiagnosticTest(unittest.TestCase):
                                    recovers=True)
         self.assertEqual((code, receipt["remaining_percent"], receipt["terminal_attempts"]), (0, 0, 2))
         self.assertEqual(receipt["terminal_failure"], "capture-pane exit 1")
+
+    def test_console_billing_ends_the_measurement_before_a_terminal_retry(self):
+        code, receipt = self.probe("0% used", "0 input, 0 output", "Current session\n0% used\nUsage credits are off",
+                                   terminal_error=subprocess.CalledProcessError(1, "tmux"),
+                                   recovers=True, billing_banner=True)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(receipt["review_eligible"])
+        self.assertEqual(receipt["reason"], "ambiguous_subscription_and_console_billing")
+        self.assertEqual(receipt["terminal_attempts"], 1)
 
     def test_exhaustion_is_a_successful_read_with_unknown_credits(self):
         code, receipt = self.probe("100% used", "0 input, 0 output")

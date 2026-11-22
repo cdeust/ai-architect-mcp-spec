@@ -75,20 +75,16 @@ def read_usage(home, token):
         except subprocess.CalledProcessError as error:
             raise TerminalUnavailable(f"{args[0]} exit {error.returncode}") from None
 
-    billing_banner = False
-
     def wait_for(predicate, reason):
-        nonlocal billing_banner
         # A slow or unfamiliar screen is inconclusive.
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             screen = tmux("capture-pane", "-p", "-t", "quota")
-            billing_banner |= "API Usage Billing" in screen or "Claude Console" in screen
+            if "API Usage Billing" in screen or "Claude Console" in screen:
+                raise Inconclusive("ambiguous_subscription_and_console_billing")
             if predicate(screen):
                 return screen
             time.sleep(0.25)
-        if billing_banner:
-            raise Inconclusive("console_billing_banner_and_no_subscription_quota")
         raise Inconclusive(reason)
 
     try:
@@ -118,8 +114,6 @@ def read_usage(home, token):
             usage_panel,
             "subscription_usage_panel_missing",
         )
-        if billing_banner:
-            raise Inconclusive("ambiguous_subscription_and_console_billing")
         credits = re.findall(r"Usage credits are (off|on)\b", screen)
         credits_state = credits[0] if len(credits) == 1 else "unknown"
         zero_use = bool(re.search(r"Total duration \(API\):\s+0s\b", screen)
