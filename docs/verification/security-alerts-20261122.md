@@ -6,16 +6,16 @@ The alert numbers below identify the original findings.
 
 | Source | Alerts | Change and verification |
 | --- | --- | --- |
-| CodeQL | 5, 561 | The Swift placeholder rule reads declarations in source order and scans each body span once. Signature, nesting, ordering and evidence excerpts are covered by the validation suite. |
+| CodeQL | 5, 561 | The Swift placeholder rule reads declarations in source order and scans each body span once. The validation suite checks nested Swift comments, declaration order and reported excerpts. |
 | CodeQL | 566–571 | The measurable-requirements suite loads full Markdown specimens from fixture files. The validator still receives the original documents. |
-| CodeQL | 564 | The launcher installs privately, acquires ownership with an atomic hard link and publishes the completed runtime by rename. Process-level tests cover concurrent launch, owner termination, and legacy installations. |
+| CodeQL | 564 | The launcher installs privately, acquires ownership with an atomic hard link and publishes the completed runtime by rename. Process-level tests cover concurrent launch, owner termination, and reuse after repairing a damaged published directory. |
 | CodeQL | 572–575 | The checksum tests import the filesystem operations they use. The assertions still cover mismatched, missing and valid checksums. |
 | Dependabot | 46–51 | The lockfile resolves Hono 4.13.20 and minimatch 11.0.1. Tests invoke the consumer APIs. |
 | OpenSSF Scorecard | 525 | Seven advisories appeared in the baseline dependency graph. The corrected graph gives zero findings in the local Scorecard Vulnerabilities check. Sandbox Runtime imports Zod v3. Its bounded collection checks receive the upstream fix through a package patch exercised under ESM and CommonJS. |
-| OpenSSF Scorecard | 535 | Registry verification selects the latest matching server version from JSON with jq. Tests exercise matching and missing records. |
+| OpenSSF Scorecard | 535 | Registry verification selects the latest matching server version from JSON with jq. Shell tests exercise an initially empty registry, convergence, exhausted retries and malformed data. |
 
 The local full and production dependency audits each reported zero advisories.
-The release registry was exercised with fixtures. GitHub records the disposition
+The committed plugin manifest returned `check_health OK: prd-gen 0.9.0` on macOS. The Codex and Gemini portable manifests each initialized the rebuilt bundle and completed both verifier tool checks. The release registry was exercised with fixtures. GitHub records the disposition
 of each alert after scanning the merged revision.
 
 Sources and reproduction

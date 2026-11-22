@@ -65,7 +65,7 @@ export function checkNoPlaceholderTests(
   const comments: HardOutputRuleViolation[] = [];
   const empty: HardOutputRuleViolation[] = [];
   const emptyBody = /\s*\}/y;
-  let end = -1;
+  let lastClosingBrace = 0;
 
   const finding = (start: number, endExclusive: number) => makeViolation(
     "no_placeholder_tests", sectionType, PLACEHOLDER_MESSAGE,
@@ -75,11 +75,11 @@ export function checkNoPlaceholderTests(
   for (const { start, bodyStart } of swiftTestHeaders(content)) {
     // The rule inspects the body up to its first closing brace. Process each
     // such span once, including when it contains another declaration.
-    if (start > end) {
-      end = content.indexOf("}", bodyStart);
-      if (end === -1) break;
-      if (PLACEHOLDER_COMMENT.test(content.slice(bodyStart, end))) {
-        comments.push(finding(start, end + 1));
+    if (start >= lastClosingBrace) {
+      lastClosingBrace = content.indexOf("}", bodyStart);
+      if (lastClosingBrace === -1) break;
+      if (PLACEHOLDER_COMMENT.test(content.slice(bodyStart, lastClosingBrace))) {
+        comments.push(finding(start, lastClosingBrace + 1));
       }
     }
     // An empty nested test is independently reportable. Its whitespace can

@@ -417,13 +417,13 @@ jobs:
       - name: Verify the registry now serves the published version
         run: |
           set -euo pipefail
-          VERSION=$(jq -er '.version | strings | select(length > 0)' server.runtime.json)
+          VERSION=$(jq -ej '.version | strings | select(length > 0)' server.runtime.json)
           MAX_ATTEMPTS=12
           SLEEP_SECONDS=5
           ACTUAL=""
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             ACTUAL=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec" \
-              | jq -er '
+              | jq -ej '
                 if (.servers | type) != "array" then error("invalid registry response") else
                   (first(.servers[] | select(
                     .server.name == "io.github.cdeust/ai-architect-mcp-spec"

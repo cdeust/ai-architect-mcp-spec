@@ -210,6 +210,43 @@ describe("placeholder-test detection", () => {
     expect(placeholderViolations(draft)).toEqual([]);
   });
 
+  it("reads formatted signatures and keeps the documented legacy order of modifiers", () => {
+    const examples = [
+      "func  testLedger  (id: Int){ }",
+      "func testExport()  throws  async  { }",
+      "func testImport() async  throws  { }",
+      String.raw`func testReceipt(title: String = "quarter \"(draft") { }`,
+      String.raw`func testExportLabel(text: String = "quarter\n(draft") { }`,
+    ];
+    expect(placeholderViolations(examples.join("\n")).map((v) => v.offendingContent)).toEqual(examples);
+  });
+
+  it("discards incomplete Swift samples and keeps later tests independent", () => {
+    const complete = "func testLedger() { }";
+    const document = [
+      'func testDraft(label: String = "draft ) { }',
+      complete,
+      "func testReview() throwsSoon { }",
+      "func testTotals() { // TODO finish totals",
+    ].join("\n");
+    expect(placeholderViolations(document).map((v) => v.offendingContent)).toEqual([complete]);
+  });
+
+  it("leaves everyday conditional statements and default argument closures out of findings", () => {
+    const source = [
+      "if (invoice.isPaid) { }",
+      "func testInvoice(action: () -> Void = makeAction() { }) { assertPaid() }",
+    ].join("\n");
+    expect(placeholderViolations(source)).toEqual([]);
+  });
+
+  it("preserves the placeholder message and the 120-character excerpt reported to callers", () => {
+    const source = 'func testInvoice() { // TODO verify paid and unpaid invoices, tax adjustments, and the monthly billing summary against the ledger. }';
+    const [finding] = placeholderViolations(source);
+    expect(finding?.message).toBe("Found placeholder test with empty or TODO-only body");
+    expect(finding?.offendingContent).toBe(source.slice(0, 120));
+  });
+
   it("attributes a complete test following an unfinished declaration to its own name", () => {
     const pending = "func testInvoice() { // TODO }";
     expect(placeholderViolations("func testDraft(\n" + pending).map((v) => v.offendingContent))
@@ -222,6 +259,14 @@ describe("placeholder-test detection", () => {
     "| test_a | covers AC-1 |   `   // Setup",
   ])("flags the matrix row %s", (row) => {
     expect(placeholderViolations(row)).toHaveLength(1);
+  });
+
+  it("reads compact and indented table rows and leaves a pipe in narrative prose alone", () => {
+    const tight = "|testInvoice|invoice totals|//TODO";
+    const indented = "  |  testBalance  | current balance |   //   Setup";
+    const narrative = "Example row follows here: | testReceipt | receipt | // TODO";
+    expect(placeholderViolations([tight, narrative, indented].join("\n")).map((v) => v.offendingContent))
+      .toEqual([tight, indented]);
   });
 
   // The one behavioural delta the differential found: `\s` matched `\n`, so a

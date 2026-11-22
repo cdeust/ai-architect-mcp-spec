@@ -49444,15 +49444,15 @@ function checkNoPlaceholderTests(content, sectionType) {
   const comments = [];
   const empty = [];
   const emptyBody = /\s*\}/y;
-  let end = -1;
+  let lastClosingBrace = 0;
   const finding = (start, endExclusive) => makeViolation("no_placeholder_tests", sectionType, PLACEHOLDER_MESSAGE, content.slice(start, endExclusive).substring(0, 120));
   for (const { start, bodyStart } of swiftTestHeaders(content)) {
-    if (start > end) {
-      end = content.indexOf("}", bodyStart);
-      if (end === -1)
+    if (start >= lastClosingBrace) {
+      lastClosingBrace = content.indexOf("}", bodyStart);
+      if (lastClosingBrace === -1)
         break;
-      if (PLACEHOLDER_COMMENT.test(content.slice(bodyStart, end))) {
-        comments.push(finding(start, end + 1));
+      if (PLACEHOLDER_COMMENT.test(content.slice(bodyStart, lastClosingBrace))) {
+        comments.push(finding(start, lastClosingBrace + 1));
       }
     }
     emptyBody.lastIndex = bodyStart;
