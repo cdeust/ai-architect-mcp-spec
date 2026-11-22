@@ -218,6 +218,8 @@ export function registerPipelineTools(server) {
         feature_description: z
             .string()
             .describe("What the PRD is about — passed to all prompts"),
+        semantic_review: z.boolean().optional()
+            .describe("Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks."),
         codebase_path: z
             .string()
             .optional()
@@ -232,7 +234,7 @@ export function registerPipelineTools(server) {
         request_size: RequestSizeSchema
             .optional()
             .describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`),
-    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size }) => {
+    }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size, semantic_review }) => {
         // Global run semaphore (bounded-I/O Phase 3). Admit a new run only while
         // fewer than MAX_CONCURRENT_RUNS are in flight. At cap we REJECT with a
         // structured, retryable error rather than hang or grow unbounded — the
@@ -261,6 +263,7 @@ export function registerPipelineTools(server) {
             };
         }
         const run_id = generateRunId();
+        const reviewModel = process.env.PRD_GEN_SEMANTIC_REVIEW_MODEL?.trim() || undefined;
         const initial = newPipelineState({
             run_id,
             feature_description,
@@ -268,6 +271,8 @@ export function registerPipelineTools(server) {
             skip_preflight: skip_preflight ?? false,
             prd_context: prd_context ?? null,
             request_size: request_size ?? REQUEST_SIZE_DEFAULT,
+            semantic_review: semantic_review || Boolean(reviewModel),
+            semantic_review_model: reviewModel,
         });
         // B1 — Wire retry_policy from composition root (Curie A7).
         // The reducer (section-generation.ts) reads state.retry_policy and never
@@ -343,7 +348,10 @@ export function registerPipelineTools(server) {
             if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) ||
                 isRetiredImplementationAnswer(found.run.state, result))
                 return architectOsRequired();
-            const out = step({ state: recordLegacyDefineRefusal(found.run.state, found.run.action), result });
+            const { state, action } = found.run;
+            const out = state.semantic_review_requested && state.current_step === "complete" && action
+                ? { state, action, messages: [] }
+                : step({ state: recordLegacyDefineRefusal(state, action), result });
             // Drain the evidence queues BEFORE the state is kept: a state on
             // disk has empty queues, so a run that comes back after a restart
             // writes nothing twice. drainEvidenceQueues is a no-op when the
@@ -379,7 +387,7 @@ export function registerPipelineTools(server) {
         "next_offset is the invocation_offset to read them from. It is " +
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-        "page, null on the last one. format:'define_handoff_v1' returns validated planning data for a pending Define checkpoint. " +
+        "page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. " +
         "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
         "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
         run_id: z.string(),

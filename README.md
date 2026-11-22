@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  <strong>Catch a hallucinated spec before it becomes code.</strong><br>
-  Its structural checks — every acceptance criterion traces to a requirement, no performance claim passes without a measurement — run deterministically, with no model in the loop. Given the symbols of your code graph, it reports the inline-code symbols of the spec that none of them resolve.<br>
+  <strong>Check your specification before it becomes code.</strong><br>
+  Deterministic checks find structural defects, including broken requirement links and performance sections whose only verdicts are PASS. Supply a codebase symbol catalog to receive advisory findings for unmatched inline-code references.<br>
   <strong>Works in Codex, Gemini CLI, Claude Code, and CI. Runs on your machine.</strong>
 </p>
 
@@ -32,7 +32,7 @@
 
 ---
 
-Every AI agent that drafts a PRD eventually invents a function that doesn't exist, claims latency it can't measure, or writes acceptance criteria that don't tie back to the requirements they're supposed to test. The output sounds confident. It is not actionable. The next stage in the pipeline — code generation, ticket import, sprint planning — silently inherits the hallucination, ships it, and pays for it later.
+A PRD can name a function that does not exist, assert a latency limit without evidence, or lose the links between requirements and acceptance criteria. These defects can carry into code generation, ticket import, and sprint planning. Check the document and its code references before handing it to the implementation team.
 
 **AI Architect MCP Spec** is a TypeScript MCP server that fixes this at the structural level. Its portable verifier gives Codex, Gemini CLI, Claude Code, CI, and other stdio MCP hosts the same deterministic Hard Output Rules and cross-section traceability checks. The full pipeline is a stateless reducer (`step(state, result?) → next_state, action`) driven by a host that can execute its orchestration actions; Claude Code is the only packaged full-pipeline host today. Sections are produced one at a time, validated before the host ever sees them, and every load-bearing claim is judged by a panel of genius reasoning agents drawn from `zetetic-team-subagents` against the codebase graph from `ai-architect-mcp-codebase`. The loop is closed: per-judge reliability is calibrated from history, retry budgets are derived from survival statistics, KPI gates are tuned against frozen baselines, and held-out partitions are mechanically sealed so no calibration result can be peeked at before evaluation.
 
@@ -61,7 +61,7 @@ This is a proposed configuration for trials. The first integration replay uses t
 
 - **A spec checked against your code.** With a codebase (`codebase_path`), self-check sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report. That check is advisory: it does not block the run.
 - **Traceability that is actually checked.** Every acceptance criterion must tie back to a requirement; numbering gaps are caught, not assumed away.
-- **No PASS without a measurement.** The verdict taxonomy *refuses* to pass a latency, throughput, fps or storage claim — it returns SPEC-COMPLETE or NEEDS-RUNTIME instead of a confident guess.
+- **Performance verdict checks.** When the validator recognizes a performance target, it flags a verification section with one or more verdicts that all say PASS. An observed measurement belongs in runtime verification. [Verdict regression tests](packages/validation/src/__tests__/quality-rules.test.ts)
 - **A guard against agreeable judges.** A panel that agrees 100% of the time over 5+ claims raises `distribution_suspicious` rather than being read as consensus.
 - **It works where you work.** The deterministic verifier travels to Codex, Gemini CLI, Claude Code and CI; the full generation pipeline runs on hosts that can execute its orchestration actions.
 
@@ -422,13 +422,15 @@ The reducer advances through PRD generation, specification verification and fina
 | **10** | `file_export` | Writes the PRD files of the run's context profile, plus `00-run-notes.md` for each skipped file or withheld failed section (see [Exported files per context profile](#exported-files-per-context-profile)) |
 | **11** | `self_check` | Two-phase multi-judge verification (see below); typed `verification` field on `done` |
 
-After self-check, the legacy-named `implementation_gate` presents specification verification. Use `get_pipeline_state` with `format: "define_handoff_v1"` while the question is pending to read validated requirements and acceptance criteria for planning. `PRD only` finishes the run. Architect-os owns implementation, tests, and publication. With the updated launcher, an older execution checkpoint remains readable in state formats. Requesting its action or submitting a result returns `architect_os_required`.
+For legacy runs, `implementation_gate` presents specification verification after self-check. Use `get_pipeline_state` with `format: "define_handoff_v1"` while the question is pending to read validated requirements and acceptance criteria for planning. `PRD only` finishes the run. Architect-os owns implementation, tests, and publication. With the updated launcher, an older execution checkpoint remains readable in state formats. Requesting its action or submitting a result returns `architect_os_required`.
 
 At the same pending checkpoint, request `get_pipeline_state` with `format: "verified_plan_v1"` and `plan_step` set to an architect-os Step name. Spec derives one Step proposal from the saved intent, requirements and acceptance criteria, then verifies the proposal against that source. The result includes the proposal and the SHA-256 fingerprints of the Define and proposal JSON files (compact UTF-8 JSON with a terminating newline). The `plan_sha256` fingerprint covers the version, run ID and both file fingerprints. Architect-os prepares an execution manifest with the operator policy for the owner to approve. This projection covers a single Step. Both the Define source and plan must fit their MCP response budgets.
 
 To prepare an implementation review, keep the Define checkpoint pending and call `get_pipeline_state` with `format: "implementation_review_v1"`, `plan_step` and the operator's `review_id`. Configure `PRD_GEN_REVIEW_GIT` as the absolute path to a trusted host Git executable with `--attr-source` support, `PRD_GEN_REVIEW_REPOSITORY` as the absolute checkout root, `PRD_GEN_REVIEW_REPOSITORY_ID` as the operator’s identifier for that checkout, and `PRD_GEN_REVIEW_AUTHORITY` as an absolute path to an operator-controlled regular JSON file outside the checkout and its Git metadata, inaccessible to the implementation agent and without hard links. Keep the checkout’s Git metadata under operator control during review. The client supplies only identifiers. The file contains `version` (1), `review_id`, `repository_id`, the full `base_revision` recorded before work, the full `reviewed_revision` observed after delivery, the architect-os `manifest` and separate owner `decision`, the exact UTF-8 `policy` text, and the map of input file names to exact UTF-8 `files` text. The operator supplies this record in v1.
 
 Spec checks the approved manifest and input digests against the saved plan and matches the repository identity. It reads the commit-to-commit Git diff using tracked attributes from the base revision recorded by the operator. Keep the operator-controlled Git metadata stable throughout the review. A complete dossier reports `ready_for_review`, with the diff and its digest, both revisions, both approval and plan digests, and `evidence_required` for every acceptance criterion. Evidence for behavioral conformity must link each criterion to a result on the reviewed revision.
+
+The shipped `generate-prd` dispatcher runs scope and declared edge-case review automatically. An MCP host can set `PRD_GEN_SEMANTIC_REVIEW_MODEL` in its trusted launcher configuration to select the reviewer and enable that review for all new runs. The reducer dispatches one judge action through the host, then validates the verdict and citations against the exact reviewed inputs. The host returns a provider error if its configured route cannot use the requested model. A finding, an inconclusive result, incomplete evidence or a stale review blocks Define. Successful automatic runs expose Define at `done` without a review question. Architect OS owns execution and its approval policy. [Semantic review contract](packages/orchestration/src/semantic-review.ts)
 
 
 Every step is independently testable (`stepOnce(state, result?)` returns the same shape as the runner). The runner coalesces `emit_message` actions internally so the host never sees a no-op.
@@ -609,11 +611,13 @@ A cross-audit found and fixed two layer violations:
 |---|---|
 | **Section drift between turns** | Single immutable `PipelineState` snapshot per step; reducer is pure; host can replay any step |
 | **Hallucinated symbols** | `validate_prd_section` and `validate_prd_document` take an optional `known_symbols` list, the symbol names the host read from its code graph, and report (without scoring) the inline-code symbols none of them resolve. The pipeline does not send that list. With a codebase graph (`codebase_path`), self-check also sends the exported PRD to `validate_prd_against_graph` of `ai-architect-mcp-codebase` and records its report, advisory (#118) |
-| **NFRs claiming PASS without measurement** | Verdict taxonomy refuses PASS for latency/throughput/fps/storage; consensus engine forwards SPEC-COMPLETE / NEEDS-RUNTIME |
+| **Performance sections with only PASS verdicts** | The deterministic validator flags all-PASS verdicts on recognized performance targets, including a single PASS. Runtime verification establishes the measured result. |
 | **Confirmatory bias (every judge says PASS)** | `distribution_suspicious` flag fires at 100% PASS over ≥5 claims; surfaced in typed `done.verification.distribution_suspicious` |
 | **Acceptance criteria not traceable to requirements** | Cross-document validator checks FR-AC coverage and AC numbering gaps |
 | **Tests claiming "comprehensive" without listing what they cover** | Test-traceability rule: every section's claimed test must reference an FR or AC ID |
 | **Retries that use the same context as the failure** | `map_failure_to_retrieval` closes the validator→Cortex feedback loop; corrective queries before retry |
+
+The reconstructed defect fixture records where structural validation stops. Its scope-creep and missing-edge-case examples still require semantic review. [Seeded defect regression](packages/validation/src/__tests__/seeded-defects-regression.test.ts)
 
 ---
 
@@ -770,6 +774,6 @@ code is built on.
 ---
 
 <p align="center">
-  <em>Don't ship a PRD that hallucinates a function it can't measure.<br>
+  <em>Check requirement links, code references, and performance verdicts before implementation.<br>
   Ship one whose every claim was judged by Pearl, Curie, Liskov, and a panel of seven others, validated against the call graph, and grounded in what Cortex remembers from yesterday.</em>
 </p>

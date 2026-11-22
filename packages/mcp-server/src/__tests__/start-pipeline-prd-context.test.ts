@@ -20,7 +20,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { REQUEST_SIZE_CONFIGS } from "@prd-gen/core";
 
 import { registerPipelineTools } from "../pipeline-tools.js";
@@ -79,7 +79,7 @@ async function refusal(args: Record<string, unknown>): Promise<string | null> {
 }
 
 describe("start_pipeline: the kind and the size a host declares, over MCP (#119)", () => {
-  it("lists both inputs as optional, and describes each input of the tool", async () => {
+  it("keeps context, size and semantic review optional in the public input", async () => {
     const { tools } = await client.listTools();
     const tool = tools.find((t) => t.name === "start_pipeline");
     const schema = tool?.inputSchema as {
@@ -92,12 +92,14 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
       "feature_description",
       "prd_context",
       "request_size",
+      "semantic_review",
       "skip_preflight",
     ]);
     expect(schema.required).toEqual(["feature_description"]);
     expect(schema.properties.feature_description.description).toMatch(/What the PRD is about/);
     expect(schema.properties.codebase_path.description).toMatch(/Absolute path/);
     expect(schema.properties.skip_preflight.description).toMatch(/skip the preflight/);
+    expect(schema.properties.semantic_review.description).toMatch(/scope and declared edge-case coverage/);
     expect(schema.properties.prd_context.description).toMatch(/^The kind of PRD the request calls for, declared by the host/);
     // A size is not a kind.
     expect(schema.properties.prd_context.enum).not.toContain("tiny");
@@ -145,6 +147,8 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
   it("reads the kind, and no size, from the description when nothing is declared", async () => {
     // start_pipeline steps through context_detection before it answers.
     const run = await started({});
+    expect(run).not.toHaveProperty("semantic_review_requested");
+    expect(run).not.toHaveProperty("semantic_review_model");
     expect(run.prd_context).toBe("feature");
     expect(run.request_size).toBe("standard");
     expect(run.messages).toContain("PRD context detected: Feature (from trigger words)");
@@ -168,4 +172,19 @@ describe("start_pipeline: the kind and the size a host declares, over MCP (#119)
     expect(await refusal({ request_size: "bug" })).toContain("request_size");
     expect(await refusal({ prd_context: "bug", request_size: "tiny" })).toBeNull();
   });
+});
+
+it.each([
+  [" gemini-argon ", false, true, "gemini-argon"],
+  ["   ", undefined, undefined, undefined],
+  [undefined, true, true, undefined],
+] as const)("activates the configured reviewer for %s with request flag %s", async (model, flag, enabled, reviewer) => {
+  vi.stubEnv("PRD_GEN_SEMANTIC_REVIEW_MODEL", model);
+  try {
+    const state = await started({ semantic_review: flag });
+    expect(Reflect.get(state, "semantic_review_requested")).toBe(enabled);
+    expect(Reflect.get(state, "semantic_review_model")).toBe(reviewer);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

@@ -198,7 +198,7 @@ function emitRememberOrDone(
 ): { state: PipelineState; action: HandlerAction } {
   if (state.run_remembered) {
     return {
-      state: { ...state, current_step: "complete", pending_completion: null },
+      state: { ...state, current_step: "complete", pending_completion: state.post_specs?.automatic_define ? pending : null },
       action: doneAction(state, pending),
     };
   }

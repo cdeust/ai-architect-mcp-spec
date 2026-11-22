@@ -1,5 +1,5 @@
-import { appendFileSync, readFileSync } from "node:fs";
-import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFileSync, readFileSync, rmSync } from "node:fs";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, vi } from "vitest";
@@ -56,7 +56,6 @@ posixTest.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "exit"] as const)("jou
 
 async function parallelStandIn(file: string, out: string, onBatch = [
     'if /bin/mkdir "$OUT/claimed" 2>/dev/null; then',
-    '  /bin/mkdir locked && echo x > locked/file && /bin/chmod 000 locked',
     '  pwd > "$OUT/kept"', 'fi', 'pwd >> "$OUT/ready"', 'exec /bin/sleep 10',
   ]) {
   const [{ plan }] = await loadArms(file);
@@ -90,11 +89,23 @@ posixTest("journals the entire interrupted parallel batch when one workspace can
     pilot.arms = [{ ...pilot.arms[0], name: "parallel", mode: "parallel" }];
     await writeFile(file, JSON.stringify(pilot));
     const { batch, start } = await parallelStandIn(file, out);
-    const host = harness({ PATH: out, OUT: out, START: String(start) });
+    let blockedWorkspace: string | undefined;
+    const host = harness({ PATH: out, OUT: out, START: String(start) }, {
+      rm(path, options) {
+        if (path === blockedWorkspace) {
+          const denied = new Error("Workspace removal denied (EACCES)");
+          throw Object.assign(denied, { code: "EACCES" });
+        }
+        rmSync(path, options);
+      },
+    });
     run = host.run("--i-accept-model-cost", "--plan", file, "--out", out);
     interrupt = () => host.events.emit("SIGTERM");
-    await expect.poll(async () => (await readFile(join(out, "ready"), "utf8").catch(() => "")).trim().split("\n").length,
+    const readyMarker = join(out, "ready");
+    await expect.poll(async () => (await readFile(readyMarker, "utf8").catch(() => "")).split("\n").filter(Boolean).length,
       { timeout: 4000 }).toBe(batch.length);
+    blockedWorkspace = (await readFile(join(out, "kept"), "utf8")).trim();
+    expect((await readFile(readyMarker, "utf8")).split("\n")).toContain(blockedWorkspace);
     interrupt();
     const rows = readFileSync(join(dir, "rows.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
     const interrupted = rows.filter(row => row.error === "Interrupted by SIGTERM");
@@ -104,8 +115,6 @@ posixTest("journals the entire interrupted parallel batch when one workspace can
   } finally {
     interrupt?.();
     await run;
-    const kept = await readFile(join(out, "kept"), "utf8").catch(() => "");
-    if (kept) await chmod(join(kept.trim(), "locked"), 0o700);
     await rm(out, { recursive: true, force: true });
   }
 });

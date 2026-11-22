@@ -74,3 +74,31 @@ describe("self-check skips failed section drafts (#122)", () => {
     expect(out.state.pending_completion?.verification?.claims_evaluated).toBe(2);
   });
 });
+
+it("dispatches and requires semantic evidence before a self-check can pass", () => {
+  const state = {
+    ...selfCheckState([
+      section("requirements", "passed", "Export a local copy."),
+      section("acceptance_criteria", "passed", MECHANICAL_AC_CONTENT),
+    ]),
+    semantic_review_requested: true as const,
+  };
+  const first = step({ state, result: undefined });
+  expect(first.action).toMatchObject({
+    kind: "spawn_subagents", purpose: "judge", batch_id: expect.stringMatching(/^self_check_scope_coverage_/),
+  });
+  expect(first.state.pending_completion).toBeNull();
+  const batch = first.action;
+  if (batch.kind !== "spawn_subagents") throw new Error("Expected a semantic review");
+  const rejected = step({
+    state: first.state, result: {
+      kind: "subagent_batch_result", batch_id: batch.batch_id, responses: [{
+        invocation_id: batch.invocations[0]!.invocation_id, raw_text: "Unavailable",
+      }],
+    },
+  });
+  expect(rejected.state.pending_completion?.outcome).toMatchObject({
+    status: "needs_attention",
+    reasons: expect.arrayContaining(["semantic_review: current, complete scope and edge-case evidence is required"]),
+  });
+});

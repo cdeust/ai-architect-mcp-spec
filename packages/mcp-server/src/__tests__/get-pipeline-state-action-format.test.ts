@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, beforeAll, vi } from "vitest";
 import { z } from "zod";
-import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState } from "@prd-gen/orchestration";
+import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState, type NextAction } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 import { prepareImplementationReview } from "../implementation-review.js";
 
@@ -337,4 +337,51 @@ it("stores a legacy handoff refusal through the in-process MCP tools", async () 
   expect(submit.isError).toBeFalsy();
   const state = await handlers.get("get_pipeline_state")!({ run_id, format: "full" });
   expect(parse(state)).toMatchObject({ state: { post_specs: { legacy_define_refusal: true, decision: "pending" } } });
+});
+
+it("keeps the terminal automatic outcome after a duplicate submission", async () => {
+  const run_id = "run_review_finished";
+  const source = newPipelineState({ run_id, feature_description: "Check exact delivery", semantic_review: true });
+  const action: NextAction = {
+    kind: "done", summary: "Original review outcome.", artifacts: [],
+    outcome: { status: "needs_attention", reasons: ["Indeterminate scope"] },
+  };
+  new RunFiles(RUNS_DIR).write({ ...source, current_step: "complete" }, action);
+  const reply = parse(await handlers.get("submit_action_result")!({
+    run_id, result: { kind: "subagent_batch_result", batch_id: "old", responses: [] },
+  }));
+  expect(reply.action).toEqual(action);
+  expect(reply.messages).toEqual([]);
+  const saved = parse(await handlers.get("get_pipeline_state")!({ run_id, format: "action" }));
+  expect(saved.action).toEqual(action);
+});
+
+it("still consumes the pending completion action of a running automatic review", async () => {
+  const run_id = "run_review_finalizing";
+  const state = newPipelineState({ run_id, feature_description: "Check exact delivery", semantic_review: true });
+  const saved: NextAction = {
+    kind: "call_cortex_tool", tool_name: "remember", arguments: {}, correlation_id: "self_check_remember",
+  };
+  new RunFiles(RUNS_DIR).write({
+    ...state, current_step: "finalize",
+    pending_completion: { summary: "Recorded verification", artifacts: [] },
+  }, saved);
+  const reply = parse(await handlers.get("submit_action_result")!({
+    run_id, result: { kind: "tool_result", correlation_id: saved.correlation_id, success: true },
+  }));
+  expect(reply).toMatchObject({ current_step: "complete", action: { kind: "done" } });
+});
+
+it("keeps the response for a legacy completed run", async () => {
+  const run_id = "run_legacy_finished";
+  const state = newPipelineState({ run_id, feature_description: "Finished legacy run" });
+  new RunFiles(RUNS_DIR).write({ ...state, current_step: "complete" }, {
+    kind: "done", summary: "The earlier completion message.", artifacts: [],
+  });
+  const reply = parse(await handlers.get("submit_action_result")!({
+    run_id, result: { kind: "subagent_batch_result", batch_id: "old", responses: [] },
+  }));
+  expect(reply).toMatchObject({
+    current_step: "complete", action: { kind: "done", summary: "Pipeline already complete." },
+  });
 });

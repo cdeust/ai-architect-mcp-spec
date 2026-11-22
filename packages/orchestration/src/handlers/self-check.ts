@@ -38,6 +38,7 @@ import {
 } from "@prd-gen/core";
 import { VERIFY_BUDGET_QUESTION_ID } from "./protocol-ids.js";
 import { documentSections, prdSections } from "../section-plan.js";
+import { reviewSemanticCoverage } from "../semantic-review.js";
 import {
   resolveVerifyBudget,
   reduceJudgeRequests,
@@ -269,6 +270,13 @@ function handleSelfCheckPhaseA(
   }
 
   if (reduced.length > config.invocation_cap) {
+    if (state.semantic_review_requested) {
+      return {
+        state: { ...state, current_step: "complete" as const },
+        action: { kind: "failed" as const, step: "self_check" as const,
+          reason: `review_budget_exceeded: ${reduced.length} judge invocations exceed the configured cap of ${config.invocation_cap}` },
+      };
+    }
     const question = buildBudgetGateQuestion(reduced.length, config);
     if (result?.kind !== "user_answer" || result.question_id !== VERIFY_BUDGET_QUESTION_ID) {
       return { state, action: question };
@@ -357,7 +365,9 @@ export const handleSelfCheck: StepHandler = ({ state, result }) => {
   if ("action" in validation) {
     return { state: validation.state, action: validation.action };
   }
-  const stateAfterValidation = validation.state;
+  const semantic = reviewSemanticCoverage(validation.state, result);
+  if (semantic.action) return { state: semantic.state, action: semantic.action };
+  const stateAfterValidation = semantic.state;
 
   if (
     result?.kind === "subagent_batch_result" &&

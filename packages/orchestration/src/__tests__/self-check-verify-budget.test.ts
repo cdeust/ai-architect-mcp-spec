@@ -176,6 +176,17 @@ describe("self-check judge-panel budget gate — model-diversity slots (arXiv:26
 });
 
 describe("self-check judge-panel budget gate — over-cap decisions", () => {
+  it("refuses to exceed the configured cap or ask an operator during automatic review", () => {
+    const state = { ...selfCheckState(28, true), semantic_review_requested: true as const };
+    const out = dispatchAction(state);
+    expect(out.action).toEqual({
+      kind: "failed", step: "self_check",
+      reason: "review_budget_exceeded: 30 judge invocations exceed the configured cap of 20",
+    });
+    expect(out.state.current_step).toBe("complete");
+    expect(out.state.verification_plan).toBeNull();
+  });
+
   it("emits ask_user with the 3 budget options when the reduced count exceeds the cap", () => {
     // 28 FR claims (28*1) + 1 architecture claim (1*2) = 30 > cap (20) —
     // mirrors the e2e run_mrlqa0aj_u2rh15 scenario (29 claims).

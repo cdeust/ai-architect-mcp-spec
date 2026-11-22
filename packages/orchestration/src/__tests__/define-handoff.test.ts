@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
-import { initialPostSpecs, newPipelineState, readDefineHandoff, type NextAction, type PipelineState } from "../index.js";
+import { initialPostSpecs, newPipelineState, readDefineHandoff, step, type NextAction, type PipelineState } from "../index.js";
 
+import { reviewSemanticCoverage } from "../semantic-review.js";
+import { buildVerificationReportFile, VERIFICATION_REPORT_FILENAME } from "../handlers/verification-report.js";
+import { REMEMBER_CORRELATION_ID } from "../handlers/finalize.js";
 import { evaluateRunPolicy } from "../handlers/verification-policy.js";
 
 const run_id = "run_define_v1";
@@ -236,11 +239,138 @@ it("preserves both requirements and traced criteria when their normative text su
   expect(readDefineHandoff(checkpoint, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
 });
 
-
 it("preserves the Define payload for the new gate and honors a persisted legacy refusal", () => {
   const state = ready();
   const safe = { ...pending, options: [{ label: "PRD only" }, { label: "Review verification findings" }] };
   expect(readDefineHandoff(state, safe)).toEqual(readDefineHandoff(state, pending));
   expect(readDefineHandoff({ ...state, post_specs: { ...initialPostSpecs(), legacy_define_refusal: true } }, safe))
     .toMatchObject({ error: { code: "define_not_ready" } });
+});
+
+it("blocks a ready-looking implementation checkpoint with missing semantic evidence", () => {
+  const state = { ...ready(), semantic_review_requested: true as const };
+  const message = "semantic_review: current, complete scope and edge-case evidence is required";
+  expect(readDefineHandoff(state, pending)).toEqual({ error: { code: "define_not_ready", message } });
+  expect(evaluateRunPolicy(state)).toMatchObject({ status: "blocked", reasons: [message] });
+});
+
+function reviewedCheckpoint() {
+  const enabled = {
+    ...ready(), semantic_review_requested: true as const,
+    written_files: [`prd-output/${run_id}/01-prd.md`],
+  };
+  const { action } = reviewSemanticCoverage(enabled, undefined);
+  if (action?.kind !== "spawn_subagents") throw new Error("Expected an independent reviewer");
+  return reviewSemanticCoverage(enabled, {
+    kind: "subagent_batch_result", batch_id: action.batch_id,
+    responses: [{
+      invocation_id: action.batch_id,
+      raw_text: JSON.stringify({
+        scope_creep: { status: "clear", citations: [] }, missing_edge_case: { status: "clear", citations: [] },
+      }),
+    }],
+  }).state;
+}
+
+it("reaches a terminal Define checkpoint without awaiting a user", () => {
+  const reviewed = reviewedCheckpoint();
+  const first = step({ state: reviewed });
+  if (first.action.kind !== "write_file") throw new Error("Expected a verification report write");
+  expect(first.action.content).toContain("Automatic Define outcome: passed.");
+  const recorded = step({ state: first.state, result: {
+    kind: "file_written", path: first.action.path, bytes: Buffer.byteLength(first.action.content),
+  } });
+  expect(recorded.action).toMatchObject({ kind: "call_cortex_tool", correlation_id: REMEMBER_CORRELATION_ID });
+  const complete = finishRemember(recorded.state);
+  expect(complete.action).toMatchObject({ kind: "done", outcome: { status: "passed" } });
+  expect(complete.state.post_specs).toMatchObject({ automatic_define: 1, decision: "prd_only" });
+  expect(complete.state.pending_completion).toEqual(reviewed.pending_completion);
+  expect(readDefineHandoff(complete.state, complete.action)).toEqual(readDefineHandoff(ready(), pending));
+  if (complete.action.kind !== "done") throw new Error("Expected terminal action");
+  for (const action of [
+    { ...complete.action, outcome: { status: "needs_attention" as const, reasons: ["Blocked"] } },
+    { ...complete.action, verification: undefined },
+    { ...complete.action, outcome: undefined },
+  ]) {
+    expect(readDefineHandoff(complete.state, action)).toEqual({ error: {
+      code: "define_not_ready", message: "The completed verification action and retained evidence disagree.",
+    } });
+  }
+
+  const state = complete.state;
+  const incomplete = { ...state, sections: state.sections.filter(s => s.section_type !== "acceptance_criteria") };
+  expect(readDefineHandoff(incomplete, { ...complete.action, outcome: undefined }))
+    .toMatchObject({ error: { code: "define_document_invalid" } });
+  const post_specs = state.post_specs!;
+  for (const [checkpoint, action] of [
+    [{ ...state, semantic_review_requested: undefined }, complete.action],
+    [{ ...state, post_specs: { ...post_specs, automatic_define: undefined } }, complete.action],
+    [{ ...state, post_specs: { ...post_specs, decision: "implement" } }, complete.action],
+    [{ ...state, current_step: "finalize" }, complete.action],
+    [state, pending],
+    [state, null],
+  ] satisfies Array<[PipelineState, NextAction | null]>) {
+    expect(readDefineHandoff(checkpoint, action)).toMatchObject({ error: { code: "define_not_pending" } });
+  }
+});
+
+function finishRemember(state: PipelineState) {
+  return step({ state, result: {
+    kind: "tool_result", correlation_id: REMEMBER_CORRELATION_ID, success: true,
+  } });
+}
+
+it("clears transient completion evidence when the legacy run finishes", () => {
+  const state = { ...ready(), current_step: "finalize" as const };
+  expect(state.post_specs).toBeNull();
+  expect(finishRemember(state).state.pending_completion).toBeNull();
+});
+
+it("fails closed if an automatic gate is missing its saved self-check", () => {
+  const state = { ...reviewedCheckpoint(), pending_completion: null };
+  const stopped = step({ state });
+  expect(stopped.action).toEqual({
+    kind: "failed", step: "implementation_gate", reason: "Define requires saved self-check evidence.",
+  });
+  expect(stopped.state.current_step).toBe("complete");
+});
+
+it("records a blocked terminal outcome when the standard judge evidence is incomplete", () => {
+  const state = reviewedCheckpoint();
+  state.pending_completion = { ...state.pending_completion!, verification: undefined };
+  const result = step({ state });
+  expect(result.action).toMatchObject({
+    kind: "write_file", content: expect.stringContaining(
+      "Automatic Define outcome: needs_attention.\n- Define requires passed PRD sections",
+    ),
+  });
+  expect(result.state.pending_completion?.outcome).toEqual({
+    status: "needs_attention",
+    reasons: ["Define requires passed PRD sections, a passed self-check and detailed verification evidence."],
+  });
+});
+
+it("writes the automatic refusal report even if a legacy report already exists", () => {
+  const state = reviewedCheckpoint();
+  const saved = state.pending_completion!;
+  const verification = saved.verification!;
+  state.pending_completion = {
+    ...saved,
+    verification: { ...verification, judge_verdicts: verification.judge_verdicts!.map(verdict => ({
+      ...verdict, verdict: "FAIL" as const,
+    })) },
+  };
+  state.written_files.push(`prd-output/${run_id}/${VERIFICATION_REPORT_FILENAME}`);
+  const result = step({ state });
+  expect(result.action).toMatchObject({
+    kind: "write_file",
+    content: expect.stringContaining("Automatic Define outcome: needs_attention.\n- 2 claim(s) carry a blocked verdict (FAIL)"),
+  });
+});
+
+it("reports the legacy pending decision for older runs", () => {
+  const state = { ...ready(), written_files: [`prd-output/${run_id}/01-prd.md`] };
+  const report = buildVerificationReportFile(state);
+  expect(report?.content()).toContain("Human decision: pending (gate not yet answered).");
+  expect(report?.content()).not.toContain("Automatic Define outcome");
 });

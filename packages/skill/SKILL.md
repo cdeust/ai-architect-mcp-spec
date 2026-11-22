@@ -29,7 +29,7 @@ ecosystem:
 
 You (the host) drive a loop:
 
-1. Call `start_pipeline` → receive an envelope with `{ run_id, messages, action, ... }`.
+1. Call `start_pipeline` with `semantic_review: true` → receive an envelope with `{ run_id, messages, action, ... }`.
    Declare what you know and the server does not. You have the whole conversation; the server has only `feature_description`.
    - `prd_context`: the kind of PRD. Omit it and the server reads the kind from the words of the description, or asks the user.
    - `request_size`: `"tiny"` for a small, self-contained change. It is the fast path: 4 sections (overview, requirements, acceptance criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. What it leaves out: every other section of the kind (for a feature: goals, user stories, the technical specification, the data model, the API specification, security and performance; for a release or a CI/CD change, deployment and the timeline too); with them the affected-symbols file (`stage-5.affected_symbols.json`), so on a codebase the PRD-versus-graph check reads the PRD text alone and planning receives no affected-symbols sidecar on that path; and the quality score of the run, which is not filed in the history of its kind. An incident keeps the plan of its kind whatever the size, when the run knows it is one: declare `prd_context` whenever you declare `request_size: "tiny"`. A kind the server reads from the words can miss an incident ("checkout returns 500 since the deploy" reads as a bug), and the run would then take the fast path. The server never reads a size from the description: omit `request_size` and the run has the rounds and sections of its kind.
@@ -189,7 +189,7 @@ The handlers currently emit `tool_name: "recall"` for section-context retrieval.
 
 `subagent_type` is an opaque string. Pass it verbatim to the Agent tool's `subagent_type` parameter. Do not parse, normalize, or construct it yourself.
 
-**Execute:** Issue **all** invocations in a **single message** with **multiple parallel Agent tool calls**. (Sequential dispatch produces a correct result but multiplies wall-clock time by N — for self-check batches with many judges this can exceed practical timeouts.) Each Agent call: `subagent_type = invocation.subagent_type`, `description = invocation.description`, `prompt = invocation.prompt`. **Never modify the prompt** — judge prompts contain JSON-output instructions that the runner's parser depends on.
+**Execute:** Issue **all** invocations in a **single message** with **multiple parallel Agent tool calls**. (Sequential dispatch produces a correct result but multiplies wall-clock time by N — for self-check batches with many judges this can exceed practical timeouts.) Each Agent call: `subagent_type = invocation.subagent_type`, `description = invocation.description`, `prompt = invocation.prompt`. Forward the invocation's `model` and `effort` when present. If the configured route cannot execute the requested model under its configured account and billing policy, submit an `error` for that invocation. Do not substitute a different model or billing route. **Never modify the prompt** — judge prompts contain JSON-output instructions that the runner's parser depends on.
 
 **Submit:**
 ```json
@@ -259,9 +259,13 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 
 ## SPECIFICATION HANDOFF
 
-At the `implementation_gate` question, show the verification findings. Read
-`get_pipeline_state({ run_id, format: "define_handoff_v1" })` to obtain a validated
-handoff for planning while the checkpoint is pending. `PRD only` closes the run.
+When an automatic run returns `done` with `outcome.status: "passed"`, call
+`get_pipeline_state({ run_id, format: "define_handoff_v1" })` directly if you are
+driving planning. Forward the validated handoff to architect-os. Treat a refusal
+as a blocked handoff and surface its reasons. No review question follows `done`.
+
+An older run can still expose an `implementation_gate` question. Read its
+handoff while that checkpoint is pending. `PRD only` closes the older run.
 Execution requires a separately approved plan in architect-os.
 
 ## ERROR TRANSPORT
