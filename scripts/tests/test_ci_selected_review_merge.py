@@ -197,3 +197,8 @@ class SelectedReviewMergeTests(unittest.TestCase):
                 api = RetryApi(latest=provider)
                 api.page = pages(sha=OLD_HEAD)[0] if provider == "claude" else pages()[0]
                 self.held(api)
+
+    def test_a_failed_post_step_cannot_erase_a_successful_claude_verdict_read(self):
+        api = RetryApi()
+        api.previous.verifier["conclusion"] = "failure"
+        self.held(api)

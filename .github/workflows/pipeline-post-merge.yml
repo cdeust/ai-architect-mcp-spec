@@ -844,7 +844,7 @@ jobs:
                       )
                   if previous_provider == "claude" and (previous_run["id"], previous_attempt) not in claude:
                       require(
-                          not _verified_job(
+                          not _verified_steps(
                               previous_jobs.get("Verify Claude review verdict", {}),
                               ("Verify the verdict for this run",),
                           ),
