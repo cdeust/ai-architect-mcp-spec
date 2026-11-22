@@ -18,7 +18,7 @@ The verifier reports whether the input satisfies its implemented rules. A report
 
 ## The pipeline
 
-![Spec workflow. An existing PRD can go directly to the portable verifier. In the full flow, a host drives PRD generation and verification, Spec exports validated Define and a deterministic proposal, and Architect OS prepares a preview. An operator can also request a pinned implementation dossier. Independent Plan review and measured delivery replay are next.](docs/diagrams/spec-delivery-flow.svg)
+![Six-stage workflow with ready and next badges. Spec analyses and verifies a PRD, then exports Define and a deterministic proposal for Architect OS approval, execution and delivery. Optional graph analysis and the pinned review dossier are ready. Independent Plan review, specimen replay and delivery evidence remain next for the paired loop.](docs/diagrams/spec-delivery-flow.svg)
 
 ### Generate and verify a PRD
 
@@ -61,6 +61,12 @@ A run declared `request_size: "tiny"` writes `00-run-notes.md`, `01-prd.md`, `05
 
 - **Ready** on Spec `main`. The portable verifier, host-driven Define verification, deterministic proposal and revision-bound review dossier are implemented. [Verification and Define](https://github.com/cdeust/ai-architect-mcp-spec/pull/387) · [Deterministic proposal](https://github.com/cdeust/ai-architect-mcp-spec/pull/383) · [Review dossier](https://github.com/cdeust/ai-architect-mcp-spec/pull/385)
 - **Next** for the paired loop. The independent review handoff reached the Architect OS preview in an offline replay using a candidate Spec bundle and two model fixtures. Production evidence still needs signed-in adapters that attest the account and effective model, results on specimen inputs before Step, and results per criterion on the delivered revision. [Architect OS integration and replay](https://github.com/cdeust/architect-os/pull/123)
+
+### A recorded handoff
+
+The delivery-command fixture drives an actual Spec process over stdio and compares the resulting dossier with the approved Git revisions. Its assertions cover `ready_for_review` and `evidence_required` for each acceptance criterion. [Input fixture](packages/mcp-server/src/__tests__/fixtures/define-delivery-command.json) · [Expected results](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts)
+
+A separate paired run used an experimental Spec bundle with two deterministic model fixtures. Architect OS accepted the exact reviewed Plan as `pending`, and a second admitted session resumed it with zero model calls. The PR records the tested Architect OS commit and the materialization refusal when specimen evidence was missing. [Recorded paired replay](https://github.com/cdeust/architect-os/pull/123)
 
 ## Getting started
 
