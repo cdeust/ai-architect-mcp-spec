@@ -31,10 +31,12 @@ a scheduled routine, the local manager. It follows the contract of `cdeust/Corte
 source of truth for CI. Where the prompt of a routine says otherwise, this section wins:
 the prompt was written before the contract, and the repository's own standards apply.
 
-1. **The review verdict decides the merge.** The `PR Review` workflow posts a comment by
-   `claude[bot]` that ends with `Verdict: approve` or `Verdict: block`. The resolver merges
-   a pull request whose last verdict covers its head, reads approve, and whose required
-   checks are green. No agent merges by hand or enables auto-merge.
+1. **The selected review decides the merge.** The default-branch quota workflow identifies
+   the provider for this review run and attempt. Claude posts a run-linked verdict. Codex
+   publishes an authenticated GitHub App receipt on the current head. A separate read-only
+   CI job verifies the selected provider's verdict. The protected resolver checks the
+   admission, successful run, and verdict again before merging. See the
+   [subscription review contract](review-subscriptions.md).
 2. **Three reviews per branch.** A push to a pull request ready for review triggers review
    admission. The budget counts successful workflow runs for that pull request and branch
    whose review action step succeeded. Push once per verdict, with every blocker of that

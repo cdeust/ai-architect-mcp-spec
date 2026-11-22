@@ -3,11 +3,12 @@
 
 Runs from the trusted default-branch checkout of claude-review.yml, before the
 review action. It reads workflow-run metadata only: no PR content, no comment
-text. A review counts when its run is a success of the same PR, ran under the
+text. A Claude review counts when its run is a success of the same PR, ran under the
 review contract (it has the "Claude review budget" job) and the action step
 ("PR Review") itself succeeded, so runs that skipped the action because the cap
 was reached do not count as reviews, nor do reviews of the workflow that
-preceded the contract (ADR-1129).
+preceded the contract (ADR-1129). A verified Codex receipt counts once per head,
+including a completed review whose findings block the subsequent verdict check.
 
 Writes `round`, `cap`, `skip` and `reviewed_sha` to $GITHUB_OUTPUT. At the cap
 no fourth review runs: the accepted part merges, the rest leaves the PR for a
@@ -103,22 +104,27 @@ def candidate_runs(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str):
         row
         for row in _lines(text)
         if row.get("id") != run_id
-        and row.get("conclusion") == "success"
+        and row.get("conclusion") in {"success", "failure"}
         and pr in row.get("prs", [])
     ]
 
 
-def ran_the_action(gh: Gh, repo: str, run: Record) -> bool:
+def review_source(gh: Gh, repo: str, run: Record) -> str | None:
     jq = (
-        f'[select(any(.jobs[]; .name == "{BUDGET_JOB}")) | .jobs[].steps[]? '
-        f'| select(.name == "{ACTION_STEP}") | .conclusion]'
+        f'[select(any(.jobs[]; .name == "{BUDGET_JOB}")) | .jobs[] as $job | $job.steps[]? '
+        f'| select(.name == "{ACTION_STEP}") '
+        '| if $job.name == "Codex GitHub review" and .conclusion == "success" then "native-receipt" '
+        'elif $job.name == "Claude review" then .conclusion else empty end]'
     )
     text = gh([f"repos/{repo}/actions/runs/{run['id']}/jobs", "--jq", jq])
     conclusions = json.loads(text)
     if not isinstance(conclusions, list):
         raise BudgetError("protocol")
-    return "success" in conclusions
-
+    if "native-receipt" in conclusions:
+        return "codex"
+    if run.get("conclusion") == "success" and "success" in conclusions:
+        return "claude"
+    return None
 
 def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
     ordered = sorted(reviews, key=lambda run: run["created_at"])
@@ -138,7 +144,15 @@ def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
 
 def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels):
     runs = candidate_runs(gh, repo, pr, run_id, head_ref)
-    reviews = [run for run in runs if ran_the_action(gh, repo, run)]
+    reviews, native_heads = [], set()
+    for run in sorted(runs, key=lambda row: row["created_at"]):
+        source = review_source(gh, repo, run)
+        if source == "codex":
+            if run["head_sha"] in native_heads:
+                continue
+            native_heads.add(run["head_sha"])
+        if source:
+            reviews.append(run)
     return decide(reviews, labels)
 
 

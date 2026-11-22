@@ -146,7 +146,7 @@ class LowRiskTierTests(unittest.TestCase):
         ):
             with self.assertRaises(ns["PostMergeError"]) as caught:
                 ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
-            self.assertIn("no Claude review ran", str(caught.exception))
+            self.assertIn("no candidate review run on this PR head", str(caught.exception))
             self.assertEqual(api.puts, [])
 
     def test_a_hold_label_still_holds_a_low_risk_pr(self):

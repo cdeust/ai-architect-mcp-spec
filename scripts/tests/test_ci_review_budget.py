@@ -88,13 +88,20 @@ class CountTests(unittest.TestCase):
         runs = [
             run(1, 1),
             run(2, 2),  # cap run: success, but the action step was skipped
-            run(3, 3, conclusion="failure"),
+            run(3, 3, "c" * 40, conclusion="failure"),
             run(4, 4, prs=(8,)),
             run(99, 5),  # the current run
         ]
         jobs = {1: ["success"], 2: ["skipped"], 3: ["success"], 4: ["success"]}
         out = self.count(runs, jobs)
         self.assertEqual((out["round"], out["reviewed_sha"]), (2, SHA))
+
+    def test_native_block_counts_and_rereading_one_receipt_does_not_spend_a_round(self):
+        head = "b" * 40
+        runs = [run(1, 1, head, conclusion="failure"), run(2, 2, head), run(3, 3, SHA)]
+        jobs = {1: ["native-receipt"], 2: ["native-receipt"], 3: ["native-receipt"]}
+        result = self.count(runs, jobs)
+        self.assertEqual((result["round"], result["reviewed_sha"]), (3, SHA))
 
     def test_skipped_runs_do_not_move_the_reviewed_commit(self):
         reviewed, skipped = "b" * 40, "c" * 40
@@ -135,7 +142,7 @@ class JqFilterTests(unittest.TestCase):
     def test_job_filter_selects_the_action_step_only(self):
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.ran_the_action(record, "o/r", {"id": 1})
+        budget.review_source(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         steps = [
             {"name": "Checkout repository", "conclusion": "success"},
@@ -152,7 +159,7 @@ class JqFilterTests(unittest.TestCase):
         # the whole budget and the pull request could never be merged.
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.ran_the_action(record, "o/r", {"id": 1})
+        budget.review_source(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         done = [{"name": budget.ACTION_STEP, "conclusion": "success"}]
         old = {"jobs": [{"name": "Claude review", "steps": done}]}
@@ -225,6 +232,44 @@ class WorkflowWiringTests(unittest.TestCase):
             if step.get("uses", "").startswith("anthropics/claude-code-action@")
         )
 
+    def test_verdict_is_verified_after_a_successful_review_in_a_fresh_job(self):
+        job = self.jobs["verdict"]
+        self.assertEqual(job["needs"], "review")
+        self.assertNotIn("if", job)  # The default success condition excludes failed and skipped reviews.
+        self.assertNotIn("continue-on-error", job)
+        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
+        checkout, check = job["steps"]
+        self.assertEqual(checkout["uses"], self.jobs["budget"]["steps"][0]["uses"])
+        self.assertEqual(
+            checkout["with"], {"ref": "main", "fetch-depth": 1, "persist-credentials": False}
+        )
+        self.assertNotIn("continue-on-error", check)
+        self.assertEqual(check["run"], "python3 -I scripts/ci_review_verdict.py")
+        self.assertEqual(
+            check["env"],
+            {
+                "GH_TOKEN": "${{ github.token }}",
+                "GH_REPO": "${{ github.repository }}",
+                "PR": "${{ github.event.pull_request.number }}",
+                "RUN_ID": "${{ github.run_id }}",
+                "RUN_ATTEMPT": "${{ github.run_attempt }}",
+            },
+        )
+
+    def test_native_verification_has_its_own_read_only_job(self):
+        job = self.jobs["verdict-codex"]
+        self.assertEqual(job["needs"], "codex")
+        self.assertNotIn("continue-on-error", job)
+        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
+        checkout, read, enforce = job["steps"]
+        self.assertEqual(checkout["with"]["ref"], "main")
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertEqual(read["env"]["HEAD_SHA"], "${{ github.event.pull_request.head.sha }}")
+        self.assertEqual(read["env"]["REVIEWER"], "codex-existing")
+        self.assertEqual(read["run"], "python3 -I scripts/ci_review_codex.py")
+        self.assertEqual(enforce["env"]["VERDICT"], "${{ steps.proof.outputs.verdict }}")
+        self.assertEqual(enforce["run"], 'test "$VERDICT" = approve')
+
     def test_reviews_of_one_pr_are_admitted_one_at_a_time(self):
         self.assertEqual(
             self.workflow["concurrency"],
@@ -242,8 +287,12 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("secrets.", yaml.safe_dump(job))
         self.assertEqual(
-            job["steps"][-1]["run"], "python3 -I scripts/ci_review_budget.py"
+            job["steps"][-2]["run"], "python3 -I scripts/ci_review_budget.py"
         )
+
+        admit = job["steps"][-1]
+        self.assertEqual(admit["name"], "Admit a subscription review round")
+        self.assertEqual(admit["if"], "steps.count.outputs.skip == 'false'")
 
     def test_budget_checks_out_main_and_keeps_no_credentials(self):
         checkout = self.jobs["budget"]["steps"][0]
@@ -252,7 +301,9 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_review_waits_for_the_budget_and_honours_its_skip(self):
         review = self.jobs["review"]
-        self.assertEqual(review["needs"], "budget")
+        self.assertEqual(set(review["needs"]), {"budget", "admission"})
+        self.assertEqual(self.jobs["admission"]["needs"], "budget")
+        self.assertIn("needs.admission.outputs.reviewer == 'claude'", review["if"])
         self.assertIn("needs.budget.outputs.skip != 'true'", review["if"])
 
     def test_budget_and_review_share_the_same_event_predicate(self):
@@ -285,7 +336,7 @@ class WorkflowWiringTests(unittest.TestCase):
         prompt = self.action()["with"]["prompt"]
         link = (
             '"[View job run](${{ github.server_url }}/${{ github.repository }}'
-            '/actions/runs/${{ github.run_id }})"'
+            '/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }})"'
         )
         self.assertIn(link, prompt)
         self.assertIn("in every comment that carries the verdict line", prompt)

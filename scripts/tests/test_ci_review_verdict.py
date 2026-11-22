@@ -60,6 +60,15 @@ def review(text="Blockers: none.\n\nVerdict: approve", **kw):
 
 
 class VerdictOfRunTests(unittest.TestCase):
+    def test_routed_claude_requires_the_full_repository_and_attempt_link(self):
+        target = f"https://github.com/{REPO}/actions/runs/{RUN}/attempts/2"
+        row = review()
+        for address, expected in ((target, "approve"), (target[:-1] + "1", None),
+                                  (target[:-1] + "20", None), (target.replace(REPO, "another/repo"), None),
+                                  (target.split("/attempts")[0], None)):
+            row["body"] = f"[View job run]({address})\nVerdict: approve"
+            self.assertEqual(verdict.verdict_of_run([row], RUN, target), expected)
+
     def test_a_review_that_ends_with_approve_or_block_passes(self):
         self.assertEqual(verdict.verdict_of_run([review()], RUN), "approve")
         blocked = review("Blocker: x.\n\nVerdict: block")
