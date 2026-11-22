@@ -1,0 +1,85 @@
+name: Native GitHub review acceptance
+# An owner opens a new same-repository draft on this integration branch to
+# exercise the real App. Production review selection has its own workflow.
+on:
+  pull_request:
+    types: [opened]
+permissions: {}
+jobs:
+  request:
+    if: >-
+      github.event.pull_request.draft && github.actor_id == github.repository_owner_id
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.head.ref == 'ci/review-subscription-runtime'
+      && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    outputs:
+      request_id: ${{ steps.send.outputs.id }}
+    steps:
+      - name: Send the review request from GitHub Actions
+        id: send
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/pulls/$PR" | jq -e --arg sha "$SHA" '.draft and .state == "open" and .head.sha == $sha' > /dev/null
+          previous=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --slurp |
+            jq -r --arg sha "$SHA" '[.[][] | select(.user.node_id == "BOT_kgDOC98s_g" and
+              (.body | startswith("<!-- codex-pull-request-review-summary -->") and contains($sha)))] | length')
+          if [[ "$previous" != 0 ]]; then
+            echo "::error::A native receipt already exists for this head. Fresh dispatch cannot be tested."
+            exit 1
+          fi
+          body=$(printf '@codex review\n\n<!-- ci-codex-review %s -->' "$SHA")
+          reply=$(gh api "repos/$GH_REPO/issues/$PR/comments" --method POST -f body="$body")
+          id=$(jq -er 'select(.user.login == "github-actions[bot]" and .user.type == "Bot") | .id' <<<"$reply")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "GitHub Actions request: $GITHUB_SERVER_URL/$GH_REPO/pull/$PR#issuecomment-$id"
+  receipt:
+    needs: request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # Operational ceiling for this live integration trial.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify that OpenAI accepted this Actions request and reviewed this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REQUEST_ID: ${{ needs.request.outputs.request_id }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, runpy, subprocess, time
+          proof = runpy.run_path("scripts/ci_native_verdict.py")
+          repo, pr, sha = (os.environ[k] for k in ("GH_REPO", "PR", "SHA"))
+          request_id = int(os.environ["REQUEST_ID"])
+          owner, name = repo.split("/")
+          def api(*args):
+              return json.loads(subprocess.check_output(["gh", "api", *args], timeout=60))
+          accepted = False
+          while True:
+              reactions = api(f"repos/{repo}/issues/comments/{request_id}/reactions", "--paginate", "--slurp")
+              accepted = accepted or any(r["user"]["node_id"] == proof["BOT"]["id"] and r["content"] in ("eyes", "+1")
+                             for page in reactions for r in page)
+              pages = api("graphql", "--paginate", "--slurp", "-f", "query=" + proof["QUERY"],
+                          "-f", "owner=" + owner, "-f", "repo=" + name, "-F", "pr=" + pr)
+              if any(p["data"]["repository"]["pullRequest"]["isDraft"] is not True for p in pages):
+                  raise SystemExit("Integration PR left draft state")
+              verdict, _ = proof["state"](pages, sha, allow_draft_read=True)
+              if accepted and verdict in ("approve", "block"):
+                  print("OpenAI accepted GitHub Actions comment", request_id, "and reviewed", sha, "with verdict", verdict)
+                  break
+              time.sleep(15)
+          PY

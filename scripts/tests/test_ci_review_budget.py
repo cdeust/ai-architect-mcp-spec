@@ -88,7 +88,7 @@ class CountTests(unittest.TestCase):
         runs = [
             run(1, 1),
             run(2, 2),  # cap run: success, but the action step was skipped
-            run(3, 3, "c" * 40, conclusion="failure"),
+            run(3, 3, "c" * 40, conclusion="failure"),  # review ran but its verdict check failed
             run(4, 4, prs=(8,)),
             run(99, 5),  # the current run
         ]
