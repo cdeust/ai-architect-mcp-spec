@@ -21,6 +21,25 @@ function blockCommentEnd(content: string, afterOpening: number): number {
   return content.length;
 }
 
+// String.trim and the existing document grammar recognize the same ECMAScript
+// whitespace and line terminators. Read one source character at a time.
+function afterWhitespace(content: string, offset: number): number {
+  while (content[offset]?.trim() === "") offset++;
+  return offset;
+}
+
+function swiftBodyStart(content: string, afterParameters: number): number | undefined {
+  let position = afterWhitespace(content, afterParameters);
+  // Preserve the modifier order recognized in existing and legacy PRDs.
+  for (const modifier of ["throws", "async", "throws"]) {
+    if (!content.startsWith(modifier, position)) continue;
+    const afterWord = position + modifier.length;
+    position = afterWhitespace(content, afterWord);
+    if (position === afterWord) return undefined;
+  }
+  return content[position] === "{" ? position + 1 : undefined;
+}
+
 /**
  * Read Swift test headers in source order. A new declaration starts fresh
  * when a draft signature is unfinished. Parentheses in tuple and function
@@ -30,7 +49,6 @@ function* swiftTestHeaders(content: string) {
   const headerTokens = /\bfunc\s+test\w+\s*\(|[()"]|\/\/|\/\*/g;
   // Inside a signature, comments and string defaults can contain punctuation.
   const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*/y;
-  const bodyOpening = /\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{/y;
   let start = 0;
   let depth = 0;
 
@@ -44,8 +62,8 @@ function* swiftTestHeaders(content: string) {
         depth++;
       } else if (token[0] === ")") {
         if (--depth === 0) {
-          bodyOpening.lastIndex = headerTokens.lastIndex;
-          if (bodyOpening.test(content)) yield { start, bodyStart: bodyOpening.lastIndex };
+          const bodyStart = swiftBodyStart(content, headerTokens.lastIndex);
+          if (bodyStart !== undefined) yield { start, bodyStart };
         }
       } else if (token[0] === "/*") {
         headerTokens.lastIndex = blockCommentEnd(content, headerTokens.lastIndex);
@@ -64,7 +82,6 @@ export function checkNoPlaceholderTests(
 ): HardOutputRuleViolation[] {
   const comments: HardOutputRuleViolation[] = [];
   const empty: HardOutputRuleViolation[] = [];
-  const emptyBody = /\s*\}/y;
   let lastClosingBrace = 0;
 
   const finding = (start: number, endExclusive: number) => makeViolation(
@@ -84,8 +101,8 @@ export function checkNoPlaceholderTests(
     }
     // An empty nested test is independently reportable. Its whitespace can
     // only extend to the next token, so this check never rescans a body.
-    emptyBody.lastIndex = bodyStart;
-    if (emptyBody.test(content)) empty.push(finding(start, emptyBody.lastIndex));
+    const next = afterWhitespace(content, bodyStart);
+    if (content[next] === "}") empty.push(finding(start, next + 1));
   }
 
   return [

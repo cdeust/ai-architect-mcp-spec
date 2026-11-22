@@ -49410,10 +49410,26 @@ function blockCommentEnd(content, afterOpening) {
   }
   return content.length;
 }
+function afterWhitespace(content, offset) {
+  while (content[offset]?.trim() === "")
+    offset++;
+  return offset;
+}
+function swiftBodyStart(content, afterParameters) {
+  let position = afterWhitespace(content, afterParameters);
+  for (const modifier of ["throws", "async", "throws"]) {
+    if (!content.startsWith(modifier, position))
+      continue;
+    const afterWord = position + modifier.length;
+    position = afterWhitespace(content, afterWord);
+    if (position === afterWord)
+      return void 0;
+  }
+  return content[position] === "{" ? position + 1 : void 0;
+}
 function* swiftTestHeaders(content) {
   const headerTokens = /\bfunc\s+test\w+\s*\(|[()"]|\/\/|\/\*/g;
   const parameterTrivia = /"(?:\\[^\r\n]|[^"\\\r\n])*"?|\/\/[^\r\n]*/y;
-  const bodyOpening = /\s*(?:throws\s+)?(?:async\s+)?(?:throws\s+)?\{/y;
   let start = 0;
   let depth = 0;
   let token;
@@ -49426,9 +49442,9 @@ function* swiftTestHeaders(content) {
         depth++;
       } else if (token[0] === ")") {
         if (--depth === 0) {
-          bodyOpening.lastIndex = headerTokens.lastIndex;
-          if (bodyOpening.test(content))
-            yield { start, bodyStart: bodyOpening.lastIndex };
+          const bodyStart = swiftBodyStart(content, headerTokens.lastIndex);
+          if (bodyStart !== void 0)
+            yield { start, bodyStart };
         }
       } else if (token[0] === "/*") {
         headerTokens.lastIndex = blockCommentEnd(content, headerTokens.lastIndex);
@@ -49443,7 +49459,6 @@ function* swiftTestHeaders(content) {
 function checkNoPlaceholderTests(content, sectionType) {
   const comments = [];
   const empty = [];
-  const emptyBody = /\s*\}/y;
   let lastClosingBrace = 0;
   const finding = (start, endExclusive) => makeViolation("no_placeholder_tests", sectionType, PLACEHOLDER_MESSAGE, content.slice(start, endExclusive).substring(0, 120));
   for (const { start, bodyStart } of swiftTestHeaders(content)) {
@@ -49455,9 +49470,9 @@ function checkNoPlaceholderTests(content, sectionType) {
         comments.push(finding(start, lastClosingBrace + 1));
       }
     }
-    emptyBody.lastIndex = bodyStart;
-    if (emptyBody.test(content))
-      empty.push(finding(start, emptyBody.lastIndex));
+    const next = afterWhitespace(content, bodyStart);
+    if (content[next] === "}")
+      empty.push(finding(start, next + 1));
   }
   return [
     ...comments,

@@ -221,6 +221,24 @@ describe("placeholder-test detection", () => {
     expect(placeholderViolations(examples.join("\n")).map((v) => v.offendingContent)).toEqual(examples);
   });
 
+  it("reads copied PRD whitespace around Swift modifiers and inside the body", () => {
+    const plain = "func testDraft(){\u00a0\r\n\t}";
+    const modified = "func testInvoice()\r\nthrows\u00a0async\tthrows\n{\u2003}";
+    expect(placeholderViolations([plain, modified].join("\n")).map((v) => v.offendingContent))
+      .toEqual([plain, modified]);
+  });
+
+  it("requires separation and the start of a body after the recognized modifiers", () => {
+    const drafts = [
+      "func testDraft() throws{ }",
+      "func testSummary() asyncthrows { }",
+      "func testExport() async async { }",
+      "func testTotals() async",
+      "func testArchive()   ",
+    ];
+    expect(placeholderViolations(drafts.join("\n"))).toEqual([]);
+  });
+
   it("discards incomplete Swift samples and keeps later tests independent", () => {
     const complete = "func testLedger() { }";
     const document = [
