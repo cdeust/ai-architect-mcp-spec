@@ -23,7 +23,7 @@
     "verify": "pnpm install --frozen-lockfile && pnpm build && pnpm bundle && pnpm test"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.19.0"
   },
   "devDependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.83",

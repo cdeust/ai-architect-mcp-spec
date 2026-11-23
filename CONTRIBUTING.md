@@ -19,7 +19,7 @@ the architecture diagram.
 
 ## Dev setup
 
-**Prerequisites:** Node.js 20.x or 22.x, pnpm v10+ (`corepack enable && corepack prepare pnpm@10`).
+**Prerequisites:** Node.js 20.19 or later in 20.x, or 22.x (`markdown-it` 15 depends on `entities` 8, which requires Node 20.19.0), pnpm v10+ (`corepack enable && corepack prepare pnpm@10`).
 
 ```bash
 git clone https://github.com/cdeust/ai-architect-mcp-spec.git
