@@ -11,7 +11,7 @@
 //
 // source: issue #118.
 
-import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
+import type { StateBlock } from "markdown-it";
 
 /**
  * Whether an HTML block is a comment (CommonMark 0.31.2 §4.6, start
