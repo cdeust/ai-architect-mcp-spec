@@ -1,13 +1,42 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { extname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initialPostSpecs, newPipelineState } from "@prd-gen/orchestration";
+import { build, transformSync } from "esbuild";
 import { expect, it } from "vitest";
 import { handleFinalize } from "../../../orchestration/src/handlers/finalize.js";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 import { startStdioServer } from "./stdio-server.js";
 
 const historicalPrStatus = "PR: not opened (declined at the gate, or publication failed).";
+const repo = fileURLToPath(new URL("../../../../", import.meta.url));
+const packages = join(repo, "packages");
+const authorityPhrases = [["ALREADY", "approved"].join(" "), "gh pr create", "git push"];
+const retiredBuilder = /\b(?:build|make|create)(?:Implementation|Testing|Review|PrCreation)Prompt\b/;
+const retiredModule = /^(?:implementation|testing|review|pr-creation)-prompts\.[cm]?[jt]sx?$/;
 // source: MCP Vitest config's cold-start allowance for the server dependency graph.
 const checkpointTimeoutMs = 60_000;
+
+function productionSourceFiles() {
+  const roots = readdirSync(packages, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => join(packages, entry.name, "src"))
+    .filter(existsSync);
+  return roots.flatMap(root => readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .filter(entry => !relative(root, entry.parentPath).split(sep).includes("__tests__"))
+    .filter(entry => !/\.(?:test|spec|perf)\.[cm]?[jt]sx?$/.test(entry.name)));
+}
+
+function sourceForAuthorityCheck(path: string, text: string): string {
+  const extension = extname(path).slice(1).replace(/^[cm](?=[jt]s$)/, "");
+  if (extension === "ts" || extension === "tsx" || extension === "js" || extension === "jsx") {
+    // Keep unreachable code and strip comments that describe the legacy protocol.
+    return transformSync(text, { loader: extension, treeShaking: false, legalComments: "none" }).code;
+  }
+  return text;
+}
 
 function historicalCompletion(run_id: string) {
   return {
@@ -18,11 +47,48 @@ function historicalCompletion(run_id: string) {
   };
 }
 
-it("ships no retired publication commands or claim of human approval", () => {
-  const bundle = readFileSync(new URL("../../../../mcp-server/index.js", import.meta.url), "utf8");
-  const phrases = [["ALREADY", "approved"].join(" "), "gh pr create", "git push"];
-  expect(phrases.filter((phrase) => bundle.includes(phrase))).toEqual([]);
-});
+it("finds no retired constructors or publication authority in production sources", () => {
+  const files = productionSourceFiles();
+  expect(files.length).toBeGreaterThan(0);
+  const violations = files.flatMap(({ name, parentPath }) => {
+    const path = join(parentPath, name);
+    const text = readFileSync(path, "utf8");
+    const location = relative(repo, path);
+    if (retiredModule.test(name) || retiredBuilder.test(text)) return [`${location}: retired prompt builder`];
+    const source = sourceForAuthorityCheck(path, text);
+    return authorityPhrases.filter(phrase => source.includes(phrase)).map(phrase => `${location}: ${phrase}`);
+  });
+  expect(violations).toEqual([]);
+}, checkpointTimeoutMs);
+
+it("ships no retired authority text in a freshly built source bundle", async () => {
+  const scratch = mkdtempSync(join(tmpdir(), "prd-gen-retired-authority-"));
+  const outfile = join(scratch, "index.js");
+  try {
+    await build({
+      absWorkingDir: repo,
+      entryPoints: [join(packages, "mcp-server", "src", "index.ts")],
+      tsconfigRaw: {
+        compilerOptions: {
+          paths: {
+            "@prd-gen/benchmark/calibration": ["./packages/benchmark/calibration/index.ts"],
+            "@prd-gen/*": ["./packages/*/src/index.ts"],
+          },
+        },
+      },
+      bundle: true,
+      platform: "node",
+      target: "node20",
+      format: "esm",
+      external: ["better-sqlite3"],
+      outfile,
+    });
+    const bundle = readFileSync(outfile, "utf8");
+    expect(authorityPhrases.filter(phrase => bundle.includes(phrase))).toEqual([]);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}, checkpointTimeoutMs);
 
 it("refuses submitted results for all four retired steps over MCP stdio", async () => {
   const checkpoints = [

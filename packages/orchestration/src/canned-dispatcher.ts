@@ -37,7 +37,6 @@ import {
   JIRA_GENERATION_INV_ID,
   GIT_HISTORY_INV_ID,
   IMPLEMENTATION_GATE_QUESTION_ID,
-  PR_GATE_QUESTION_ID,
 } from "./handlers/protocol-ids.js";
 import {
   defaultFakeSectionDraft,
@@ -74,13 +73,6 @@ export interface CannedDispatcherOptions {
    * A non-pass verdict keeps "PRD only" unless override_policy is true.
    */
   readonly implementation_gate_answer?: "PRD only" | "Implement";
-  /**
-   * Answer for the `pr_gate` ask_user (PR 5, design-phases-3-5.md §3).
-   * Default "No" — the zero-risk terminal default (never pushes/opens a PR
-   * unless a test explicitly opts in). Set to "Push + open PR" to drive the
-   * `pr_creation` spawn in a full smoke run.
-   */
-  readonly pr_gate_answer?: "Push + open PR" | "No";
 }
 
 export type CannedDispatcher = (action: NextAction) => ActionResult | undefined;
@@ -97,7 +89,6 @@ export function makeCannedDispatcher(
   const graph_path = opts.graph_path ?? "/tmp/canned/graph";
   const fake_section_draft = opts.fake_section_draft ?? defaultFakeSectionDraft;
   const implementation_gate_answer = opts.implementation_gate_answer ?? "PRD only";
-  const pr_gate_answer = opts.pr_gate_answer ?? "No";
 
   function pickFakeAgentResponse(invocation_id: string, prompt: string): string {
     if (invocation_id.startsWith(SELF_CHECK_JUDGE_INV_PREFIX)) {
@@ -140,16 +131,6 @@ export function makeCannedDispatcher(
         kind: "user_answer",
         question_id: action.question_id,
         selected: [implementation_gate_answer === GATE_OPTION_IMPLEMENT && approved ? approved.label : GATE_OPTION_PRD_ONLY],
-      };
-    }
-    if (action.question_id === PR_GATE_QUESTION_ID) {
-      // Explicit, not relying on options[0]: "No" is the zero-risk default
-      // (design-phases-3-5.md §3, PR 5) — never pushes/opens a PR unless a
-      // test explicitly opts in via pr_gate_answer.
-      return {
-        kind: "user_answer",
-        question_id: action.question_id,
-        selected: [pr_gate_answer],
       };
     }
     if (action.options && action.options.length > 0) {
