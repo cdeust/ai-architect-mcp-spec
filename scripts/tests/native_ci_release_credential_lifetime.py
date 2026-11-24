@@ -35,6 +35,7 @@ TAG = "v0.0.0-fixture"
 SUN_PATH_BYTES = 104  # the smaller of the two platform limits, terminating NUL included
 RUNNER_SIGINT_WINDOW_S = 7.5
 RUNNER_SIGTERM_WINDOW_S = 2.5
+TRANSPORT_EXIT_S = 1.0
 OPENSSH_PARENT_CHECK_S = 10  # ssh-agent.c: parent_alive_interval for a command-scoped agent
 
 HOSTILE_SSH_CONFIG = """Host *
@@ -206,6 +207,23 @@ class Fixture:
             except ProcessLookupError:
                 pass
             self.process.stdout.close()
+        # An agent outside the step's group, or a stopped one that never checks its
+        # parent again, is found through what the transport recorded, then removed
+        # with its socket directory wherever the workflow under test put it.
+        agents = [record["agent"] for record in self.transports() if record.get("agent")]
+        if (self.log / "agent-pid").exists():
+            agents.append((self.log / "agent-pid").read_text())
+        for pid in agents:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+        for record in self.transports():
+            directory = (self.repo / record["socket"]).parent
+            owned = directory.name.startswith("release-agent.") or any(
+                directory != base and base in directory.parents for base in (self.root, self.socket_base))
+            if record["socket"] and owned and directory not in (self.repo, self.runner_temp):
+                shutil.rmtree(directory, ignore_errors=True)
         for pid, _, _, args in processes():
             if (str(self.root) in args or str(self.socket_base) in args) and int(pid) != os.getpid():
                 try:
@@ -245,7 +263,12 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             probe = subprocess.run(["ssh-add", "-l"], cwd=fixture.repo, capture_output=True,
                                    env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]))
             self.assertEqual(probe.returncode, 2, "the same probe that reached the agent no longer does")
+            # Git and its ssh client end on their own once the publisher is gone, as a
+            # real client does on EOF; they get TRANSPORT_EXIT_S, the agent gets nothing.
+            deadline = time.monotonic() + TRANSPORT_EXIT_S
             for pid in (record["pid"], record["parent"]):
+                while alive(int(pid)) and time.monotonic() < deadline:
+                    time.sleep(0.02)
                 self.assertFalse(alive(int(pid)), "a transport process outlived the step")
         leftovers = [row for row in processes() if not row[2].startswith("Z")
                      and (str(fixture.root) in row[3] or str(fixture.socket_base) in row[3])]
