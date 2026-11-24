@@ -83,7 +83,8 @@ class ReleaseSecurity(unittest.TestCase):
     def test_actions_are_immutable_and_package_caches_are_disabled(self):
         for key, action in workflow_fields(DOCUMENT):
             if key == "uses":
-                self.assertRegex(action, r"^[\w.-]+/[\w.-]+(?:/[\w.-]+)*@[a-fA-F0-9]{40}\Z")
+                # A suffix on ./local@<hash> would still resolve from the checkout.
+                self.assertRegex(action, r"^[A-Za-z0-9][A-Za-z0-9-]*/[\w.-]+(?:/[\w.-]+)*@[a-fA-F0-9]{40}\Z")
                 self.assertNotRegex(action, r"^actions/cache(?:/|@)")
         for job in JOBS.values():
             for step in job.get("steps", []):
