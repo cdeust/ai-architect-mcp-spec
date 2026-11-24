@@ -50,11 +50,7 @@ import {
   ExternalGroundingTypeSchema,
   type Claim,
 } from "@prd-gen/core";
-import {
-  getRetryArmForRun,
-  getMaxAttemptsForRun,
-  MAX_ATTEMPTS_BASELINE,
-} from "@prd-gen/benchmark";
+import { withRetryPolicy } from "./retry-policy-wiring.js";
 import { prepareImplementationReview } from "./implementation-review.js";
 import { drainEvidenceQueues } from "./evidence-drain.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
@@ -177,30 +173,7 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
         semantic_review_model: reviewModel,
       });
 
-      // B1 — Wire retry_policy from composition root (Curie A7).
-      // The reducer (section-generation.ts) reads state.retry_policy and never
-      // calls benchmark seams directly (§1.5 DIP / §2.2 layer rule). The
-      // composition root is the only permitted caller of the benchmark seams.
-      //
-      // Preserve an existing policy (resumed run): if initial.retry_policy is
-      // already non-null, we skip overwrite. newPipelineState always returns
-      // null for retry_policy (fresh state), so in practice this guard protects
-      // future paths where state is loaded from persistent storage before
-      // start_pipeline re-runs.
-      //
-      // Pass null as calibratedValue: no Wave D calibration run has completed
-      // yet, so getMaxAttemptsForRun returns MAX_ATTEMPTS_BASELINE.
-      //
-      // source: Curie cross-audit Wave D, A7 anomaly resolution.
-      const arm = getRetryArmForRun(run_id);
-      // Pass MAX_ATTEMPTS_BASELINE as the calibratedValue: no Wave D calibration
-      // run has completed yet. For a control-arm run, getMaxAttemptsForRun ignores
-      // calibratedValue and returns MAX_ATTEMPTS_BASELINE anyway.
-      const maxAttempts = getMaxAttemptsForRun(run_id, MAX_ATTEMPTS_BASELINE);
-      const initialWithPolicy =
-        initial.retry_policy !== null
-          ? initial // preserve existing policy (resumed run)
-          : { ...initial, retry_policy: { maxAttempts, arm } };
+      const initialWithPolicy = withRetryPolicy(initial);
 
       const { state, action, messages } = step({ state: initialWithPolicy });
       // Drain BEFORE persist — same invariant as submit_action_result.
