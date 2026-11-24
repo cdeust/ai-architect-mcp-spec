@@ -117,7 +117,7 @@ export const SpawnSubagentsActionSchema = z.object({
    * the `testing` step's test-engineer spawn — "review" already existed
    * (unused until PR 4b's `review` step wires it) so no addition was needed
    * there. "pr" added additively (design-phases-3-5.md §3, PR 5) for the
-   * `pr_creation` step's engineer spawn (branch push + `gh pr create`) — no
+   * `pr_creation` step's engineer spawn (branch push + pull request) — no
    * existing purpose value was removed or repurposed. "probe" added
    * additively (#123) for the `preflight` step's one-invocation check that
    * the host can start a zetetic-team-subagents subagent — no existing

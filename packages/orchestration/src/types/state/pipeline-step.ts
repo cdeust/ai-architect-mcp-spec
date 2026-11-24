@@ -74,7 +74,7 @@ export const PipelineStepSchema = z.enum([
    * `pr_creation` (PR 5, design-phases-3-5.md §3): one `spawn_subagents`
    * (purpose "pr", subagent_type "engineer", isolation "none" — SAME
    * branch/worktree as `implementation`) instructing the engineer to push
-   * the branch and run `gh pr create`, returning the PR URL via a
+   * the branch and open a pull request, returning the PR URL via a
    * machine-readable `PR_URL:` footer. Push/`gh` failure or a missing
    * footer DEGRADES (`appendError("upstream_failure")`,
    * `post_specs.pr.pushed = false`) — `finalize` is still reached, never a

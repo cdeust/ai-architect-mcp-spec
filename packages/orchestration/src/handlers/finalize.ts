@@ -106,7 +106,7 @@ function buildPostSpecsSummary(state: PipelineState): string {
     lines.push(
       ps.pr.pushed
         ? `PR: opened at ${ps.pr.url ?? "(unknown url)"}.`
-        : "PR: not opened (declined at the gate, or push/gh pr create failed).",
+        : "PR: not opened (declined at the gate, or publication failed).",
     );
   }
   return lines.join("\n");

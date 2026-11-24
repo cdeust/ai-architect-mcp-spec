@@ -14,12 +14,22 @@
  */
 
 import { describe, expect, it } from "vitest";
+import * as promptBuilders from "../index.js";
 import {
   buildClarificationPrompt,
   buildSectionPrompt,
   buildJiraPrompt,
   buildGitHistoryPrompt,
 } from "../index.js";
+
+it("exports only the prompt builders used by the specification pipeline", () => {
+  expect(Object.keys(promptBuilders).sort()).toEqual([
+    "buildClarificationPrompt",
+    "buildGitHistoryPrompt",
+    "buildJiraPrompt",
+    "buildSectionPrompt",
+  ]);
+});
 
 describe("buildClarificationPrompt", () => {
   it("includes the feature description verbatim", () => {
