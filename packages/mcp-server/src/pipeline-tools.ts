@@ -17,8 +17,6 @@
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  planSectionVerification,
-  planDocumentVerification,
   concludeSection,
   concludeDocument,
 } from "@prd-gen/verification";
@@ -32,8 +30,8 @@ import {
 import { registerStartPipeline } from "./tools/start-pipeline.js";
 import { registerSubmitActionResult } from "./tools/submit-action-result.js";
 import { registerGetPipelineState } from "./tools/get-pipeline-state.js";
+import { registerPlanVerificationTools } from "./tools/plan-verification.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
-import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js";
 
 export function registerPipelineTools(server: McpServer): Record<string, RegisteredTool> {
   const startPipeline = registerStartPipeline(server);
@@ -42,59 +40,10 @@ export function registerPipelineTools(server: McpServer): Record<string, Registe
 
   const getPipelineState = registerGetPipelineState(server);
 
-  // ─── plan_section_verification ─────────────────────────────────────────────
-
-  const planSectionVerificationTool = server.tool(
-    "plan_section_verification",
-    "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " +
-    PLAN_PAGING_DESCRIPTION,
-    {
-      section_type: SectionTypeSchema,
-      content: z.string(),
-      codebase_excerpts: z.array(z.string()).default([]),
-      memory_excerpts: z.array(z.string()).default([]),
-      request_offset: z.number().int().min(0).default(0),
-    },
-    { readOnlyHint: true },
-    async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
-      const plan = planSectionVerification(section_type, content, {
-        codebase_excerpts,
-        memory_excerpts,
-        include_prd_excerpt: true,
-      });
-      return planPageResult(plan, request_offset);
-    },
-  );
-
-  // ─── plan_document_verification ────────────────────────────────────────────
-
-  const planDocumentVerificationTool = server.tool(
-    "plan_document_verification",
-    "Same as plan_section_verification but across all sections of a document. " +
-    PLAN_PAGING_DESCRIPTION,
-    {
-      sections: z
-        .array(
-          z.object({
-            type: SectionTypeSchema,
-            content: z.string(),
-          }),
-        )
-        .min(1),
-      codebase_excerpts: z.array(z.string()).default([]),
-      memory_excerpts: z.array(z.string()).default([]),
-      request_offset: z.number().int().min(0).default(0),
-    },
-    { readOnlyHint: true },
-    async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
-      const plan = planDocumentVerification(sections, {
-        codebase_excerpts,
-        memory_excerpts,
-        include_prd_excerpt: true,
-      });
-      return planPageResult(plan, request_offset);
-    },
-  );
+  const {
+    plan_section_verification: planSectionVerificationTool,
+    plan_document_verification: planDocumentVerificationTool,
+  } = registerPlanVerificationTools(server);
 
   // ─── conclude_verification ─────────────────────────────────────────────────
 
