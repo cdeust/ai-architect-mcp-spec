@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import itertools
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,26 @@ DOCUMENT = yaml.safe_load(WORKFLOW.read_text())
 JOBS = DOCUMENT["jobs"]
 BUNDLE = "ai-architect-mcp-spec.mcpb"
 SBOM = "ai-architect-mcp-spec.cdx.json"
+
+
+# One table for the whole SemVer tag class: (tag, accepted, published as prerelease).
+# A prerelease is a hyphen in the version before "+"; build metadata may hold
+# hyphens too and never makes a release a prerelease (SemVer 2.0.0, items 9-10).
+# source: https://semver.org/spec/v2.0.0.html
+TAGS = [
+    ("v1.2.3", True, False), ("v1.2.3-rc.1", True, True),
+    ("v0.0.0-rc.1+build.8", True, True), ("v1.2.3+sha-1", True, False),
+    ("v1.2.3+sha-1.build-2.x", True, False), ("v1.2.3+-", True, False),
+    ("v1.2.3-rc.1+sha-1", True, True), ("v1.2.3-x-y+sha-1", True, True),
+    ("v1.2.3-0+0", True, True),
+    ("", False, None), ("main", False, None), ("v01.2.3", False, None),
+    ("v1.2.3-01", False, None), ("v1.2.3-", False, None), ("v1.2.3+", False, None),
+    ("v1.2.3-rc.1+", False, None), ("v1.2.3+sha..1", False, None),
+    ("v1.2.3+sha_1", False, None), ("v1.2.3+a+b", False, None),
+    ("v1.2.3$( )", False, None), ('v1.2.3"', False, None), ("v1.2.3;", False, None),
+    ("--flag=v1.2.3", False, None), ("prefix\nv1.2.3", False, None),
+    ("v1.2.3\nother=value", False, None),
+]
 
 
 def named_step(name):
@@ -162,14 +183,8 @@ class ReleaseSecurity(unittest.TestCase):
             "EVENT_NAME": "${{ github.event_name }}", "REF_NAME": "${{ github.ref_name }}",
             "DISPATCH_TAG": "${{ inputs.tag }}",
         })
-        cases = [("v1.2.3", True), ("v0.0.0-rc.1+build.8", True),
-                 ("v1.2.3+sha-1", True), ("", False), ("main", False),
-                 ("v01.2.3", False), ("v1.2.3-01", False), ("v1.2.3-", False),
-                 ("v1.2.3$( )", False), ('v1.2.3"', False), ("v1.2.3;", False),
-                 ("--flag=v1.2.3", False), ("prefix\nv1.2.3", False),
-                 ("v1.2.3\nother=value", False)]
         for event in ["push", "workflow_dispatch"]:
-            for value, valid in cases:
+            for value, valid, _ in TAGS:
                 with self.subTest(event=event, value=value), tempfile.TemporaryDirectory() as directory:
                     output = Path(directory, "output")
                     output.touch()
@@ -302,8 +317,10 @@ class ReleaseSecurity(unittest.TestCase):
             gh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> commands\n'
                           'if [ "$2" = view ]; then exit "$VIEW"; fi\n')
             gh.chmod(0o755)
-            for exists, tag, prerelease in [(False, "v1.2.3", "false"), (True, "v1.2.3-rc.1", "true")]:
-                with self.subTest(exists=exists):
+            published = [(tag, str(pre).lower()) for tag, valid, pre in TAGS if valid]
+            self.assertEqual({p for _, p in published}, {"true", "false"})
+            for exists, (tag, prerelease) in itertools.product((False, True), published):
+                with self.subTest(exists=exists, tag=tag):
                     result = run_step("Create or update the GitHub Release", root,
                                       PATH=str(root) + os.pathsep + os.environ["PATH"], TAG=tag,
                                       VIEW="0" if exists else "1")

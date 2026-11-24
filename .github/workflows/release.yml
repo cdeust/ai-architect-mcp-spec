@@ -286,8 +286,11 @@ jobs:
         run: |
           set -euo pipefail
           assets=(ai-architect-mcp-spec.{mcpb,cdx.json}{,.sha256})
+          # SemVer 2.0.0: a hyphen marks a prerelease only before the "+" of
+          # build metadata, which may itself hold hyphens (v1.2.3+sha-1).
+          version="${TAG%%+*}"
           prerelease=false
-          if [[ "$TAG" == *-* ]]; then prerelease=true; fi
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
           if gh release view "$TAG" --json id > /dev/null; then
             gh release upload "$TAG" "${assets[@]}" --clobber
             gh release edit "$TAG" --notes-file release-notes.md --draft=false --prerelease="$prerelease"
