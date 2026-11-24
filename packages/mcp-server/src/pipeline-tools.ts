@@ -22,11 +22,7 @@ import {
   buildVerifiedPlan,
   ReviewIdSchema,
   isLegacyExecutionCheckpoint,
-  isRetiredImplementationAnswer,
-  recordLegacyDefineRefusal,
   refreshImplementationGateQuestion,
-  step,
-  ActionResultSchema,
 } from "@prd-gen/orchestration";
 import {
   planSectionVerification,
@@ -42,20 +38,18 @@ import {
   type Claim,
 } from "@prd-gen/core";
 import { registerStartPipeline } from "./tools/start-pipeline.js";
+import { registerSubmitActionResult } from "./tools/submit-action-result.js";
 import { prepareImplementationReview } from "./implementation-review.js";
-import { drainEvidenceQueues } from "./evidence-drain.js";
 import { buildConcludeOpts } from "./build-conclude-opts.js";
 import {
   boundFullStateResponse,
   boundGroundingResponse,
 } from "./bound-full-state.js";
-import { boundEnvelopeResponse } from "./bound-envelope-action.js";
 import { pageActionResponse } from "./page-action-response.js";
 import { PLAN_PAGING_DESCRIPTION, planPageResult } from "./page-plan-response.js";
 import {
   runs,
   runNotFound,
-  inFlight,
   envelope,
   architectOsRequired,
   planningSizeError,
@@ -64,69 +58,7 @@ import {
 export function registerPipelineTools(server: McpServer): Record<string, RegisteredTool> {
   const startPipeline = registerStartPipeline(server);
 
-  // ─── submit_action_result ──────────────────────────────────────────────────
-
-  const submitActionResult = server.tool(
-    "submit_action_result",
-    "Feed an ActionResult to the pipeline runner; receive the next NextAction.",
-    {
-      run_id: z.string(),
-      // Use the canonical ActionResultSchema directly. Pre-fix this duplicated
-      // the discriminated union inline; adding a new ActionResult kind would
-      // have required updating both the canonical schema in orchestration AND
-      // this inline copy with no compile-time enforcement of synchrony
-      // (cross-audit feynman HIGH-1, Phase 3+4 follow-up, 2026-04).
-      result: ActionResultSchema,
-    },
-    { destructiveHint: true },
-    async ({ run_id, result }) => {
-      if (inFlight.has(run_id)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                error: `concurrent submission rejected for run_id ${run_id}`,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-      inFlight.add(run_id);
-      try {
-        const found = runs.find(run_id);
-        if (found.kind !== "found") return runNotFound(run_id, found);
-        if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) ||
-            isRetiredImplementationAnswer(found.run.state, result)) return architectOsRequired();
-        const { state, action } = found.run;
-        const out = state.semantic_review_requested && state.current_step === "complete" && action
-          ? { state, action, messages: [] }
-          : step({ state: recordLegacyDefineRefusal(state, action), result });
-        // Drain the evidence queues BEFORE the state is kept: a state on
-        // disk has empty queues, so a run that comes back after a restart
-        // writes nothing twice. drainEvidenceQueues is a no-op when the
-        // queues are empty.
-        const drained = drainEvidenceQueues(out.state);
-        // With the UNBOUNDED action: see start_pipeline's identical comment.
-        runs.keep(drained, out.action);
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                boundEnvelopeResponse(envelope(drained, out.action, out.messages)),
-                null,
-                2,
-              ),
-            },
-          ],
-        };
-      } finally {
-        inFlight.delete(run_id);
-      }
-    },
-  );
+  const submitActionResult = registerSubmitActionResult(server);
 
   // ─── get_pipeline_state ─────────────────────────────────────────────────
 
