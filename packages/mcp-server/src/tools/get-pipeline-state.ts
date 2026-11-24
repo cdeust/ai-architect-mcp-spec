@@ -92,11 +92,11 @@ const handleGetPipelineState: ToolCallback<ReturnType<typeof getPipelineStateInp
       // in memory or in the run's file. A pending implementation question
       // can be upgraded to match the current gate policy. source: page-action-response.ts.
       if (isLegacyExecutionCheckpoint(state, found.run.action)) return architectOsRequired();
+      // zod applies the default over MCP; a direct handler call (tests,
+      // in-process hosts) may omit the field.
       const page = pageActionResponse(
         state.run_id,
         refreshImplementationGateQuestion(state, found.run.action),
-        // zod applies the default over MCP; a direct handler call (tests,
-        // in-process hosts) may omit the field.
         invocation_offset ?? 0,
       );
       if ("error" in page) {
