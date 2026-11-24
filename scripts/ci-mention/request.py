@@ -59,11 +59,14 @@ def target(event, repository, sha, run, get):
     if issue.get("pull_request"):
         pr = get(f"pulls/{number}")
         if (pr["state"] != "open" or pr["head"]["repo"]["full_name"] != repository
-                or pr["base"]["repo"]["full_name"] != repository or pr["head"]["ref"] == base):
+                or pr["base"]["repo"]["full_name"] != repository
+                or pr["head"]["ref"] in (base, pr["base"]["repo"]["default_branch"])):
             raise ValueError("Publication requires an open, same-repository non-default branch")
         branch, sha = pr["head"]["ref"], pr["head"]["sha"]
     else:
         branch = f"claude/issue-{number}-{int(run)}"
+    if branch == base:
+        raise ValueError("Publication requires a non-default branch")
     if not re.fullmatch("[0-9a-f]{40}", sha):
         raise ValueError("Invalid target revision")
     subprocess.run(["git", "check-ref-format", "--branch", branch], check=True,

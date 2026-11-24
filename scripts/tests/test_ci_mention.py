@@ -64,9 +64,13 @@ class MentionJobs(unittest.TestCase):
         api.assert_not_called()
         event["issue"]["pull_request"] = {"url": "fixture"}
         pr = {"state": "open", "head": {"repo": {"full_name": repo}, "ref": "feature", "sha": sha},
-              "base": {"repo": {"full_name": repo}}}
+              "base": {"repo": {"full_name": repo, "default_branch": "main"}}}
         api.return_value = pr
         self.assertEqual(resolve(event, repo, sha, "12", api).branch, "feature")
+        pr["base"]["repo"]["default_branch"] = "feature"
+        with self.assertRaises(ValueError):
+            resolve(event, repo, sha, "12", api)
+        pr["base"]["repo"]["default_branch"] = "main"
         for state, head_repo, branch in [("closed", repo, "feature"), ("open", "fork/spec", "feature"),
                                         ("open", repo, "main")]:
             with self.subTest(state=state, head_repo=head_repo, branch=branch):
