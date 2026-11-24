@@ -138,7 +138,7 @@ test("invalid JSON, a missing message and a transport rejection have distinct lo
 });
 
 test("Mistral waits only for the remaining provider interval across requests", async (t) => {
-  let now = 0;
+  let now = 100_000;
   const waits = [];
   t.mock.method(Date, "now", () => now);
   t.mock.method(globalThis, "setTimeout", (fn, ms) => {
@@ -168,11 +168,12 @@ test("each retry respects Retry-After or the fallback and releases its request t
   });
   t.mock.method(globalThis, "clearTimeout", timer => { cleared.push(timer); });
   const responses = [
-    new Response(null, { status: 429, headers: { "retry-after": "3" } }), new Response(null, { status: 429 }), success(),
+    new Response(null, { status: 429, headers: { "retry-after": "3" } }), new Response(null, { status: 429 }),
+    new Response(null, { status: 429, headers: { "retry-after": "0" } }), success(),
   ];
   t.mock.method(globalThis, "fetch", async () => responses.shift());
   await callChatCompletions({ ...fixture, timeoutMs: fixture.timeoutMs + 1 }, "");
   assert.deepEqual(waits, [3000, 2000]);
-  assert.equal(timers.length, 3);
+  assert.equal(timers.length, 4);
   assert.deepEqual(cleared, timers);
 });

@@ -20,11 +20,11 @@ import { chatCompletionsUrl } from "./config.mjs";
 
 const TEMPERATURE = 0; // deterministic verdicts — source: task requirement "temperature 0"
 
-/** @type {Map<string, number>} last request timestamp per provider, module-level throttle state */
-const lastRequestAt = new Map();
+/** @type {Map<string, number>} earliest next request timestamp for a throttled provider */
+const nextRequestAt = new Map();
 
-async function sleep(ms) {
-  if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -37,14 +37,10 @@ async function sleep(ms) {
 async function respectMinInterval(provider) {
   const floor = MIN_INTERVAL_MS[provider] ?? 0;
   if (floor <= 0) return;
-  const last = lastRequestAt.get(provider);
-  if (last !== undefined) {
-    const elapsed = Date.now() - last;
-    if (elapsed < floor) {
-      await sleep(floor - elapsed);
-    }
-  }
-  lastRequestAt.set(provider, Date.now());
+  const now = Date.now();
+  const next = nextRequestAt.get(provider) ?? now;
+  if (next > now) await sleep(next - now);
+  nextRequestAt.set(provider, Date.now() + floor);
 }
 
 /**
@@ -63,12 +59,13 @@ export async function callChatCompletions(config, promptText) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     await respectMinInterval(config.provider);
 
-    const { response, content } = await request(config, url, body);
-    if (response.status !== 429) return { content };
+    const result = await request(config, url, body);
+    if ("content" in result) return result;
     if (attempt === MAX_ATTEMPTS) {
       throw new Error(`callChatCompletions: rate limited (429) after ${MAX_ATTEMPTS} attempts`);
     }
-    await sleep(computeBackoffDelayMs(attempt, response.headers.get("retry-after")));
+    const delay = computeBackoffDelayMs(attempt, result.retryAfter);
+    if (delay > 0) await sleep(delay);
   }
 }
 
@@ -88,7 +85,7 @@ async function request(config, url, body) {
     }).catch(() => { throw new Error("callChatCompletions: network error"); });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      if (response.status === 429) return { response };
+      if (response.status === 429) return { retryAfter: response.headers.get("retry-after") };
       throw new Error(`callChatCompletions: HTTP ${response.status}`);
     }
     const json = await response.json().catch(() => {
@@ -98,7 +95,7 @@ async function request(config, url, body) {
     if (typeof content !== "string") {
       throw new Error("callChatCompletions: response missing choices[0].message.content");
     }
-    return { response, content };
+    return { content };
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(`callChatCompletions: request timed out after ${config.timeoutMs}ms`);

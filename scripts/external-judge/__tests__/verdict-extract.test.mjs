@@ -183,3 +183,15 @@ test("verdict fields retain their type constraints and finite-number check", () 
     });
   }
 });
+
+test("single extraction requires an opening object and handles an empty first property name", () => {
+  assert.throws(() => extractVerdict("[]"), { message: "extractVerdict: no balanced JSON object found in reply" });
+  const text = ' {"":"}","verdict":"PASS","rationale":"r","confidence":0}';
+  assert.equal(extractVerdict(text).verdict, "PASS");
+});
+
+test("a batch with one recognizable answer must diagnose another empty object by index", () => {
+  assert.throws(() => extractVerdicts('[{},{"claim_id":"A","verdict":"PASS","rationale":"r","confidence":0}]'), {
+    message: 'extractVerdicts: element 0 has no string "claim_id"',
+  });
+});

@@ -39,7 +39,9 @@ function literalPattern(apiKey, baseUrl) {
           add(form);
           continue;
         }
-        const prefix = escapeLiteral(authority).replace(/[a-z]/gi, c => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+        // Only the authority folds case. Preserve multi-character case mappings in raw IDNs.
+        const prefix = escapeLiteral(authority).replace(/\p{L}/gu, c =>
+          `(?:${[...new Set([c, c.toLowerCase(), c.toUpperCase()])].join("|")})`);
         const path = form.slice(authority.length);
         let end = path.length;
         while (path[end - 1] === "/") end--;

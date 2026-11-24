@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatCompletionsUrl, ConfigError, resolveConfig } from "../lib/config.mjs";
+import { chatCompletionsUrl, ConfigError, PROVIDER_PRESETS, resolveConfig } from "../lib/config.mjs";
 
 test("resolveConfig: gemini preset fills base URL and default model from GEMINI_API_KEY", () => {
   const config = resolveConfig({ provider: "gemini" }, { GEMINI_API_KEY: "g-key" });
@@ -162,6 +162,11 @@ test("preset selection requires a name and only obtains that preset's key", () =
 test("a preset's own credential ignores the generic key's unused origin list", () => {
   const config = resolveConfig({ provider: "gemini" }, { GEMINI_API_KEY: "fixture", EXTERNAL_JUDGE_ALLOWED_ORIGINS: "invalid" });
   assert.equal(chatCompletionsUrl(config).origin, "https://generativelanguage.googleapis.com");
+});
+
+test("preset metadata distinguishes provider-enforced quota from the local Mistral throttle", () => {
+  assert.match(PROVIDER_PRESETS.gemini.rateLimitNote, /provider-enforced quota/);
+  assert.match(PROVIDER_PRESETS.mistral.rateLimitNote, /~2 req\/min.*enforced client-side/);
 });
 
 test("missing values use custom defaults and non-positive, infinite and blank timeout values are rejected", () => {

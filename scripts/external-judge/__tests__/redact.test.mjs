@@ -107,3 +107,16 @@ test("redact: literal regex punctuation has no wildcard meaning in either the ke
   assert.equal(redact("x fooQaBar foo.aBar y", { apiKey: "foo.aBar" }), "x fooQaBar ***REDACTED*** y");
   assert.equal(redact("bearer token BEARER other ordinary", {}), "Bearer ***REDACTED*** Bearer ***REDACTED*** ordinary");
 });
+
+test("unvalidated non-HTTP endpoint literals survive parsing as a whole secret", () => {
+  for (const baseUrl of ["ftp://files.example/private", "blob:https://judge.example/fixture"]) {
+    assert.equal(redact("unvalidated " + baseUrl, { baseUrl }), "unvalidated ***REDACTED***");
+  }
+});
+
+test("redact: recognizes case variants of a raw internationalized host and its ASCII serialization", () => {
+  const baseUrl = "https://éCole.example/Privé/";
+  for (const text of ["HTTPS://ÉCOLE.EXAMPLE/Privé", new URL(baseUrl).href]) {
+    assert.equal(redact(text, { baseUrl }), "***REDACTED***");
+  }
+});

@@ -164,3 +164,10 @@ test("judge masks local exception messages as well as provider verdict text, pre
   const refused = { ...config, apiKey: "origin", allowedOrigins: [] };
   assert.deepEqual(await runJudge(refused, ""), { status: "error", reason: "Base URL ***REDACTED*** is not authorized for the configured API key." });
 });
+
+test("a non-Error rejection receives the local fallback diagnostic", async (t) => {
+  // A response adapter can throw any JS value while releasing an error body.
+  t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 400, body: { cancel() { throw "fixture-private"; } } }));
+  assert.deepEqual(await runJudge({ provider: "custom", baseUrl: "https://x", allowedOrigins,
+    model: "m", apiKey: "key", timeoutMs: 1000 }, ""), { status: "error", reason: "unexpected judge failure" });
+});

@@ -182,11 +182,11 @@ export function extractVerdicts(rawText) {
   const parsed = firstParsedJson(rawText);
   if (!Array.isArray(parsed)) {
     const verdict = toVerdict(parsed);
-    const claimId = parsed && typeof parsed === "object" ? /** @type {Record<string, unknown>} */ (parsed).claim_id : undefined;
+    const claimId = /** @type {Record<string, unknown>} */ (parsed).claim_id;
     return { verdict: typeof claimId === "string" ? { claim_id: claimId, ...verdict } : verdict };
   }
   const verdicts = parsed.map((item, i) => {
-    const claimId = item && typeof item === "object" ? /** @type {Record<string, unknown>} */ (item).claim_id : undefined;
+    const claimId = item.claim_id;
     if (typeof claimId !== "string" || claimId.length === 0) {
       throw new Error(`extractVerdicts: element ${i} has no string "claim_id"`);
     }
@@ -253,5 +253,5 @@ function isVerdictShaped(value) {
   const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
   /** @param {unknown} v */
   const answers = (v) => isObject(v) && ("verdict" in /** @type {object} */ (v) || "claim_id" in /** @type {object} */ (v));
-  return Array.isArray(value) ? value.length > 0 && value.every(isObject) && value.some(answers) : answers(value);
+  return Array.isArray(value) ? value.every(isObject) && value.some(answers) : answers(value);
 }

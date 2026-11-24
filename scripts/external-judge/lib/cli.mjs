@@ -8,7 +8,7 @@ const judge = new Map([...shared, ["debug", "debug"]]);
 const calibration = new Map([...shared, ["min-agreement", "minAgreement"]]);
 
 /** Parse both `--name value` and `--name=value` for either entry point. */
-export function parseFlags(argv, entry = "judge") {
+export function parseFlags(argv, entry) {
   const options = entry === "calibrate" ? calibration : judge;
   const flags = Object.create(null);
   for (let i = 0; i < argv.length; i++) {

@@ -63,6 +63,10 @@ const DEFAULT_TIMEOUT_MS = 30_000; // source: measured — generous headroom ove
 export class ConfigError extends Error {}
 export const API_KEY_FLAG_ERROR = "Set the API key in the environment. The --api-key option is forbidden.";
 
+export function providerPreset(name) {
+  return typeof name === "string" && Object.hasOwn(PROVIDER_PRESETS, name) ? PROVIDER_PRESETS[name] : undefined;
+}
+
 function parseEndpoint(value, label) {
   if (!URL.canParse(value)) throw new ConfigError(`${label} must be an absolute HTTP(S) URL.`);
   const url = new URL(value);
@@ -117,8 +121,7 @@ export function resolveConfig(flags, env) {
     throw new ConfigError(API_KEY_FLAG_ERROR);
   }
   const providerName = /** @type {Provider|undefined} */ (flags.provider);
-  const preset = typeof providerName === "string" && Object.hasOwn(PROVIDER_PRESETS, providerName)
-    ? PROVIDER_PRESETS[providerName] : undefined;
+  const preset = providerPreset(providerName);
 
   if (providerName !== undefined && providerName !== "custom" && !preset) {
     throw new ConfigError("Unknown --provider. Known providers are gemini, mistral and custom.");

@@ -28,8 +28,9 @@ test("CLI diagnostics print safe config messages and suppress unexpected error d
 });
 
 test("an option following a flag or a bare option terminator cannot hide an unknown argument", () => {
-  for (const args of [["--debug", "-k", "fixture"], ["--"], ["stray"], ["--api-key-extra"], ["--xapi-key"]]) {
+  for (const args of [["--debug", "-k", "fixture"], ["--"], ["stray"], ["xxmodel"], ["--api-key-extra"], ["--xapi-key"]]) {
     assert.throws(() => parseFlags(args), { constructor: ConfigError, message: "Unknown option." });
   }
   assert.equal(parseFlags(["--model=-one"]).model, "-one");
+  assert.equal(parseFlags(["--debug"]).debug, "true");
 });
