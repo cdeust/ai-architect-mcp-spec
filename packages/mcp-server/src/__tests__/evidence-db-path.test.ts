@@ -170,20 +170,19 @@ describe("evidence repository wiring", () => {
     // (index.ts: check_health, get_quality_history, get_strategy_effectiveness;
     // pipeline-runs.ts: eviction prune; evidence-drain.ts: strategy-execution
     // tracker and quality scores, #121).
-    const expected: Record<string, number> = {
-      "index.ts": 3,
-      "pipeline-tools.ts": 0,
-      "pipeline-runs.ts": 1,
-      "evidence-drain.ts": 2,
-    };
-    for (const f of Object.keys(expected)) {
+    const callsByFile: Record<string, number> = {};
+    for (const f of readdirSync(SRC_DIR, { recursive: true }) as string[]) {
+      if (!f.endsWith(".ts") || f.includes("__tests__")) continue;
       // Comments stripped first: a comment naming getEvidenceRepo() must not
       // satisfy this (review r4502015550).
       const code = readFileSync(join(SRC_DIR, f), "utf-8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/\/\/.*$/gm, "");
-      expect(code.match(/getEvidenceRepo\(\)/g)?.length ?? 0, f).toBe(expected[f]);
+        .replace(/\/\/.*$/gm, "")
+        .replace(/\bfunction\s+getEvidenceRepo\s*\(/g, "");
+      const calls = code.match(/\bgetEvidenceRepo\s*\(/g)?.length ?? 0;
+      if (calls > 0) callsByFile[f] = calls;
     }
+    expect(callsByFile).toEqual({ "index.ts": 3, "pipeline-runs.ts": 1, "evidence-drain.ts": 2 });
   });
 
   // Real server over stdio (the built entry point, as `pnpm build && pnpm
