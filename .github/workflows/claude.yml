@@ -1,8 +1,7 @@
 name: Claude Code
 
-# source: https://github.com/anthropics/claude-code-action/blob/8041f1d17e0e7d2f2cfe35002962e9f26237c0bb/.github/workflows/claude.yml
-# Cortex uses its existing OAuth account and owner-authored default-branch events.
 on:
+  # zizmor: ignore[dangerous-triggers] -- owner gate, read-only model job and isolated publication from the default branch.
   issue_comment:
     types: [created]
   issues:
@@ -11,7 +10,7 @@ on:
 permissions: {}
 
 jobs:
-  claude:
+  prepare:
     if: >-
       github.event.sender.login == github.repository_owner
       && ((github.event_name == 'issue_comment'
@@ -24,61 +23,77 @@ jobs:
        && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      revision: ${{ steps.target.outputs.revision }}
+      branch: ${{ steps.target.outputs.branch }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     steps:
-      - name: Authorize owner fix target
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          # Owner mentions cannot turn a fork or default-branch PR into a fix target.
-          if jq -e '.issue.pull_request != null' "$GITHUB_EVENT_PATH" >/dev/null; then
-            gh api "repos/$GH_REPO/pulls/$ISSUE_NUMBER" |
-              jq -e --arg repo "$GH_REPO" \
-                '.head.repo.full_name == $repo and .head.ref != .base.repo.default_branch' >/dev/null
-          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-          # Use the action App token instead of a persisted workflow token.
+          ref: ${{ github.sha }}
           persist-credentials: false
-      # source: pinned action src/modes/tag/index.ts#L79 fetches the PR head or
-      # base (src/github/operations/branch.ts#L241, #L350, #L368) before its own
-      # git auth, and src/github/operations/git-config.ts#L78-L81 unsets this
-      # local header before Claude runs. Private repositories cannot fetch anonymously.
-      - name: Authorize pinned action fetch
+          path: control
+      - name: Resolve the owner request
+        id: target
         env:
-          FETCH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          basic="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 | tr -d '\n')"
-          echo "::add-mask::$basic"
-          git config --local "http.$GITHUB_SERVER_URL/.extraheader" "AUTHORIZATION: basic $basic"
-      - name: Install subprocess isolation
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y bubblewrap socat
-          # source: upstream action.yml subprocess isolation dependency setup.
-          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --version
-      - uses: anthropics/claude-code-action@f431adaf77e0fecf918431e75a2b5b45b85af002 # v1.0.283
-        env:
-          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I control/scripts/ci-mention/request.py resolve
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          include_comments_by_actor: ${{ github.repository_owner }}
-          # Inherit tag mode's acceptEdits: Edit/Write inside the workspace.
-          # Explicit validation tools run headlessly without a permission prompt.
-          claude_args: |
-            --strict-mcp-config
-            --allowedTools "Task,Bash(git:*),Bash(gh:*),Bash(python3:*),Bash(python:*),Bash(pytest:*),Bash(uv:*),Bash(uvx:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(cargo:*),Bash(bash:*)"
-            --append-system-prompt "For generated GitHub workflows, edit their canonical source and run render-ci; never hand-edit generated workflows. Commit only on the task branch, open or update a PR, and never push main or bypass review or merge gates."
-            --model "claude-opus-5-5"
+          ref: ${{ steps.target.outputs.revision }}
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.11.1
+          package-manager-cache: false
+      - name: Install the locked preparation tools
+        run: |
+          npm ci --prefix control/.github/actions/claude-subscription-quota --no-fund
+          npm ci --prefix control/scripts/ci-mention --ignore-scripts --no-fund
+          mv candidate/.git "$RUNNER_TEMP/mention-index"
+          mkdir "$RUNNER_TEMP/proposal"
+      - name: Prepare the answer and proposed edits
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python3 -I control/scripts/ci-mention/prepare.py
+      - name: Record the proposed edit
+        working-directory: candidate
+        env:
+          BASE_SHA: ${{ steps.target.outputs.revision }}
+        run: |
+          export GIT_DIR="$RUNNER_TEMP/mention-index" GIT_WORK_TREE="$PWD"
+          git -c core.hooksPath=/dev/null add -A
+          git diff --cached --binary --no-ext-diff --no-textconv "$BASE_SHA" > "$RUNNER_TEMP/proposal/change.patch"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: owner-mention-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/proposal
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/proposal
+      - name: Publish to the authorized branch
+        env:
+          EXPECTED_BRANCH: ${{ needs.prepare.outputs.branch }}
+          BASE_SHA: ${{ needs.prepare.outputs.revision }}
+        run: python3 -I control/scripts/ci-mention/request.py publish
