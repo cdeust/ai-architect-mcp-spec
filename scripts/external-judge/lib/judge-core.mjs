@@ -15,6 +15,7 @@
  */
 
 import { callChatCompletions } from "./openai-client.mjs";
+import { PROVIDER_PRESETS } from "./config.mjs";
 import { redact } from "./redact.mjs";
 import { extractVerdicts } from "./verdict-extract.mjs";
 
@@ -32,15 +33,17 @@ import { extractVerdicts } from "./verdict-extract.mjs";
  */
 export async function runJudge(config, promptText) {
   if (!config.apiKey) {
+    const presetKey = PROVIDER_PRESETS[config.provider]?.apiKeyEnv;
+    const sources = presetKey ? `EXTERNAL_JUDGE_API_KEY or ${presetKey}` : "EXTERNAL_JUDGE_API_KEY";
     return {
       status: "skipped",
-      reason: redact(`no credentials — set EXTERNAL_JUDGE_API_KEY (or provider-specific ${config.provider === "gemini" ? "GEMINI_API_KEY" : config.provider === "mistral" ? "MISTRAL_API_KEY" : "EXTERNAL_JUDGE_API_KEY"})`),
+      reason: redact(`no credentials — set ${sources}`, config),
     };
   }
   if (!config.baseUrl || !config.model) {
     return {
       status: "error",
-      reason: redact("missing config — a base URL and model are required"),
+      reason: redact("missing config — a base URL and model are required", config),
     };
   }
 

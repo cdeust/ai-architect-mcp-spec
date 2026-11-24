@@ -14,9 +14,10 @@ const scripts = {
   calibrate: fileURLToPath(new URL("../calibrate.mjs", import.meta.url)),
 };
 
-function cli(script, args, extraEnv = {}) {
+function cli(script, args, extraEnv = {}, input = prompt) {
   const env = {
     PATH: process.env.PATH,
+    ...(process.env.__STRYKER_ACTIVE_MUTANT__ && { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }),
     EXTERNAL_JUDGE_API_KEY: key,
     EXTERNAL_JUDGE_MODEL: "fixture-model",
     ...extraEnv,
@@ -27,25 +28,27 @@ function cli(script, args, extraEnv = {}) {
       else resolve({ code: error?.code ?? 0, stdout, stderr });
     });
     child.stdin.on("error", (error) => { if (error.code !== "EPIPE") reject(error); });
-    child.stdin.end(prompt);
+    child.stdin.end(input);
   });
 }
 
 async function endpoint(t, respond) {
   const received = [];
+  let connections = 0;
   const server = createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     received.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks)) });
     respond(req, res);
   });
+  server.on("connection", () => { connections++; });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  return { origin, baseUrl: `${origin}/v1/`, received };
+  return { origin, baseUrl: `${origin}/v1/`, received, connections: () => connections };
 }
 
 function sendVerdict(res, rationale = "The synthetic claim is consistent.") {
@@ -179,4 +182,84 @@ test("calibration reports rejected requests as errors and never prints provider 
   assert.doesNotMatch(output.stdout, /Nothing to calibrate|Fixture detail/);
   assert.ok(!output.stdout.includes(key));
   assert.ok(!output.stdout.includes(server.origin));
+});
+
+test("unknown options on both CLIs fail before transport with a fixed diagnostic", async () => {
+  for (const script of Object.keys(scripts)) {
+    for (const args of [[`--unknown-${key}=${key}`], ["--unknown", key], ["-x"]]) {
+      assert.deepEqual(await cli(script, args), { code: 2, stdout: "", stderr: `${script}.mjs: Unknown option.\n` });
+    }
+  }
+});
+
+test("judge empty-input and calibration output mask literals from their configuration", async () => {
+  const empty = await cli("judge", [], { EXTERNAL_JUDGE_API_KEY: "prompt" }, " \t");
+  assert.deepEqual(empty, { code: 2, stdout: "",
+    stderr: "judge.mjs: empty ***REDACTED*** (pass the ***REDACTED*** as `judge.mjs … < ***REDACTED***.txt`)\n" });
+  const report = await cli("calibrate", ["--base-url", "gemini", "--provider", "gemini"], { EXTERNAL_JUDGE_API_KEY: "" });
+  assert.equal(report.code, 0);
+  assert.ok(report.stdout.includes('provider "***REDACTED***"'));
+  const failed = await cli("calibrate", [], { EXTERNAL_JUDGE_API_KEY: "agreement" });
+  assert.equal(failed.code, 1);
+  assert.doesNotMatch(failed.stdout, /agreement/);
+  assert.match(failed.stdout, /\*\*\*REDACTED\*\*\* rate/);
+});
+
+test("200 verdict masks mixed-case endpoint, slashless tenant path and URL-encoded credential", async (t) => {
+  const credential = "fixture secret+/=";
+  const server = await endpoint(t, (_req, res) => sendVerdict(res,
+    `${server.origin.toUpperCase()}/Tenant/v1 and ${encodeURIComponent(credential)}`));
+  const output = await cli("judge", ["--base-url", server.origin + "/Tenant/v1/"], {
+    EXTERNAL_JUDGE_API_KEY: credential, EXTERNAL_JUDGE_ALLOWED_ORIGINS: server.origin,
+  });
+  assert.equal(server.received.length, 1);
+  assert.equal(output.code, 0);
+  assert.equal(JSON.parse(output.stdout).verdict.rationale, `${marker} and ${marker}`);
+});
+
+test("judge terminates a real loopback response stalled after its headers", async (t) => {
+  const server = await endpoint(t, (_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write("{");
+  });
+  const output = await cli("judge", ["--base-url", server.baseUrl, "--timeout-ms=500"], {
+    EXTERNAL_JUDGE_ALLOWED_ORIGINS: server.origin,
+  });
+  assert.equal(server.received.length, 1);
+  assert.equal(output.code, 0);
+  assert.deepEqual(JSON.parse(output.stdout), { status: "error", reason: "callChatCompletions: request timed out after 500ms" });
+});
+
+test("custom providers never use either preset credential, including an environment-selected endpoint", async (t) => {
+  const server = await endpoint(t, (_req, res) => sendVerdict(res));
+  for (const presetKey of ["GEMINI_API_KEY", "MISTRAL_API_KEY"]) {
+    for (const args of [["--provider", "custom", "--base-url", server.baseUrl], []]) {
+      const output = await cli("judge", args, { [presetKey]: key, EXTERNAL_JUDGE_API_KEY: "",
+        EXTERNAL_JUDGE_BASE_URL: server.baseUrl, EXTERNAL_JUDGE_ALLOWED_ORIGINS: server.origin });
+      assert.equal(output.code, 0);
+      assert.equal(JSON.parse(output.stdout).status, "skipped");
+      assert.equal(server.connections(), 0);
+      assert.equal(server.received.length, 0);
+    }
+  }
+});
+
+test("an authorized prefix of the destination port grants no access", async (t) => {
+  const server = await endpoint(t, (_req, res) => sendVerdict(res));
+  const output = await cli("judge", ["--base-url", server.baseUrl], { EXTERNAL_JUDGE_ALLOWED_ORIGINS: server.origin.slice(0, -1) });
+  assert.equal(JSON.parse(output.stdout).status, "error");
+  assert.match(JSON.parse(output.stdout).reason, /origin is not authorized/);
+  assert.equal(server.connections(), 0);
+});
+
+test("debug success prints the scrubbed configuration and a single newline-terminated verdict", async (t) => {
+  const server = await endpoint(t, (_req, res) => sendVerdict(res));
+  const output = await cli("judge", ["--debug", "--base-url", server.baseUrl], { EXTERNAL_JUDGE_ALLOWED_ORIGINS: server.origin });
+  const config = { provider: "custom", baseUrl: marker, model: "fixture-model", apiKey: marker, allowedOrigins: marker, timeoutMs: 30000 };
+  const diagnostic = /^judge\.mjs debug config: (.+)\n$/.exec(output.stderr);
+  assert.ok(diagnostic);
+  assert.deepEqual(JSON.parse(diagnostic[1]), config);
+  assert.equal(output.code, 0);
+  assert.equal(JSON.parse(output.stdout).status, "ok");
+  assert.equal(output.stdout, JSON.stringify(JSON.parse(output.stdout)) + "\n");
 });

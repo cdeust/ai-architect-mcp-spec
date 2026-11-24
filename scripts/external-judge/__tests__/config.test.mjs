@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chatCompletionsUrl, resolveConfig } from "../lib/config.mjs";
+import { chatCompletionsUrl, ConfigError, resolveConfig } from "../lib/config.mjs";
 
 test("resolveConfig: gemini preset fills base URL and default model from GEMINI_API_KEY", () => {
   const config = resolveConfig({ provider: "gemini" }, { GEMINI_API_KEY: "g-key" });
@@ -79,9 +79,20 @@ test("selecting a preset does not extend authorization for a generic key", () =>
 
 test("origins are canonicalized independently of the base path", () => {
   const config = resolveConfig({ baseUrl: "https://judge.example:443/v1//", model: "m" }, {
-    EXTERNAL_JUDGE_ALLOWED_ORIGINS: " https://other.example , HTTPS://JUDGE.EXAMPLE/ ",
+    EXTERNAL_JUDGE_ALLOWED_ORIGINS: " https://other.example ,\u00a0HTTPS://JUDGE.EXAMPLE/\u00a0",
   });
   assert.equal(chatCompletionsUrl(config).href, "https://judge.example/v1/chat/completions");
+});
+
+test("malformed and unsupported endpoint URLs receive fixed diagnostics without their values", () => {
+  for (const value of ["http://[fixture", "ftp://judge.example", "ws://judge.example"]) {
+    assert.throws(() => chatCompletionsUrl({ baseUrl: value, allowedOrigins: [value] }), {
+      constructor: ConfigError, message: "Base URL must be an absolute HTTP(S) URL.",
+    });
+    assert.throws(() => resolveConfig({}, { EXTERNAL_JUDGE_ALLOWED_ORIGINS: value }), {
+      constructor: ConfigError, message: "EXTERNAL_JUDGE_ALLOWED_ORIGINS entry must be an absolute HTTP(S) URL.",
+    });
+  }
 });
 
 test("origins exclude paths, credentials, queries, fragments and non-HTTP schemes", () => {
@@ -118,4 +129,43 @@ test("resolveConfig: default timeout applies when unset or invalid", () => {
   assert.equal(resolveConfig({}, {}).timeoutMs, 30_000);
   assert.equal(resolveConfig({ timeoutMs: "not-a-number" }, {}).timeoutMs, 30_000);
   assert.equal(resolveConfig({ timeoutMs: "5000" }, {}).timeoutMs, 5000);
+});
+
+test("library authorization requires an array and exact canonical origin membership", () => {
+  const baseUrl = "https://judge.example/api";
+  const origin = new URL(baseUrl).origin;
+  const rejected = { constructor: ConfigError, message: "Base URL origin is not authorized for the configured API key." };
+  for (const allowedOrigins of [origin, null, 1, new Set([origin]), { includes: () => true }]) {
+    assert.throws(() => chatCompletionsUrl({ baseUrl, allowedOrigins }), rejected);
+  }
+  for (const other of ["https://judge", origin + ".example", "https://sub.judge.example",
+    "https://otherjudge.example", origin + ":8443", origin + "."]) {
+    assert.throws(() => chatCompletionsUrl({ baseUrl, allowedOrigins: [other] }), rejected);
+    assert.throws(() => chatCompletionsUrl({ baseUrl: other, allowedOrigins: [origin] }), rejected);
+  }
+});
+
+test("preset selection requires a name and only obtains that preset's key", () => {
+  const origin = "https://custom.example";
+  for (const [name, envKey] of [["gemini", "GEMINI_API_KEY"], ["mistral", "MISTRAL_API_KEY"]]) {
+    const env = { [envKey]: "fixture-secret", EXTERNAL_JUDGE_ALLOWED_ORIGINS: origin };
+    assert.throws(() => resolveConfig({ provider: [name] }, env), ConfigError);
+    for (const provider of [undefined, "custom", name === "gemini" ? "mistral" : "gemini"]) {
+      assert.equal(resolveConfig({ provider, baseUrl: origin }, env).apiKey, "");
+    }
+    const bound = resolveConfig({ provider: name, baseUrl: origin }, env);
+    assert.equal(bound.apiKey, "fixture-secret");
+    assert.throws(() => chatCompletionsUrl(bound), /origin is not authorized/);
+  }
+});
+
+test("a preset's own credential ignores the generic key's unused origin list", () => {
+  const config = resolveConfig({ provider: "gemini" }, { GEMINI_API_KEY: "fixture", EXTERNAL_JUDGE_ALLOWED_ORIGINS: "invalid" });
+  assert.equal(chatCompletionsUrl(config).origin, "https://generativelanguage.googleapis.com");
+});
+
+test("missing values use custom defaults and non-positive, infinite and blank timeout values are rejected", () => {
+  assert.deepEqual(resolveConfig({}, {}), { provider: "custom", baseUrl: "", model: "", apiKey: "", allowedOrigins: [], timeoutMs: 30_000 });
+  for (const timeoutMs of [0, -1, "Infinity", ""]) assert.equal(resolveConfig({ timeoutMs }, {}).timeoutMs, 30_000);
+  assert.equal(resolveConfig({}, { EXTERNAL_JUDGE_TIMEOUT_MS: "123" }).timeoutMs, 123);
 });

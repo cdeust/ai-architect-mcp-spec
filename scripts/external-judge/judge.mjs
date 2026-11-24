@@ -58,8 +58,8 @@ async function main() {
   // the exfiltration primitive.
   const promptText = await readStdin();
 
-  if (!promptText || !promptText.trim()) {
-    process.stderr.write(`${redact("judge.mjs: empty prompt (pass the prompt as `judge.mjs … < prompt.txt`)")}\n`);
+  if (!promptText.trim()) {
+    process.stderr.write(`${redact("judge.mjs: empty prompt (pass the prompt as `judge.mjs … < prompt.txt`)", config)}\n`);
     process.exitCode = 2;
     return;
   }

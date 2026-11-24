@@ -12,16 +12,48 @@
  */
 
 const REDACTED = "***REDACTED***";
-const SENSITIVE_KEYS = new Set(["apikey", "api_key", "authorization", "baseurl", "allowedorigins"]);
+const SENSITIVE_KEYS = new Set([
+  "apikey", "api_key", "authorization", "baseurl", "base_url", "allowedorigins", "allowed_origins",
+]);
+
+function escapeLiteral(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function literalPattern(apiKey, baseUrl) {
-  const url = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
-  const literals = [apiKey, baseUrl, url?.href, url?.origin === "null" ? undefined : url?.origin]
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-  if (!literals.length) return null;
-  const escaped = literals.map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(escaped.join("|"), "g");
+  // Each alternative has its literal length so overlapping secrets match longest first.
+  const alternatives = [];
+  function add(literal, pattern = escapeLiteral(literal)) {
+    alternatives.push({ length: literal.length, pattern });
+  }
+  if (apiKey) {
+    add(apiKey);
+    add(encodeURIComponent(apiKey.toWellFormed()));
+  }
+  if (baseUrl) {
+    const url = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
+    if (url && url.origin !== "null") {
+      for (const form of [baseUrl, url.href, url.origin]) {
+        const authority = form.match(/^https?:\/\/[^/?#]+/i)?.[0];
+        if (!authority) {
+          add(form);
+          continue;
+        }
+        const prefix = escapeLiteral(authority).replace(/[a-z]/gi, c => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+        const path = form.slice(authority.length);
+        let end = path.length;
+        while (path[end - 1] === "/") end--;
+        const stem = path.slice(0, end);
+        for (const suffix of new Set([path, stem, stem + "/"])) {
+          add(authority + suffix, prefix + escapeLiteral(suffix));
+        }
+      }
+    } else {
+      add(baseUrl);
+    }
+  }
+  alternatives.sort((a, b) => b.length - a.length);
+  return alternatives.length ? new RegExp(alternatives.map(a => a.pattern).join("|"), "g") : null;
 }
 
 /**

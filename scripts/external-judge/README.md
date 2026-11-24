@@ -21,6 +21,7 @@ scripts/external-judge/
   judge.mjs            CLI: run one judge prompt against one external model
   calibrate.mjs         CLI: run the 10-claim calibration sweep + admission gate
   lib/
+    cli.mjs              documented options and safe CLI diagnostics
     config.mjs           provider presets + env/flag resolution
     openai-client.mjs     fetch wrapper: 429 backoff, timeout, Mistral throttle
     verdict-extract.mjs   tolerant JSON-verdict extraction from a raw reply
@@ -103,6 +104,15 @@ address (`127.0.0.0/8` or `[::1]`) is allowed only when its origin, including
 the port, appears in the list. Requests never follow redirects. HTTP errors
 report their status code. The judge discards provider error payloads and
 masks the configured credential and endpoint in output text and `--debug`.
+
+The matcher covers the literal credential and its `encodeURIComponent` form.
+It matches endpoint schemes and hosts regardless of case, keeps path case
+significant and accepts trailing slashes. The authorized provider already
+receives the credential. It can transform it into arbitrary text in a successful
+verdict. Base64, truncated credentials, other encodings and isolated hostname
+fragments are outside this literal matcher's guarantee. Masking every possible
+substring would also erase ordinary verdict text. HTTP error diagnostics carry
+only the status and discard the remote body.
 
 Output (stdout, one JSON line):
 ```json
@@ -245,3 +255,12 @@ The tests use synthetic prompts and credentials. Transport tests start servers
 on loopback and check the real CLI, including the number of requests received.
 The suite makes no provider calls and runs independently of the repository's
 Vitest suite.
+
+To replay the regression and mutation checks with the repository's locked
+development dependencies, run the following from its root. The mutation runner
+copies the judge to a fresh directory under `TMPDIR` and prints the location
+of one Stryker JSON report per production file.
+
+```sh
+pnpm run test:external-judge && node scripts/external-judge/mutation.mjs
+```

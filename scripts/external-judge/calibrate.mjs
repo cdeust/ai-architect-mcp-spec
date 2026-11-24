@@ -171,7 +171,7 @@ function formatReport(summaryObj, threshold) {
 }
 
 async function main() {
-  const flags = parseFlags(process.argv.slice(2));
+  const flags = parseFlags(process.argv.slice(2), "calibrate");
   const threshold = Number(flags.minAgreement ?? 0.7);
   const config = resolveConfig(flags, process.env);
 
@@ -179,18 +179,18 @@ async function main() {
   const rows = await runCalibration(groundTruth, config, runJudge);
   const summaryObj = summarize(rows);
 
-  process.stdout.write(`${redact(formatReport(summaryObj, threshold))}\n`);
+  process.stdout.write(`${redact(formatReport(summaryObj, threshold), config)}\n`);
 
   if (summaryObj.skipped === summaryObj.total) {
     process.stdout.write(
-      redact(`\nNothing to calibrate — all ${summaryObj.total} claims skipped (no credentials for provider "${config.provider}"). Exiting 0.\n`),
+      redact(`\nNothing to calibrate — all ${summaryObj.total} claims skipped (no credentials for provider "${config.provider}"). Exiting 0.\n`, config),
     );
     return;
   }
 
   const admitted = summaryObj.agreementRate !== null && summaryObj.agreementRate >= threshold;
   process.stdout.write(
-    redact(`\nAdmission gate: ${admitted ? "PASS" : "FAIL"} (agreement ${summaryObj.agreementRate === null ? "N/A" : (summaryObj.agreementRate * 100).toFixed(1) + "%"} vs threshold ${(threshold * 100).toFixed(0)}%)\n`),
+    redact(`\nAdmission gate: ${admitted ? "PASS" : "FAIL"} (agreement ${summaryObj.agreementRate === null ? "N/A" : (summaryObj.agreementRate * 100).toFixed(1) + "%"} vs threshold ${(threshold * 100).toFixed(0)}%)\n`, config),
   );
   process.exitCode = admitted ? 0 : 1;
 }

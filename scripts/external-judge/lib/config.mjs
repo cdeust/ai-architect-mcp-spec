@@ -94,12 +94,12 @@ export function chatCompletionsUrl({ baseUrl, allowedOrigins }) {
   if (url.protocol === "http:" && !loopback) {
     throw new ConfigError("Base URL must use HTTPS except for numeric loopback addresses.");
   }
-  if (!allowedOrigins?.includes(url.origin)) {
+  if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(url.origin)) {
     throw new ConfigError("Base URL origin is not authorized for the configured API key.");
   }
   const path = url.pathname;
   let end = path.length;
-  while (end > 0 && path[end - 1] === "/") end--;
+  while (path[end - 1] === "/") end--;
   url.pathname = `${path.slice(0, end)}/chat/completions`;
   return url;
 }
@@ -117,9 +117,10 @@ export function resolveConfig(flags, env) {
     throw new ConfigError(API_KEY_FLAG_ERROR);
   }
   const providerName = /** @type {Provider|undefined} */ (flags.provider);
-  const preset = Object.hasOwn(PROVIDER_PRESETS, providerName) ? PROVIDER_PRESETS[providerName] : undefined;
+  const preset = typeof providerName === "string" && Object.hasOwn(PROVIDER_PRESETS, providerName)
+    ? PROVIDER_PRESETS[providerName] : undefined;
 
-  if (providerName && providerName !== "custom" && !preset) {
+  if (providerName !== undefined && providerName !== "custom" && !preset) {
     throw new ConfigError("Unknown --provider. Known providers are gemini, mistral and custom.");
   }
 
@@ -127,8 +128,8 @@ export function resolveConfig(flags, env) {
   const model = flags.model || env.EXTERNAL_JUDGE_MODEL || preset?.defaultModel || "";
   const genericKey = env.EXTERNAL_JUDGE_API_KEY;
   const apiKey = genericKey || (preset ? env[preset.apiKeyEnv] : undefined) || "";
-  const configuredOrigins = readAllowedOrigins(env.EXTERNAL_JUDGE_ALLOWED_ORIGINS);
-  const allowedOrigins = genericKey || !preset ? configuredOrigins : [new URL(preset.baseUrl).origin];
+  const allowedOrigins = genericKey || !preset
+    ? readAllowedOrigins(env.EXTERNAL_JUDGE_ALLOWED_ORIGINS) : [new URL(preset.baseUrl).origin];
   const timeoutMs = Number(flags.timeoutMs ?? env.EXTERNAL_JUDGE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
 
   return {

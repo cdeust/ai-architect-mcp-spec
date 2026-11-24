@@ -131,3 +131,36 @@ test("runJudge: a batched reply (issue #119) returns every verdict with its clai
     globalThis.fetch = originalFetch;
   }
 });
+
+test("skips name the applicable key and redact configured literals in local diagnostics", async () => {
+  for (const [provider, label] of [["gemini", "EXTERNAL_JUDGE_API_KEY or GEMINI_API_KEY"],
+    ["mistral", "EXTERNAL_JUDGE_API_KEY or MISTRAL_API_KEY"], ["custom", "EXTERNAL_JUDGE_API_KEY"]]) {
+    const result = await runJudge({ provider, baseUrl: "credentials", apiKey: "" }, "");
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, `no ***REDACTED*** — set ${label}`);
+  }
+});
+
+test("missing model and missing URL both fail with a redacted reason before fetch", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("unexpected"); });
+  for (const [baseUrl, model] of [["https://x", ""], ["", "m"]]) {
+    assert.deepEqual(await runJudge({ baseUrl, model, apiKey: "model" }, ""),
+      { status: "error", reason: "missing config — a base URL and ***REDACTED*** are required" });
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("judge masks local exception messages as well as provider verdict text, preserving the taxonomy", async (t) => {
+  const config = { provider: "key", baseUrl: "https://x/v1", model: "key-model", apiKey: "key", allowedOrigins, timeoutMs: 1000 };
+  const times = [20, 27];
+  const content = JSON.stringify([{ claim_id: "key-id", verdict: "PASS", rationale: "key", caveats: ["key"], confidence: 1 }]);
+  const response = Response.json({ choices: [{ message: { content } }] });
+  t.mock.method(Date, "now", () => times.shift());
+  t.mock.method(globalThis, "fetch", async () => response);
+  assert.deepEqual(await runJudge(config, ""), {
+    status: "ok", model: "***REDACTED***-model", provider: "***REDACTED***", latency_ms: 7,
+    verdicts: [{ claim_id: "***REDACTED***-id", verdict: "PASS", rationale: "***REDACTED***", caveats: ["***REDACTED***"], confidence: 1 }],
+  });
+  const refused = { ...config, apiKey: "origin", allowedOrigins: [] };
+  assert.deepEqual(await runJudge(refused, ""), { status: "error", reason: "Base URL ***REDACTED*** is not authorized for the configured API key." });
+});

@@ -17,7 +17,6 @@
 
 import { computeBackoffDelayMs, MAX_ATTEMPTS, MIN_INTERVAL_MS } from "./backoff.mjs";
 import { chatCompletionsUrl } from "./config.mjs";
-import { redact } from "./redact.mjs";
 
 const TEMPERATURE = 0; // deterministic verdicts — source: task requirement "temperature 0"
 
@@ -51,7 +50,7 @@ async function respectMinInterval(provider) {
 /**
  * @param {import("./config.mjs").Config} config
  * @param {string} promptText
- * @returns {Promise<{content: string, httpModel: string}>}
+ * @returns {Promise<{content: string}>}
  */
 export async function callChatCompletions(config, promptText) {
   const url = chatCompletionsUrl(config);
@@ -64,44 +63,34 @@ export async function callChatCompletions(config, promptText) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     await respectMinInterval(config.provider);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-    let response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        redirect: "manual",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${config.apiKey}`,
-        },
-        body,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`callChatCompletions: request timed out after ${config.timeoutMs}ms`);
-      }
-      throw new Error("callChatCompletions: network error");
-    } finally {
-      clearTimeout(timer);
+    const { response, content } = await request(config, url, body);
+    if (response.status !== 429) return { content };
+    if (attempt === MAX_ATTEMPTS) {
+      throw new Error(`callChatCompletions: rate limited (429) after ${MAX_ATTEMPTS} attempts`);
     }
+    await sleep(computeBackoffDelayMs(attempt, response.headers.get("retry-after")));
+  }
+}
 
-    if (!response.ok) await response.body?.cancel().catch(() => {});
-
-    if (response.status === 429) {
-      const retryAfter = response.headers.get("retry-after") ?? undefined;
-      if (attempt === MAX_ATTEMPTS) {
-        throw new Error(`callChatCompletions: rate limited (429) after ${MAX_ATTEMPTS} attempts`);
-      }
-      await sleep(computeBackoffDelayMs(attempt, retryAfter));
-      continue;
-    }
-
+async function request(config, url, body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.apiKey}`,
+      },
+      body,
+      signal: controller.signal,
+    }).catch(() => { throw new Error("callChatCompletions: network error"); });
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      if (response.status === 429) return { response };
       throw new Error(`callChatCompletions: HTTP ${response.status}`);
     }
-
     const json = await response.json().catch(() => {
       throw new Error("callChatCompletions: response was not valid JSON");
     });
@@ -109,9 +98,13 @@ export async function callChatCompletions(config, promptText) {
     if (typeof content !== "string") {
       throw new Error("callChatCompletions: response missing choices[0].message.content");
     }
-    const httpModel = typeof json?.model === "string" ? json.model : config.model;
-    return { content, httpModel: redact(httpModel, config) };
+    return { response, content };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`callChatCompletions: request timed out after ${config.timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  // Unreachable — loop always returns or throws — but keep TS/JSDoc happy.
-  throw new Error("callChatCompletions: exhausted retries without a terminal response");
 }

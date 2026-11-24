@@ -45,3 +45,65 @@ test("redact: treats keys as literal text and masks canonical URL forms", () => 
     nested: ["key=***REDACTED*** endpoint=***REDACTED***"],
   });
 });
+
+test("redact: masks the endpoint field without a separate config", () => {
+  assert.deepEqual(redact({ baseUrl: "https://judge.example/private/", model: "fixture-model" }), {
+    baseUrl: "***REDACTED***",
+    model: "fixture-model",
+  });
+});
+
+test("redact: masks the literal of a malformed endpoint", () => {
+  const baseUrl = "http://[fixture";
+  assert.equal(redact(`Request to ${baseUrl}`, { baseUrl }), "Request to ***REDACTED***");
+});
+
+test("redact: masks the canonical origin when the diagnostic omits the path", () => {
+  const baseUrl = "https://JUDGE.example:443/private/";
+  assert.equal(redact("Request to https://judge.example", { baseUrl }), "Request to ***REDACTED***");
+});
+
+test("redact: preserves ordinary null text beside an opaque endpoint", () => {
+  const baseUrl = "about:blank";
+  assert.equal(redact(`Null result: null at ${baseUrl}`, { baseUrl }), "Null result: null at ***REDACTED***");
+});
+
+test("redact: consumes the full endpoint when a credential is its prefix", () => {
+  const apiKey = "https://judge.example";
+  const baseUrl = `${apiKey}/private/`;
+  const text = `Request to ${baseUrl} with credential ${apiKey}`;
+  assert.equal(redact(text, { apiKey, baseUrl }), "Request to ***REDACTED*** with credential ***REDACTED***");
+});
+
+test("redact: matches scheme and authority without case, preserves case in paths and keys", () => {
+  const context = { baseUrl: "https://Judge.EXAMPLE:443/Tenant/v1/", apiKey: "Secret+/=:@" };
+  const hidden = "***REDACTED***";
+  for (const baseUrl of [context.baseUrl, context.baseUrl.slice(0, -1)]) {
+    for (const host of ["HTTPS://jUdGe.eXaMpLe:443", "hTtPs://JUDGE.ExAmPlE"]) {
+      assert.equal(redact(`${host}/Tenant/v1 / ${host}/Tenant/v1/`, { ...context, baseUrl }), `${hidden} / ${hidden}`);
+    }
+  }
+  assert.equal(redact("SECRET+/=:@ Secret%2B%2F%3D%3A%40", context), `SECRET+/=:@ ${hidden}`);
+  assert.equal(redact("https://judge.example/tenant/v1", context), `${hidden}tenant/v1`);
+  assert.equal(redact("https://judge.example/", { baseUrl: "https://judge.example" }), hidden);
+});
+
+test("redact: sensitive snake_case fields are private without configuration", () => {
+  assert.deepEqual(redact({ BASE_URL: "one", allowed_origins: ["two"] }),
+    { BASE_URL: "***REDACTED***", allowed_origins: "***REDACTED***" });
+});
+
+test("redact: repeated trailing slashes and shared key prefixes preserve the longest complete literal", () => {
+  const baseUrl = "http://j.example/Path///";
+  const apiKey = "http://j.example/PathKey";
+  for (const text of [baseUrl, "HTTP://J.EXAMPLE/Path", "HTTP://J.EXAMPLE/Path/", apiKey]) {
+    assert.equal(redact(text, { apiKey, baseUrl }), "***REDACTED***");
+  }
+});
+
+test("redact: literal regex punctuation has no wildcard meaning in either the key or the endpoint", () => {
+  const baseUrl = "https://[::1]:8443/tenant.$+/";
+  assert.equal(redact("https://[::1]:8443/tenant.$+/", { baseUrl }), "***REDACTED***");
+  assert.equal(redact("x fooQaBar foo.aBar y", { apiKey: "foo.aBar" }), "x fooQaBar ***REDACTED*** y");
+  assert.equal(redact("bearer token BEARER other ordinary", {}), "Bearer ***REDACTED*** Bearer ***REDACTED*** ordinary");
+});

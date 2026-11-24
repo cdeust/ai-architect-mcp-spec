@@ -133,3 +133,53 @@ test("extractVerdicts: an incomplete element is named, not read as prose (Codex 
     /"verdict" must be one of/,
   );
 });
+
+test("single and batched parsers report local classifications, without quoting input", () => {
+  for (const value of [null, 1, "  \n "]) {
+    assert.throws(() => extractVerdict(value), { message: "extractVerdict: empty reply — no JSON to parse" });
+    assert.throws(() => extractVerdicts(value), { message: "extractVerdicts: empty reply — no JSON to parse" });
+  }
+  for (const [input, message] of [
+    ["none", "no JSON array or object found in reply"], ["{", "no balanced JSON object found in reply"],
+    ["[", "no balanced JSON array found in reply"], ["{private}", "candidate JSON failed to parse"],
+    ["{}", "candidate JSON is not a verdict or a list of verdicts"],
+  ]) assert.throws(() => extractVerdicts(input), { message: "extractVerdicts: " + message });
+  assert.throws(() => extractVerdict("{private}"), { message: "extractVerdict: candidate JSON object failed to parse" });
+  for (const verdict of ["private", 1, null]) {
+    assert.throws(() => extractVerdicts(JSON.stringify({ verdict })), {
+      message: 'extractVerdict: "verdict" must be one of PASS, SPEC-COMPLETE, NEEDS-RUNTIME, INCONCLUSIVE, FAIL',
+    });
+  }
+});
+
+test("scanner respects escaped quotes, escaped backslashes and both bracket directions", () => {
+  const evidence = { verdict: "INCONCLUSIVE", rationale: 'before "}] after \\', confidence: 1, caveats: ["before ]", false, "after {"] };
+  for (const read of [extractVerdict, raw => extractVerdicts(raw).verdict]) {
+    assert.deepEqual(read("prefix " + JSON.stringify(evidence) + " more {}"), { ...evidence, caveats: ["before ]", "after {"] });
+  }
+});
+
+test("only a nonempty array of objects with at least one answer is a candidate", () => {
+  for (const prose of ["[]", "[null]", "[{}]", '[[{"verdict":"FAIL"}]]', '[1,{"verdict":"FAIL"}]', '[{"verdict":"FAIL"},null]']) {
+    assert.throws(() => extractVerdicts(prose), { message: "extractVerdicts: candidate JSON is not a verdict or a list of verdicts" });
+  }
+  assert.throws(() => extractVerdicts('[{"claim_id":"A"}]'), /"verdict" must be one of/);
+  for (const id of [1, "", null]) {
+    assert.throws(() => extractVerdicts(JSON.stringify([{ claim_id: id, verdict: "FAIL" }])), {
+      message: 'extractVerdicts: element 0 has no string "claim_id"',
+    });
+  }
+});
+
+test("verdict fields retain their type constraints and finite-number check", () => {
+  for (const rationale of [null, 7, "  "]) {
+    assert.throws(() => extractVerdict(JSON.stringify({ verdict: "PASS", rationale, confidence: 1 })), {
+      message: 'extractVerdict: "rationale" must be a non-empty string',
+    });
+  }
+  for (const confidence of ['"1"', "1e400"]) {
+    assert.throws(() => extractVerdicts(`{"verdict":"PASS","rationale":"r","confidence":${confidence}}`), {
+      message: 'extractVerdict: "confidence" must be a finite number',
+    });
+  }
+});
