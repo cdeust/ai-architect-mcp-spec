@@ -1,0 +1,1616 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`lists the complete MCP tool descriptors 1`] = `
+{
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Get the full skill configuration",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {},
+        "type": "object",
+      },
+      "name": "get_config",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Read the SKILL.md content that drives PRD generation",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {},
+        "type": "object",
+      },
+      "name": "read_skill_config",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Check system health — verify all components are accessible",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {},
+        "type": "object",
+      },
+      "name": "check_health",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Get configuration for a specific PRD context type",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "context": {
+            "description": "The PRD context type",
+            "enum": [
+              "proposal",
+              "feature",
+              "bug",
+              "incident",
+              "poc",
+              "mvp",
+              "release",
+              "cicd",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "context",
+        ],
+        "type": "object",
+      },
+      "name": "get_prd_context_info",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "List thinking strategies available to the pipeline.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {},
+        "type": "object",
+      },
+      "name": "list_available_strategies",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Run deterministic Hard Output Rules validation on a single PRD section. Returns violations found — zero LLM calls, pure regex/parsing. The response is paged under the 100,000-char MCP response budget: each page holds whole items (the violations, then the unresolved symbols) from item_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and item_offset set to next_offset until it is null. The other fields (rulesChecked, rulesPassed, hasCriticalViolations, totalScore) describe the whole report and are on every page.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "content": {
+            "description": "The markdown content of the PRD section",
+            "type": "string",
+          },
+          "item_offset": {
+            "default": 0,
+            "description": "Index of the first report item (violations, then unresolved symbols) of the page to return",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "known_symbols": {
+            "description": "Optional symbol names from the host's code graph (plain, or qualified with ., ::, # or -> (read as .); a signature such as (email:), generic arguments and trailing ?/! are ignored). When given, the report gains \`symbolExistence\` {checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: lower-case receivers, JS built-ins, std:: paths, # after anything but one PascalCase name (anchors), file names. Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked; a non-call left with one name (Self::CONST, crate::Foo) is not checked. [] means an empty graph: omit the field when the graph lookup failed.",
+            "items": {
+              "maxLength": 512,
+              "type": "string",
+            },
+            "maxItems": 200000,
+            "type": "array",
+          },
+          "section_type": {
+            "description": "The type of PRD section being validated",
+            "enum": [
+              "overview",
+              "goals",
+              "requirements",
+              "user_stories",
+              "technical_specification",
+              "acceptance_criteria",
+              "data_model",
+              "api_specification",
+              "security_considerations",
+              "performance_requirements",
+              "testing",
+              "deployment",
+              "risks",
+              "timeline",
+              "source_code",
+              "test_code",
+              "jira_tickets",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "content",
+          "section_type",
+        ],
+        "type": "object",
+      },
+      "name": "validate_prd_section",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Run full document validation including cross-section checks (SP arithmetic, AC numbering, FR-AC coverage, test traceability). Returns comprehensive validation report. The response is paged under the 100,000-char MCP response budget: each page holds whole items (the violations, then the unresolved symbols) from item_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and item_offset set to next_offset until it is null. The other fields (rulesChecked, rulesPassed, hasCriticalViolations, totalScore) describe the whole report and are on every page.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "item_offset": {
+            "default": 0,
+            "description": "Index of the first report item (violations, then unresolved symbols) of the page to return",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "known_symbols": {
+            "description": "Optional symbol names from the host's code graph (plain, or qualified with ., ::, # or -> (read as .); a signature such as (email:), generic arguments and trailing ?/! are ignored). When given, the report gains \`symbolExistence\` {checkedSymbols, knownSymbols, unresolvedSymbols[]}: the code symbols named in inline code spans outside fenced blocks that none of these resolve — each is either introduced by the PRD or fabricated. Not scored. Checked spans: calls on a bare name or a receiver starting upper-case, ::/# paths, Upper.member. Skipped: lower-case receivers, JS built-ins, std:: paths, # after anything but one PascalCase name (anchors), file names. Rust relative roots (crate::, self::, super::, Self::) are dropped and the rest is checked; a non-call left with one name (Self::CONST, crate::Foo) is not checked. [] means an empty graph: omit the field when the graph lookup failed.",
+            "items": {
+              "maxLength": 512,
+              "type": "string",
+            },
+            "maxItems": 200000,
+            "type": "array",
+          },
+          "sections": {
+            "description": "Array of PRD sections to validate",
+            "items": {
+              "properties": {
+                "content": {
+                  "description": "Section content",
+                  "type": "string",
+                },
+                "type": {
+                  "description": "Section type",
+                  "enum": [
+                    "overview",
+                    "goals",
+                    "requirements",
+                    "user_stories",
+                    "technical_specification",
+                    "acceptance_criteria",
+                    "data_model",
+                    "api_specification",
+                    "security_considerations",
+                    "performance_requirements",
+                    "testing",
+                    "deployment",
+                    "risks",
+                    "timeline",
+                    "source_code",
+                    "test_code",
+                    "jira_tickets",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "type",
+                "content",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "sections",
+        ],
+        "type": "object",
+      },
+      "name": "validate_prd_document",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Get historical PRD quality scores from the evidence repository",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Maximum number of records to return",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer",
+          },
+        },
+        "type": "object",
+      },
+      "name": "get_quality_history",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Get strategy performance data — actual vs expected improvement, compliance rate",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "min_executions": {
+            "default": 5,
+            "description": "Minimum executions required to include a strategy",
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer",
+          },
+        },
+        "type": "object",
+      },
+      "name": "get_strategy_effectiveness",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "When validate_prd_section returns violations, call this to get corrective Cortex recall queries. Closes the validation→retrieval feedback loop so retries use better context.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "violations": {
+            "description": "Violations from validate_prd_section",
+            "items": {
+              "properties": {
+                "isAdvisory": {
+                  "type": "boolean",
+                },
+                "isCritical": {
+                  "type": "boolean",
+                },
+                "location": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "message": {
+                  "type": "string",
+                },
+                "offendingContent": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "rule": {
+                  "enum": [
+                    "sp_arithmetic",
+                    "no_self_referencing_deps",
+                    "ac_numbering",
+                    "no_orphan_ddl",
+                    "no_now_in_partial_indexes",
+                    "no_any_codable",
+                    "no_placeholder_tests",
+                    "sp_not_in_fr_table",
+                    "uneven_sp_distribution",
+                    "metrics_disclaimer",
+                    "fr_traceability",
+                    "clean_architecture",
+                    "post_generation_self_check",
+                    "mandatory_codebase_analysis",
+                    "honest_verification_verdicts",
+                    "code_example_port_compliance",
+                    "test_traceability_integrity",
+                    "duplicate_requirement_ids",
+                    "fr_to_ac_coverage",
+                    "ac_to_test_coverage",
+                    "fk_references_exist",
+                    "fr_numbering_gaps",
+                    "risk_mitigation_completeness",
+                    "deployment_rollback_plan",
+                    "dependency_targets_defined",
+                    "measurable_requirements",
+                    "testable_acceptance_criteria",
+                    "contradictory_requirements",
+                    "missing_prd_definitions",
+                    "contradictory_publication_policy",
+                    "consistent_control_names",
+                    "generic_over_specific",
+                    "no_nested_types",
+                    "single_responsibility",
+                    "explicit_access_control",
+                    "factory_based_injection",
+                    "solid_compliance",
+                    "code_reusability",
+                    "no_hardcoded_secrets",
+                    "input_validation_required",
+                    "output_encoding_injection_prevention",
+                    "auth_on_every_endpoint",
+                    "security_safe_error_handling",
+                    "cryptographic_standards",
+                    "rate_limiting_required",
+                    "secure_communication",
+                    "data_classification_required",
+                    "sensitive_data_protection",
+                    "no_sensitive_data_in_logs",
+                    "data_minimization",
+                    "audit_trail_required",
+                    "consent_and_erasure_support",
+                    "structured_error_handling",
+                    "resilience_patterns",
+                    "graceful_degradation",
+                    "transaction_boundaries",
+                    "consistent_error_format",
+                    "concurrency_safety",
+                    "immutability_by_default",
+                    "atomic_operations",
+                    "no_magic_numbers",
+                    "defensive_coding",
+                    "method_size_limits",
+                    "consistent_naming",
+                    "api_contract_documentation",
+                    "deprecation_strategy",
+                    "mandatory_test_coverage",
+                    "security_testing_required",
+                    "performance_testing_required",
+                    "no_production_data_in_tests",
+                    "edge_case_negative_tests",
+                    "test_isolation",
+                    "structured_logging",
+                    "distributed_tracing",
+                    "no_pii_in_observability",
+                    "alerting_thresholds",
+                    "dependency_vulnerability_scanning",
+                    "minimal_dependency_principle",
+                  ],
+                  "type": "string",
+                },
+                "scorePenalty": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number",
+                },
+                "sectionType": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "overview",
+                        "goals",
+                        "requirements",
+                        "user_stories",
+                        "technical_specification",
+                        "acceptance_criteria",
+                        "data_model",
+                        "api_specification",
+                        "security_considerations",
+                        "performance_requirements",
+                        "testing",
+                        "deployment",
+                        "risks",
+                        "timeline",
+                        "source_code",
+                        "test_code",
+                        "jira_tickets",
+                      ],
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "rule",
+                "sectionType",
+                "message",
+                "offendingContent",
+                "location",
+                "isCritical",
+                "scorePenalty",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "violations",
+        ],
+        "type": "object",
+      },
+      "name": "map_failure_to_retrieval",
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+      },
+      "description": "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "codebase_path": {
+            "description": "Absolute path to the codebase. Triggers index_codebase via ai-architect-mcp-codebase.",
+            "type": "string",
+          },
+          "feature_description": {
+            "description": "What the PRD is about — passed to all prompts",
+            "type": "string",
+          },
+          "prd_context": {
+            "description": "The kind of PRD the request calls for, declared by the host, which has the whole conversation where the server has only feature_description. Omit it and the server reads the kind from the words of feature_description, or asks the user. get_prd_context_info gives the clarification range and the section count of a kind.",
+            "enum": [
+              "proposal",
+              "feature",
+              "bug",
+              "incident",
+              "poc",
+              "mvp",
+              "release",
+              "cicd",
+            ],
+            "type": "string",
+          },
+          "request_size": {
+            "description": "The size of the request, declared by the host: the server never reads a size from feature_description. 'tiny' (Tiny change) is the fast path for a small, self-contained change: 4 sections (overview, requirements, acceptance_criteria, testing) and 4 to 5 clarification rounds, in place of those of the kind. It is not for: incident, which keeps the rounds and sections of its kind. Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.",
+            "enum": [
+              "standard",
+              "tiny",
+            ],
+            "type": "string",
+          },
+          "semantic_review": {
+            "description": "Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks.",
+            "type": "boolean",
+          },
+          "skip_preflight": {
+            "description": "If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall.",
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "feature_description",
+        ],
+        "type": "object",
+      },
+      "name": "start_pipeline",
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+      },
+      "description": "Feed an ActionResult to the pipeline runner; receive the next NextAction.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "properties": {
+                  "freeform": {
+                    "type": "string",
+                  },
+                  "kind": {
+                    "const": "user_answer",
+                    "type": "string",
+                  },
+                  "question_id": {
+                    "type": "string",
+                  },
+                  "selected": {
+                    "default": [],
+                    "items": {
+                      "type": "string",
+                    },
+                    "maxItems": 4,
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "question_id",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "correlation_id": {
+                    "type": "string",
+                  },
+                  "data": {},
+                  "error": {
+                    "type": "string",
+                  },
+                  "kind": {
+                    "const": "tool_result",
+                    "type": "string",
+                  },
+                  "success": {
+                    "type": "boolean",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "correlation_id",
+                  "success",
+                  "data",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                  },
+                  "kind": {
+                    "const": "subagent_batch_result",
+                    "type": "string",
+                  },
+                  "responses": {
+                    "items": {
+                      "properties": {
+                        "error": {
+                          "type": "string",
+                        },
+                        "invocation_id": {
+                          "type": "string",
+                        },
+                        "raw_text": {
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "invocation_id",
+                      ],
+                      "type": "object",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "batch_id",
+                  "responses",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "bytes": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                  "kind": {
+                    "const": "file_written",
+                    "type": "string",
+                  },
+                  "path": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "bytes",
+                ],
+                "type": "object",
+              },
+            ],
+          },
+          "run_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "run_id",
+          "result",
+        ],
+        "type": "object",
+      },
+      "name": "submit_action_result",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts — the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "format": {
+            "default": "summary",
+            "enum": [
+              "full",
+              "summary",
+              "grounding",
+              "validation",
+              "action",
+              "define_handoff_v1",
+              "verified_plan_v1",
+              "implementation_review_v1",
+            ],
+            "type": "string",
+          },
+          "invocation_offset": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "plan_step": {
+            "description": "Operator-selected architect-os Step name for plan and review formats.",
+            "type": "string",
+          },
+          "review_id": {
+            "description": "Operator-assigned review dossier identifier.",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "type": "string",
+          },
+          "run_id": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "run_id",
+        ],
+        "type": "object",
+      },
+      "name": "get_pipeline_state",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. The response is paged under the 100,000-char MCP response budget: each page holds whole judge requests from request_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and request_offset set to next_offset until it is null, and dispatch the judge requests of every page. claims and mechanical_claims are on the page at offset 0 only.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "codebase_excerpts": {
+            "default": [],
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "content": {
+            "type": "string",
+          },
+          "memory_excerpts": {
+            "default": [],
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "request_offset": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "section_type": {
+            "enum": [
+              "overview",
+              "goals",
+              "requirements",
+              "user_stories",
+              "technical_specification",
+              "acceptance_criteria",
+              "data_model",
+              "api_specification",
+              "security_considerations",
+              "performance_requirements",
+              "testing",
+              "deployment",
+              "risks",
+              "timeline",
+              "source_code",
+              "test_code",
+              "jira_tickets",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "section_type",
+          "content",
+        ],
+        "type": "object",
+      },
+      "name": "plan_section_verification",
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+      },
+      "description": "Same as plan_section_verification but across all sections of a document. The response is paged under the 100,000-char MCP response budget: each page holds whole judge requests from request_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and request_offset set to next_offset until it is null, and dispatch the judge requests of every page. claims and mechanical_claims are on the page at offset 0 only.",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "codebase_excerpts": {
+            "default": [],
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "memory_excerpts": {
+            "default": [],
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "request_offset": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer",
+          },
+          "sections": {
+            "items": {
+              "properties": {
+                "content": {
+                  "type": "string",
+                },
+                "type": {
+                  "enum": [
+                    "overview",
+                    "goals",
+                    "requirements",
+                    "user_stories",
+                    "technical_specification",
+                    "acceptance_criteria",
+                    "data_model",
+                    "api_specification",
+                    "security_considerations",
+                    "performance_requirements",
+                    "testing",
+                    "deployment",
+                    "risks",
+                    "timeline",
+                    "source_code",
+                    "test_code",
+                    "jira_tickets",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "type",
+                "content",
+              ],
+              "type": "object",
+            },
+            "minItems": 1,
+            "type": "array",
+          },
+        },
+        "required": [
+          "sections",
+        ],
+        "type": "object",
+      },
+      "name": "plan_document_verification",
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+      },
+      "description": "Aggregate JudgeVerdict[] from spawned subagents into a VerificationReport (consensus + dissent). IMPORTANT: omitting claim_types when a reliability repository is open suppresses observation flushing for this batch — the calibration data will be missing for these runs (one-sided censoring).",
+      "execution": {
+        "taskSupport": "forbidden",
+      },
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "claim_types": {
+            "additionalProperties": {
+              "type": "string",
+            },
+            "description": "Map of claim_id → claim_type. When provided, enables per-(judge × claim_type) reliability lookup. Omit to fall back to per-agent scalar priors. Source: derive from plan_section_verification / plan_document_verification response: { [req.claim.claim_id]: req.claim.claim_type } for each entry in judge_requests[]. TODO(Wave-E): auto-populate from plan state when server-side session context is available.",
+            "propertyNames": {
+              "type": "string",
+            },
+            "type": "object",
+          },
+          "claims": {
+            "description": "OPTIONAL. Pass the Claim objects from the corresponding plan_section_verification / plan_document_verification response if you want oracle-based ground truth (breaks Curie A2 annotator-circularity for grounded claims). Claims that carry external_grounding will have their truth resolved by the appropriate oracle; claims without it fall back to consensus-majority (back-compat preserved). Shape mirrors the Claim type but only text and evidence are required for grounding propagation — omit them to pass minimal objects. source: Curie A2.3, PHASE_4_PLAN.md §4.1 Wave F closure.",
+            "items": {
+              "properties": {
+                "claim_id": {
+                  "type": "string",
+                },
+                "claim_type": {
+                  "enum": [
+                    "architecture",
+                    "performance",
+                    "correctness",
+                    "security",
+                    "data_model",
+                    "test_coverage",
+                    "story_point_arithmetic",
+                    "fr_traceability",
+                    "risk",
+                    "acceptance_criteria_completeness",
+                    "cross_file_consistency",
+                  ],
+                  "type": "string",
+                },
+                "evidence": {
+                  "default": "",
+                  "type": "string",
+                },
+                "external_grounding": {
+                  "properties": {
+                    "payload": {},
+                    "type": {
+                      "enum": [
+                        "schema",
+                        "math",
+                        "code",
+                        "spec",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "type",
+                    "payload",
+                  ],
+                  "type": "object",
+                },
+                "source_section": {
+                  "type": "string",
+                },
+                "text": {
+                  "default": "",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "claim_id",
+                "claim_type",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+          "consensus_strategy": {
+            "default": "weighted_average",
+            "enum": [
+              "weighted_average",
+              "bayesian",
+            ],
+            "type": "string",
+          },
+          "run_id": {
+            "description": "Pipeline run_id — required for calibrated Bayesian reliability weights (CC-3 control-arm seam uses this to partition treatment vs control runs). When absent, falls back to Beta(7,3) prior for all judges.",
+            "type": "string",
+          },
+          "scope": {
+            "default": "section",
+            "enum": [
+              "section",
+              "document",
+            ],
+            "type": "string",
+          },
+          "section_type": {
+            "enum": [
+              "overview",
+              "goals",
+              "requirements",
+              "user_stories",
+              "technical_specification",
+              "acceptance_criteria",
+              "data_model",
+              "api_specification",
+              "security_considerations",
+              "performance_requirements",
+              "testing",
+              "deployment",
+              "risks",
+              "timeline",
+              "source_code",
+              "test_code",
+              "jira_tickets",
+            ],
+            "type": "string",
+          },
+          "verdicts": {
+            "items": {
+              "properties": {
+                "caveats": {
+                  "default": [],
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "claim_id": {
+                  "type": "string",
+                },
+                "confidence": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number",
+                },
+                "judge": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "genius",
+                          "type": "string",
+                        },
+                        "name": {
+                          "enum": [
+                            "alexander",
+                            "alkhwarizmi",
+                            "altshuller",
+                            "archimedes",
+                            "arendt",
+                            "aristotle",
+                            "bateson",
+                            "beer",
+                            "borges",
+                            "boyd",
+                            "braudel",
+                            "bruner",
+                            "carnot",
+                            "champollion",
+                            "coase",
+                            "cochrane",
+                            "curie",
+                            "darwin",
+                            "deming",
+                            "dijkstra",
+                            "eco",
+                            "einstein",
+                            "ekman",
+                            "engelbart",
+                            "erdos",
+                            "erlang",
+                            "euler",
+                            "feinstein",
+                            "fermi",
+                            "feynman",
+                            "fisher",
+                            "fleming",
+                            "foucault",
+                            "gadamer",
+                            "galileo",
+                            "geertz",
+                            "ginzburg",
+                            "godel",
+                            "hamilton",
+                            "hart",
+                            "hopper",
+                            "ibnalhaytham",
+                            "ibnkhaldun",
+                            "jobs",
+                            "kahneman",
+                            "kauffman",
+                            "kay",
+                            "kekule",
+                            "knuth",
+                            "lamport",
+                            "laplace",
+                            "lavoisier",
+                            "leguin",
+                            "lem",
+                            "liskov",
+                            "mandelbrot",
+                            "margulis",
+                            "maxwell",
+                            "mcclintock",
+                            "meadows",
+                            "mendeleev",
+                            "midgley",
+                            "mill",
+                            "nagarjuna",
+                            "noether",
+                            "ostrom",
+                            "panini",
+                            "pearl",
+                            "peirce",
+                            "poincare",
+                            "polya",
+                            "popper",
+                            "propp",
+                            "ramanujan",
+                            "ranganathan",
+                            "rawls",
+                            "rejewski",
+                            "rogerfisher",
+                            "rogers",
+                            "schelling",
+                            "schon",
+                            "semmelweis",
+                            "shannon",
+                            "simon",
+                            "snow",
+                            "strauss",
+                            "taleb",
+                            "thompson",
+                            "toulmin",
+                            "turing",
+                            "varela",
+                            "ventris",
+                            "vonneumann",
+                            "vygotsky",
+                            "wittgenstein",
+                            "wu",
+                            "zhuangzi",
+                          ],
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "team",
+                          "type": "string",
+                        },
+                        "name": {
+                          "enum": [
+                            "architect",
+                            "code-reviewer",
+                            "data-scientist",
+                            "dba",
+                            "devops-engineer",
+                            "engineer",
+                            "experiment-runner",
+                            "frontend-engineer",
+                            "latex-engineer",
+                            "mlops",
+                            "orchestrator",
+                            "paper-writer",
+                            "professor",
+                            "refactorer",
+                            "research-scientist",
+                            "reviewer-academic",
+                            "security-auditor",
+                            "test-engineer",
+                            "ux-designer",
+                          ],
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                      ],
+                      "type": "object",
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "rule",
+                          "type": "string",
+                        },
+                        "name": {
+                          "const": "rule-tier",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "kind",
+                        "name",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                "model": {
+                  "type": "string",
+                },
+                "rationale": {
+                  "type": "string",
+                },
+                "verdict": {
+                  "enum": [
+                    "PASS",
+                    "SPEC-COMPLETE",
+                    "NEEDS-RUNTIME",
+                    "INCONCLUSIVE",
+                    "FAIL",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "judge",
+                "claim_id",
+                "verdict",
+                "rationale",
+                "confidence",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
+        },
+        "required": [
+          "verdicts",
+        ],
+        "type": "object",
+      },
+      "name": "conclude_verification",
+    },
+  ],
+}
+`;
+
+exports[`pins the invalid argument response for conclude_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool conclude_verification: Invalid input: expected array, received string at verdicts",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`pins the invalid argument response for get_pipeline_state 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool get_pipeline_state: Invalid input: expected string, received undefined at run_id",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`pins the invalid argument response for plan_document_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool plan_document_verification: Too small: expected array to have >=1 items at sections",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`pins the invalid argument response for plan_section_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool plan_section_verification: Invalid option: expected one of "overview"|"goals"|"requirements"|"user_stories"|"technical_specification"|"acceptance_criteria"|"data_model"|"api_specification"|"security_considerations"|"performance_requirements"|"testing"|"deployment"|"risks"|"timeline"|"source_code"|"test_code"|"jira_tickets" at section_type",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`pins the invalid argument response for start_pipeline 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool start_pipeline: Invalid input: expected string, received undefined at feature_description",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`pins the invalid argument response for submit_action_result 1`] = `
+{
+  "content": [
+    {
+      "text": "MCP error -32602: Input validation error: Invalid arguments for tool submit_action_result: Invalid input: expected object, received undefined at result",
+      "type": "text",
+    },
+  ],
+  "isError": true,
+}
+`;
+
+exports[`plans section and document verification and concludes a verdict through stdio > conclude_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "section_type": "requirements",
+  "claims_evaluated": 1,
+  "judges_invoked": 1,
+  "results": [
+    {
+      "claim_id": "FR-001",
+      "verdict": "PASS",
+      "confidence": 1,
+      "unanimous": true,
+      "dissenting": [],
+      "distribution": {
+        "PASS": 1,
+        "SPEC-COMPLETE": 0,
+        "NEEDS-RUNTIME": 0,
+        "INCONCLUSIVE": 0,
+        "FAIL": 0
+      },
+      "strategy": "weighted_average",
+      "judges": [
+        {
+          "kind": "team",
+          "name": "engineer"
+        }
+      ]
+    }
+  ],
+  "distribution": {
+    "PASS": 1,
+    "SPEC-COMPLETE": 0,
+    "NEEDS-RUNTIME": 0,
+    "INCONCLUSIVE": 0,
+    "FAIL": 0
+  },
+  "failures": [],
+  "warnings": [],
+  "distribution_suspicious": false
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
+
+exports[`plans section and document verification and concludes a verdict through stdio > plan_document_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "claims": [
+    {
+      "claim_id": "FR-001",
+      "claim_type": "fr_traceability",
+      "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+      "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+      "source_section": "requirements"
+    }
+  ],
+  "judge_requests": [
+    {
+      "judge": {
+        "kind": "genius",
+        "name": "aristotle"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "## requirements\\n\\n- FR-001: Copying a configuration example MUST preserve its exact contents.\\n\\n## testing\\n\\nCompare the copied configuration with the original example.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    },
+    {
+      "judge": {
+        "kind": "genius",
+        "name": "toulmin"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "## requirements\\n\\n- FR-001: Copying a configuration example MUST preserve its exact contents.\\n\\n## testing\\n\\nCompare the copied configuration with the original example.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    },
+    {
+      "judge": {
+        "kind": "team",
+        "name": "code-reviewer"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "## requirements\\n\\n- FR-001: Copying a configuration example MUST preserve its exact contents.\\n\\n## testing\\n\\nCompare the copied configuration with the original example.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    }
+  ],
+  "mechanical_claims": [],
+  "__page": {
+    "offset": 0,
+    "count": 3,
+    "total": 3,
+    "next_offset": null,
+    "final_chars": 2722,
+    "budget_chars": 100000
+  }
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
+
+exports[`plans section and document verification and concludes a verdict through stdio > plan_section_verification 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "claims": [
+    {
+      "claim_id": "FR-001",
+      "claim_type": "fr_traceability",
+      "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+      "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+      "source_section": "requirements"
+    }
+  ],
+  "judge_requests": [
+    {
+      "judge": {
+        "kind": "genius",
+        "name": "aristotle"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    },
+    {
+      "judge": {
+        "kind": "genius",
+        "name": "toulmin"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    },
+    {
+      "judge": {
+        "kind": "team",
+        "name": "code-reviewer"
+      },
+      "claim": {
+        "claim_id": "FR-001",
+        "claim_type": "fr_traceability",
+        "text": "Functional requirement: Copying a configuration example MUST preserve its exact contents.",
+        "evidence": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "source_section": "requirements"
+      },
+      "context": {
+        "prd_excerpt": "- FR-001: Copying a configuration example MUST preserve its exact contents.",
+        "codebase_excerpts": [],
+        "memory_excerpts": []
+      }
+    }
+  ],
+  "mechanical_claims": [],
+  "__page": {
+    "offset": 0,
+    "count": 3,
+    "total": 3,
+    "next_offset": null,
+    "final_chars": 2434,
+    "budget_chars": 100000
+  }
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
+
+exports[`starts, reads and advances the same run through stdio > get_pipeline_state 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "run_id": "<run_id>",
+  "current_step": "clarification",
+  "messages": [],
+  "action": null,
+  "state_summary": {
+    "sections": [],
+    "clarification_rounds": 0,
+    "errors": 0,
+    "prd_context": "feature",
+    "request_size": "tiny"
+  }
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
+
+exports[`starts, reads and advances the same run through stdio > start_pipeline 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "run_id": "<run_id>",
+  "current_step": "input_analysis",
+  "messages": [
+    {
+      "text": "PRD Spec Generator\\nRun ID: <run_id>\\nAllowed strategies: 16\\nAllowed PRD contexts: 8\\n\\nFeature: Add a copy button to each configuration example.\\nCodebase: (none provided)",
+      "level": "info"
+    },
+    {
+      "text": "Preflight skipped (skip_preflight=true). Section generation will proceed without Cortex recall context if Cortex is unavailable.",
+      "level": "warn"
+    },
+    {
+      "text": "PRD context: Feature. Request size: Tiny change.",
+      "level": "info"
+    }
+  ],
+  "action": {
+    "kind": "call_cortex_tool",
+    "tool_name": "recall",
+    "arguments": {
+      "query": "Add a copy button to each configuration example.",
+      "max_results": 8
+    },
+    "correlation_id": "input_analysis_global_recall"
+  },
+  "state_summary": {
+    "sections": [],
+    "clarification_rounds": 0,
+    "errors": 0,
+    "prd_context": "feature",
+    "request_size": "tiny"
+  },
+  "__bounded": {
+    "original_chars": 1010,
+    "final_chars": 1131,
+    "budget_chars": 100000,
+    "applied": []
+  }
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
+
+exports[`starts, reads and advances the same run through stdio > submit_action_result 1`] = `
+{
+  "content": [
+    {
+      "text": "{
+  "run_id": "<run_id>",
+  "current_step": "clarification",
+  "messages": [
+    {
+      "text": "No codebase provided. Skipping codebase analysis.",
+      "level": "info"
+    },
+    {
+      "text": "Scope acceptable. Proceeding to clarification.",
+      "level": "info"
+    }
+  ],
+  "action": {
+    "kind": "spawn_subagents",
+    "purpose": "draft",
+    "batch_id": "clarification_compose_1",
+    "invocations": [
+      {
+        "invocation_id": "clarification_compose_inv_1",
+        "subagent_type": "zetetic-team-subagents:engineer",
+        "description": "Compose clarification question (round 1)",
+        "prompt": "<role>You are eliciting requirements for a Feature PRD.</role>\\n<feature>Add a copy button to each configuration example.</feature>\\n<round>1 of 5</round>\\n<prior_questions_and_answers>\\n(no prior questions)\\n</prior_questions_and_answers>\\n<task>\\nGenerate ONE clarification question that:\\n- Addresses the highest-uncertainty area not yet covered\\n- Cannot be answered by reading prior answers or codebase context above\\n- Has a concrete answer (not \\"tell me more about X\\")\\n</task>\\n<output_format>\\nReturn EXACTLY ONE JSON object, nothing else:\\n{\\n  \\"question\\": \\"<the question to ask the user>\\",\\n  \\"options\\": [\\"<option 1>\\", \\"<option 2>\\", \\"<option 3>\\"] | null,\\n  \\"rationale\\": \\"<why this question now, in one sentence>\\"\\n}\\nIf options is non-null, the user picks from a fixed set. Otherwise freeform.\\n</output_format>",
+        "isolation": "none"
+      }
+    ]
+  },
+  "state_summary": {
+    "sections": [],
+    "clarification_rounds": 0,
+    "errors": 0,
+    "prd_context": "feature",
+    "request_size": "tiny"
+  },
+  "__bounded": {
+    "original_chars": 1678,
+    "final_chars": 1799,
+    "budget_chars": 100000,
+    "applied": []
+  }
+}",
+      "type": "text",
+    },
+  ],
+}
+`;
