@@ -268,7 +268,7 @@ jobs:
           done
           for file in ai-architect-mcp-spec.{mcpb,cdx.json}; do
             actual=$(sha256sum "$file" | cut -d ' ' -f 1)
-            [[ "$actual" == "$(cat "$file.sha256")" ]] || { echo "::error::Checksum mismatch for $file"; exit 1; }
+            printf '%s\n' "$actual" | cmp -s - "$file.sha256" || { echo "::error::Checksum mismatch for $file"; exit 1; }
           done
 
       - name: Attest build provenance (.mcpb + SBOM)

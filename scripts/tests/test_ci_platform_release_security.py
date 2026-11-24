@@ -1,4 +1,4 @@
-"""Run with python3 -B -m unittest discover -s scripts/tests -p test_release_security.py."""
+"""GitHub Actions release runner boundaries, included in ci.json's platform regression suite."""
 
 import hashlib
 import os
@@ -12,7 +12,8 @@ import zipfile
 import yaml
 
 
-WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/release.yml"
+DEFAULT_WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/release.yml"
+WORKFLOW = Path(os.environ.get("RELEASE_WORKFLOW_PATH", DEFAULT_WORKFLOW))
 DOCUMENT = yaml.safe_load(WORKFLOW.read_text())
 JOBS = DOCUMENT["jobs"]
 BUNDLE = "ai-architect-mcp-spec.mcpb"
@@ -46,14 +47,32 @@ class ReleaseSecurity(unittest.TestCase):
             for step in spec["steps"]:
                 action = step.get("uses", "").partition("@")[0]
                 if action == "actions/checkout":
-                    self.assertIs(step["with"].get("persist-credentials"), False)
+                    with self.subTest(job=job, control="checkout"):
+                        self.assertIs(step["with"].get("persist-credentials"), False, f"{job}: persisted checkout")
                 if re.search(r"\b(?:pnpm|npx|npm|scripts/)\b", step.get("run", "")) or action == "actions/checkout":
                     jobs_running_build.append(job)
-                    self.assertEqual(permissions, {"contents": "read"}, job)
+                    with self.subTest(job=job, step=step.get("name")):
+                        self.assertEqual(permissions, {"contents": "read"}, job)
             if "write" in permissions.values():
                 actions = {s["uses"].partition("@")[0] for s in spec["steps"] if "uses" in s}
-                self.assertLessEqual(actions, {"actions/attest-build-provenance"})
+                with self.subTest(job=job, control="trusted actions"):
+                    self.assertLessEqual(actions, {"actions/attest-build-provenance"})
         self.assertTrue(jobs_running_build)
+
+    def test_permissions_and_release_dependencies(self):
+        self.assertEqual(DOCUMENT["permissions"], {})
+        self.assertEqual(JOBS["build"]["permissions"], {"contents": "read"})
+        self.assertEqual(JOBS["build"]["needs"], "target")
+        self.assertEqual(JOBS["release"]["permissions"], {
+            "actions": "read", "contents": "write", "attestations": "write", "id-token": "write",
+        })
+        registry = JOBS["publish_registry"]
+        self.assertEqual(registry["permissions"], {
+            "contents": "read", "attestations": "read", "id-token": "write",
+        })
+        self.assertEqual(set(registry["needs"]), {"target", "release"})
+        attest = named_step("Attest build provenance (.mcpb + SBOM)")
+        self.assertEqual(set(attest["with"]["subject-path"].split()), {BUNDLE, SBOM})
 
     def test_event_selects_and_validates_the_tag_before_export(self):
         self.assertEqual(named_step("Resolve target tag")["env"], {
@@ -112,6 +131,15 @@ class ReleaseSecurity(unittest.TestCase):
             self.assertEqual((root / BUNDLE).read_bytes(), BUNDLE.encode())
             self.assertEqual((root / SBOM).read_bytes(), SBOM.encode())
             self.assertFalse((root / "unrequested").exists())
+            with zipfile.ZipFile(archive, "w") as z:
+                for file in [BUNDLE, SBOM, "release-notes.md"]:
+                    z.writestr(file, b"modified")
+                    if file != "release-notes.md":
+                        z.writestr(file + ".sha256", "0" * 64)
+            wrong_companion = run_step(verify["name"], root, **env,
+                                       ARCHIVE_SHA256=hashlib.sha256(archive.read_bytes()).hexdigest())
+            self.assertNotEqual(wrong_companion.returncode, 0)
+            self.assertIn("Checksum mismatch", wrong_companion.stdout)
 
     def test_release_command_creates_and_updates_the_four_assets(self):
         with tempfile.TemporaryDirectory() as directory:
