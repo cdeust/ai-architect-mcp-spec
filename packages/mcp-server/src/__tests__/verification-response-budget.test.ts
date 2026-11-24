@@ -40,6 +40,29 @@ function parse<T>(res: ToolResult): T {
   return JSON.parse(res.content[0].text) as T;
 }
 
+it.each(["plan_section_verification", "plan_document_verification"])(
+  "%s gives the judges the host's source excerpts",
+  async (tool) => {
+    const section = largePrd(600)[0]!;
+    const codebase_excerpts = ["The copy button is wired to copyExample."];
+    const memory_excerpts = ["The prior review confirmed clipboard support."];
+    const args = tool === "plan_section_verification"
+      ? { section_type: section.type, content: section.content }
+      : { sections: [section] };
+    const response = await handlers.get(tool)!({ ...args, codebase_excerpts, memory_excerpts });
+    expect(response.isError).toBeFalsy();
+    const { judge_requests } = parse<{ judge_requests: Array<{ context: unknown }> }>(response);
+    expect(judge_requests.length).toBeGreaterThan(0);
+    for (const request of judge_requests) {
+      expect(request.context).toMatchObject({
+        prd_excerpt: expect.stringContaining(section.content),
+        codebase_excerpts,
+        memory_excerpts,
+      });
+    }
+  },
+);
+
 interface PlanPageBody {
   claims?: unknown[];
   mechanical_claims?: unknown[];
