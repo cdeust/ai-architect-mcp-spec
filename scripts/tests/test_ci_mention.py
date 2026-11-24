@@ -36,16 +36,18 @@ class MentionJobs(unittest.TestCase):
                 module["main"]()
             command, = run.call_args.args
             environment = run.call_args.kwargs["env"]
-            self.assertEqual(set(environment), {"HOME", "PATH", "CLAUDE_CODE_OAUTH_TOKEN",
+            self.assertEqual(set(environment), {"HOME", "PATH", "CLAUDE_CODE_OAUTH_TOKEN", "ENABLE_TOOL_SEARCH",
                                                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"})
             self.assertEqual(command[command.index("--tools") + 1], "")
             self.assertIn("--strict-mcp-config", command)
+            self.assertEqual(environment["ENABLE_TOOL_SEARCH"], "false")
+            self.assertTrue(json.loads(command[command.index("--settings") + 1])["disableClaudeAiConnectors"])
             self.assertTrue(json.loads(command[command.index("--settings") + 1])["disableAllHooks"])
             config = json.loads(command[command.index("--mcp-config") + 1])
-            self.assertEqual(config["mcpServers"]["workspace"]["args"], ["--confine-roots", str(tmp / "candidate")])
+            self.assertEqual(config["mcpServers"]["candidate_files"]["args"], ["--confine-roots", str(tmp / "candidate")])
             self.assertEqual(command[command.index("--permission-mode") + 1], "dontAsk")
             self.assertEqual(set(command[command.index("--allowedTools") + 1].split(",")), {
-                "mcp__workspace__" + tool for tool in ("list_directory", "search_files",
+                "mcp__candidate_files__" + tool for tool in ("list_directory", "search_files",
                 "read_text_file", "edit_file", "write_file", "create_directory", "move_file")})
 
     def test_only_open_owner_targets_and_same_repo_task_branches(self):
