@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runJudge } from "../lib/judge-core.mjs";
 
+const allowedOrigins = ["https://x"];
+
 /**
  * fetch is monkey-patched here strictly for test isolation (mocking network
  * I/O without a real request) — the one justified exception documented in
@@ -48,7 +50,7 @@ test("runJudge: success path returns ok with parsed verdict, model, provider, la
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", timeoutMs: 5000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", allowedOrigins, timeoutMs: 5000 },
       "prompt text",
     );
     assert.equal(result.status, "ok");
@@ -68,12 +70,13 @@ test("runJudge: never fabricates a verdict on network error — returns status e
   };
   try {
     const result = await runJudge(
-      { provider: "mistral", baseUrl: "https://x/v1/", model: "mistral-small-latest", apiKey: "k", timeoutMs: 1000 },
+      { provider: "mistral", baseUrl: "https://x/v1/", model: "mistral-small-latest", apiKey: "fixture-key", allowedOrigins, timeoutMs: 1000 },
       "prompt text",
     );
     assert.equal(result.status, "error");
     assert.ok(!("verdict" in result));
-    assert.match(result.reason, /simulated network failure/);
+    assert.match(result.reason, /network error/);
+    assert.doesNotMatch(result.reason, /simulated network failure/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -88,7 +91,7 @@ test("runJudge: never fabricates a verdict when the model reply has no parseable
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "m", apiKey: "k", timeoutMs: 1000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "m", apiKey: "k", allowedOrigins, timeoutMs: 1000 },
       "prompt text",
     );
     assert.equal(result.status, "error");
@@ -118,7 +121,7 @@ test("runJudge: a batched reply (issue #119) returns every verdict with its clai
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", timeoutMs: 5000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", allowedOrigins, timeoutMs: 5000 },
       "prompt text",
     );
     assert.equal(result.status, "ok");

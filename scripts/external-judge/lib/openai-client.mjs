@@ -11,22 +11,18 @@
  * `MAX_ATTEMPTS` (backoff.mjs), honoring the server's `Retry-After` header
  * when present. On timeout, aborts the request and throws.
  *
- * Invariant: the Authorization header value is never included in any thrown
- * Error message or logged object — errors carry status code and a redacted
- * request summary only (lib/redact.mjs).
+ * Errors carry locally generated diagnostics. HTTP error bodies, redirect
+ * locations and network exception messages never become diagnostics.
  */
 
 import { computeBackoffDelayMs, MAX_ATTEMPTS, MIN_INTERVAL_MS } from "./backoff.mjs";
+import { chatCompletionsUrl } from "./config.mjs";
 import { redact } from "./redact.mjs";
 
 const TEMPERATURE = 0; // deterministic verdicts — source: task requirement "temperature 0"
 
 /** @type {Map<string, number>} last request timestamp per provider, module-level throttle state */
 const lastRequestAt = new Map();
-
-function joinUrl(baseUrl, path) {
-  return baseUrl.replace(/\/+$/, "") + path;
-}
 
 async function sleep(ms) {
   if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,7 +54,7 @@ async function respectMinInterval(provider) {
  * @returns {Promise<{content: string, httpModel: string}>}
  */
 export async function callChatCompletions(config, promptText) {
-  const url = joinUrl(config.baseUrl, "chat/completions");
+  const url = chatCompletionsUrl(config);
   const body = JSON.stringify({
     model: config.model,
     temperature: TEMPERATURE,
@@ -74,6 +70,7 @@ export async function callChatCompletions(config, promptText) {
     try {
       response = await fetch(url, {
         method: "POST",
+        redirect: "manual",
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${config.apiKey}`,
@@ -82,41 +79,38 @@ export async function callChatCompletions(config, promptText) {
         signal: controller.signal,
       });
     } catch (err) {
-      clearTimeout(timer);
       if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`callChatCompletions: request timed out after ${config.timeoutMs}ms`);
       }
-      throw new Error(`callChatCompletions: network error — ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error("callChatCompletions: network error");
+    } finally {
+      clearTimeout(timer);
     }
-    clearTimeout(timer);
+
+    if (!response.ok) await response.body?.cancel().catch(() => {});
 
     if (response.status === 429) {
       const retryAfter = response.headers.get("retry-after") ?? undefined;
       if (attempt === MAX_ATTEMPTS) {
-        throw new Error(
-          `callChatCompletions: rate limited (429) after ${MAX_ATTEMPTS} attempts — ${redact({ url, provider: config.provider })}`,
-        );
+        throw new Error(`callChatCompletions: rate limited (429) after ${MAX_ATTEMPTS} attempts`);
       }
       await sleep(computeBackoffDelayMs(attempt, retryAfter));
       continue;
     }
 
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `callChatCompletions: HTTP ${response.status} from ${config.provider} — ${text.slice(0, 500)}`,
-      );
+      throw new Error(`callChatCompletions: HTTP ${response.status}`);
     }
 
-    /** @type {any} */
-    const json = await response.json();
+    const json = await response.json().catch(() => {
+      throw new Error("callChatCompletions: response was not valid JSON");
+    });
     const content = json?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
-      throw new Error(
-        `callChatCompletions: response missing choices[0].message.content — shape: ${JSON.stringify(Object.keys(json ?? {}))}`,
-      );
+      throw new Error("callChatCompletions: response missing choices[0].message.content");
     }
-    return { content, httpModel: json?.model ?? config.model };
+    const httpModel = typeof json?.model === "string" ? json.model : config.model;
+    return { content, httpModel: redact(httpModel, config) };
   }
   // Unreachable — loop always returns or throws — but keep TS/JSDoc happy.
   throw new Error("callChatCompletions: exhausted retries without a terminal response");

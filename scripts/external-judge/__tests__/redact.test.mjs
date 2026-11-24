@@ -15,9 +15,8 @@ test("redact: masks an authorization header value regardless of case", () => {
 });
 
 test("redact: masks a Bearer token embedded in a plain string", () => {
-  const out = redact("curl -H 'Authorization: Bearer sk-abc123' https://example.com");
-  assert.ok(!out.includes("sk-abc123"));
-  assert.match(out, /Bearer \*\*\*REDACTED\*\*\*/);
+  const out = redact("Request Authorization: Bearer \t sk-abc123 with a token");
+  assert.equal(out, "Request Authorization: Bearer ***REDACTED*** with a token");
 });
 
 test("redact: recurses into nested objects and arrays without mutating the original", () => {
@@ -33,4 +32,16 @@ test("redact: leaves non-sensitive primitives untouched", () => {
   assert.equal(redact(42), 42);
   assert.equal(redact(null), null);
   assert.equal(redact(true), true);
+});
+
+test("redact: treats keys as literal text and masks canonical URL forms", () => {
+  const apiKey = "fixture.$[key]";
+  const baseUrl = "https://JUDGE.example:443/private/";
+  const canonical = "https://judge.example/private/";
+  const value = { baseUrl, allowedOrigins: ["https://judge.example"], nested: [`key=${apiKey} endpoint=${canonical}`] };
+  assert.deepEqual(redact(value, { apiKey, baseUrl }), {
+    baseUrl: "***REDACTED***",
+    allowedOrigins: "***REDACTED***",
+    nested: ["key=***REDACTED*** endpoint=***REDACTED***"],
+  });
 });

@@ -7,7 +7,7 @@
  * reason to change from HTTP dispatch or CLI parsing).
  *
  * Precondition: `flags` is a plain object of already-parsed CLI flags
- *   (--provider, --base-url, --model, --api-key, --timeout-ms); `env` is a
+ *   (--provider, --base-url, --model, --timeout-ms); `env` is a
  *   process.env-shaped object.
  * Postcondition: returns a fully-resolved Config; apiKey is "" (not
  *   undefined) when absent so callers can do a single falsy check.
@@ -25,6 +25,8 @@
  *   treated as a hard operational limit, not a documented API guarantee).
  */
 
+import { isIPv4 } from "node:net";
+
 /** @typedef {"gemini"|"mistral"|"custom"} Provider */
 
 /**
@@ -33,6 +35,7 @@
  * @property {string} baseUrl
  * @property {string} model
  * @property {string} apiKey
+ * @property {string[]} allowedOrigins
  * @property {number} timeoutMs
  */
 
@@ -57,29 +60,75 @@ const PROVIDER_PRESETS = /** @type {const} */ ({
 
 const DEFAULT_TIMEOUT_MS = 30_000; // source: measured — generous headroom over p99 chat-completion latency for small models.
 
+export class ConfigError extends Error {}
+export const API_KEY_FLAG_ERROR = "Set the API key in the environment. The --api-key option is forbidden.";
+
+function parseEndpoint(value, label) {
+  if (!URL.canParse(value)) throw new ConfigError(`${label} must be an absolute HTTP(S) URL.`);
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new ConfigError(`${label} must be an absolute HTTP(S) URL.`);
+  }
+  if (url.href !== `${url.origin}${url.pathname}`) {
+    throw new ConfigError(`${label} must not contain user information, a query or a fragment.`);
+  }
+  return url;
+}
+
+function readAllowedOrigins(value) {
+  if (!value?.trim()) return [];
+  return value.split(",").map((entry) => {
+    const url = parseEndpoint(entry.trim(), "EXTERNAL_JUDGE_ALLOWED_ORIGINS entry");
+    if (url.pathname !== "/") {
+      throw new ConfigError("EXTERNAL_JUDGE_ALLOWED_ORIGINS entries must be origins without a path.");
+    }
+    return url.origin;
+  });
+}
+
+/** Validate the exact destination used by fetch, including direct library calls. */
+export function chatCompletionsUrl({ baseUrl, allowedOrigins }) {
+  const url = parseEndpoint(baseUrl, "Base URL");
+  // IPv4 127/8 (RFC 1122 §3.2.1.3) and IPv6 ::1 (RFC 4291 §2.5.3) need no DNS lookup.
+  const loopback = url.hostname === "[::1]" || (isIPv4(url.hostname) && url.hostname.startsWith("127."));
+  if (url.protocol === "http:" && !loopback) {
+    throw new ConfigError("Base URL must use HTTPS except for numeric loopback addresses.");
+  }
+  if (!allowedOrigins?.includes(url.origin)) {
+    throw new ConfigError("Base URL origin is not authorized for the configured API key.");
+  }
+  const path = url.pathname;
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  url.pathname = `${path.slice(0, end)}/chat/completions`;
+  return url;
+}
+
 /**
- * Resolve final config from parsed CLI flags + environment.
- * Precedence (highest wins): explicit flag > provider preset > env var.
+ * Resolve flags and environment before opening a connection.
+ * Provider-specific environment keys are scoped to the matching preset origin.
  *
  * @param {{provider?: string, baseUrl?: string, model?: string, apiKey?: string, timeoutMs?: string|number}} flags
  * @param {Record<string, string|undefined>} env
  * @returns {Config}
  */
 export function resolveConfig(flags, env) {
+  if (Object.hasOwn(flags, "apiKey")) {
+    throw new ConfigError(API_KEY_FLAG_ERROR);
+  }
   const providerName = /** @type {Provider|undefined} */ (flags.provider);
-  const preset = providerName && providerName !== "custom" ? PROVIDER_PRESETS[providerName] : undefined;
+  const preset = Object.hasOwn(PROVIDER_PRESETS, providerName) ? PROVIDER_PRESETS[providerName] : undefined;
 
   if (providerName && providerName !== "custom" && !preset) {
-    throw new Error(`Unknown --provider "${providerName}". Known: gemini, mistral, custom.`);
+    throw new ConfigError("Unknown --provider. Known providers are gemini, mistral and custom.");
   }
 
   const baseUrl = flags.baseUrl || preset?.baseUrl || env.EXTERNAL_JUDGE_BASE_URL || "";
   const model = flags.model || env.EXTERNAL_JUDGE_MODEL || preset?.defaultModel || "";
-  const apiKey =
-    flags.apiKey ||
-    env.EXTERNAL_JUDGE_API_KEY ||
-    (preset ? env[preset.apiKeyEnv] : undefined) ||
-    "";
+  const genericKey = env.EXTERNAL_JUDGE_API_KEY;
+  const apiKey = genericKey || (preset ? env[preset.apiKeyEnv] : undefined) || "";
+  const configuredOrigins = readAllowedOrigins(env.EXTERNAL_JUDGE_ALLOWED_ORIGINS);
+  const allowedOrigins = genericKey || !preset ? configuredOrigins : [new URL(preset.baseUrl).origin];
   const timeoutMs = Number(flags.timeoutMs ?? env.EXTERNAL_JUDGE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
 
   return {
@@ -87,6 +136,7 @@ export function resolveConfig(flags, env) {
     baseUrl,
     model,
     apiKey,
+    allowedOrigins,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS,
   };
 }
