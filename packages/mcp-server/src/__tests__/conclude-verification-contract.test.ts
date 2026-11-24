@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Claim, JudgeVerdict } from "@prd-gen/core";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { buildConcludeOpts } from "../build-conclude-opts.js";
@@ -54,7 +55,7 @@ afterAll(async () => {
 async function conclude(args: Record<string, unknown>) {
   const response = await client.callTool({
     name: "conclude_verification", arguments: { verdicts, ...args },
-  });
+  }) as CallToolResult;
   expect(response.isError).toBeFalsy();
   const part = response.content[0];
   if (part?.type !== "text") throw new Error("Expected a verification report");
