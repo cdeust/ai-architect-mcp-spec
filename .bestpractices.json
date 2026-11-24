@@ -67,7 +67,7 @@
   "build_floss_tools_status": "Met",
   "build_floss_tools_justification": "pnpm, TypeScript, vitest and esbuild are all FLOSS.",
   "test_status": "Met",
-  "test_justification": "The Pipeline unit job builds the workspace and runs Vitest with coverage. The unit command is in https://github.com/cdeust/ai-architect-mcp-spec/blob/main/ci.json",
+  "test_justification": "vitest suite, 1903 tests across 99 test files, run with coverage by the Pipeline unit job: https://github.com/cdeust/ai-architect-mcp-spec/blob/main/ci.json",
   "test_invocation_status": "Met",
   "test_invocation_justification": "pnpm test — single documented command, stated in README and CONTRIBUTING.",
   "test_most_status": "Met",

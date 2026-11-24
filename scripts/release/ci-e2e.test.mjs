@@ -9,9 +9,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const COMMAND = JSON.parse(readFileSync(join(ROOT, "ci.json"), "utf8")).e2e;
+const ci = JSON.parse(readFileSync(join(ROOT, "ci.json"), "utf8"));
+const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+const COMMAND = ci.e2e;
+const installer = /\bnpm install -g (pnpm\S*)/g;
+const packageManager = manifest.packageManager ?? [...ci.unit.matchAll(installer)][0]?.[1];
 const REQUIRED = [
-  ["npm", "install", "-g", "pnpm@10"],
+  ["npm", "install", "-g", packageManager],
   ["pnpm", "install", "--frozen-lockfile"],
   ["pnpm", "build"],
   ["pnpm", "bundle"],
@@ -65,6 +69,12 @@ function execute({ root, log }, fail = null) {
 const posix = process.platform !== "win32";
 
 test.skipIf(!posix)("E2E builds once and tests manifest, portable runtime and staged MCPB in order", () => {
+  expect(packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
+  for (const command of Object.values(ci).filter((value) => typeof value === "string")) {
+    for (const [, declaration] of command.matchAll(installer)) {
+      expect(declaration).toBe(packageManager);
+    }
+  }
   const { result, calls } = execute(fixture());
   expect(result.error).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
