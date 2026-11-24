@@ -18,8 +18,8 @@ lexer.inline.ruler.at("html_inline", (state, silent) => {
 const BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
 
 interface Scope {
-  /** First inline outside the container, or Infinity for the document root. */
-  end: number;
+  /** First inline outside the container. The document root has no closing token. */
+  end?: number;
 }
 
 interface Tag {
@@ -42,14 +42,14 @@ function quoteTags(content: string): Tag[] {
 
 function scopedInlines(tokens: Token[]): Inline[] {
   const inlines: Inline[] = [];
-  const scopes: Scope[] = [{ end: Infinity }];
+  const scopes: Scope[] = [{}];
   let markdownDepth = 0;
   for (const token of tokens) {
     if (token.type === "blockquote_open") markdownDepth++;
     if (token.type === "blockquote_close") markdownDepth--;
     if (markdownDepth > 0) continue;
     if (token.type.startsWith("heading_") || ["li", "td", "th"].includes(token.tag)) {
-      if (token.nesting === 1) scopes.push({ end: Infinity });
+      if (token.nesting === 1) scopes.push({});
       else scopes.pop()!.end = inlines.length;
     } else if (token.type === "inline") {
       inlines.push({ token, tags: quoteTags(token.content), scope: scopes.at(-1)! });
@@ -62,7 +62,7 @@ function pairQuotes(inlines: Inline[]): void {
   const open: { tag: Tag; scope: Scope }[] = [];
   for (const [index, { scope, tags }] of inlines.entries()) {
     // A child can close its parent's quote. A sibling cannot close the child's.
-    while (open.length && open.at(-1)!.scope.end <= index) open.pop();
+    while (open.length && (open.at(-1)!.scope.end ?? Infinity) <= index) open.pop();
     for (const tag of tags) {
       if (tag.source.content.startsWith("</")) {
         const opener = open.pop();

@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { projectDefineDocument } from "../define-handoff.js";
 import { DEFINE_REQUIREMENT_OPTIONS, proseLines, requirementDefinitions } from "../hard-output-rules/rules/requirement-definitions.js";
 
@@ -84,6 +84,13 @@ it("recognizes case, attributes and multiline tags but preserves custom elements
   check(content, entries(texts), numbered(texts));
 });
 
+it("treats <blockquote/> as an opener which still needs a separate closing tag", () => {
+  const literal = "Render the <blockquote/> element.";
+  const texts = [literal, "Keep the receipt."];
+  const content = list(numbered([literal, "Keep <blockquote/>old receipt</blockquote>the receipt."]));
+  check(content, entries(texts), numbered(texts));
+});
+
 it("preserves every requirement in 200 lists with independently placed tag mentions", () => {
   const text = fc.constantFrom(mention, "Describe the </blockquote> tag.", publish);
   fc.assert(fc.property(fc.array(text, { minLength: 1 }), (texts) => {
@@ -115,4 +122,40 @@ it("restores the parent item after its child ends and can close its quote inside
 it("pairs two root mentions across ordinary blocks and retains both boundaries", () => {
   const content = ["Begin <blockquote>obsolete", "", "- FR-009: Old text.", "", "end</blockquote>finish", "", "- FR-001: " + stop];
   check(content.join("\n"), entries([stop]), ["Begin", "finish", ...numbered([stop])]);
+});
+
+it("keeps HTML tag mentions inside nested Markdown quotes out of root pairing", () => {
+  const lines = numbered([publish, stop]);
+  const content = ["> > <blockquote>", ">", "> <blockquote>", "", list(lines), "", "Literal </blockquote>."];
+  check(content.join("\n"), entries([publish, stop]), [...lines, "Literal </blockquote>."]);
+});
+
+it("starts a fresh Define reader with the configured CommonMark HTML rule", async () => {
+  vi.resetModules();
+  const { projectDefineDocument: project } = await import("../define-handoff.js");
+  const literal = '<span title="<blockquote>">Example</span></blockquote>';
+  const content = list(numbered([literal, "Signed <blockquote>old</blockquote>receipt."]));
+  expect(project([{ type: "requirements", content }]).requirements).toEqual([
+    { id: "FR-001", text: literal }, { id: "FR-002", text: "Signed receipt." },
+  ]);
+});
+
+it("reports an incompatible Markdown parser that has no HTML inline rule", async () => {
+  vi.resetModules();
+  vi.doMock("markdown-it", async (loadOriginal) => {
+    const original = await loadOriginal<typeof import("markdown-it")>();
+    return { ...original, default: class extends original.default {
+      constructor(...args: ConstructorParameters<typeof original.default>) {
+        super(...args);
+        const rules = this.inline.ruler.__rules__;
+        rules.splice(rules.findIndex(rule => rule.name === "html_inline"), 1);
+      }
+    } };
+  });
+  try {
+    await expect(import("../define-handoff.js")).rejects.toThrow(/^markdown-it has no html_inline rule$/);
+  } finally {
+    vi.doUnmock("markdown-it");
+    vi.resetModules();
+  }
 });
