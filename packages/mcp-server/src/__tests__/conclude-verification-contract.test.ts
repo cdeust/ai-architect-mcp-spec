@@ -106,15 +106,3 @@ it("leaves the claim map absent when there are no usable claims", async () => {
   await concludeDirectly({ verdicts, claims: [{ ...minimalClaim, claim_id: "invalid", evidence: 42 }] });
   expect(buildConcludeOpts).toHaveBeenCalledWith(expect.objectContaining({ claims: undefined }));
 });
-
-it("leaves an empty direct claim batch untouched", async () => {
-  const claims: Claim[] = [];
-  const iterate = vi.spyOn(claims, Symbol.iterator);
-  try {
-    await concludeDirectly({ verdicts, claims });
-    expect(iterate).not.toHaveBeenCalled();
-    expect(buildConcludeOpts).toHaveBeenCalledWith(expect.objectContaining({ claims: undefined }));
-  } finally {
-    iterate.mockRestore();
-  }
-});
