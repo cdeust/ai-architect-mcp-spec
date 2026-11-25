@@ -334,10 +334,19 @@ class AgentsDoNotApproveTests(unittest.TestCase):
                    "gh api -X POST repos/cdeust/x/issues/7/labels --input body.json",
                    "gh api --method PUT repos/cdeust/x/issues/7/labels",
                    "gh label create owner-approved",
-                   "echo ok && gh pr edit 7 --add-label owner-approved"]
+                   "echo ok && gh pr edit 7 --add-label owner-approved",
+                   "gh -R o/r pr edit 7 --add-label owner-approved",
+                   "gh pr create --label owner-approved",
+                   "gh api -X PATCH repos/o/r/issues/7 -f 'labels[]=owner-approved'",
+                   "gh api graphql -f query='mutation{addLabelsToLabelable(input:{}){clientMutationId}}'",
+                   "env -i gh pr edit 7 --add-label owner-approved",
+                   "/usr/local/bin/gh pr edit 7 --add-label owner-approved",
+                   "gh pr edit 7 --add-label $L",
+                   "gh alias set ok 'pr edit --add-label owner-approved'",
+                   "gh -R o/r pr merge 7"]
         allowed = ["gh pr edit 7 --add-label claude-rereview", "gh pr view 7 --json labels",
                    "gh pr edit 7 --remove-label owner-approved", "gh api repos/cdeust/x/issues/7/labels",
-                   "gh label list"]
+                   "gh label list", "gh -R o/r pr view 7", "gh api repos/o/r/issues/7"]
         decided = self.decisions(refused + allowed)
         for command in refused:
             with self.subTest(command=command):

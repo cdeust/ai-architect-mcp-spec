@@ -44,7 +44,7 @@ the prompt was written before the contract, and the repository's own standards a
    owner can always merge by hand. The review bots (Claude, Codex, any security review)
    are optional: they give advice, and their absence, failure or exhausted quota blocks
    nothing. A review by a session other than the author is still owed before the pull
-   request is marked ready (rule 10), but no mechanical check reads it. A pull request that
+   request is opened (rule 10), but no mechanical check reads it. A pull request that
    changes this merge rule is judged by the resolver of `main`, so the owner merges it by
    hand, on a green gate and an independent review. See
    [review and merge](review-subscriptions.md).

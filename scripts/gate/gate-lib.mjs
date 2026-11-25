@@ -79,6 +79,10 @@ export function validateConfig(raw) {
   });
   if (!isTextList(guard.hosted)) fail("guard.hosted must be a list of environment variable names");
   if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
+  if (guard.protectedLabel !== undefined) {
+    if (!isText(guard.protectedLabel?.name)) fail("guard.protectedLabel.name must be a label");
+    if (!isText(guard.protectedLabel.why)) fail("guard.protectedLabel.why must say why");
+  }
   return raw;
 }
 
@@ -513,10 +517,18 @@ export function guardDecision(call, guard) {
       reason: `${call.tool_name} sends content the delivery gate cannot judge. Commit, run the gate, and push with git.`,
     };
   }
+  const label = guard.protectedLabel;
+  if (label !== undefined && typeof call?.tool_name === "string" && call.tool_name.startsWith("mcp__github__")
+      && JSON.stringify(call.tool_input ?? null).toLowerCase().includes(label.name.toLowerCase())) {
+    return { kind: "refuse", reason: label.why };
+  }
   const command = call?.tool_input?.command;
   if (typeof command !== "string") return { kind: "allow" };
   // Each command of the text on its own, whatever its case.
   const commands = commandsOf(command);
+  if (label !== undefined && commands.some((one) => writesLabel(one, label.name))) {
+    return { kind: "refuse", reason: label.why };
+  }
   const words = guardWords(guard);
   const matches = (source) => {
     const expressionOf = new RegExp(fill(source, words), "i");
@@ -526,6 +538,99 @@ export function guardDecision(call, guard) {
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
   if (guard.push.some(matches)) return { kind: "push" };
   return { kind: "allow" };
+}
+
+/** Programs that run the command that follows them, with the options they take a value for. */
+const WRAPPERS = {
+  env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string"],
+  command: [],
+  exec: ["-a"],
+  sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U"],
+  time: ["-f", "-o"],
+  nohup: [],
+  nice: ["-n"],
+  xargs: ["-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"],
+  eval: [],
+};
+/** The options of gh that come before its command and take a value. */
+const GH_GLOBAL = ["-R", "--repo", "--hostname"];
+
+/**
+ * precondition:  `command` is one command as commandsOf gives it: words
+ *                separated by one space, a quoted string read as `""`.
+ * postcondition: the arguments of the gh program the command runs, past the
+ *                assignments and the wrappers in front of it (`env -i`, a
+ *                path such as `/usr/local/bin/gh`, `sudo -u x`), and past
+ *                gh's own options (`-R o/r`); null when it runs no gh.
+ */
+function ghArguments(command) {
+  const words = command.split(" ");
+  let i = 0;
+  for (;;) {
+    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i += 1;
+    const name = (words[i] ?? "").split("/").pop();
+    if (!(name in WRAPPERS)) break;
+    i += 1;
+    while (i < words.length && words[i].startsWith("-")) {
+      const option = words[i].split("=")[0];
+      i += WRAPPERS[name].includes(option) && !words[i].includes("=") ? 2 : 1;
+    }
+  }
+  if (!/^(?:gh|gh\.exe)$/.test((words[i] ?? "").split("/").pop())) return null;
+  i += 1;
+  while (i < words.length && words[i].startsWith("-")) {
+    i += GH_GLOBAL.includes(words[i]) ? 2 : 1;
+  }
+  return words.slice(i);
+}
+
+/** A word the guard cannot read: a quoted string, a variable, a substitution. */
+const unreadable = (word) => word.includes('""') || word.includes("$") || word.includes("`");
+
+/**
+ * precondition:  `command` is one command as commandsOf gives it; `label` is
+ *                the name of the protected label.
+ * postcondition: true when the command may set `label` through gh: an edit or
+ *                a creation of an issue or a pull request that adds a label,
+ *                a label created or edited, an alias (it can expand to any of
+ *                these), any GraphQL call (its query is a quoted string the
+ *                guard cannot read), or a REST write to an issue, a pull
+ *                request or its labels; in every case unless the label each
+ *                names is readable and is not `label`. Comments stay allowed.
+ */
+export function writesLabel(command, label) {
+  const args = ghArguments(command);
+  if (args === null) return false;
+  const named = (word) => unreadable(word) || word.toLowerCase().includes(label.toLowerCase());
+  const [group, action] = args;
+  if ((group === "pr" || group === "issue") && (action === "edit" || action === "create")) {
+    for (let i = 2; i < args.length; i += 1) {
+      const [option, attached] = args[i].split(/=(.*)/s);
+      if (["--add-label", "--label", "-l"].includes(option)) {
+        if (named(attached ?? args[i + 1] ?? '""')) return true;
+      } else if (/^-l./.test(args[i]) && named(args[i].slice(2))) return true;
+    }
+    return false;
+  }
+  if (group === "label") return ["create", "edit", "clone"].includes(action) && args.slice(2).some(named);
+  if (group === "alias") return action === "set" || action === "import";
+  if (group !== "api") return false;
+  const rest = args.slice(1);
+  const endpoint = rest.find((word, i) => !word.startsWith("-")
+    && !["-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "-H", "--header", "-q", "--jq",
+         "-t", "--template", "--cache", "-p", "--preview", "--hostname"].includes(rest[i - 1])) ?? '""';
+  if (/(?:^|\/)graphql$/.test(endpoint) || unreadable(endpoint)) return true;
+  let method = "GET";
+  let fields = false;
+  rest.forEach((word, i) => {
+    if (word === "-X" || word === "--method") method = (rest[i + 1] ?? "").toUpperCase();
+    else if (/^-X./.test(word)) method = word.slice(2).toUpperCase();
+    else if (word.startsWith("--method=")) method = word.slice(9).toUpperCase();
+    else if (/^(?:-f|-F|--field|--raw-field|--input)(?:$|=)|^-[fF]./.test(word)) fields = true;
+  });
+  const explicit = rest.some((word) => /^(?:-X|--method)/.test(word));
+  const writes = explicit ? method !== "GET" : fields;
+  return writes && /(?:^|\/)(?:issues|pulls)\/[^/]+(?:\/labels(?:\/.*)?)?$/.test(endpoint.replace(/\?.*$/, ""));
 }
 
 /**

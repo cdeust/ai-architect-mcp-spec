@@ -1,6 +1,6 @@
 name: Native GitHub review acceptance
 # An owner opens a new same-repository draft on this integration branch to
-# exercise the real App. Production review selection has its own workflow.
+# exercise the real App. It is the owner's diagnostic; no merge reads it.
 on:
   pull_request:
     types: [opened]

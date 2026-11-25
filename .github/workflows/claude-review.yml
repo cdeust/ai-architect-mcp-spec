@@ -8,7 +8,7 @@ on:
 
 permissions: {}
 
-# One review admission at a time per pull request: the budget counts completed
+# One optional review at a time per pull request: the budget counts completed
 # reviews, so two pushes whose runs overlap would each be admitted as the same
 # round (ADR-1119). A run in progress is never cancelled; of the runs waiting
 # behind it, GitHub keeps the newest, which is the head that matters.
