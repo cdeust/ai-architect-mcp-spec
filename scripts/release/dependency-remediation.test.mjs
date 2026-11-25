@@ -91,6 +91,21 @@ function fixtureBash() {
   return join(native, "bash.exe");
 }
 
+// Above vitest's 5000ms default: each test runs the registry step in a bash that
+// starts curl and sleep stand-ins, and process start on windows-latest varies
+// with runner load. "release retries an empty registry" took 880ms in run
+// 45319560109 and 7502ms in run 45330752186 (job 138232378666), a timeout, not
+// a failure of the step; "release exhausts its bounded retry" took 4024ms in
+// the same job. 30s follows frozen-baseline-provenance.test.mjs.
+// source: the two job logs above; precedent scripts/release/frozen-baseline-provenance.test.mjs.
+const REGISTRY_TIMEOUT_MS = 30_000;
+
+// spawnSync blocks the event loop, so vitest's limit alone cannot stop a hung
+// bash. The child gets its own limit, below the test's, so a hang ends as
+// ETIMEDOUT in result.error, which the assertion below reports.
+// source: margin of 5s left to vitest to report, as in frozen-baseline-provenance.test.mjs.
+const REGISTRY_PROCESS_TIMEOUT_MS = REGISTRY_TIMEOUT_MS - 5_000;
+
 function runRegistryVerification(first, next = first) {
   const workflow = readFileSync(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
   const commands = registryVerificationCommands(workflow);
@@ -106,7 +121,7 @@ function runRegistryVerification(first, next = first) {
     const fixturePath = 'export PATH="$PWD:$PATH"\n'
       + '[[ $(type -P curl) == "$PWD/curl" && $(type -P sleep) == "$PWD/sleep" ]] || exit 97\n';
     const result = spawnSync(fixtureBash(), ["-c", fixturePath + commands], {
-      cwd: work, encoding: "utf8",
+      cwd: work, encoding: "utf8", timeout: REGISTRY_PROCESS_TIMEOUT_MS,
     });
     expect(result.error).toBeUndefined();
     return { ...result, probes: readFileSync(join(work, "probes"), "utf8") };
@@ -124,20 +139,20 @@ test("release retries an empty registry, then selects the target latest version"
   expect(result.stdout).toContain("registry reports latest version <none>");
   expect(result.stdout).toContain("Registry converged to 0.9.0 on attempt 2.");
   expect(result.probes).toBe("curl\nsleep\ncurl\n");
-});
+}, REGISTRY_TIMEOUT_MS);
 
 test("release exhausts its bounded retry when a valid registry still has no latest version", () => {
   const result = runRegistryVerification({ servers: [row(registryName, version, false)] });
   expect(result.status).toBe(1);
   expect(result.stdout).toContain("after 12 attempts");
   expect(result.probes).toBe("curl\nsleep\n".repeat(11) + "curl\n");
-});
+}, REGISTRY_TIMEOUT_MS);
 
 test("release rejects a malformed registry response without polling", () => {
   const result = runRegistryVerification({ servers: null });
   expect(result.status).not.toBe(0);
   expect(result.probes).toBe("curl\n");
-});
+}, REGISTRY_TIMEOUT_MS);
 
 
 test("release shell extraction stops before a later workflow sibling", () => {

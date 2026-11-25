@@ -1,37 +1,9 @@
 name: Release
 
-# Supply-chain hardening (issue #29). This repo's distributed artifact is the
-# `.mcpb` bundle attached to the GitHub Release and referenced by server.json
-# in the MCP registry; the marketplace consumes the git tree. All workspace
-# packages are `private: true` and NOTHING is published to npm, so npm
-# provenance (issue #29 criterion 2) has no artifact to attest — see the
-# per-job notes. What this workflow now does:
-#   * attests build provenance for the .mcpb and the SBOM (Sigstore; verify
-#     with `gh attestation verify <file> --repo cdeust/ai-architect-mcp-spec`);
-#   * generates a CycloneDX SBOM from pnpm-lock.yaml covering the workspace;
-#   * VERIFIES a locally-patched copy of server.json's fileSha256 equals the
-#     built .mcpb before publishing — closing the #23 defect class in the
-#     pipeline, not just its instance (scripts/release/verify-mcpb-checksum.mjs).
-#     This copy is never committed: fileSha256 is optional in the committed
-#     server.json (scripts/check-distribution-identity.mjs tolerates its
-#     absence) because nothing reads it there — the registry publish below
-#     builds its own verified runtime copy instead. An earlier revision
-#     opened a PR to commit this patch onto protected main; that PR could
-#     never merge (its author is `github-actions[bot]`, and GitHub does not
-#     trigger `pull_request` workflows — hence the required status checks —
-#     for events authored by the default `GITHUB_TOKEN`, a recursion guard),
-#     so every release produced one permanently blocked PR. Removed
-#     2026-08-10 once the evidence showed the committed value had no reader;
-#     see PR #82's closure for the record of that decision.
-#   * pins every third-party action to a commit SHA;
-#   * publishes server.json to the official MCP Registry
-#     (registry.modelcontextprotocol.io) after the GitHub Release is public
-#     (job `publish_registry`, needs: release) — closing the gap where every
-#     prior tag from v0.5.0 through v0.8.0 built and released the .mcpb but
-#     never told the registry, which kept serving v0.7.0 while the release
-#     itself moved on. scripts/publish-mcp-registry.sh, the manual runbook
-#     this job supersedes, is removed in the same change (dead docs are how
-#     the drift went unnoticed for four tags).
+# The read-only build hands the .mcpb, CycloneDX SBOM, checksums and notes
+# to a fresh runner. That runner checks the archive before signing and
+# publishing. The registry job independently verifies the public bundle.
+# All workspace packages are private. The marketplace consumes the git tree.
 
 on:
   push:
@@ -50,24 +22,57 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  release:
-    name: Build, test, and publish release
+  target:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve target tag
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$DISPATCH_TAG"
+          else
+            tag="$REF_NAME"
+          fi
+          # SemVer 2.0.0, including prerelease identifiers and build metadata.
+          export LC_ALL=C
+          number='(0|[1-9][0-9]*)'
+          pre="($number|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+          meta='[0-9A-Za-z-]+'
+          semver="^v$number\.$number\.$number(-$pre(\.$pre)*)?(\+$meta(\.$meta)*)?$"
+          if ! [[ "$tag" =~ $semver ]]; then
+            echo "::error::Expected a release tag of the form v<SemVer>." >&2
+            exit 1
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build, test, and package
+    needs: target
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # create the release, upload assets
-      id-token: write       # OIDC token Sigstore exchanges for a signing cert
-      attestations: write   # record the build-provenance statement on the repo
+      contents: read
+    outputs:
+      id: ${{ steps.upload.outputs.artifact-id }}
+      digest: ${{ steps.upload.outputs.artifact-digest }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -78,7 +83,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install dependencies (frozen)
         run: pnpm install --frozen-lockfile
@@ -139,8 +144,8 @@ jobs:
           OUTFILE="${GITHUB_WORKSPACE}/ai-architect-mcp-spec.mcpb"
 
           # Use @anthropic-ai/mcpb if available, else zip
-          if npx -y --yes @anthropic-ai/mcpb@latest pack --help >/dev/null 2>&1; then
-            npx -y @anthropic-ai/mcpb@latest pack "${STAGE_DIR}" "${OUTFILE}"
+          if npx -y @anthropic-ai/mcpb@2.1.2 pack --help >/dev/null 2>&1; then
+            npx -y @anthropic-ai/mcpb@2.1.2 pack "${STAGE_DIR}" "${OUTFILE}"
           else
             (cd "${STAGE_DIR}" && zip -r "${OUTFILE}" .)
           fi
@@ -164,13 +169,6 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('ai-architect-mcp-spec.cdx.json','utf8'))"
           echo "SBOM components: $(node -e "console.log((JSON.parse(require('fs').readFileSync('ai-architect-mcp-spec.cdx.json','utf8')).components||[]).length)")"
           shasum -a 256 ai-architect-mcp-spec.cdx.json | awk '{print $1}' > ai-architect-mcp-spec.cdx.json.sha256
-
-      - name: Attest build provenance (.mcpb + SBOM)
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            ai-architect-mcp-spec.mcpb
-            ai-architect-mcp-spec.cdx.json
 
       - name: Patch a local copy of server.json with the real .mcpb checksum
         run: |
@@ -201,9 +199,10 @@ jobs:
             ai-architect-mcp-spec.mcpb server.json
 
       - name: Extract release notes from CHANGELOG
-        id: changelog
+        env:
+          TAG: ${{ needs.target.outputs.tag }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           # Pull the section between [VERSION] and the next [section] heading
           awk -v ver="$VERSION" '
             /^## \[/ {
@@ -223,19 +222,82 @@ jobs:
             echo "SHA-256: \`${MCPB_SHA256}\`"
           } >> release-notes.md
 
-      - name: Create GitHub Release (with .mcpb artifact + SBOM)
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+      - name: Transfer release files
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          body_path: release-notes.md
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
+          name: release-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
             ai-architect-mcp-spec.mcpb
             ai-architect-mcp-spec.mcpb.sha256
             ai-architect-mcp-spec.cdx.json
             ai-architect-mcp-spec.cdx.json.sha256
+            release-notes.md
+
+  release:
+    name: Attest and publish release
+    needs: [target, build]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read         # download the immutable workflow artifact by ID
+      contents: write       # create the release, upload assets
+      id-token: write       # obtain a Sigstore signing certificate
+      attestations: write   # record the provenance statements
+    steps:
+      - name: Verify and read release artifact
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ARTIFACT_ID: ${{ needs.build.outputs.id }}
+          ARCHIVE_SHA256: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ && "$ARCHIVE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          archive="$RUNNER_TEMP/release.zip"
+          endpoint="repos/$REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+          run_id=$(gh api "$endpoint" --jq '.workflow_run.id')
+          [[ "$run_id" == "$GITHUB_RUN_ID" ]] || { echo "::error::Artifact belongs to a different workflow run"; exit 1; }
+          gh api "$endpoint/zip" > "$archive"
+          actual=$(sha256sum "$archive" | cut -d ' ' -f 1)
+          [[ "$actual" == "$ARCHIVE_SHA256" ]] || { echo "::error::Release artifact digest mismatch"; exit 1; }
+          # Read only the fixed members as bytes. Never extract paths, permissions
+          # or symlinks from the build into this runner.
+          for file in ai-architect-mcp-spec.{mcpb,cdx.json}{,.sha256} release-notes.md; do
+            unzip -p "$archive" "$file" > "./$file"
+          done
+          for file in ai-architect-mcp-spec.{mcpb,cdx.json}; do
+            actual=$(sha256sum "$file" | cut -d ' ' -f 1)
+            printf '%s\n' "$actual" | cmp -s - "$file.sha256" || { echo "::error::Checksum mismatch for $file"; exit 1; }
+          done
+
+      - name: Attest build provenance (.mcpb + SBOM)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ai-architect-mcp-spec.mcpb
+            ai-architect-mcp-spec.cdx.json
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          assets=(ai-architect-mcp-spec.{mcpb,cdx.json}{,.sha256})
+          # SemVer 2.0.0: a hyphen marks a prerelease only before the "+" of
+          # build metadata, which may itself hold hyphens (v1.2.3+sha-1).
+          version="${TAG%%+*}"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+          if gh release view "$TAG" --json id > /dev/null; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --notes-file release-notes.md --draft=false --prerelease="$prerelease"
+          else
+            gh release create "$TAG" "${assets[@]}" --verify-tag --title "$TAG" \
+              --notes-file release-notes.md --prerelease="$prerelease"
+          fi
 
   publish_registry:
     # Publishes server.json to the official MCP Registry
@@ -257,52 +319,39 @@ jobs:
     # independently confirmed. The committed server.json is never rewritten
     # by any job.
     name: Publish server.json to the MCP Registry
-    needs: [release]
+    needs: [target, release]
     if: |
-      always() &&
+      !cancelled() && needs.target.result == 'success' &&
       (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      attestations: read # verify provenance of the public asset
       id-token: write   # OIDC token the MCP Registry exchanges for a publish credential
     steps:
-      # Fail loudly rather than silently skip: workflow_dispatch without an
-      # explicit tag would otherwise publish whatever ref happened to be
-      # selected in the UI, which is exactly the kind of unattended drift
-      # this job exists to close.
-      - name: Resolve target tag
-        id: resolve
-        run: |
-          set -euxo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-            if [ -z "$TAG" ]; then
-              echo "::error::workflow_dispatch requires a 'tag' input (e.g. v0.8.0) — refusing to guess which release to publish."
-              exit 1
-            fi
-          else
-            TAG="${{ github.ref_name }}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.resolve.outputs.tag }}
-
       - name: Verify server.json version matches the tag being published
+        id: manifest
         env:
-          TAG: ${{ steps.resolve.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.target.outputs.tag }}
         run: |
           set -euo pipefail
+          # Read the manifest as data at the exact commit whose provenance
+          # the next step will verify. No repository checkout on this runner.
+          commit=$(gh api "repos/$REPOSITORY/commits/refs/tags/$TAG" --jq .sha)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$REPOSITORY/contents/server.json?ref=$commit" > server.json
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
           VERSION=$(jq -r '.version' server.json)
           PKG_VERSION=$(jq -r '.packages[0].version' server.json)
           [ "$TAG" = "v$VERSION" ] || { echo "::error::server.json version $VERSION does not match tag $TAG" >&2; exit 1; }
           [ "$VERSION" = "$PKG_VERSION" ] || { echo "::error::server.json top-level version $VERSION != packages[0].version $PKG_VERSION" >&2; exit 1; }
           IDENTIFIER=$(jq -r '.packages[0].identifier' server.json)
-          case "$IDENTIFIER" in
-            *"/releases/download/$TAG/"*) : ;;
-            *) echo "::error::server.json packages[0].identifier ($IDENTIFIER) does not reference tag $TAG" >&2; exit 1 ;;
-          esac
+          [[ "$IDENTIFIER" == "https://github.com/$REPOSITORY/releases/download/$TAG/ai-architect-mcp-spec.mcpb" ]] || {
+            echo "::error::Registry identifier does not match the public release asset" >&2; exit 1;
+          }
 
       # The exact defect this job exists to prevent runs in both directions:
       # a registry entry must never point at a release asset that does not
@@ -314,7 +363,8 @@ jobs:
         id: mcpb
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.resolve.outputs.tag }}
+          TAG: ${{ needs.target.outputs.tag }}
+          COMMIT: ${{ steps.manifest.outputs.commit }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -326,7 +376,7 @@ jobs:
           [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::ai-architect-mcp-spec.mcpb checksum mismatch: release asset is $ACTUAL, .sha256 companion says $EXPECTED" >&2; exit 1; }
           gh attestation verify ai-architect-mcp-spec.mcpb --repo "$REPOSITORY" \
             --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
-            --source-ref "refs/tags/$TAG"
+            --source-ref "refs/tags/$TAG" --source-digest "$COMMIT"
           echo "digest=$ACTUAL" >> "$GITHUB_OUTPUT"
 
       # mcp-publisher has no first-party GitHub Action wrapper, so it is
@@ -380,6 +430,9 @@ jobs:
       # narrows *which* mcp-publisher exit codes are treated as non-fatal, it
       # never widens what "passing" means.
       - name: Publish server.json to the MCP Registry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ needs.target.outputs.tag }}
         run: |
           set +e
           OUTPUT=$(./mcp-publisher publish server.runtime.json 2>&1)
@@ -387,8 +440,8 @@ jobs:
           set -e
           echo "$OUTPUT"
           if [ "$STATUS" -ne 0 ]; then
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "$OUTPUT" | grep -qi "duplicate version"; then
-              echo "::notice::mcp-publisher reports ${{ steps.resolve.outputs.tag }} already published (workflow_dispatch recovery path) — treating as a candidate success, pending independent registry verification below."
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && grep -qi "duplicate version" <<< "$OUTPUT"; then
+              echo "::notice::mcp-publisher reports $TAG already published (workflow_dispatch recovery path) — treating as a candidate success, pending independent registry verification below."
             else
               echo "::error::mcp-publisher publish failed (exit ${STATUS})"
               exit "$STATUS"
