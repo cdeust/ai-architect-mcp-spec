@@ -3,7 +3,7 @@ import { findDefineDecisionConflicts } from "./define-decisions.js";
 import { semanticReviewFindings } from "./semantic-review.js";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { DefineHandoffV1Schema, isBlockingViolation, type DefineHandoffV1 } from "@prd-gen/core";
+import { DefineHandoffV1Schema, isBlockingViolation, toHandoffTickets, type DefineHandoffV1 } from "@prd-gen/core";
 import { projectDefineDocument, validateDocument } from "@prd-gen/validation";
 import { evaluatePolicy, resolveVerificationPolicy } from "./handlers/verification-policy.js";
 import { IMPLEMENTATION_GATE_QUESTION_ID } from "./handlers/protocol-ids.js";
@@ -36,8 +36,11 @@ export function defineEnvelopeText(handoff: DefineHandoffV1): string {
  */
 export function withPassedDefine(state: PipelineState): PipelineState {
   const projection = projectVerifiedDefine(state);
-  return "error" in projection ? state
-    : { ...state, passed_define: { handoff: projection.handoff, intent: state.feature_description } };
+  if ("error" in projection) {
+    const { passed_define: _refused, ...rest } = state;
+    return rest;
+  }
+  return { ...state, passed_define: { handoff: projection.handoff, intent: state.feature_description } };
 }
 
 /**
@@ -58,6 +61,10 @@ function disagreement(): Refusal {
  * Serve the snapshot the gate kept, after it advanced, only while the
  * checkpoint still projects exactly that Define for the same intent: a
  * checkpoint changed after the run finished is refused, not re-published.
+ * Readiness (completion evidence, verification policy) is judged once, at
+ * the gate, under the policy then in force: a legacy run clears that
+ * evidence when it finishes, and a policy injected later does not withdraw
+ * a Define the gate already let through.
  */
 function readPassedDefine(
   state: PipelineState, passed: NonNullable<PipelineState["passed_define"]>, action: NextAction | null,
@@ -75,13 +82,15 @@ function readPassedDefine(
 /** Read a validated Define checkpoint without granting implementation authority. */
 export function readDefineHandoff(state: PipelineState, action: NextAction | null): Planning {
   if (state.passed_define) return readPassedDefine(state, state.passed_define, action);
+  // Without a snapshot: the pending question, or an automatic completion saved
+  // before the gate kept snapshots.
   const automatic = state.semantic_review_requested && state.post_specs?.automatic_define === 1 &&
     state.current_step === "complete" && state.post_specs.decision === "prd_only" && action?.kind === "done";
   const legacy = state.current_step === "implementation_gate" && action?.kind === "ask_user" &&
     action.question_id === IMPLEMENTATION_GATE_QUESTION_ID &&
     (!state.post_specs || state.post_specs.decision === "pending");
   if (!automatic && !legacy) {
-    return refusal("define_not_pending", "Define requires a pending implementation decision.");
+    return refusal("define_not_pending", "Define requires a pending implementation decision or a Define kept when the run finished.");
   }
 
   const projection = projectVerifiedDefine(state);
@@ -124,10 +133,7 @@ function projectDefineState(state: PipelineState): Projection {
     version: 1,
     run_id: state.run_id,
     ...projectDefineDocument(sections),
-    ...(jira?.status === "passed" && {
-      tickets: jira.tickets.map(({ id, story_points, depends_on, acceptance_ids }) =>
-        ({ id, story_points, depends_on, acceptance_ids })),
-    }),
+    ...(jira?.status === "passed" && { tickets: toHandoffTickets(jira.tickets) }),
   });
   if (!parsed.success) {
     return refusal("define_document_invalid", z.prettifyError(parsed.error));
@@ -141,9 +147,9 @@ function projectDefineState(state: PipelineState): Projection {
   if (dispute) {
     return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
   }
-  // A run that generated tickets publishes them or nothing; only a checkpoint
+  // A run that attempted tickets publishes them or nothing; only a checkpoint
   // of the Markdown-only generator reads without them.
-  if (jira?.status === "failed") return refusal("define_not_ready", `jira_tickets_invalid: ${jira.reason}`);
+  if (jira?.status === "failed") return refusal("define_not_ready", `jira_tickets_${jira.cause}: ${jira.detail}`);
   const semanticFinding = semanticReviewFindings(state)[0];
   if (semanticFinding) return refusal("define_not_ready", semanticFinding.message);
   return { handoff: parsed.data };

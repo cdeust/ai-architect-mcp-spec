@@ -67,7 +67,7 @@ it("requires the saved implementation question and an undecided gate", () => {
     [{ ...source, post_specs: { ...initialPostSpecs(), decision: "prd_only" } }, pending],
   ] satisfies Array<[PipelineState, NextAction | null]>) {
     expect(readDefineHandoff(state, action)).toEqual({
-      error: { code: "define_not_pending", message: "Define requires a pending implementation decision." },
+      error: { code: "define_not_pending", message: "Define requires a pending implementation decision or a Define kept when the run finished." },
     });
   }
 });
@@ -287,6 +287,8 @@ it("reaches a terminal Define checkpoint without awaiting a user", () => {
   expect(complete.state.post_specs).toMatchObject({ automatic_define: 1, decision: "prd_only" });
   expect(complete.state.pending_completion).toEqual(reviewed.pending_completion);
   expect(readDefineHandoff(complete.state, complete.action)).toEqual(readDefineHandoff(ready(), pending));
+  // The automatic exit keeps the passed Define too.
+  expect(complete.state.passed_define).toEqual(readDefineHandoff(ready(), pending));
   if (complete.action.kind !== "done") throw new Error("Expected terminal action");
   for (const action of [
     { ...complete.action, outcome: { status: "needs_attention" as const, reasons: ["Blocked"] } },

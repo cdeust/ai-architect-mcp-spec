@@ -61,7 +61,8 @@
 import type { StepHandler } from "../runner.js";
 import { appendError, type PipelineState } from "../types/state.js";
 import { plannedSections, runRequestSize } from "../section-plan.js";
-import { JIRA_SOURCE_TYPES, NO_JIRA_SOURCES } from "./jira-generation.js";
+import { JIRA_FAILED_PREFIX, JIRA_SOURCE_TYPES } from "./jira-generation.js";
+import { renderJiraTickets } from "./jira-ticket-draft.js";
 import {
   SECTION_DISPLAY_NAMES,
   SECTION_ORDER,
@@ -88,8 +89,9 @@ export interface PrdFile {
  *   "failed_validation"      — at least one of the section types was
  *                               attempted and its terminal status is
  *                               "failed" (MAX_ATTEMPTS exhausted).
- *                               For JIRA: the subagent failed, or every
- *                               source section that ran failed — see
+ *                               For JIRA: the subagent failed or its
+ *                               tickets were refused (jira_result failed),
+ *                               or every source section that ran failed — see
  *                               jiraSkipReason.
  *   "skipped"                — planned but never reached a terminal state
  *                               with content (e.g. the run ended early), or
@@ -146,8 +148,8 @@ function reasonForSectionTypes(
 function jiraSkipReason(state: PipelineState): SkipReason {
   // A checkpoint of the Markdown-only generator has no jira_result: read its errors.
   const subagentFailed = state.jira_result
-    ? state.jira_result.status === "failed" && state.jira_result.reason !== NO_JIRA_SOURCES
-    : state.errors.some((e) => e.startsWith("[jira_generation] failed"));
+    ? state.jira_result.status === "failed" && state.jira_result.cause !== "skipped"
+    : state.errors.some((e) => e.startsWith(JIRA_FAILED_PREFIX));
   const sources = state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type));
   const sourcesFailed =
     sources.some((s) => s.status === "failed") && !sources.some(exportable);
@@ -260,7 +262,11 @@ function joinSections(
     .join("\n\n");
 }
 
+/** The tickets the run validated; a checkpoint before jira_result kept them as a section. */
 function jiraContent(state: PipelineState): string {
+  if (state.jira_result) {
+    return state.jira_result.status === "passed" ? renderJiraTickets(state.jira_result.tickets) : "";
+  }
   const last = [...state.sections]
     .reverse()
     .find((s) => s.section_type === "jira_tickets" && exportable(s));

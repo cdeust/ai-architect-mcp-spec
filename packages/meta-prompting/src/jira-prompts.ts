@@ -2,8 +2,9 @@
  * JIRA ticket generation prompt.
  *
  * Takes the requirements + user_stories + acceptance_criteria sections and
- * produces a self-contained prompt for the engineer subagent to emit a
- * structured tickets. The pipeline renders the operator's Markdown document.
+ * produces a self-contained prompt for the engineer subagent to emit the
+ * tickets as one JSON object; the pipeline validates them and renders
+ * 07-jira-tickets.md.
  */
 
 export interface JiraPromptInput {

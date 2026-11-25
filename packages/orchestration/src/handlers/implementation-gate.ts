@@ -1,6 +1,7 @@
 /**
  * Persist specification verification and offer a PRD-only completion.
- * Define remains readable while the verification question is pending.
+ * Define is readable while the verification question is pending; every exit
+ * of the gate keeps the passed Define (withPassedDefine) for reads after it.
  * Any implementation decision is made in architect-os after plan approval.
  */
 import { projectVerifiedDefine, withPassedDefine } from "../define-handoff.js";

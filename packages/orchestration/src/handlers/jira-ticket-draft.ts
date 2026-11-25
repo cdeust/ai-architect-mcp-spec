@@ -1,19 +1,32 @@
 import { extractJsonObject, JiraDraftSchema, unknownTicketCriterion, type JiraTicket } from "@prd-gen/core";
 import { z } from "zod";
+import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
+
+/** Issues named in a refusal; the count says how many more there were. */
+const NAMED_ISSUES = 3;
+
+/** A refusal names a few issues and stays within one error entry, whatever the reply's size. */
+function describe(error: z.ZodError): string {
+  const named = z.prettifyError(new z.ZodError(error.issues.slice(0, NAMED_ISSUES)));
+  const more = error.issues.length - NAMED_ISSUES;
+  return (more > 0 ? `${named}\n(and ${more} more issue(s))` : named).slice(0, ERROR_MESSAGE_CHARS);
+}
 
 /**
  * Validate the engineer's structured tickets against the document's criteria.
  * A fenced or prefaced object is read like every other structured agent reply.
  */
-export function parseJiraDraft(raw: string, criteria: ReadonlySet<string>) {
+export function parseJiraDraft(
+  raw: string, criteria: ReadonlySet<string>,
+): { readonly error: string } | { readonly tickets: JiraTicket[] } {
   let json: unknown;
   try {
     json = extractJsonObject(raw);
-  } catch {
-    return { error: "Expected a JSON object containing tickets." };
+  } catch (error) {
+    return { error: `Expected a JSON object containing tickets: ${(error as Error).message}`.slice(0, ERROR_MESSAGE_CHARS) };
   }
   const parsed = JiraDraftSchema.safeParse(json);
-  if (!parsed.success) return { error: z.prettifyError(parsed.error) };
+  if (!parsed.success) return { error: describe(parsed.error) };
   const unknown = unknownTicketCriterion(parsed.data.tickets, criteria);
   return unknown ? { error: unknown } : { tickets: parsed.data.tickets };
 }
@@ -38,7 +51,8 @@ function renderTicket(ticket: JiraTicket): string {
   return [
     `#### ${ticket.id} — ${ticket.title}`,
     "",
-    ticket.description,
+    // Quoted, so a description line cannot read as a heading, ticket or total.
+    ticket.description.split("\n").map(line => line ? `> ${line}` : ">").join("\n"),
     "",
     `- **Acceptance Criteria:** ${ticket.acceptance_ids.join(", ")}`,
     `- **Story Points:** ${ticket.story_points}`,
@@ -51,8 +65,7 @@ export function renderJiraTickets(tickets: JiraTicket[]): string {
   const phases = groupBy(tickets, ticket => ticket.phase);
   const summary = ["## Summary", "", "| Phase | Story Count | Total SP |", "| --- | ---: | ---: |"];
   const document = ["# JIRA Tickets"];
-  for (const phase of [...phases.keys()].sort((a, b) => a - b)) {
-    const stories = phases.get(phase)!;
+  for (const [phase, stories] of [...phases].sort(([a], [b]) => a - b)) {
     const total = points(stories);
     document.push(`## Phase ${phase} (${total} SP)`);
     for (const [epic, epicStories] of groupBy(stories, story => story.epic)) {

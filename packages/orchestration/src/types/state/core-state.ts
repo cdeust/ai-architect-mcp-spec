@@ -3,7 +3,7 @@ import {
   AgentIdentitySchema,
   ClaimSchema,
   DefineHandoffV1Schema,
-  JiraTicketSchema,
+  JiraResultSchema,
   PRDContextSchema,
   REQUEST_SIZE_DEFAULT,
   RequestSizeSchema,
@@ -475,10 +475,7 @@ export const PipelineStateSchema = z.object({
    */
   post_specs: PostSpecsStateSchema.nullable().default(null),
   // Absent on checkpoints made by the Markdown-only ticket generator.
-  jira_result: z.discriminatedUnion("status", [
-    z.strictObject({ status: z.literal("passed"), tickets: z.array(JiraTicketSchema).min(1) }),
-    z.strictObject({ status: z.literal("failed"), reason: z.string() }),
-  ]).optional(),
+  jira_result: JiraResultSchema.optional(),
   /** The Define projection that passed when the gate advanced (define-handoff.ts withPassedDefine). */
   passed_define: z.strictObject({ handoff: DefineHandoffV1Schema, intent: z.string() }).optional(),
   /**

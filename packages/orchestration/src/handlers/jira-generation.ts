@@ -2,15 +2,14 @@
  * JIRA ticket generation.
  *
  * Spawns the engineer subagent to produce JIRA tickets from the
- * acceptance_criteria + user_stories + requirements sections. The output is
- * stored as a synthetic "jira" pseudo-section so file_export can pick it up.
+ * acceptance_criteria + user_stories + requirements sections.
  * A failed section's draft is never source material (#122): when every
  * source failed, generation is skipped and file_export reports 07 as
  * failed_validation.
  *
  * The engineer answers with structured tickets. They are validated against
- * the acceptance criteria of the document, kept on the checkpoint as
- * `jira_result` and rendered to the Markdown section. Every new run records
+ * the acceptance criteria of the document and kept on the checkpoint as
+ * `jira_result`, from which file_export renders 07-jira-tickets.md. Every new run records
  * `jira_result`; only a checkpoint of the Markdown-only generator lacks it.
  *
  * State machine:
@@ -19,13 +18,14 @@
  */
 
 import type { StepHandler } from "../runner.js";
-import type { SectionType } from "@prd-gen/core";
+import type { JiraResult, SectionType } from "@prd-gen/core";
 import { appendError, type PipelineState } from "../types/state.js";
 import { buildJiraPrompt } from "@prd-gen/meta-prompting";
 import { projectDefineDocument } from "@prd-gen/validation";
 import { documentSections } from "../section-plan.js";
 import { JIRA_GENERATION_INV_ID as INVOCATION_ID } from "./protocol-ids.js";
-import { parseJiraDraft, renderJiraTickets } from "./jira-ticket-draft.js";
+import { parseJiraDraft } from "./jira-ticket-draft.js";
+import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
 
 const BATCH_ID = "jira_generation";
 
@@ -51,24 +51,23 @@ function gatherSourceSections(state: PipelineState): ReadonlyArray<{
     }));
 }
 
-/** Recorded when no exportable source exists; file_export reports it from the sources. */
-export const NO_JIRA_SOURCES = "no source sections";
+/** Prefix of every failed generation in errors[]; a checkpoint before jira_result is read by it. */
+export const JIRA_FAILED_PREFIX = "[jira_generation] failed";
 
-/** Prefix shared by every failed generation; file_export reads `jira_result` first. */
-const FAILED = "[jira_generation] failed";
+type Failure = Extract<JiraResult, { status: "failed" }>;
 
-function refuse(state: PipelineState, reason: string, message: string) {
+function refuse(state: PipelineState, cause: Failure["cause"], detail: string, message: string) {
+  const bounded = detail.slice(0, ERROR_MESSAGE_CHARS);
   const withError = appendError(
     state,
-    `${FAILED}: ${reason}`,
-    // The handler tolerates this (warns + continues to file_export).
-    // Tagging as "upstream_failure" keeps the structural-error gate
-    // from firing on a recoverable subagent flake (cross-audit
-    // curie H1, Phase 3+4 follow-up, 2026-04).
+    `${JIRA_FAILED_PREFIX}: ${cause}: ${bounded}`,
+    // The handler tolerates this (warns + continues to file_export): a
+    // subagent flake or a refused reply, not a structural error of the run
+    // (cross-audit curie H1, Phase 3+4 follow-up, 2026-04).
     "upstream_failure",
   );
   return {
-    state: { ...withError, jira_result: { status: "failed" as const, reason }, current_step: "file_export" as const },
+    state: { ...withError, jira_result: { status: "failed" as const, cause, detail: bounded }, current_step: "file_export" as const },
     action: { kind: "emit_message" as const, level: "warn" as const, message },
   };
 }
@@ -87,32 +86,19 @@ export const handleJiraGeneration: StepHandler = ({ state, result }) => {
       (r) => r.invocation_id === INVOCATION_ID,
     );
     if (!response || response.error || !response.raw_text) {
-      return refuse(state, response?.error ?? "no response",
+      return refuse(state, "missing", response?.error ?? "no response",
         "JIRA generation failed; proceeding to file export anyway.");
     }
     const draft = parseJiraDraft(response.raw_text, acceptanceIds(state));
     if ("error" in draft) {
-      return refuse(state, `jira_tickets_invalid: ${draft.error}`,
-        `jira_tickets_invalid: the generated tickets were refused; proceeding to file export without them. ${draft.error}`);
+      return refuse(state, "invalid", draft.error,
+        "jira_tickets_invalid: the generated tickets were refused; proceeding to file export without them.");
     }
 
-    // The "jira_tickets" SectionType lives in @prd-gen/core; file-export
-    // filters it from the PRD body and writes it to its own file.
+    // file_export renders 07-jira-tickets.md from these tickets.
     const updated: PipelineState = {
       ...state,
       jira_result: { status: "passed", tickets: draft.tickets },
-      sections: [
-        ...state.sections,
-        {
-          section_type: "jira_tickets",
-          status: "passed",
-          attempt: 1,
-          violation_count: 0,
-          last_violations: [],
-          attempt_log: [],
-          content: renderJiraTickets(draft.tickets),
-        },
-      ],
       current_step: "file_export",
     };
     return {
@@ -128,7 +114,7 @@ export const handleJiraGeneration: StepHandler = ({ state, result }) => {
   const sourceMaterial = gatherSourceSections(state);
   if (sourceMaterial.length === 0) {
     return {
-      state: { ...state, jira_result: { status: "failed", reason: NO_JIRA_SOURCES }, current_step: "file_export" },
+      state: { ...state, jira_result: { status: "failed", cause: "skipped", detail: "no source sections" }, current_step: "file_export" },
       action: {
         kind: "emit_message",
         message: "No source sections for JIRA generation. Skipping.",

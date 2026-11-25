@@ -151,4 +151,7 @@ export {
 // Consensus reliability port — core declares, benchmark implements, verification consumes.
 export type { ConsensusReliabilityProvider } from "./persistence/consensus-reliability-provider.js";
 export { DefineHandoffV1Schema, hasDefineStatementText, type DefineHandoffV1 } from "./domain/define-handoff.js";
-export { JiraDraftSchema, JiraTicketSchema, unknownTicketCriterion, type JiraTicket } from "./domain/jira-tickets.js";
+export {
+  JiraDraftSchema, JiraResultSchema, JiraTicketSchema, toHandoffTickets, unknownTicketCriterion,
+  type JiraResult, type JiraTicket,
+} from "./domain/jira-tickets.js";

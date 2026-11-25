@@ -7,6 +7,7 @@ import {
 import { REMEMBER_CORRELATION_ID } from "../handlers/finalize.js";
 import { handleFileExport } from "../handlers/file-export.js";
 import { handleJiraGeneration } from "../handlers/jira-generation.js";
+import { renderJiraTickets } from "../handlers/jira-ticket-draft.js";
 
 const run_id = "run_define_tickets";
 const pending: NextAction = {
@@ -100,13 +101,44 @@ describe("Define v1 tickets", () => {
   });
 
   it("refuses a run whose generated tickets were refused instead of publishing it without them", () => {
-    const failed = { status: "failed" as const, reason: "jira_tickets_invalid: TICKET_DEPENDENCY_CYCLE" };
+    const failed = { status: "failed" as const, cause: "invalid" as const, detail: "TICKET_DEPENDENCY_CYCLE" };
     expect(readDefineHandoff(ready(failed), pending)).toEqual({ error: {
-      code: "define_not_ready", message: "jira_tickets_invalid: jira_tickets_invalid: TICKET_DEPENDENCY_CYCLE",
+      code: "define_not_ready", message: "jira_tickets_invalid: TICKET_DEPENDENCY_CYCLE",
     } });
+    expect(readDefineHandoff(ready({ status: "failed", cause: "missing", detail: "timeout" }), pending)).toEqual({ error: {
+      code: "define_not_ready", message: "jira_tickets_missing: timeout",
+    } });
+    // Every document check comes first: the schema, a blocking rule and a sourced dispute.
     const broken = ready(failed);
     broken.sections = broken.sections.filter(section => section.section_type !== "acceptance_criteria");
     expect(readDefineHandoff(broken, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
+    const contradictory = ready(failed);
+    contradictory.sections[0]!.content = "- FR-001: The link expires after one hour.";
+    contradictory.sections.push({ ...contradictory.sections[0]!, section_type: "overview", content: "- NFR-002: The link expires after three hours." });
+    expect(readDefineHandoff(contradictory, pending)).toMatchObject({ error: {
+      code: "define_document_invalid", message: expect.stringContaining("contradictory_requirements"),
+    } });
+    const disputed = ready(failed);
+    disputed.feature_description = "With `--until ci`, never publish the verified commit.";
+    disputed.sections[1]!.content = "- AC-001: With `--until ci`, publish the verified commit automatically (FR-001).\n- AC-002: Replay the saved commit (FR-001).";
+    expect(readDefineHandoff(disputed, pending)).toMatchObject({ error: {
+      code: "define_document_invalid", message: expect.stringContaining("sourced_publication_policy"),
+    } });
+    // ...and the ticket refusal comes before the scope review.
+    expect(readDefineHandoff({ ...ready(failed), semantic_review_requested: true }, pending)).toMatchObject({ error: {
+      message: "jira_tickets_invalid: TICKET_DEPENDENCY_CYCLE",
+    } });
+  });
+
+  it("refuses a ticket graph that fails the handoff schema", () => {
+    for (const [tickets, cause] of [
+      [[{ ...first, depends_on: ["TICKET-002"] }, second], "TICKET_DEPENDENCY_CYCLE"],
+      [[{ ...first, depends_on: ["TICKET-009"] }], "TICKET_DEPENDENCY_UNKNOWN"],
+    ] as const) {
+      expect(readDefineHandoff(ready(passed([...tickets])), pending)).toMatchObject({ error: {
+        code: "define_document_invalid", message: expect.stringContaining(cause),
+      } });
+    }
   });
 
   it("refuses tickets whose criterion left the document after generation", () => {
@@ -148,12 +180,14 @@ describe("the passed Define snapshot", () => {
   it("does not serve a finished checkpoint that kept no snapshot", () => {
     const { done } = finishPrdOnly(ready(passed()));
     expect(readDefineHandoff({ ...done.state, passed_define: undefined }, done.action)).toEqual({
-      error: { code: "define_not_pending", message: "Define requires a pending implementation decision." },
+      error: { code: "define_not_pending", message: "Define requires a pending implementation decision or a Define kept when the run finished." },
     });
+    // The legacy run cleared its completion evidence: readiness was judged at the gate.
+    expect(done.state.pending_completion).toBeNull();
   });
 
   it("keeps no snapshot of a refused specification", () => {
-    const failed = finishPrdOnly(ready({ status: "failed", reason: "no response" }));
+    const failed = finishPrdOnly(ready({ status: "failed", cause: "missing", detail: "no response" }));
     expect(failed.done.state.passed_define).toBeUndefined();
     expect(readDefineHandoff(failed.done.state, failed.done.action)).toMatchObject({ error: { code: "define_not_pending" } });
   });
@@ -204,6 +238,17 @@ describe("the 07 deliverable of a refused ticket result", () => {
     }
     throw new Error("file_export wrote no run notes");
   };
+  /** The content file_export writes as 07, if it writes one. */
+  const jiraFile = (start: PipelineState) => {
+    let out = handleFileExport({ state: start });
+    for (let writes = 0; writes < 20 && out.action.kind === "write_file"; writes++) {
+      if (out.action.path.endsWith("07-jira-tickets.md")) return out.action.content;
+      out = handleFileExport({ state: out.state, result: {
+        kind: "file_written", path: out.action.path, bytes: Buffer.byteLength(out.action.content),
+      } });
+    }
+    return undefined;
+  };
   const jiraNote = (state: PipelineState) =>
     runNotes(state).split("\n").find(line => line.includes("07-jira-tickets.md"));
 
@@ -211,12 +256,14 @@ describe("the 07 deliverable of a refused ticket result", () => {
     const fenced = submit(`Here are the tickets:\n\`\`\`json\n${JSON.stringify({ tickets: [first] })}\n\`\`\``);
     expect(fenced.jira_result).toEqual(passed([first]));
     expect(jiraNote(fenced)).toBeUndefined();
+    expect(jiraFile(fenced)).toBe(renderJiraTickets([first]));
   });
 
   it("reports 07 as failed validation, not as nothing to build from", () => {
     const refused = submit(JSON.stringify({ tickets: [{ ...first, story_points: 4 }] }));
-    expect(refused.jira_result).toMatchObject({ status: "failed", reason: expect.stringContaining("TICKET_POINTS_INVALID") });
-    expect(refused.errors.at(-1)).toMatch(/^\[jira_generation\] failed: jira_tickets_invalid: /);
+    expect(refused.jira_result).toMatchObject({ status: "failed", cause: "invalid", detail: expect.stringContaining("TICKET_POINTS_INVALID") });
+    expect(refused.errors.at(-1)).toMatch(/^\[jira_generation\] failed: invalid: /);
+    expect(jiraFile(refused)).toBeUndefined();
     expect(jiraNote(refused)).toContain("failed validation");
     // The reason is read from jira_result, not from an error the FIFO cap may evict.
     expect(jiraNote({ ...refused, errors: [], error_kinds: [] })).toContain("failed validation");
@@ -224,7 +271,16 @@ describe("the 07 deliverable of a refused ticket result", () => {
 
   it("records a skipped generation as such", () => {
     const none = handleJiraGeneration({ state: { ...atJira(), sections: [] } }).state;
-    expect(none.jira_result).toEqual({ status: "failed", reason: "no source sections" });
+    expect(none.jira_result).toEqual({ status: "failed", cause: "skipped", detail: "no source sections" });
     expect(jiraNote(none)).toContain("not generated in this run");
+  });
+
+  it("reads a checkpoint of the Markdown-only generator from its section and errors", () => {
+    const legacy: PipelineState = { ...atJira(), current_step: "file_export" };
+    const failed = { ...legacy, errors: ["[jira_generation] failed: timeout"], error_kinds: ["upstream_failure" as const] };
+    expect(jiraNote(failed)).toContain("failed validation");
+    expect(jiraNote(legacy)).toContain("not generated in this run");
+    const markdown = { ...legacy, sections: [...legacy.sections, { ...legacy.sections[0]!, section_type: "jira_tickets" as const, content: "# Saved tickets" }] };
+    expect(jiraFile(markdown)).toBe("# Saved tickets");
   });
 });
