@@ -140,6 +140,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEWED_SHA: ${{ steps.budget.outputs.reviewed_sha }}
           ROUND: ${{ steps.budget.outputs.round }}
@@ -183,6 +184,7 @@ jobs:
           prompt: ${{ steps.prompt.outputs.prompt }}
           claude_args: |
             --strict-mcp-config
+            --setting-sources user
             --permission-mode dontAsk
             --allowedTools "Read,Glob,Grep,LS,Task"
             --json-schema '{"type":"object","additionalProperties":false,"required":["findings","summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000},"findings":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["file","line","severity","category","description","exploit_scenario","recommendation","confidence"],"properties":{"file":{"type":"string","minLength":1,"maxLength":200,"pattern":"^(?!/)(?!.*(^|/)\\.\\.(/|$))[^\\n\\r\\t`]+$"},"line":{"type":"integer","minimum":0},"severity":{"type":"string","enum":["HIGH","MEDIUM"]},"category":{"type":"string","minLength":1,"maxLength":80,"pattern":"^[a-z][a-z0-9_]*$"},"description":{"type":"string","minLength":1,"maxLength":500},"exploit_scenario":{"type":"string","minLength":1,"maxLength":500},"recommendation":{"type":"string","minLength":1,"maxLength":500},"confidence":{"type":"integer","minimum":1,"maximum":10}}}}}}'
