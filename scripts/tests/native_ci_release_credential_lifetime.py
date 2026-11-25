@@ -80,11 +80,22 @@ exec sh -c "$command"
 PYTHON_WRAPPER = """#!/usr/bin/env bash
 # Stand-in for python3 that is slow to stop: it forwards SIGTERM to the real
 # interpreter only after FIXTURE_PUBLISHER_STOP_S, so the step must wait for it.
+# Its output goes to its own log: holding the step's output open would make the
+# test wait for it and hide a step that did not.
+exec >> "$FIXTURE_LOG/publisher.out" 2>&1
 "$FIXTURE_REAL_PYTHON" "$@" <&0 &
 child=$!
-trap 'sleep "$FIXTURE_PUBLISHER_STOP_S"; kill -TERM "$child" 2>/dev/null; wait "$child"; exit $?' TERM
+finish() {
+  status=$?
+  # A stopped agent resumes inside the release's grace once the publisher is done.
+  if [ -n "${FIXTURE_RESUME_AGENT_S-}" ]; then
+    ( sleep "$FIXTURE_RESUME_AGENT_S"; kill -CONT "$(cat "$FIXTURE_LOG/agent-pid")" ) </dev/null &
+  fi
+  exit "$status"
+}
+trap 'sleep "$FIXTURE_PUBLISHER_STOP_S"; kill -TERM "$child" 2>/dev/null; wait "$child"; finish' TERM
 wait "$child"
-exit $?
+finish
 """
 
 AGENT_WRAPPER = """#!/bin/sh
@@ -100,9 +111,11 @@ def alive(pid):
 
 
 def processes():
-    rows = subprocess.run(["ps", "-Ao", "pid=,pgid=,stat=,args="], capture_output=True, text=True,
+    """[pid, pgid, stat, args, ppid] of every process."""
+    rows = subprocess.run(["ps", "-Ao", "pid=,pgid=,stat=,ppid=,args="], capture_output=True, text=True,
                           check=True, timeout=10).stdout.splitlines()
-    return [row.split(None, 3) for row in rows if len(row.split(None, 3)) == 4]
+    split = [row.split(None, 4) for row in rows]
+    return [[pid, pgid, stat, args, ppid] for pid, pgid, stat, ppid, args in (r for r in split if len(r) == 5)]
 
 
 def git(*args, **kwargs):
@@ -189,7 +202,8 @@ class Fixture:
 
     def finish(self, timeout=60):
         output, _ = self.process.communicate(timeout=timeout)
-        return self.process.returncode, output
+        published = self.log / "publisher.out"
+        return self.process.returncode, output + (published.read_text() if published.exists() else "")
 
     def transports(self):
         result = []
@@ -239,7 +253,7 @@ class Fixture:
                 directory != base and base in directory.parents for base in (self.root, self.socket_base))
             if record["socket"] and owned and directory not in (self.repo, self.runner_temp):
                 shutil.rmtree(directory, ignore_errors=True)
-        for pid, _, _, args in processes():
+        for pid, _, _, args, _ in processes():
             if (str(self.root) in args or str(self.socket_base) in args) and int(pid) != os.getpid():
                 try:
                     os.kill(int(pid), signal.SIGKILL)
@@ -266,6 +280,11 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             if (fixture.log / "agent-starts").exists() else []
         starts = [first for first in starts if first != "-k"]
         self.assertEqual(len(starts), 1, "exactly one signing agent is started: %r" % starts)
+        # At the step's exit only the ssh client may still be ending (on EOF, below).
+        clients = {record["pid"] for record in fixture.transports()}
+        group = [row for row in processes() if row[1] == str(fixture.process.pid)
+                 and not row[2].startswith("Z") and row[0] not in clients and row[4] not in clients]
+        self.assertEqual(group, [], "a child of the step outlived it")
         for record in fixture.transports():
             self.assertEqual(record["list"], "0", "positive control: the transport reached the live agent")
             socket = fixture.repo / record["socket"]  # a relative socket resolves from the step directory
@@ -278,18 +297,17 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             probe = subprocess.run(["ssh-add", "-l"], cwd=fixture.repo, capture_output=True,
                                    env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]), timeout=10)
             self.assertEqual(probe.returncode, 2, "the same probe that reached the agent no longer does")
-            # Git and its ssh client end on their own once the publisher is gone, as a
-            # real client does on EOF; they get TRANSPORT_EXIT_S, the agent gets nothing.
+            # The ssh client ends on its own once Git is gone, as a real client does on
+            # EOF; it gets TRANSPORT_EXIT_S, Git and the agent get nothing.
+            self.assertFalse(alive(int(record["parent"])), "Git outlived the step")
             deadline = time.monotonic() + TRANSPORT_EXIT_S
-            for pid in (record["pid"], record["parent"]):
+            for pid in (record["pid"],):
                 while alive(int(pid)) and time.monotonic() < deadline:
                     time.sleep(0.02)
                 self.assertFalse(alive(int(pid)), "a transport process outlived the step")
         leftovers = [row for row in processes() if not row[2].startswith("Z")
                      and (str(fixture.root) in row[3] or str(fixture.socket_base) in row[3])]
         self.assertEqual(leftovers, [], "a process of the step outlived it")
-        group = [row for row in processes() if row[1] == str(fixture.process.pid) and not row[2].startswith("Z")]
-        self.assertEqual(group, [], "a child of the step outlived it")
         self.assertEqual(set(os.listdir(fixture.runner_temp)), fixture.runner_entries,
                          "the step left files in RUNNER_TEMP")
         self.assertEqual(os.listdir(fixture.socket_base), [], "the step left files in TMPDIR")
@@ -409,8 +427,10 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             self.assert_released(fixture)
         self.each_workflow(check)
 
-    def stuck_agent(self, path, hook_tail):
+    def stuck_agent(self, path, hook_tail, resume_after_s=None):
         fixture = self.fixture(path)
+        if resume_after_s is not None:
+            fixture.env["FIXTURE_RESUME_AGENT_S"] = resume_after_s
         hook = fixture.remote / "hooks" / "pre-receive"
         hook.write_text('#!/bin/sh\npid=$(cat "$FIXTURE_LOG/agent-pid")\nkill -STOP "$pid"\n'
                         + hook_tail + ': > "$FIXTURE_LOG/agent-stopped"\nexit 0\n')
@@ -435,8 +455,9 @@ class ReleaseCredentialLifetime(unittest.TestCase):
 
     def test_agent_slow_to_stop_gets_its_grace_and_the_step_succeeds(self):
         def check(path):
-            # Stopped during the push, the agent resumes 1 s later and only then acts on SIGTERM.
-            fixture = self.stuck_agent(path, '( sleep 1; kill -CONT "$pid" ) >/dev/null 2>&1 &\n')
+            # Stopped during the push, the agent resumes 0.5 s after the publisher exits,
+            # inside the release's grace, and only then acts on its SIGTERM.
+            fixture = self.stuck_agent(path, "", resume_after_s="0.5")
             status, output = fixture.finish()
             self.assertEqual(status, 0, output)
             self.assertNotIn("::error::", output)
