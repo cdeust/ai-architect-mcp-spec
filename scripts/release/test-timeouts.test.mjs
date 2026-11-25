@@ -68,7 +68,7 @@ describe("the wall-clock limits of the test suite", () => {
         if (copy) copies.push([relative(ROOT, file), Number(copy[1].replaceAll("_", ""))]);
       }
     }
-    expect(copies.length).toBe(3);
+    expect(copies.length).toBe(4);
     for (const [, value] of copies) expect(value).toBe(CHILD_TIMEOUT_MS);
   });
 

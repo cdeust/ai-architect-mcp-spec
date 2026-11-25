@@ -40,7 +40,11 @@ import {
   serverCommand,
   verdict,
 } from "./check-health-stdio.mjs";
-import { CHILD_TIMEOUT_MS } from "../vitest.shared.mts";
+
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts. Not imported: this file runs under
+// `node --test` (pnpm test:portable), and node 22.12 cannot load a .mts. The guard in
+// scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LAUNCHER = join(ROOT, "bin", "ensure-deps.mjs");
