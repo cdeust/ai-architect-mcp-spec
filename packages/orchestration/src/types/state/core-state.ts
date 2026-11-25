@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AgentIdentitySchema,
   ClaimSchema,
+  DefineHandoffV1Schema,
   JiraTicketSchema,
   PRDContextSchema,
   REQUEST_SIZE_DEFAULT,
@@ -478,6 +479,8 @@ export const PipelineStateSchema = z.object({
     z.strictObject({ status: z.literal("passed"), tickets: z.array(JiraTicketSchema).min(1) }),
     z.strictObject({ status: z.literal("failed"), reason: z.string() }),
   ]).optional(),
+  /** The Define projection that passed when the gate advanced (define-handoff.ts withPassedDefine). */
+  passed_define: z.strictObject({ handoff: DefineHandoffV1Schema, intent: z.string() }).optional(),
   /**
    * Judge-panel budget override for self-check's multi-judge verification
    * batch. Composition-root-injected only (mirrors `retry_policy`); the
@@ -502,5 +505,9 @@ export const PipelineStateSchema = z.object({
     message:
       "PipelineState: errors[] and error_kinds[] must have the same length (lockstep invariant — use appendError() to append, never spread directly).",
     path: ["error_kinds"],
+  })
+  .refine((s) => !s.passed_define || s.passed_define.handoff.run_id === s.run_id, {
+    message: "PipelineState: passed_define belongs to another run.",
+    path: ["passed_define"],
   });
 export type PipelineState = z.infer<typeof PipelineStateSchema>;

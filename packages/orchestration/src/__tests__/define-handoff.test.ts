@@ -49,6 +49,7 @@ it("projects without mutating the saved checkpoint or granting execution control
       requirements: [{ id: "FR-001", text: "Keep the validated commit." }],
       acceptance: [{ id: "AC-001", text: "Verify the saved commit (FR-001).", requirement_ids: ["FR-001"] }],
     },
+    intent: "Verify the delivery",
   });
   expect(state).toEqual(prior);
   expect(readDefineHandoff({ ...state, post_specs: initialPostSpecs() }, pending))
@@ -297,7 +298,15 @@ it("reaches a terminal Define checkpoint without awaiting a user", () => {
     } });
   }
 
-  const state = complete.state;
+  // A checkpoint completed before the snapshot existed is projected from its state.
+  const state = { ...complete.state, passed_define: undefined };
+  expect(readDefineHandoff(state, complete.action)).toEqual(readDefineHandoff(complete.state, complete.action));
+  for (const action of [
+    { ...complete.action, outcome: { status: "needs_attention" as const, reasons: ["Blocked"] } },
+    { ...complete.action, verification: undefined },
+  ]) {
+    expect(readDefineHandoff(state, action)).toMatchObject({ error: { code: "define_not_ready" } });
+  }
   const incomplete = { ...state, sections: state.sections.filter(s => s.section_type !== "acceptance_criteria") };
   expect(readDefineHandoff(incomplete, { ...complete.action, outcome: undefined }))
     .toMatchObject({ error: { code: "define_document_invalid" } });

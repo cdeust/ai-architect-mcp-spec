@@ -3,7 +3,7 @@
  * Define remains readable while the verification question is pending.
  * Any implementation decision is made in architect-os after plan approval.
  */
-import { projectVerifiedDefine } from "../define-handoff.js";
+import { projectVerifiedDefine, withPassedDefine } from "../define-handoff.js";
 import { specVerificationQuestion, presentSpecAction } from "../architect-os-boundary.js";
 import { answerOptionQuestion } from "./match-offered-option.js";
 import type { StepHandler } from "../runner.js";
@@ -51,9 +51,10 @@ function writeReportAction(state: PipelineState): { kind: "write_file"; path: st
   return { kind: "write_file", path: reportFile.path, content: reportFile.content() };
 }
 
+/** Every exit of the gate passes here: the passed Define is kept before advancing. */
 function finish(state: PipelineState, postSpecs: PostSpecsState) {
   return {
-    state: { ...state, post_specs: postSpecs, current_step: "finalize" as const },
+    state: { ...withPassedDefine({ ...state, post_specs: postSpecs }), current_step: "finalize" as const },
     action: { kind: "emit_message" as const, message: "Specification finalized." },
   };
 }

@@ -513,6 +513,75 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
   }
 }, 120_000);
 
+it("serves the ticketed Define of the gate after PRD only, across restarts", async () => {
+  const output = mkdtempSync(join(tmpdir(), "prd-gen-define-tickets-"));
+  const start = () => startDefineServer({ cwd: output, env: { HOME: output, USERPROFILE: output } });
+  const host = makeHost(output, "ready");
+  const files = new RunFiles(join(output, ".prd-gen", "runs"));
+  let server: StdioServer | undefined;
+  try {
+    server = await start();
+    const { run_id, action } = await driveToGate(server, host);
+    const args = { run_id, format: "define_handoff_v1" };
+    const planArgs = { run_id, format: "verified_plan_v1", plan_step: "delivery" };
+    const atGate = await server.call("get_pipeline_state", args);
+    expect(atGate.isError).toBeFalsy();
+    expect(JSON.parse(atGate.text).handoff.tickets).toEqual([
+      { id: "TICKET-001", story_points: 1, depends_on: [], acceptance_ids: ["AC-001"] },
+      { id: "TICKET-002", story_points: 2, depends_on: ["TICKET-001"], acceptance_ids: ["AC-002"] },
+      { id: "TICKET-003", story_points: 3, depends_on: ["TICKET-002"], acceptance_ids: ["AC-003"] },
+    ]);
+    const planAtGate = await server.call("get_pipeline_state", planArgs);
+    expect(readFileSync(join(output, "07-jira-tickets.md"), "utf8")).toContain("#### TICKET-003 — Deliver AC-003");
+
+    let envelope = await call<Envelope>(server, "submit_action_result", {
+      run_id, result: { kind: "user_answer", question_id: action.question_id, selected: ["PRD only"] },
+    });
+    for (let count = 0; envelope.current_step !== "complete" && count < 10; count++) {
+      const result = host.respond(NextActionSchema.parse(envelope.action));
+      if (!result) break;
+      envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    }
+    expect(envelope).toMatchObject({ current_step: "complete", action: { kind: "done" } });
+    await server.close();
+    server = await start();
+    expect((await server.call("get_pipeline_state", args)).text).toBe(atGate.text);
+    expect((await server.call("get_pipeline_state", planArgs)).text).toBe(planAtGate.text);
+
+    const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+    const done = NextActionSchema.parse(envelope.action);
+    const reread = async (checkpoint: PipelineState) => {
+      await server!.close();
+      files.write(checkpoint, done);
+      server = await start();
+      return Promise.all([args, planArgs].map(request => server!.call("get_pipeline_state", request)));
+    };
+    const [handoff, plan] = await reread({ ...state, passed_define: undefined });
+    for (const refused of [handoff!, plan!]) {
+      expect(refused.isError).toBe(true);
+      expect(JSON.parse(refused.text)).toMatchObject({ error: { code: "define_not_pending" } });
+    }
+    if (state.jira_result?.status !== "passed") throw new Error("Expected generated tickets");
+    const [first, second] = state.jira_result.tickets;
+    const estimate = { ...state, jira_result: { status: "passed" as const, tickets: [{ ...first!, story_points: 5 }, ...state.jira_result.tickets.slice(1)] } };
+    for (const response of await reread(estimate)) {
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready", message: expect.stringContaining("no longer projects") } });
+    }
+    const cycle = { ...state, jira_result: { status: "passed" as const, tickets: [{ ...first!, depends_on: [second!.id] }, ...state.jira_result.tickets.slice(1)] } };
+    await server.close();
+    expect(() => files.write(cycle, done)).not.toThrow();
+    server = await start();
+    const refusedCycle = await server.call("get_pipeline_state", args);
+    expect(refusedCycle.isError).toBe(true);
+    expect(JSON.parse(refusedCycle.text)).toMatchObject({
+      error: { code: "define_document_invalid", message: expect.stringContaining("TICKET_DEPENDENCY_CYCLE") },
+    });
+  } finally {
+    await server?.close();
+    rmSync(output, { recursive: true, force: true });
+  }
+}, 120_000);
+
 async function assertReviewRefusal(
   server: StdioServer, args: Record<string, unknown>, code: string,
 ) {

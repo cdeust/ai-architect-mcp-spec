@@ -2,6 +2,7 @@ import type { McpServer, RegisteredTool, ToolCallback } from "@modelcontextproto
 import { z } from "zod";
 import {
   MAX_RESPONSE_CHARS,
+  defineEnvelopeText,
   readDefineHandoff,
   buildVerifiedPlan,
   ReviewIdSchema,
@@ -30,13 +31,13 @@ const handleGetPipelineState: ToolCallback<ReturnType<typeof getPipelineStateInp
     const state = found.run.state;
     if (format === "define_handoff_v1" || format === "verified_plan_v1" || format === "implementation_review_v1") {
       const define = readDefineHandoff(state, found.run.action);
-      const sourceText = JSON.stringify(define);
+      const sourceText = "error" in define ? JSON.stringify(define) : defineEnvelopeText(define.handoff);
       if (sourceText.length > MAX_RESPONSE_CHARS) return planningSizeError("define");
       if (format === "define_handoff_v1" || "error" in define) {
         return { content: [{ type: "text" as const, text: sourceText }], isError: "error" in define };
       }
 
-      const plan = buildVerifiedPlan(define.handoff, state.feature_description, plan_step);
+      const plan = buildVerifiedPlan(define.handoff, define.intent, plan_step);
       const text = JSON.stringify(plan);
       if (text.length > MAX_RESPONSE_CHARS) return planningSizeError("plan");
       if (format === "verified_plan_v1" || "error" in plan) {
@@ -133,7 +134,8 @@ export function registerGetPipelineState(server: McpServer): RegisteredTool {
     "next_offset is the invocation_offset to read them from. It is " +
     "paged under the same budget: each page holds whole invocations from " +
     "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-    "page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. " +
+    "page, null on the last one. format:'define_handoff_v1' returns validated planning data, with the ticket estimates and prerequisites when the run generated them, " +
+    "from the pending specification question or the snapshot kept when the run finished. " +
     "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
     "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.",
     getPipelineStateInput(),
