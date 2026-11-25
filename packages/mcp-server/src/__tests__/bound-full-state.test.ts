@@ -273,6 +273,46 @@ describe("boundFullStateResponse — aggregate overshoot fix", () => {
     expect(wireChars(bounded)).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
   });
 
+  it("sheds generated ticket prose and the Define snapshot last, with where to read them", () => {
+    const base = newPipelineState({ run_id: "run_tickets", feature_description: "tickets", skip_preflight: true });
+    const ticket = (index: number) => ({
+      id: `TICKET-${String(index + 1).padStart(3, "0")}`, story_points: 3, depends_on: [], acceptance_ids: ["AC-001"],
+      title: "t", description: bigString(4_000), source: "FR-001", phase: 1, epic: "e",
+    });
+    const handoff = {
+      version: 1 as const, run_id: "run_tickets",
+      requirements: [{ id: "FR-001", text: bigString(100_000) }],
+      acceptance: [{ id: "AC-001", text: "Read it (FR-001).", requirement_ids: ["FR-001"] }],
+    };
+    const state = PipelineStateSchema.parse({
+      ...base,
+      jira_result: { status: "passed", tickets: Array.from({ length: 20 }, (_, index) => ticket(index)) },
+      passed_define: { handoff, intent: "tickets" },
+    });
+    const out = boundFullStateResponse(state);
+    expect(out.__bounded.final_chars).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+    expect(out.__bounded.applied.map(({ field }) => field)).toEqual(["jira_result", "passed_define"]);
+    expect(out.state.jira_result).toMatchObject({ omitted: true, hint: expect.stringContaining("07-jira-tickets.md") });
+    expect(out.state.passed_define).toMatchObject({ omitted: true, hint: expect.stringContaining("define_handoff_v1") });
+    const small = PipelineStateSchema.parse({ ...base, jira_result: { status: "passed", tickets: [ticket(0)] } });
+    expect(boundFullStateResponse(small).state.jira_result).toEqual(small.jira_result);
+  });
+
+  it("sheds the Define snapshot only when the ticket stub is not enough", () => {
+    const base = newPipelineState({ run_id: "run_tickets", feature_description: "tickets", skip_preflight: true });
+    const state = PipelineStateSchema.parse({ ...base, jira_result: { status: "passed", tickets: Array.from({ length: 30 }, (_, index) => ({
+      id: `TICKET-${String(index + 1).padStart(3, "0")}`, story_points: 3, depends_on: [], acceptance_ids: ["AC-001"],
+      title: "t", description: bigString(4_000), source: "FR-001", phase: 1, epic: "e",
+    })) }, passed_define: { intent: "tickets", handoff: {
+      version: 1, run_id: "run_tickets",
+      requirements: [{ id: "FR-001", text: "Keep it." }],
+      acceptance: [{ id: "AC-001", text: "Read it (FR-001).", requirement_ids: ["FR-001"] }],
+    } } });
+    const out = boundFullStateResponse(state);
+    expect(out.__bounded.applied.map(({ field }) => field)).toEqual(["jira_result"]);
+    expect(out.state.passed_define).toEqual(state.passed_define);
+  });
+
   it("does not mutate the input state (no aliasing)", () => {
     const original = worstCaseState();
     const groundingRef = original.codebase_grounding;

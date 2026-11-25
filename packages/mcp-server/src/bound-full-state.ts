@@ -295,6 +295,22 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     }
   }
 
+  // ── Shed 4: the structured ticket result and the passed Define snapshot ───
+  // Generated ticket prose has no input cap of its own. The tickets are in the
+  // exported 07-jira-tickets.md and the snapshot is served by
+  // format:"define_handoff_v1", so a diagnostic response can drop both.
+  const stubs = {
+    jira_result: "tickets are in the exported 07-jira-tickets.md (written_files)",
+    passed_define: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1")`,
+  } as const;
+  for (const field of ["jira_result", "passed_define"] as const) {
+    if (!fits() && work[field] != null) {
+      const reclaimed = serializedChars(work[field]);
+      work[field] = { omitted: true, chars: reclaimed, hint: stubs[field] } satisfies OmittedStub;
+      applied.push({ field, kind: "omitted", reclaimed_chars: reclaimed });
+    }
+  }
+
   return {
     state: work,
     __bounded: {
