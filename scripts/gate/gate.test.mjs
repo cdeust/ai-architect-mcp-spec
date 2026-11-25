@@ -679,11 +679,27 @@ describe("guardDecision", () => {
       ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 6],
       ["gh api repos/o/r/merges --field base=main --field head=x", 6],
       ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 7],
+      ["gh pr edit 3 --add-label owner-approved", 8],
+      ["gh issue edit 3 --add-label bug,owner-approved", 8],
+      ["gh pr edit 3 --add-label 'owner-approved'", 8],
+      ["gh label create owner-approved", 9],
+      ["gh api repos/o/r/issues/3/labels -f 'labels[]=owner-approved'", 10],
+      ["gh api -X DELETE repos/o/r/issues/3/labels/hold", 10],
     ];
     for (const [command, rule] of cases) {
       expect(decide(command), command).toEqual({ kind: "refuse", reason: why(rule) });
     }
-    expect(guard.refuse).toHaveLength(8);
+    expect(guard.refuse).toHaveLength(11);
+    expect(why(8)).toContain("owner-approved");
+    // Positive control: other labels and reading labels stay allowed.
+    for (const command of [
+      "gh pr edit 3 --add-label claude-rereview",
+      "gh pr edit 3 --remove-label owner-approved",
+      "gh api repos/o/r/issues/3/labels",
+      "gh label list",
+    ]) {
+      expect(decide(command), command).toEqual({ kind: "allow" });
+    }
     expect(why(0)).toContain("--no-verify");
     expect(why(3)).toContain("forced push");
     expect(why(4)).toContain("merges by hand");
