@@ -59,10 +59,16 @@ As of issue #29, every release (`.github/workflows/release.yml`) ships:
   `pnpm-lock.yaml`) enumerates the workspace dependency graph and accompanies
   every release.
 
-- **Continuous checks** — `pnpm audit --prod --audit-level high` and
-  dependency review on PRs (`ci.yml`), CodeQL for JavaScript/TypeScript on a
-  schedule (`codeql.yml`), and OpenSSF Scorecard (`scorecard.yml`). The
-  Scorecard number is a recorded baseline, not a badge.
+- **Dependency audit** — On pull requests and pushes to `main`, the Pipeline
+  unit job runs `pnpm audit --prod --audit-level high` against the workspace
+  lockfile before the frozen install and build. A high or critical
+  production advisory or a failed audit command stops the job.
+  [Unit command](ci.json) · [Pipeline](.github/workflows/pipeline.yml)
+
+- **Code scanning** — CodeQL scans JavaScript and TypeScript on pull requests
+  to `main`, pushes to `main` and a weekly schedule. OpenSSF Scorecard records
+  the repository's supply-chain practices.
+  [CodeQL](.github/workflows/codeql.yml) · [Scorecard](.github/workflows/scorecard.yml)
 
 **Not published to npm.** All workspace packages under `packages/` are
 `private: true`; nothing is published to the npm registry, so npm provenance
