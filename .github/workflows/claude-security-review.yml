@@ -22,24 +22,28 @@ jobs:
   security-review:
     name: Claude security review
     # Same trust rule as claude-review.yml: a head branch of this repository
-    # (an author with write access), not a draft, not Dependabot. Fork code
-    # never runs here, and no secret reaches it.
+    # (an author with write access), not a draft, and Dependabot neither as
+    # actor nor as author. Fork code never runs here, and no secret reaches it.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && !github.event.pull_request.draft
       && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30 # source: operational cap, the real bound on one review's cost.
     permissions:
       contents: read
-      pull-requests: write # the review's tracking and inline comments
+      pull-requests: read # the diff, and the engine's actor check
       actions: read # the budget reads this workflow's earlier runs
     outputs:
       run: ${{ steps.decide.outputs.run }}
+      round: ${{ steps.budget.outputs.round }}
+      cap: ${{ steps.budget.outputs.cap }}
+      findings: ${{ steps.engine.outputs.structured_output }}
     steps:
-      # Every file this job executes or hands to the model comes from main.
-      # The engine then checks the pull request head out in this workspace, so
-      # no step of this job may run after it: the check lives in the next job.
+      # Every file this job executes or hands to the model comes from main. In
+      # agent mode the engine never checks the pull request head out, and the
+      # model publishes nothing: the publish job posts what it returns.
       - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -161,52 +165,54 @@ jobs:
           fi
           bwrap --version
       # The engine. Everything above is the guard and stays when the engine
-      # changes (docs/claude-security-review.md, "Engine").
+      # changes (docs/claude-security-review.md, "Engine"). Agent mode: no
+      # tracking comment, no comment tool, no checkout of the PR head.
       - name: Claude security review
+        id: engine
         if: steps.decide.outputs.run == 'true'
         uses: anthropics/claude-code-action@f431adaf77e0fecf918431e75a2b5b45b85af002 # v1.0.283
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # The workflow's own token, not the Claude App's: comments come from
-          # github-actions[bot], whose text the merge resolver never reads as a
-          # verdict, and the session holds no contents: write token.
           github_token: ${{ github.token }}
-          track_progress: true
-          # Only the owner's comments reach the prompt: on a public repository
-          # anyone can comment, and tag mode puts PR comments in the prompt.
-          include_comments_by_actor: ${{ github.repository_owner }}
+          # Pushes by these Apps are reviewed too; with bots allowed the action
+          # authenticates git through a helper, so .git/config holds no token.
           allowed_bots: "claude[bot],chatgpt-codex-connector[bot]"
           prompt: ${{ steps.prompt.outputs.prompt }}
           claude_args: |
             --strict-mcp-config
             --permission-mode dontAsk
-            --allowedTools "Task,mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Read,Glob,Grep,LS,Task"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings","summary"],"properties":{"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["file","line","severity","category","description","exploit_scenario","recommendation","confidence"],"properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["HIGH","MEDIUM"]},"category":{"type":"string"},"description":{"type":"string"},"exploit_scenario":{"type":"string"},"recommendation":{"type":"string"},"confidence":{"type":"integer"}}}}}}'
             --model "claude-opus-5-5"
 
-  verify:
-    name: Verify the security review summary
+  publish:
+    name: Publish the security review
     needs: security-review
     if: needs.security-review.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5 # source: operational cap; a few API calls.
+    timeout-minutes: 5 # source: operational cap; one validation and one API call.
     permissions:
       contents: read
-      pull-requests: read # reads the summary comment
+      pull-requests: write # posts the one review comment
     steps:
-      # A fresh job on main: the review job's workspace holds the PR head.
+      # A fresh job on main with no secret: it validates the model's JSON,
+      # neutralises mentions, verdict lines and HTML, and posts one comment.
       - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 1
           persist-credentials: false
-      # A run that published no summary fails, so the budget does not count it.
-      - name: Verify the published summary
+      - name: Publish the validated findings
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          RUN_ID: ${{ github.run_id }}
-        run: python3 -I scripts/ci_security_review.py verify
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ROUND: ${{ needs.security-review.outputs.round }}
+          CAP: ${{ needs.security-review.outputs.cap }}
+          FINDINGS: ${{ needs.security-review.outputs.findings }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: python3 -I scripts/ci_security_review.py publish

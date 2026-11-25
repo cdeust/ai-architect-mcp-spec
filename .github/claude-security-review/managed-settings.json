@@ -32,7 +32,7 @@
       "Read(~/.docker/**)",
       "Read(~/.npmrc)",
       "Read(~/.gitconfig)",
-      "Read(**/.git/config)"
+      "Read(**/.git/**)"
     ]
   }
 }
