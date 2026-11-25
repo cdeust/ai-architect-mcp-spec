@@ -13,6 +13,8 @@
 import { describe, expect, it } from "vitest";
 import { makeCannedDispatcher } from "../canned-dispatcher.js";
 import type { ActionResult, NextAction } from "../types/actions.js";
+import { JiraDraftSchema } from "@prd-gen/core";
+import { buildJiraPrompt } from "@prd-gen/meta-prompting";
 
 describe("makeCannedDispatcher routing", () => {
   const dispatch = makeCannedDispatcher({
@@ -159,7 +161,7 @@ describe("makeCannedDispatcher routing", () => {
     expect(out.responses[0].raw_text).toContain("FR-001");
   });
 
-  it("spawn_subagents routes jira_generation_engineer to JIRA placeholder", () => {
+  it("spawn_subagents routes jira_generation_engineer to chained tickets for the source criteria", () => {
     const action: NextAction = {
       kind: "spawn_subagents",
       batch_id: "jira_generation",
@@ -169,7 +171,10 @@ describe("makeCannedDispatcher routing", () => {
           invocation_id: "jira_generation_engineer",
           subagent_type: "zetetic-team-subagents:engineer",
           description: "jira",
-          prompt: "...",
+          prompt: buildJiraPrompt({ feature_description: "Sign-in", source_sections: [
+            { section_type: "requirements", content: "- FR-001: Sign in (AC-009 is not a criterion here)." },
+            { section_type: "acceptance_criteria", content: "- AC-002: Signs in.\n- AC-003: Sees an error." },
+          ] }),
           isolation: "none",
         },
       ],
@@ -178,7 +183,11 @@ describe("makeCannedDispatcher routing", () => {
       ActionResult,
       { kind: "subagent_batch_result" }
     >;
-    expect(out.responses[0].raw_text).toContain("JIRA");
+    const { tickets } = JiraDraftSchema.parse(JSON.parse(out.responses[0].raw_text!));
+    expect(tickets.map(({ id, acceptance_ids, depends_on }) => ({ id, acceptance_ids, depends_on }))).toEqual([
+      { id: "TICKET-001", acceptance_ids: ["AC-002"], depends_on: [] },
+      { id: "TICKET-002", acceptance_ids: ["AC-003"], depends_on: ["TICKET-001"] },
+    ]);
   });
 
   it("spawn_subagents falls through to the synthetic-response default for unknown prefixes", () => {

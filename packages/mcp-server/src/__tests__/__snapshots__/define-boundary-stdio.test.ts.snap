@@ -127,7 +127,6 @@ exports[`resumes the semantically empty specification at Define without starting
   "artifacts": [
     "01-prd.md",
     "05-testing.md",
-    "07-jira-tickets.md",
     "00-run-notes.md",
   ],
   "pendingDecision": {
@@ -175,7 +174,6 @@ exports[`resumes the semantically empty specification at Define without starting
   "jira_generation/spawn_subagents/jira_generation",
   "file_export/write_file/01-prd.md",
   "file_export/write_file/05-testing.md",
-  "file_export/write_file/07-jira-tickets.md",
   "file_export/write_file/00-run-notes.md",
   "implementation_gate/ask_user/implementation_gate",
 ]

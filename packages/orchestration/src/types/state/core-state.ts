@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AgentIdentitySchema,
   ClaimSchema,
+  JiraTicketSchema,
   PRDContextSchema,
   REQUEST_SIZE_DEFAULT,
   RequestSizeSchema,
@@ -472,6 +473,11 @@ export const PipelineStateSchema = z.object({
    * source: design-phases-3-5.md §2.1.
    */
   post_specs: PostSpecsStateSchema.nullable().default(null),
+  // Absent on checkpoints made by the Markdown-only ticket generator.
+  jira_result: z.discriminatedUnion("status", [
+    z.strictObject({ status: z.literal("passed"), tickets: z.array(JiraTicketSchema).min(1) }),
+    z.strictObject({ status: z.literal("failed"), reason: z.string() }),
+  ]).optional(),
   /**
    * Judge-panel budget override for self-check's multi-judge verification
    * batch. Composition-root-injected only (mirrors `retry_policy`); the

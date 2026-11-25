@@ -61,7 +61,7 @@
 import type { StepHandler } from "../runner.js";
 import { appendError, type PipelineState } from "../types/state.js";
 import { plannedSections, runRequestSize } from "../section-plan.js";
-import { JIRA_SOURCE_TYPES } from "./jira-generation.js";
+import { JIRA_SOURCE_TYPES, NO_JIRA_SOURCES } from "./jira-generation.js";
 import {
   SECTION_DISPLAY_NAMES,
   SECTION_ORDER,
@@ -144,7 +144,10 @@ function reasonForSectionTypes(
  * from".
  */
 function jiraSkipReason(state: PipelineState): SkipReason {
-  const subagentFailed = state.errors.some((e) => e.startsWith("[jira_generation] failed"));
+  // A checkpoint of the Markdown-only generator has no jira_result: read its errors.
+  const subagentFailed = state.jira_result
+    ? state.jira_result.status === "failed" && state.jira_result.reason !== NO_JIRA_SOURCES
+    : state.errors.some((e) => e.startsWith("[jira_generation] failed"));
   const sources = state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type));
   const sourcesFailed =
     sources.some((s) => s.status === "failed") && !sources.some(exportable);
