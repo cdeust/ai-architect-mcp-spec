@@ -28,6 +28,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { cpuMillis } from "./cpu-clock.js";
 import { validateSection } from "../index.js";
 import { checkProseSPTotal, checkSPArithmetic } from "../hard-output-rules/rules/sp-rules.js";
 import { checkDocumentDependencyTargetsDefined } from "../hard-output-rules/rules/dependency-target-rules.js";
@@ -45,7 +46,8 @@ const MIN_SAMPLE_MS = 0.5;
 
 /**
  * Growth ratio between `large` and `small`, taken from the FASTEST observation
- * of each size.
+ * of each size, in CPU time (cpu-clock.ts) rather than wall-clock time: waiting
+ * for a core under load is not work the code did.
  *
  * The minimum, not the median, because scheduler noise and GC pauses only ever
  * ADD time: the fastest run of a fixed workload is the one least perturbed by
@@ -79,13 +81,13 @@ function growthRatio(run: (input: string) => void, small: string, large: string,
   let fastestLarge = Infinity;
 
   for (let i = 0; i < pairs; i++) {
-    const startedSmall = performance.now();
+    const startedSmall = cpuMillis();
     run(small);
-    fastestSmall = Math.min(fastestSmall, performance.now() - startedSmall);
+    fastestSmall = Math.min(fastestSmall, cpuMillis() - startedSmall);
 
-    const startedLarge = performance.now();
+    const startedLarge = cpuMillis();
     run(large);
-    fastestLarge = Math.min(fastestLarge, performance.now() - startedLarge);
+    fastestLarge = Math.min(fastestLarge, cpuMillis() - startedLarge);
   }
 
   return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
@@ -126,6 +128,38 @@ function expectSubQuadratic(build: (n: number) => string, section: Parameters<ty
   const ratio = growthRatio((input) => validateSection(input, section), small, large);
   expect(ratio).toBeLessThan(QUADRATIC_GROWTH_CEILING);
 }
+
+describe("the growth estimator", () => {
+  // Positive control: a worker that really is quadratic must still exceed the
+  // ceiling, or an estimator made robust to load would also be blind.
+  it("still reports a quadratic worker above the ceiling", () => {
+    // source: 3,000 and 6,000 characters give about 9 M and 36 M inner steps, a few
+    // milliseconds of CPU on one core, large against the 0.5 ms floor.
+    const quadratic = (input: string) => {
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) for (let j = 0; j < input.length; j++) sum += input.charCodeAt(j) ^ i;
+      if (sum === 0.5) throw new Error("unreachable");
+    };
+    const small = "a".repeat(3_000);
+    const large = "a".repeat(6_000);
+    quadratic(small);
+    quadratic(large);
+    expect(growthRatio(quadratic, small, large)).toBeGreaterThan(QUADRATIC_GROWTH_CEILING);
+  });
+
+  it("reports a linear worker below the ceiling", () => {
+    const linear = (input: string) => {
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input.charCodeAt(i);
+      if (sum === 0.5) throw new Error("unreachable");
+    };
+    const small = "a".repeat(2_000_000);
+    const large = "a".repeat(4_000_000);
+    linear(small);
+    linear(large);
+    expect(growthRatio(linear, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+});
 
 describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
   it("reads long lists with isolated mentions of HTML blockquote tags", () => {

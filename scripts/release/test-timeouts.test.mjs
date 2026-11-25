@@ -72,10 +72,11 @@ describe("the wall-clock limits of the test suite", () => {
     for (const [, value] of copies) expect(value).toBe(CHILD_TIMEOUT_MS);
   });
 
-  it("sets the test timeout of every project except the delivery gate", async () => {
+  it("sets the test timeout of every project and of the perf run, except the delivery gate", async () => {
     const root = readFileSync(join(ROOT, "vitest.config.mts"), "utf8");
     const projects = [...root.matchAll(/"\.\/([^"]+vitest\.config\.m?ts)"/g)].map(m => m[1]).filter(p => !p.startsWith("scripts/gate/"));
-    expect(projects.length).toBeGreaterThanOrEqual(10);
+    projects.push("vitest.perf.config.ts"); // run alone by pnpm test:perf, outside the projects list
+    expect(projects.length).toBeGreaterThanOrEqual(11);
     for (const project of projects) {
       const config = (await import(pathToFileURL(join(ROOT, project)).href)).default;
       expect({ project, timeout: config.test?.testTimeout }).toEqual({ project, timeout: TEST_TIMEOUT_MS });
