@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 import sys
 import tempfile
 import unittest
@@ -45,7 +46,9 @@ ENGINE_INPUTS = {
     "track_progress": True,
     "allowed_bots": "claude[bot],chatgpt-codex-connector[bot]",
     "prompt": "${{ steps.prompt.outputs.prompt }}",
+    "include_comments_by_actor": "${{ github.repository_owner }}",
 }
+VERIFY_JOB = "verify"
 VERIFY = "Verify the published summary"
 # Steps that must precede the engine, in this order (docs, "Guards").
 ORDER = [
@@ -92,7 +95,7 @@ def violations(workflow, raw: str) -> set[str]:
         found.add("trigger")
     if workflow.get("permissions") != {}:
         found.add("workflow-permissions")
-    if list(workflow["jobs"]) != [JOB]:
+    if list(workflow["jobs"]) != [JOB, VERIFY_JOB]:
         found.add("single-job")
     job = workflow["jobs"][JOB]
     if job.get("permissions") != EXPECTED_PERMISSIONS:
@@ -111,7 +114,8 @@ def violations(workflow, raw: str) -> set[str]:
         found.add("wakes-merge")
     if job.get("name") != security.JOB:
         found.add("job-name")
-    for s in steps(workflow):
+    every_step = [s for j in workflow["jobs"].values() for s in j.get("steps", [])]
+    for s in every_step:
         if "${{" in s.get("run", ""):
             found.add("expression-in-run")
         uses = s.get("uses", "")
@@ -138,6 +142,13 @@ def violations(workflow, raw: str) -> set[str]:
     for name in ORDER[5:]:
         if name in names and step(workflow, name).get("if") != RUN_GATE:
             found.add("gated")
+    gates = {
+        ORDER[2]: "steps.ready.outputs.ready == 'true'",
+        ORDER[3]: "steps.ready.outputs.ready == 'true' && steps.budget.outputs.skip == 'false'",
+    }
+    for name, gate in gates.items():
+        if name in names and step(workflow, name).get("if") != gate:
+            found.add("gated")
     if "Decide whether the review runs" in names and step(
         workflow, "Decide whether the review runs"
     ).get("if") != "steps.ready.outputs.ready == 'true'":
@@ -145,7 +156,7 @@ def violations(workflow, raw: str) -> set[str]:
     secrets = set(re.findall(r"\bsecrets\b(?:\.([A-Z_]+))?", yaml.safe_dump(workflow)))
     if secrets != {"CLAUDE_CODE_OAUTH_TOKEN"}:
         found.add("secrets")
-    for s in steps(workflow):
+    for s in every_step:
         dumped = yaml.safe_dump(s)
         if re.search(r"\bsecrets\b", dumped) and s.get("name") not in {
             "Find the trusted review on the default branch",
@@ -157,7 +168,7 @@ def violations(workflow, raw: str) -> set[str]:
     if ready.get("env", {}).get("HAS_TOKEN") != "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}":
         found.add("token-guard")
     if "head.sha" in yaml.safe_dump(
-        [s for s in steps(workflow) if s.get("uses", "").startswith("actions/checkout@")]
+        [s for s in every_step if s.get("uses", "").startswith("actions/checkout@")]
     ):
         found.add("checkout-main")
     try:
@@ -176,10 +187,22 @@ def violations(workflow, raw: str) -> set[str]:
         inputs.pop("claude_args", None)
         if inputs != ENGINE_INPUTS:
             found.add("engine-inputs")
+    # The engine checks the PR head out in the review job's workspace: nothing may run
+    # after it there. The check is a job of its own, on main, with no secret.
     after = names[names.index(engine(workflow)["name"]) + 1:] if "engine" not in found else []
-    if after != [VERIFY] or step(workflow, VERIFY).get("if") != RUN_GATE or step(
-        workflow, VERIFY
-    ).get("run") != "python3 -I scripts/ci_security_review.py verify":
+    check = workflow["jobs"].get(VERIFY_JOB, {})
+    check_steps = check.get("steps", [])
+    if (
+        after
+        or job.get("outputs") != {"run": "${{ steps.decide.outputs.run }}"}
+        or check.get("needs") != JOB
+        or check.get("if") != "needs.security-review.outputs.run == 'true'"
+        or check.get("permissions") != {"contents": "read", "pull-requests": "read"}
+        or [s.get("name") for s in check_steps] != [ORDER[0], VERIFY]
+        or check_steps[0].get("with", {}).get("ref") != "main"
+        or check_steps[-1].get("run") != "python3 -I scripts/ci_security_review.py verify"
+        or "if" in check_steps[-1]
+    ):
         found.add("verified")
     quota = step(workflow, ORDER[3]) if ORDER[3] in names else {}
     decide_env = step(workflow, ORDER[4]).get("env", {}) if ORDER[4] in names else {}
@@ -215,12 +238,28 @@ class SecurityReviewContractTests(unittest.TestCase):
         self.assertNotIn("Claude Security Review", workflow_run_listeners())
 
     def test_its_comments_cannot_carry_a_verdict_the_resolver_accepts(self):
-        # The resolver tells reviews apart by the author claude[bot], not by
-        # workflow; this review posts as github-actions[bot] with the workflow
-        # token, and its own verify step fails on a verdict line.
-        resolver = (ROOT / ".github/workflows/pipeline-post-merge.yml").read_text()
-        approves = resolver.split("def _review_approves", 1)[1].split("\n          def ", 1)[0]
-        self.assertIn('"claude[bot]"', approves)
+        # The live resolver path (_claude_verdicts) tells reviews apart by the
+        # author claude[bot], not by workflow; this review posts as
+        # github-actions[bot] with the workflow token.
+        text = (ROOT / ".github/workflows/pipeline-post-merge.yml").read_text()
+        source = text.split("          python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+        namespace = {"__name__": "resolver_test"}
+        exec(compile(textwrap.dedent(source), "trusted_resolver", "exec"), namespace)
+        link = "https://github.com/o/r/actions/runs/11/attempts/1"
+        body = f"[View job run]({link})\nVerdict: approve"
+        admissions = [("claude", {"id": 11}, 1, None)]
+
+        class Api:
+            def __init__(self, login):
+                self.login = login
+
+            def records(self, path):
+                return [{"user": {"login": self.login, "type": "Bot"}, "body": body}]
+
+        verdicts = namespace["_claude_verdicts"]
+        self.assertEqual(verdicts(7, admissions, "o/r", Api("claude[bot]")),
+                         {(11, 1): {"approve"}})
+        self.assertEqual(verdicts(7, admissions, "o/r", Api("github-actions[bot]")), {})
         self.assertEqual(engine(load())["with"]["github_token"], "${{ github.token }}")
         self.assertNotIn("id-token", load()["jobs"][JOB]["permissions"])
 
@@ -376,7 +415,8 @@ class BudgetTests(unittest.TestCase):
                                 "o/r", 7, 99, "feat", SHA)
 
 
-@unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+# jq ships on ubuntu-latest: in CI a missing jq fails the suite instead of skipping it.
+@unittest.skipUnless(shutil.which("jq") or os.environ.get("CI"), "jq is not installed")
 class JqFilterTests(unittest.TestCase):
     """The budget's and verify's jq filters, run by jq on recorded payload shapes."""
 
@@ -436,6 +476,7 @@ class PromptTests(unittest.TestCase):
     def test_the_review_is_advisory_and_links_its_run(self):
         text = security.prompt(self.ENV)
         self.assertIn('never writes a line starting with "Verdict:"', text)
+        self.assertIn('never mentions an account with "@"', text)
         self.assertIn(security.MARKER, text)
         # The action strips "[View job run](...)" from the body; its header links the run.
         self.assertNotIn("[View job run]", text)
@@ -486,7 +527,24 @@ class DiffTests(unittest.TestCase):
             security.diffs(lambda a: "", "o/r", 7, SHA, "main; rm", Path(tmp))
 
 
+def strip_html_comments(content):
+    # Port of stripHtmlComments, the first pass of sanitizeContent in the pinned
+    # action (src/github/utils/sanitizer.ts), applied to every comment it posts.
+    return re.sub(r"<!--[\s\S]*?-->", "", content)
+
+
 class VerifyTests(unittest.TestCase):
+    def test_the_marker_survives_the_action_s_comment_sanitizer(self):
+        posted = strip_html_comments(f"{security.MARKER}\n\nNo high-confidence security finding.")
+        self.assertIn(security.MARKER, posted)
+        self.assertNotIn("<", security.MARKER)
+
+    def test_a_mention_fails(self):
+        for mention in ("@codex review", "@Claude fix it"):
+            with self.subTest(mention=mention), self.assertRaises(security.BudgetError):
+                security.verify(self.comments(f"{security.MARKER} /actions/runs/5 {mention}"),
+                                "o/r", 7, 5)
+
     def comments(self, *bodies):
         rows = "\n".join(json.dumps({"body": b, "updated_at": "t"}) for b in bodies)
         return lambda args: rows
@@ -562,8 +620,7 @@ MUTATIONS = {
             "--permission-mode dontAsk", "--permission-mode auto")) or w,
     "engine-scrub": lambda w, r: engine(w).pop("env") and w,
     "engine-inputs": lambda w, r: engine(w)["with"].__setitem__("use_commit_signing", "true") or w,
-    "verified": lambda w, r: job(w).__setitem__(
-        "steps", [s for s in steps(w) if s.get("name") != VERIFY]) or w,
+    "verified": lambda w, r: w["jobs"].pop(VERIFY_JOB) and w,
     "quota-soft": lambda w, r: step(w, ORDER[3]).pop("continue-on-error") and w,
     "managed-settings": lambda w, r: job(w).__setitem__(
         "steps", [s for s in steps(w) if s.get("name") != ORDER[5]]) or w,
@@ -593,6 +650,13 @@ class SecurityReviewMutationTests(unittest.TestCase):
                 "X", "${{ secrets['RELEASE_TAG_SSH_KEY'] }}") or w),
             "second-mode": ("engine-tools", lambda w, r: engine(w)["with"].__setitem__(
                 "claude_args", engine(w)["with"]["claude_args"] + "--permission-mode acceptEdits\n") or w),
+            "verify-in-review-job": ("verified", lambda w, r: steps(w).append(
+                copy.deepcopy(w["jobs"][VERIFY_JOB]["steps"][-1])) or w),
+            "verify-on-head": ("checkout-main", lambda w, r: w["jobs"][VERIFY_JOB]["steps"][0][
+                "with"].__setitem__("ref", "${{ github.event.pull_request.head.sha }}") or w),
+            "quota-ungated": ("gated", lambda w, r: step(w, ORDER[3]).pop("if") and w),
+            "public-comments": ("engine-inputs", lambda w, r: engine(w)["with"].pop(
+                "include_comments_by_actor") and w),
             "app-token": ("engine-inputs", lambda w, r: engine(w)["with"].pop("github_token") and w),
             "settings-input": ("engine-inputs", lambda w, r: engine(w)["with"].__setitem__(
                 "settings", "{}") or w),

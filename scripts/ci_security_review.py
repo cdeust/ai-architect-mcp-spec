@@ -56,7 +56,12 @@ CAP = 3
 INSTRUCTIONS = ROOT / ".github/claude-security-review"
 SCAN = INSTRUCTIONS / "scan-instructions.txt"
 FALSE_POSITIVES = INSTRUCTIONS / "false-positive-filtering.txt"
-MARKER = "<!-- claude-security-review -->"
+# Visible text: the action's comment tool strips HTML comments
+# (sanitizeContent, src/github/utils/sanitizer.ts) before it posts.
+MARKER = "Claude security review (advisory)"
+# A mention in the summary would ask another reviewer to run (`@codex review`
+# is this repository's Codex request channel).
+MENTION = re.compile(r"@(codex|claude)\b", re.IGNORECASE)
 VERDICT = re.compile(r"^\s*Verdict:", re.MULTILINE)
 # Written by the workflow before the action runs. Inside .git, a pull request
 # cannot place or replace them, and the action's checkout leaves them alone.
@@ -142,6 +147,8 @@ def verify(gh: Gh, repo: str, pr: int, run_id: int) -> str:
         raise BudgetError("this run published no security review summary")
     if any(VERDICT.search(body) for body in found):
         raise BudgetError("the security review summary carries a verdict line")
+    if any(MENTION.search(body) for body in found):
+        raise BudgetError("the security review summary mentions a reviewer")
     return found[-1]
 
 
@@ -170,13 +177,13 @@ def prompt(env) -> str:
             FALSE_POSITIVES.read_text(encoding="utf-8").strip(),
             "",
             "PUBLICATION:",
-            "This review is advisory: it never approves, never blocks, and never writes a "
-            'line starting with "Verdict:".',
+            "This review is advisory: it never approves, never blocks, never writes a "
+            'line starting with "Verdict:" and never mentions an account with "@".',
             "Post each kept finding as an inline comment on its line "
             "(mcp__github_inline_comment__create_inline_comment), then write the summary into "
             "your tracking comment (mcp__github_comment__update_claude_comment), including when "
-            f"nothing is kept. Start it with the line {MARKER}, then the heading "
-            '"Claude security review (advisory)", then the kept findings in the format above '
+            f'nothing is kept. Start it with the heading "{MARKER}", then the kept findings '
+            "in the format above "
             'or the line "No high-confidence security finding.". The action adds the link '
             "to this run in the comment's header.",
         ]
