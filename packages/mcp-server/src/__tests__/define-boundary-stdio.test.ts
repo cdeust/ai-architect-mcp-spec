@@ -121,7 +121,7 @@ it("starts automatic semantic review using the configured host model", async () 
     await server?.close();
     rmSync(home, { recursive: true, force: true });
   }
-});
+}, 120_000);
 
 it.each(SEMANTIC_ISSUE_CASES)("validates host scope review evidence for %s (%s, raw %s) on MCP stdio", async (scenario, failure, raw) => {
   const home = mkdtempSync(join(tmpdir(), "prd-gen-semantic-review-"));

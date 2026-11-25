@@ -154,8 +154,21 @@ describe("Jira generation contract", () => {
     expect(refused.jira_result.detail.length).toBeLessThanOrEqual(ERROR_MESSAGE_CHARS);
     expect(refused.jira_result.detail).toMatch(/\(and \d+ more issue\(s\)\)$/);
     expect(refused.errors.every(error => error.length <= ERROR_MESSAGE_CHARS)).toBe(true);
-    const three = submit(JSON.stringify({ tickets: [{ ...first, title: "" }, { ...second, title: "" }] })).state.jira_result;
+    const empty = (id: string) => ({ ...first, id, title: "" });
+    const three = submit(JSON.stringify({ tickets: [empty("TICKET-001"), empty("TICKET-002"), empty("TICKET-003")] })).state.jira_result;
     expect(three).toMatchObject({ detail: expect.not.stringContaining("more issue") });
+    const four = submit(JSON.stringify({ tickets: ["TICKET-001", "TICKET-002", "TICKET-003", "TICKET-004"].map(empty) })).state.jira_result;
+    expect(four).toMatchObject({ detail: expect.stringMatching(/\n\(and 1 more issue\(s\)\)$/) });
+    // A few issues can still be long: a refused key is named in full by the validator.
+    const longKey = submit(JSON.stringify({ tickets: [{ ...first, ["k".repeat(2_000)]: 1 }] })).state;
+    expect(longKey.jira_result).toMatchObject({ detail: expect.stringContaining("kkkk") });
+    if (longKey.jira_result?.status !== "failed") throw new Error("Expected a refusal");
+    expect(longKey.jira_result.detail).toHaveLength(ERROR_MESSAGE_CHARS);
+    const timeout = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation",
+      responses: [{ invocation_id: "jira_generation_engineer", error: "e".repeat(2_000) }],
+    } }).state.jira_result;
+    expect(timeout).toEqual({ status: "failed", cause: "missing", detail: "e".repeat(ERROR_MESSAGE_CHARS) });
   });
 
   it("never echoes a malformed prerequisite from the graph check", () => {

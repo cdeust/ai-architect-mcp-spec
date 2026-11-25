@@ -1,15 +1,14 @@
 import { extractJsonObject, JiraDraftSchema, unknownTicketCriterion, type JiraTicket } from "@prd-gen/core";
 import { z } from "zod";
-import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
 
 /** Issues named in a refusal; the count says how many more there were. */
 const NAMED_ISSUES = 3;
 
-/** A refusal names a few issues and stays within one error entry, whatever the reply's size. */
+/** A refusal names a few issues, whatever the reply's size; jira-generation bounds its length. */
 function describe(error: z.ZodError): string {
   const named = z.prettifyError(new z.ZodError(error.issues.slice(0, NAMED_ISSUES)));
   const more = error.issues.length - NAMED_ISSUES;
-  return (more > 0 ? `${named}\n(and ${more} more issue(s))` : named).slice(0, ERROR_MESSAGE_CHARS);
+  return more > 0 ? `${named}\n(and ${more} more issue(s))` : named;
 }
 
 /**
@@ -23,7 +22,7 @@ export function parseJiraDraft(
   try {
     json = extractJsonObject(raw);
   } catch (error) {
-    return { error: `Expected a JSON object containing tickets: ${(error as Error).message}`.slice(0, ERROR_MESSAGE_CHARS) };
+    return { error: `Expected a JSON object containing tickets: ${(error as Error).message}` };
   }
   const parsed = JiraDraftSchema.safeParse(json);
   if (!parsed.success) return { error: describe(parsed.error) };

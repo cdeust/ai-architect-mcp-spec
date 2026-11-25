@@ -183,6 +183,10 @@ describe("makeCannedDispatcher routing", () => {
       ActionResult,
       { kind: "subagent_batch_result" }
     >;
+    const none = dispatch({ ...action, invocations: [{ ...action.invocations[0]!, prompt: buildJiraPrompt({
+      feature_description: "Sign-in", source_sections: [{ section_type: "requirements", content: "- FR-001: Sign in (AC-009)." }],
+    }) }] }) as Extract<ActionResult, { kind: "subagent_batch_result" }>;
+    expect(JSON.parse(none.responses[0].raw_text!)).toEqual({ tickets: [] });
     const { tickets } = JiraDraftSchema.parse(JSON.parse(out.responses[0].raw_text!));
     expect(tickets.map(({ id, acceptance_ids, depends_on }) => ({ id, acceptance_ids, depends_on }))).toEqual([
       { id: "TICKET-001", acceptance_ids: ["AC-002"], depends_on: [] },

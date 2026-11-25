@@ -335,6 +335,13 @@ describe("boundFullStateResponse — aggregate overshoot fix", () => {
     expect(absent.state.jira_result).toBeUndefined();
   });
 
+  it("never writes a stub for a Define snapshot the state does not hold", () => {
+    const base = newPipelineState({ run_id: "run_tickets", feature_description: bigString(120_000), skip_preflight: true });
+    const out = boundFullStateResponse(PipelineStateSchema.parse(base));
+    expect(out.state.passed_define).toBeUndefined();
+    expect(out.__bounded.applied).toEqual([]);
+  });
+
   it("sheds section content before the ticket result", () => {
     const base = newPipelineState({ run_id: "run_tickets", feature_description: "tickets", skip_preflight: true });
     const state = PipelineStateSchema.parse({

@@ -147,8 +147,10 @@ function reasonForSectionTypes(
  */
 function jiraSkipReason(state: PipelineState): SkipReason {
   // A checkpoint of the Markdown-only generator has no jira_result: read its errors.
-  const subagentFailed = state.jira_result
-    ? state.jira_result.status === "failed" && state.jira_result.cause !== "skipped"
+  // Reached only without a 07: a passed result always renders one.
+  const result = state.jira_result;
+  const subagentFailed = result?.status === "failed"
+    ? result.cause !== "skipped"
     : state.errors.some((e) => e.startsWith(JIRA_FAILED_PREFIX));
   const sources = state.sections.filter((s) => JIRA_SOURCE_TYPES.includes(s.section_type));
   const sourcesFailed =

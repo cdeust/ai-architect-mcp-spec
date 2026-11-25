@@ -187,6 +187,26 @@ describe("the passed Define snapshot", () => {
     expect(done.state.pending_completion).toBeNull();
   });
 
+  it("tells the remembered summary whether the run generated tickets", () => {
+    const summary = (start: PipelineState) => JSON.stringify(finishPrdOnly(start).answered.action);
+    expect(summary(ready(passed()))).toContain("JIRA tickets generated: yes.");
+    expect(summary(ready({ status: "failed", cause: "invalid", detail: "x" }))).toContain("JIRA tickets generated: no.");
+    const legacy = ready();
+    expect(summary(legacy)).toContain("JIRA tickets generated: no.");
+    const withSection = ready();
+    withSection.sections.push({ ...withSection.sections[0]!, section_type: "jira_tickets", content: "# Saved tickets" });
+    expect(summary(withSection)).toContain("JIRA tickets generated: yes.");
+    const emptySection = ready();
+    emptySection.sections.push({ ...emptySection.sections[0]!, section_type: "jira_tickets", content: "" });
+    expect(summary(emptySection)).toContain("JIRA tickets generated: no.");
+  });
+
+  it("reports a document refusal before missing readiness evidence", () => {
+    const state = ready(passed());
+    state.sections = state.sections.filter(section => section.section_type !== "acceptance_criteria");
+    expect(readDefineHandoff({ ...state, pending_completion: null }, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
+  });
+
   it("keeps no snapshot of a refused specification", () => {
     const failed = finishPrdOnly(ready({ status: "failed", cause: "missing", detail: "no response" }));
     expect(failed.done.state.passed_define).toBeUndefined();
