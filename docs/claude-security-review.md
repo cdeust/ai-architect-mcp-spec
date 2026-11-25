@@ -23,8 +23,12 @@ The workflow has two jobs.
    checkout of `main` and holds no secret.
    - It validates that JSON against the schema in `scripts/ci_security_review.py`,
      the one the engine also receives. It checks types, bounds and a confidence of
-     8 or more. Paths are checked in the form the comment will show (NFKC); a path
-     holding a control, format or combining character is refused. A finding that breaks the schema is dropped, and the
+     8 or more. A path must be relative, made of non-empty segments with no `.` or
+     `..` segment and no whitespace at either end of a segment. It must not start
+     with a drive letter or `~`, must not contain `://`, and must not hold a
+     backslash, a backtick or a line break. The comment shows the path in ASCII,
+     with every other character as a JSON escape, so a look-alike or an invisible
+     character cannot pass for `/` or `..`. A finding that breaks the schema is dropped, and the
      drop is counted in the comment. An output whose shape breaks the schema is
      refused.
    - It normalises the text (NFKC, format characters removed). It then neutralises

@@ -87,7 +87,14 @@ MAX_PATH = 200
 MAX_CATEGORY = 80
 COMMENT_LIMIT = 60_000
 SEVERITIES = ("HIGH", "MEDIUM")
-PATH_PATTERN = r"^(?!/)(?!.*(^|/)\.\.(/|$))[^\n\r\t`]+$"
+# A relative path of non-empty segments: no leading "/", "~" or drive letter, no
+# "://", no "." or ".." segment, no empty segment, no whitespace at a segment's ends,
+# no backslash, backtick or line break. Shown as ASCII with escapes (display_path), so
+# no look-alike or invisible character can pass for "/" or "..".
+PATH_PATTERN = (
+    r"^(?![A-Za-z]:)(?!~)(?!.*://)(?!/)(?!.*//)(?!.*/$)"
+    r"(?!(?:.*/)?\.{1,2}(?:/|$))(?!(?:.*/)?\s)(?!.*\s(?:/|$))[^\\`\n\r\t]+$"
+)
 CATEGORY_PATTERN = r"^[a-z][a-z0-9_]*$"
 
 
@@ -351,6 +358,12 @@ def canonical(text: str) -> str:
                    or unicodedata.category(ch) not in {"Cc", "Cf", "Mn", "Me"})
 
 
+def display_path(path: str) -> str:
+    """The path as the comment shows it: ASCII, every other character as a JSON escape,
+    so what is shown is exactly what the model named, look-alikes included."""
+    return neutral(json.dumps(path)[1:-1])
+
+
 def neutral(text: str) -> str:
     """Text the comment can carry: no mention, reference, link, verdict line or HTML."""
     text = canonical(text)
@@ -366,18 +379,13 @@ def _valid(item) -> bool:
         SCHEMA["properties"]["findings"]["items"]["required"]
     ):
         return False
-    # Validated as it will be shown (canonical, as neutral() applies it): NFKC can turn
-    # fullwidth dots into "..", and stripping a combining mark can join "..". A path that
-    # canonical() changes beyond NFKC is refused outright.
-    raw = item["file"]
-    path = canonical(raw) if isinstance(raw, str) else None
+    path = item["file"]
     line, confidence, category = item["line"], item["confidence"], item["category"]
     return (
         isinstance(path, str)
         and 0 < len(path) <= MAX_PATH
         and re.fullmatch(PATH_PATTERN, path) is not None
-        and all(ch.isprintable() for ch in path)
-        and path == unicodedata.normalize("NFKC", raw)
+        and path.isprintable()
         and type(line) is int
         and line >= 0
         and type(confidence) is int
@@ -413,7 +421,7 @@ def findings(raw: str) -> tuple[list[Record], int, str]:
             continue
         kept.append(
             {
-                "file": neutral(item["file"]),
+                "file": display_path(item["file"]),
                 "line": item["line"],
                 "severity": item["severity"],
                 "category": item["category"],

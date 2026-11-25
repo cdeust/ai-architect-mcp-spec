@@ -813,6 +813,19 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(namespace["_claude_verdicts"](
             7, [("claude", {"id": 11}, 1, None)], "o/r", Api()), {})
 
+    def test_a_path_is_shown_exactly_as_named_in_ascii(self):
+        for named, shown in (("docs/caf\u00e9.md", "docs/caf\\u00e9.md"),
+                             ("\u0939\u093f\u0928\u094d\u0926\u0940.md",
+                              "\\u0939\\u093f\\u0928\\u094d\\u0926\\u0940.md"),
+                             ("\ua4f8\ua4f8\u2215etc", "\\ua4f8\\ua4f8\\u2215etc"),
+                             ("a\uff0f\uff0e\uff0e\uff0fb", "a\\uff0f\\uff0e\\uff0e\\uff0fb"),
+                             (".\u0301./b", ".\\u0301./b"), ("src/a.ts", "src/a.ts")):
+            with self.subTest(named=named):
+                body, _ = self.publish(output(finding(file=named)))
+                self.assertIn(f"`{shown}:3`", body)
+                heading = next(line for line in body.splitlines() if line.startswith("### "))
+                self.assertTrue(heading.isascii())
+
     def test_invalid_findings_are_dropped_and_counted_not_fatal(self):
         bad = [
             finding(file="/etc/passwd"), finding(file="a/../../b"), finding(file=""),
@@ -823,9 +836,12 @@ class PublishTests(unittest.TestCase):
             finding(confidence=0), finding(confidence=9.5), finding(severity="LOW"),
             finding(category="Bad Category"), finding(category="command-injection"),
             finding(category="path_traversal\n"), finding(file="src/a.ts\n"),
-            finding(file="a\uff0f\uff0e\uff0e\uff0fb"), finding(file=".\u0301./b"),
-            finding(file="\u0301/etc/x"), finding(file="a/.\u20dd./b"),
-            finding(file="a\u00adb"),
+            finding(file=" /etc/passwd"), finding(file=" ../x"), finding(file="x ../../etc"),
+            finding(file="a/ ../b"), finding(file="a/b "), finding(file="C:/x"),
+            finding(file="..\\etc"), finding(file="~/x"), finding(file="file:///etc/passwd"),
+            finding(file="a//b"), finding(file="./a"), finding(file="a/./b"), finding(file="a/.."),
+            finding(file="a/"), finding(file="a`b"), finding(file="\ud800"),
+            finding(file="\ue000"), finding(file="a\u00adb"), finding(file=3),
             finding(description=3), finding(description="  "), {**finding(), "extra": 1}, "x",
         ]
         for item in bad:
@@ -892,9 +908,10 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(security.SCHEMA["properties"]["summary"]["maxLength"],
                          security.MAX_SUMMARY)
         for path, ok in (("src/a.ts", True), ("/etc/x", False), ("a/../b", False),
-                         ("..", False), ("a/..b", True), ("a`b", False)):
+                         ("..", False), ("a/..b", True), ("a`b", False), ("a/.b/c", True),
+                         ("a b/c", True), (" a", False), ("a\\b", False)):
             with self.subTest(path=path):
-                self.assertEqual(bool(re.match(security.PATH_PATTERN, path)), ok)
+                self.assertEqual(bool(re.fullmatch(security.PATH_PATTERN, path)), ok)
 
 
 def mutate(edit):
