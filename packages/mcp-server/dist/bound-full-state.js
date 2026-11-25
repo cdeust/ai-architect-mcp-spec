@@ -247,8 +247,22 @@ export function boundFullStateResponse(state) {
             });
         }
     }
-    // ── Shed 4: generated tickets, then the kept Define ─────────────────────────
-    // A failed jira_result is small and is a diagnosis: it is kept whole.
+    shedTicketsAndDefine(work, fits, applied);
+    return {
+        state: work,
+        __bounded: {
+            original_chars: originalChars,
+            final_chars: shippedChars(),
+            budget_chars: budget,
+            applied,
+        },
+    };
+}
+/**
+ * Shed 4: generated tickets, then the kept Define. A failed jira_result is
+ * small and is a diagnosis: it is kept whole.
+ */
+function shedTicketsAndDefine(work, fits, applied) {
     const jira = work.jira_result;
     if (!fits() && jira?.status === "passed") {
         const reclaimed = serializedChars(jira.tickets);
@@ -269,15 +283,6 @@ export function boundFullStateResponse(state) {
         };
         applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
     }
-    return {
-        state: work,
-        __bounded: {
-            original_chars: originalChars,
-            final_chars: shippedChars(),
-            budget_chars: budget,
-            applied,
-        },
-    };
 }
 /**
  * Bound the format:"grounding" payload.

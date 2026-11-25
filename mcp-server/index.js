@@ -53413,6 +53413,33 @@ var VerificationPolicySchema = external_exports.object({
   on_cross_model_disagreement: external_exports.enum(["warn", "ask"]).default("ask")
 });
 
+// packages/orchestration/dist/types/state/run-records.js
+var QualityScoreRecordSchema = external_exports.object({
+  prd_context: PRDContextSchema,
+  rules_checked: external_exports.number().int().nonnegative(),
+  rules_passed: external_exports.number().int().nonnegative(),
+  critical_violations: external_exports.number().int().nonnegative(),
+  total_score: external_exports.number().min(0).max(1)
+});
+var ReliabilityObservationRecordSchema = external_exports.object({
+  claim_id: external_exports.string(),
+  judge: AgentIdentitySchema,
+  claim_type: ClaimSchema.shape.claim_type,
+  ground_truth_is_fail: external_exports.boolean(),
+  judge_was_correct: external_exports.boolean(),
+  external_grounding: ClaimSchema.shape.external_grounding
+});
+
+// packages/orchestration/dist/types/state/handoff-state.js
+var HandoffStateFields = {
+  jira_result: JiraResultSchema.optional(),
+  passed_define: external_exports.strictObject({ handoff: DefineHandoffV1Schema, intent: external_exports.string() }).optional()
+};
+function passedDefineInRun(s) {
+  return !s.passed_define || s.passed_define.handoff.run_id === s.run_id;
+}
+var PASSED_DEFINE_FOREIGN = "PipelineState: passed_define belongs to another run.";
+
 // packages/orchestration/dist/types/actions.js
 var ASK_USER_MIN_OPTIONS = 2;
 var ASK_USER_MAX_OPTIONS = 4;
@@ -53640,21 +53667,6 @@ var ActionResultSchema = external_exports.discriminatedUnion("kind", [
 ]);
 
 // packages/orchestration/dist/types/state/core-state.js
-var QualityScoreRecordSchema = external_exports.object({
-  prd_context: PRDContextSchema,
-  rules_checked: external_exports.number().int().nonnegative(),
-  rules_passed: external_exports.number().int().nonnegative(),
-  critical_violations: external_exports.number().int().nonnegative(),
-  total_score: external_exports.number().min(0).max(1)
-});
-var ReliabilityObservationRecordSchema = external_exports.object({
-  claim_id: external_exports.string(),
-  judge: AgentIdentitySchema,
-  claim_type: ClaimSchema.shape.claim_type,
-  ground_truth_is_fail: external_exports.boolean(),
-  judge_was_correct: external_exports.boolean(),
-  external_grounding: ClaimSchema.shape.external_grounding
-});
 var ClarificationTurnSchema = external_exports.object({
   round: external_exports.number().int().min(1),
   // Earlier versions persisted questions of any length. Keep their exact text on resume.
@@ -54056,10 +54068,7 @@ var PipelineStateSchema = external_exports.object({
    * source: design-phases-3-5.md §2.1.
    */
   post_specs: PostSpecsStateSchema.nullable().default(null),
-  // Absent on checkpoints made by the Markdown-only ticket generator.
-  jira_result: JiraResultSchema.optional(),
-  /** The Define projection that passed when the gate advanced (define-handoff.ts withPassedDefine). */
-  passed_define: external_exports.strictObject({ handoff: DefineHandoffV1Schema, intent: external_exports.string() }).optional(),
+  ...HandoffStateFields,
   /**
    * Judge-panel budget override for self-check's multi-judge verification
    * batch. Composition-root-injected only (mirrors `retry_policy`); the
@@ -54082,10 +54091,7 @@ var PipelineStateSchema = external_exports.object({
 }).refine((s) => s.errors.length === s.error_kinds.length, {
   message: "PipelineState: errors[] and error_kinds[] must have the same length (lockstep invariant \u2014 use appendError() to append, never spread directly).",
   path: ["error_kinds"]
-}).refine((s) => !s.passed_define || s.passed_define.handoff.run_id === s.run_id, {
-  message: "PipelineState: passed_define belongs to another run.",
-  path: ["passed_define"]
-});
+}).refine(passedDefineInRun, { message: PASSED_DEFINE_FOREIGN, path: ["passed_define"] });
 
 // packages/orchestration/dist/types/state/helpers.js
 function newPipelineState(input2) {
@@ -106036,6 +106042,18 @@ function boundFullStateResponse(state) {
       });
     }
   }
+  shedTicketsAndDefine(work, fits, applied);
+  return {
+    state: work,
+    __bounded: {
+      original_chars: originalChars,
+      final_chars: shippedChars(),
+      budget_chars: budget,
+      applied
+    }
+  };
+}
+function shedTicketsAndDefine(work, fits, applied) {
   const jira = work.jira_result;
   if (!fits() && jira?.status === "passed") {
     const reclaimed = serializedChars(jira.tickets);
@@ -106056,15 +106074,6 @@ function boundFullStateResponse(state) {
     };
     applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
   }
-  return {
-    state: work,
-    __bounded: {
-      original_chars: originalChars,
-      final_chars: shippedChars(),
-      budget_chars: budget,
-      applied
-    }
-  };
 }
 function boundGroundingResponse(state) {
   const applied = [];
