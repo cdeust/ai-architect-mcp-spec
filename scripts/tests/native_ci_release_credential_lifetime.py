@@ -35,7 +35,6 @@ TAG = "v0.0.0-fixture"
 SUN_PATH_BYTES = 104  # the smaller of the two platform limits, terminating NUL included
 RUNNER_SIGINT_WINDOW_S = 7.5
 RUNNER_SIGTERM_WINDOW_S = 2.5
-TRANSPORT_EXIT_S = 1.0
 OPENSSH_PARENT_CHECK_S = 10  # ssh-agent.c: parent_alive_interval for a command-scoped agent
 
 HOSTILE_SSH_CONFIG = """Host *
@@ -72,9 +71,10 @@ log="$FIXTURE_LOG/ssh.$$"
 [ -z "${FIXTURE_RECORD_AGENT-}" ] || printf '%s' "$SSH_AGENT_PID" > "$FIXTURE_LOG/agent-pid"
 : > "$log.ready"
 # A blocked transport hangs until Git goes away, then ends as a real client would.
+# A blocked transport never ends by itself, like an authenticated ssh session
+# whose shell keeps it alive: only the publisher stopping it ends it.
 if [ -n "${FIXTURE_BLOCK-}" ]; then
-  while kill -0 "$PPID" 2>/dev/null; do sleep 0.05; done
-  exit 255
+  while :; do sleep 0.05; done
 fi
 grep -qx signed=0 "$log.env" || exit 255
 for command; do :; done
@@ -284,15 +284,7 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             if (fixture.log / "agent-starts").exists() else []
         starts = [first for first in starts if first != "-k"]
         self.assertEqual(len(starts), 1, "exactly one signing agent is started: %r" % starts)
-        # At the step's exit only the ssh client, and the shell Git ran it through,
-        # may still be ending (on EOF, below).
-        clients = set()
-        for record in fixture.transports():
-            clients.add(record["pid"])
-            if record["parent_command"] != "git":
-                clients.add(record["parent"])
-        group = [row for row in processes() if row[1] == str(fixture.process.pid)
-                 and not row[2].startswith("Z") and row[0] not in clients and row[4] not in clients]
+        group = [row for row in processes() if row[1] == str(fixture.process.pid) and not row[2].startswith("Z")]
         self.assertEqual(group, [], "a child of the step outlived it")
         for record in fixture.transports():
             self.assertEqual(record["list"], "0", "positive control: the transport reached the live agent")
@@ -306,15 +298,12 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             probe = subprocess.run(["ssh-add", "-l"], cwd=fixture.repo, capture_output=True,
                                    env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]), timeout=10)
             self.assertEqual(probe.returncode, 2, "the same probe that reached the agent no longer does")
-            # The ssh client ends on its own once Git is gone, as a real client does on
-            # EOF; it gets TRANSPORT_EXIT_S, Git and the agent get nothing.
-            shell = record["parent_command"] != "git"
-            git_pid = record["grandparent"] if shell else record["parent"]
-            self.assertFalse(alive(int(git_pid)), "Git outlived the step")
-            deadline = time.monotonic() + TRANSPORT_EXIT_S
-            for pid in (record["pid"], record["parent"]) if shell else (record["pid"],):
-                while alive(int(pid)) and time.monotonic() < deadline:
-                    time.sleep(0.02)
+            # Git, the shell it ran GIT_SSH_COMMAND through (dash keeps one on Linux)
+            # and the ssh client are all gone when the step exits: no grace.
+            chain = [record["pid"], record["parent"]]
+            if record["parent_command"] != "git":
+                chain.append(record["grandparent"])
+            for pid in chain:
                 self.assertFalse(alive(int(pid)), "a transport process outlived the step")
         leftovers = [row for row in processes() if not row[2].startswith("Z")
                      and (str(fixture.root) in row[3] or str(fixture.socket_base) in row[3])]

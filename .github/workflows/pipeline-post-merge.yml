@@ -1816,7 +1816,20 @@ jobs:
 
 
           def git(*args, check=True):
-              return subprocess.run(["git", *args], text=True, capture_output=True, check=check)
+              # Git, the /bin/sh it runs GIT_SSH_COMMAND through and ssh share a new
+              # session: stopping the publisher stops the whole transport, not git alone
+              # (dash keeps the shell, and with it ssh, alive after git is killed).
+              process = subprocess.Popen(["git", *args], text=True, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, start_new_session=True)
+              try:
+                  stdout, stderr = process.communicate()
+              except BaseException:
+                  os.killpg(process.pid, signal.SIGKILL)
+                  process.wait()
+                  raise
+              if check and process.returncode:
+                  raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
+              return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
 
           def validate(tags, sha):
@@ -1912,7 +1925,7 @@ jobs:
 
 
           if __name__ == "__main__":
-              # SystemExit inside subprocess.run kills the running git before unwinding.
+              # SystemExit unwinds through git(), which kills the transport's session.
               signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
               sys.exit(main())
           PY
