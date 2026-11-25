@@ -110,8 +110,8 @@ export interface CannedDispatcherOptions {
  * JSON form buildJiraPrompt requests. The rules' example IDs are not read.
  */
 function fakeJiraTickets(prompt: string): string {
-  const source = /## Source: acceptance_criteria\n([\s\S]*?)(?=\n## Source: |\n<\/source_prd>)/.exec(prompt)?.[1] ?? "";
-  const criteria = [...new Set(source.match(/\bAC-\d{1,9}\b/g) ?? [])];
+  const source = /## Source: acceptance_criteria\n([\s\S]*?)(?=\n## Source: |\n<\/source_prd>)/.exec(prompt)?.[1];
+  const criteria = [...new Set(source?.match(/\bAC-\d{1,9}\b/g) ?? [])];
   const points = [1, 2, 3, 5, 8];
   const tickets = criteria.map((criterion, index) => ({
     id: `TICKET-${String(index + 1).padStart(3, "0")}`,

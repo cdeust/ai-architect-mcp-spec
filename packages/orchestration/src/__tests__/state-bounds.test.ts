@@ -81,7 +81,8 @@ describe("appendError — entry size", () => {
   it("cuts an entry longer than ERROR_MESSAGE_CHARS with a visible mark and keeps one at the limit", () => {
     const long = appendError(freshState(), "x".repeat(ERROR_MESSAGE_CHARS + 1), "structural").errors.at(-1)!;
     expect(long).toHaveLength(ERROR_MESSAGE_CHARS);
-    expect(long.endsWith(TRUNCATED)).toBe(true);
+    expect(TRUNCATED).toBe(" …[truncated]");
+    expect(long.endsWith(" …[truncated]")).toBe(true);
     expect(long.startsWith("x".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length))).toBe(true);
     const exact = "y".repeat(ERROR_MESSAGE_CHARS);
     expect(appendError(freshState(), exact, "structural").errors.at(-1)).toBe(exact);

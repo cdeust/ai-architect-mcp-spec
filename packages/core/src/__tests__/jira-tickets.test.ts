@@ -11,10 +11,14 @@ const first: JiraTicket = {
 };
 const second: JiraTicket = { ...first, id: "TICKET-002", story_points: 8, depends_on: ["TICKET-001"], acceptance_ids: ["AC-001", "AC-002"] };
 
-/** The messages of a refused draft, so each refusal names its cause. */
+/** The messages of a refused draft, so each refusal names its cause. A graph refusal is a custom issue. */
 function issues(tickets: unknown[]): string[] {
   const parsed = JiraDraftSchema.safeParse({ tickets });
-  return parsed.success ? [] : parsed.error.issues.map(({ message }) => message);
+  if (parsed.success) return [];
+  for (const { code, message } of parsed.error.issues) {
+    if (/^TICKET_(?:ID_DUPLICATE|DEPENDENCY_UNKNOWN|DEPENDENCY_CYCLE)/.test(message)) expect(code).toBe("custom");
+  }
+  return parsed.error.issues.map(({ message }) => message);
 }
 const accepted = (tickets: unknown[]) => JiraDraftSchema.safeParse({ tickets }).success;
 
@@ -93,7 +97,7 @@ describe("the ticket graph", () => {
       .error?.issues.map(({ message }) => message)).toEqual(["TICKET_DEPENDENCY_CYCLE"]);
     expect(DefineHandoffV1Schema.safeParse({ ...handoff, tickets: [{ ...handoffTickets[0]!, title: "x" }] }).success).toBe(false);
     expect(DefineHandoffV1Schema.safeParse({ ...handoff, tickets: [{ ...handoffTickets[0]!, acceptance_ids: ["AC-404"] }] })
-      .error?.issues).toMatchObject([{ path: ["tickets"], message: "TICKET_ACCEPTANCE_UNKNOWN: TICKET-001 → AC-404" }]);
+      .error?.issues).toMatchObject([{ code: "custom", path: ["tickets"], message: "TICKET_ACCEPTANCE_UNKNOWN: TICKET-001 → AC-404" }]);
   });
 });
 
