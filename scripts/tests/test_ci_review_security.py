@@ -519,24 +519,23 @@ class JqFilterTests(unittest.TestCase):
                          {"id": 1, "status": "completed", "head_sha": SHA,
                           "created_at": "t", "prs": [7]})
 
-    def test_the_patch_filter_rebuilds_a_diff_per_file(self):
+    def test_the_patch_filter_yields_one_record_per_file(self):
         jq = None
 
         def gh(args):
             nonlocal jq
             if "--jq" in args:
                 jq = args[args.index("--jq") + 1]
-                return "@@ -1 +1 @@"
+                return json.dumps({"filename": "a", "patch": "@@ -1 +1 @@"})
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp:
             security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
-        payload = {"files": [{"filename": "a.ts", "patch": "@@ -1 +1 @@\n-x\n+y"},
-                             {"filename": "b.bin"}]}
-        self.assertEqual(self.jq(jq, payload),
-                         "diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-x\n+y\n"
-                         "diff --git a/b.bin b/b.bin\n"
-                         "[no patch from the API: binary or too large]\n")
+        payload = {"files": [{"filename": "a.ts", "patch": "@@ -1 +1 @@\n-x\n+y", "sha": "1"},
+                             {"filename": "b.bin", "sha": "2"}]}
+        self.assertEqual([json.loads(line) for line in self.jq(jq, payload).splitlines()],
+                         [{"filename": "a.ts", "patch": "@@ -1 +1 @@\n-x\n+y"},
+                          {"filename": "b.bin", "patch": None}])
 
 
 class PromptTests(unittest.TestCase):
@@ -600,7 +599,7 @@ class DiffTests(unittest.TestCase):
             def gh(args, error=error):
                 calls.append(args)
                 if "--jq" in args:
-                    return "diff --git a/x b/x\n@@ -1 +1 @@\n"
+                    return json.dumps({"filename": "x", "patch": "@@ -1 +1 @@"})
                 raise error
 
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:
@@ -613,11 +612,30 @@ class DiffTests(unittest.TestCase):
     def test_patches_with_nothing_readable_stop_the_round(self):
         def gh(args):
             if "--jq" in args:
-                return "diff --git a/x b/x\n[no patch from the API: binary or too large]\n"
+                return "\n".join(json.dumps(r) for r in (
+                    {"filename": "x\n@@ y", "patch": None}, {"filename": "z", "patch": ""},
+                    {"filename": "w", "patch": "  "}))
             raise subprocess.CalledProcessError(1, "gh")
 
+        # A file name holding "\n@@ " is not a hunk: only a non-empty patch counts.
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(security.BudgetError):
             security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+
+    def test_a_file_name_cannot_forge_diff_lines(self):
+        def gh(args):
+            if "--jq" in args:
+                return "\n".join(json.dumps(r) for r in (
+                    {"filename": "x\n+forged\n@@ y", "patch": None},
+                    {"filename": "e", "patch": ""},
+                    {"filename": "a", "patch": "@@ -1 +1 @@"}))
+            raise subprocess.CalledProcessError(1, "gh")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            text = (Path(tmp) / security.PR_DIFF).read_text()
+        self.assertNotIn("\n+forged", text)
+        self.assertIn('diff --git "x\\n+forged\\n@@ y"', text)
+        self.assertIn('diff --git "e"\n[no patch from the API', text)
 
     def test_unreadable_changes_stop_the_round_before_the_engine(self):
         def refuse(args):
@@ -775,6 +793,7 @@ class PublishTests(unittest.TestCase):
             finding(confidence=0), finding(confidence=9.5), finding(severity="LOW"),
             finding(category="Bad Category"), finding(category="command-injection"),
             finding(category="path_traversal\n"), finding(file="src/a.ts\n"),
+            finding(file="a\uff0f\uff0e\uff0e\uff0fb"),
             finding(description=3), finding(description="  "), {**finding(), "extra": 1}, "x",
         ]
         for item in bad:

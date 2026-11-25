@@ -66,7 +66,12 @@ their merge base, at the head this run labels, never at a later push.
 - When GitHub refuses it (too large), the per-file patches of the same compare
   replace it. A note then says that the compare API lists at most 300 files and
   that a file without a patch is not reviewed.
-- When no file has a readable patch, the round stops.
+- The fallback reads the patches as JSON records. Only a non-empty `patch` field
+  counts as readable, and each file name is written as one quoted string, so a
+  name holding a newline can neither fake a hunk nor forge diff lines. When no file
+  has a readable patch, the round stops.
+- The three-dot compare can include more than the PR when its base was rewritten
+  after the head merged it. It never includes less.
 - When neither can be read, the round stops before the engine and spends nothing.
   A clean comment never stands for a review of nothing.
 - It is cut at 1,000,000 bytes, and the cut file says so.

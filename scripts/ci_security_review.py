@@ -285,15 +285,23 @@ PATCHES_NOTE = (
 
 
 def _patches(gh: Gh, repo: str, base_sha: str, head_sha: str) -> str:
-    """Per-file patches of base...head, for a PR whose diff GitHub refuses (too large)."""
-    jq = (
-        '.files[] | "diff --git a/\\(.filename) b/\\(.filename)\\n'
-        '\\(.patch // "[no patch from the API: binary or too large]")"'
-    )
-    text = gh([f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq", jq])
-    if not re.search(r"^@@ ", text, re.MULTILINE):
+    """Per-file patches of base...head, for a PR whose diff GitHub refuses (too large).
+
+    Read as JSON records, so a file name (which may hold a newline) can neither fake
+    a hunk nor pass the readability check: only a non-empty `patch` field counts.
+    """
+    rows = _lines(gh([f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq",
+                      ".files[] | {filename, patch}"]))
+    if not any(isinstance(row.get("patch"), str) and row["patch"].strip() for row in rows):
         raise BudgetError("no file of the pull request has a readable patch")
-    return PATCHES_NOTE + text
+    parts = [PATCHES_NOTE]
+    for row in rows:
+        name = json.dumps(str(row.get("filename", "")))  # one quoted line, whatever it holds
+        patch = row.get("patch")
+        parts.append(f"diff --git {name}\n"
+                     + (patch if isinstance(patch, str) and patch.strip()
+                        else "[no patch from the API: binary or too large]") + "\n")
+    return "".join(parts)
 
 
 FAILURES = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
@@ -352,8 +360,10 @@ def _valid(item) -> bool:
         SCHEMA["properties"]["findings"]["items"]["required"]
     ):
         return False
-    path, line, confidence, category = (item["file"], item["line"], item["confidence"],
-                                        item["category"])
+    # Validated as it will be shown: neutral() applies NFKC, which can turn fullwidth
+    # dots and slashes into "../".
+    path = unicodedata.normalize("NFKC", item["file"]) if isinstance(item["file"], str) else None
+    line, confidence, category = item["line"], item["confidence"], item["category"]
     return (
         isinstance(path, str)
         and 0 < len(path) <= MAX_PATH
