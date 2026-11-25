@@ -318,9 +318,14 @@ class BudgetTests(unittest.TestCase):
         self.budget([run(1, 1)], {1: ["success"]}, calls)
         self.assertEqual(calls[0][0], f"repos/o/r/actions/workflows/{security.WORKFLOW}/runs")
         self.assertIn("branch=feat", calls[0])
+        self.assertIn("event=pull_request", calls[0])
         jq = calls[1][calls[1].index("--jq") + 1]
-        self.assertIn(f'.name == "{security.JOB}"', jq)
-        self.assertIn(f'.name == "{security.ACTION_STEP}"', jq)
+        # The job and its action step share one name: both selections must be there.
+        self.assertEqual(
+            jq,
+            f'[.jobs[] | select(.name == "{security.JOB}") | .steps[]? '
+            f'| select(.name == "{security.ACTION_STEP}") | .conclusion]',
+        )
 
     def test_a_protocol_error_is_not_a_silent_review(self):
         with self.assertRaises(security.BudgetError):
