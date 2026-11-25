@@ -34,3 +34,42 @@ test("an option following a flag or a bare option terminator cannot hide an unkn
   assert.equal(parseFlags(["--model=-one"]).model, "-one");
   assert.equal(parseFlags(["--debug"]).debug, "true");
 });
+
+test("a flag takes no value and an option requires one: a stray or missing argument is refused, never absorbed", () => {
+  // A positional after --debug used to be swallowed and silently turn --debug off.
+  for (const args of [["--debug", "stray"], ["--debug=false"], ["--debug=true"], ["--debug", "--model=m", "stray"]]) {
+    assert.throws(() => parseFlags(args), { constructor: ConfigError, message: /^(Unknown option|Unexpected option value)\.$/ });
+  }
+  // A bare --model used to become the model "true"; every valued option needs its value.
+  for (const option of ["--provider", "--base-url", "--model", "--timeout-ms"]) {
+    for (const args of [[option], [option + "="], [option, "--debug"], [option, "-x"]]) {
+      assert.throws(() => parseFlags(args), { constructor: ConfigError, message: "Option requires a value." });
+    }
+  }
+  assert.throws(() => parseFlags(["--min-agreement"], "calibrate"), { constructor: ConfigError, message: "Option requires a value." });
+  assert.deepEqual({ ...parseFlags(["--debug", "--model", "m", "--debug"]) }, { debug: "true", model: "m" });
+});
+
+test("diagnostics for a stray argument or a missing value never repeat the value", () => {
+  for (const args of [["--debug", "SECRET-ARG"], ["--debug=SECRET-ARG"], ["--model", "--debug=SECRET-ARG"], ["--min-agreement=SECRET-ARG"]]) {
+    for (const entry of ["judge", "calibrate"]) {
+      try {
+        parseFlags(args, entry);
+      } catch (error) {
+        assert.ok(error instanceof ConfigError);
+        assert.ok(!error.message.includes("SECRET-ARG"));
+      }
+    }
+  }
+});
+
+test("--min-agreement accepts only a ratio from 0 to 1, because it sets the admission gate", () => {
+  for (const value of ["0", "0.7", "1", "1.0", ".5", ".55", "0.", "00.5"]) {
+    assert.equal(parseFlags([`--min-agreement=${value}`], "calibrate").minAgreement, value);
+  }
+  for (const value of ["", " ", "abc", "-1", "+0.5", "1.01", "2", "1e0", "0x1", "Infinity", "NaN", "0.5 ", "1.5.2"]) {
+    assert.throws(() => parseFlags([`--min-agreement=${value}`], "calibrate"), { constructor: ConfigError });
+  }
+  assert.throws(() => parseFlags(["--min-agreement=2"], "calibrate"),
+    { constructor: ConfigError, message: "Option --min-agreement must be a number from 0 to 1." });
+});
