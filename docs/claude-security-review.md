@@ -22,8 +22,9 @@ The workflow has two jobs.
 2. **`publish`** has `contents: read` and `pull-requests: write`. It runs on a fresh
    checkout of `main` and holds no secret.
    - It validates that JSON against the schema in `scripts/ci_security_review.py`,
-     the one the engine also receives. It checks types, paths, bounds and a
-     confidence of 8 or more. A finding that breaks the schema is dropped, and the
+     the one the engine also receives. It checks types, bounds and a confidence of
+     8 or more. Paths are checked in the form the comment will show (NFKC); a path
+     holding a control, format or combining character is refused. A finding that breaks the schema is dropped, and the
      drop is counted in the comment. An output whose shape breaks the schema is
      refused.
    - It normalises the text (NFKC, format characters removed). It then neutralises
@@ -68,7 +69,8 @@ their merge base, at the head this run labels, never at a later push.
   that a file without a patch is not reviewed.
 - The fallback reads the patches as JSON records. Only a non-empty `patch` field
   counts as readable, and each file name is written as one quoted string, so a
-  name holding a newline can neither fake a hunk nor forge diff lines. When no file
+  name holding a newline can neither fake a hunk nor forge diff lines. Records are
+  split on `\n` only, because gh writes U+0085 raw inside a value. When no file
   has a readable patch, the round stops.
 - The three-dot compare can include more than the PR when its base was rewritten
   after the head merged it. It never includes less.

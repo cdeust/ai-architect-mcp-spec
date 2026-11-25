@@ -637,6 +637,18 @@ class DiffTests(unittest.TestCase):
         self.assertIn('diff --git "x\\n+forged\\n@@ y"', text)
         self.assertIn('diff --git "e"\n[no patch from the API', text)
 
+    def test_a_blank_patch_shows_the_placeholder(self):
+        def gh(args):
+            if "--jq" in args:
+                return "\n".join(json.dumps(r) for r in (
+                    {"filename": "w", "patch": "  "}, {"filename": "a", "patch": "@@ -1 +1 @@"}))
+            raise subprocess.CalledProcessError(1, "gh")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            text = (Path(tmp) / security.PR_DIFF).read_text()
+        self.assertIn('diff --git "w"\n[no patch from the API', text)
+
     def test_unreadable_changes_stop_the_round_before_the_engine(self):
         def refuse(args):
             raise subprocess.CalledProcessError(1, "gh")
@@ -707,6 +719,24 @@ def finding(**changes):
 
 def output(*items, summary="s"):
     return json.dumps({"findings": list(items), "summary": summary})
+
+
+class LinesTests(unittest.TestCase):
+    def test_a_raw_line_separator_inside_a_value_does_not_split_a_record(self):
+        # gh's encoder writes U+0085 raw; str.splitlines would cut the record there.
+        text = '{"filename": "a\u0085b", "patch": "@@ x\u2028y"}\n{"filename": "c"}\n'
+        self.assertEqual(security._lines(text),
+                         [{"filename": "a\u0085b", "patch": "@@ x\u2028y"}, {"filename": "c"}])
+
+    def test_the_patch_fallback_reads_a_patch_holding_a_raw_line_separator(self):
+        def gh(args):
+            if "--jq" in args:
+                return '{"filename": "a", "patch": "@@ -1 +1 @@\u0085x"}'
+            raise subprocess.CalledProcessError(1, "gh")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            self.assertIn("@@ -1 +1 @@", (Path(tmp) / security.PR_DIFF).read_text())
 
 
 class PublishTests(unittest.TestCase):
@@ -793,7 +823,9 @@ class PublishTests(unittest.TestCase):
             finding(confidence=0), finding(confidence=9.5), finding(severity="LOW"),
             finding(category="Bad Category"), finding(category="command-injection"),
             finding(category="path_traversal\n"), finding(file="src/a.ts\n"),
-            finding(file="a\uff0f\uff0e\uff0e\uff0fb"),
+            finding(file="a\uff0f\uff0e\uff0e\uff0fb"), finding(file=".\u0301./b"),
+            finding(file="\u0301/etc/x"), finding(file="a/.\u20dd./b"),
+            finding(file="a\u00adb"),
             finding(description=3), finding(description="  "), {**finding(), "extra": 1}, "x",
         ]
         for item in bad:

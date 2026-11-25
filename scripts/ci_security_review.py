@@ -342,12 +342,18 @@ def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
     return True
 
 
-def neutral(text: str) -> str:
-    """Text the comment can carry: no mention, reference, link, verdict line or HTML."""
+def canonical(text: str) -> str:
+    """The text as the comment will show it: NFKC, one line ending, no control, format
+    or combining character. Paths are validated on this form."""
     text = unicodedata.normalize("NFKC", text)
     text = LINE_BREAKS.sub("\n", text)
-    text = "".join(ch for ch in text if ch in "\n\t"
+    return "".join(ch for ch in text if ch in "\n\t"
                    or unicodedata.category(ch) not in {"Cc", "Cf", "Mn", "Me"})
+
+
+def neutral(text: str) -> str:
+    """Text the comment can carry: no mention, reference, link, verdict line or HTML."""
+    text = canonical(text)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("[", "\\[").replace("]", "\\]")
     text = text.replace("@", "@" + ZERO_WIDTH)
@@ -360,15 +366,18 @@ def _valid(item) -> bool:
         SCHEMA["properties"]["findings"]["items"]["required"]
     ):
         return False
-    # Validated as it will be shown: neutral() applies NFKC, which can turn fullwidth
-    # dots and slashes into "../".
-    path = unicodedata.normalize("NFKC", item["file"]) if isinstance(item["file"], str) else None
+    # Validated as it will be shown (canonical, as neutral() applies it): NFKC can turn
+    # fullwidth dots into "..", and stripping a combining mark can join "..". A path that
+    # canonical() changes beyond NFKC is refused outright.
+    raw = item["file"]
+    path = canonical(raw) if isinstance(raw, str) else None
     line, confidence, category = item["line"], item["confidence"], item["category"]
     return (
         isinstance(path, str)
         and 0 < len(path) <= MAX_PATH
         and re.fullmatch(PATH_PATTERN, path) is not None
         and all(ch.isprintable() for ch in path)
+        and path == unicodedata.normalize("NFKC", raw)
         and type(line) is int
         and line >= 0
         and type(confidence) is int
