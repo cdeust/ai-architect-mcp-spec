@@ -865,7 +865,8 @@ jobs:
             kill -TERM "$publisher" 2>/dev/null || :
             wait "$publisher" 2>/dev/null || :
             kill -TERM "$SSH_AGENT_PID" 2>/dev/null || :
-            for _ in $(seq 50); do kill -0 "$SSH_AGENT_PID" 2>/dev/null || break; sleep 0.1; done
+            # 2 s of grace keeps a stuck agent's SIGKILL well inside the runner's 7.5 s.
+            for _ in $(seq 20); do kill -0 "$SSH_AGENT_PID" 2>/dev/null || break; sleep 0.1; done
             if kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
               kill -KILL "$SSH_AGENT_PID"
               echo "::error::the signing agent did not stop on SIGTERM"
