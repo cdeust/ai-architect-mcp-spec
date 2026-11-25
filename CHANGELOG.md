@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Split MCP pipeline registration into modules for run storage, evidence draining, retry-policy wiring, and individual tools. The full profile keeps the same 16 tools, schemas, and responses, as checked by stdio characterization tests.
+
 - The CI contract gains rule 10 for draft pull requests and small gated batches. In #374 (2026-11-19), the autopilot pushed its own fix while the session's commits were still local. Publishing each gated batch to a draft gives the session a shared branch without spending its review budget.
 
 - Follow-up of #367 review (#119; notes 1 to 3 of review 1, no action before merge). (1) An incident is exempt from the fast path only when the run knows its kind, and a kind read from the words can miss one: "Checkout returns 500 since the deploy, fix it", sent with `request_size: "tiny"` and no `prd_context`, is read as a bug and takes the four sections. The limit is now said where it acts: when a run keeps a size with a plan of its own for a kind read from the words, its message adds that the kind was not declared and that an incident is started again with `prd_context: "incident"`; the description of `request_size`, SKILL.md, the packaged command, the `run_prd_pipeline` prompt and the README tell the host to declare the kind with the size. A test pins the message and the unnamed incident. (2) The entry of #367 said the size the run is held to is in each envelope; before the kind is known an envelope carries the declared size. The entry says so. (3) README said "9 PRD files written" above its own line on a tiny run, which writes 5; SKILL.md listed four of the sections a tiny run leaves out, and the list depends on the kind. Both are corrected.

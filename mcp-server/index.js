@@ -59218,6 +59218,28 @@ function registerContextTools(server2) {
   return { get_prd_context_info: getPrdContextInfo };
 }
 
+// packages/mcp-server/dist/quality-score-drain.js
+function drainQualityScores(state, repo) {
+  if (repo !== null) {
+    for (const score of state.quality_scores) {
+      try {
+        repo.recordQualityScore({
+          prdId: state.run_id,
+          prdContext: score.prd_context,
+          rulesChecked: score.rules_checked,
+          rulesPassed: score.rules_passed,
+          criticalViolations: score.critical_violations,
+          totalScore: score.total_score,
+          auditFlagsRaised: null
+        });
+      } catch (error62) {
+        console.error(`[prd-gen] quality score of ${state.run_id} not recorded: ${String(error62)}`);
+      }
+    }
+  }
+  return { ...state, quality_scores: [] };
+}
+
 // packages/benchmark/dist/src/runner.js
 import { readFileSync, readdirSync, existsSync as existsSync3, writeFileSync } from "node:fs";
 import { join as join4 } from "node:path";
@@ -59574,252 +59596,9 @@ function getMaxAttemptsForRun(runId, calibratedValue) {
   return calibratedValue;
 }
 
-// packages/mcp-server/dist/implementation-review.js
-import { execFile } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
-import { dirname as dirname4, isAbsolute as isAbsolute2, join as join5, resolve } from "node:path";
-import { promisify } from "node:util";
-var execute = promisify(execFile);
-var GIT_NULL_PATH = "/dev/null";
-var MAX_REVIEW_BYTES = 4 * MAX_RESPONSE_CHARS;
-var MAX_GIT_MARKER_BYTES = 1 << 20;
-var utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-function sameFile(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-function identity(path) {
-  return statSync(path, { bigint: true });
-}
-function pathIsWithin(boundary, path) {
-  let current = path;
-  for (; ; ) {
-    if (sameFile(boundary, identity(current)))
-      return true;
-    const parent = dirname4(current);
-    if (parent === current)
-      return false;
-    current = parent;
-  }
-}
-async function git({ executable, repository }, ...args) {
-  return runGit(executable, repository, args);
-}
-async function runGit(executable, repository, args, attributes) {
-  const { stdout } = await execute(executable, [
-    "--no-pager",
-    "--no-replace-objects",
-    "-C",
-    repository,
-    "-c",
-    "core.fsmonitor=false",
-    "-c",
-    "core.quotePath=true",
-    "-c",
-    `core.attributesFile=${GIT_NULL_PATH}`,
-    ...attributes ? [`--attr-source=${attributes}`] : [],
-    ...args
-  ], {
-    cwd: dirname4(executable),
-    encoding: null,
-    maxBuffer: MAX_REVIEW_BYTES,
-    env: {
-      SystemRoot: process.env.SystemRoot,
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_ATTR_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: GIT_NULL_PATH,
-      GIT_NO_LAZY_FETCH: "1",
-      GIT_ALLOW_PROTOCOL: "",
-      GIT_GRAFT_FILE: GIT_NULL_PATH,
-      GIT_OPTIONAL_LOCKS: "0",
-      LC_ALL: "C"
-    }
-  });
-  return utf8.decode(stdout);
-}
-async function verifyRevisions(repository, base, head) {
-  for (const revision of [base, head]) {
-    const resolved = await git(repository, "rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`);
-    if (resolved !== revision + "\n")
-      return false;
-  }
-  await git(repository, "merge-base", "--is-ancestor", base, head);
-  return true;
-}
-function openReadOnly(path) {
-  return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
-}
-function readRegularFile(fd, maxBytes, singleLink) {
-  try {
-    const info = fstatSync(fd);
-    if (!info.isFile() || info.size > maxBytes || singleLink && info.nlink !== 1)
-      return void 0;
-    const content = Buffer.alloc(info.size + 1);
-    let length = 0;
-    for (; ; ) {
-      const read = readSync(fd, content, { offset: length, length: content.length - length, position: null });
-      if (read === 0)
-        break;
-      length += read;
-      if (length === content.length)
-        return void 0;
-    }
-    if (length !== info.size)
-      return void 0;
-    return utf8.decode(content.subarray(0, length));
-  } finally {
-    closeSync(fd);
-  }
-}
-function readGitMarker(path) {
-  let fd;
-  try {
-    fd = openReadOnly(path);
-  } catch (error62) {
-    if (error62.code === "ENOENT")
-      return null;
-    throw error62;
-  }
-  return readRegularFile(fd, MAX_GIT_MARKER_BYTES, false);
-}
-function gitPathLine(text2) {
-  return /^([^\r\n]+)[\r\n]*$/.exec(text2)?.[1];
-}
-function gitMetadata(repository) {
-  const dotGit = join5(repository, ".git");
-  const info = statSync(dotGit);
-  let directory = dotGit;
-  if (!info.isDirectory()) {
-    if (!info.isFile())
-      return void 0;
-    const marker = readGitMarker(dotGit);
-    const prefix = "gitdir: ";
-    if (!marker?.startsWith(prefix))
-      return void 0;
-    const path = gitPathLine(marker.slice(prefix.length));
-    if (!path)
-      return void 0;
-    directory = resolve(repository, path);
-  }
-  const gitDir = realpathSync(directory);
-  const data = readGitMarker(join5(gitDir, "commondir"));
-  if (data === null)
-    return [gitDir];
-  const common = data === void 0 ? void 0 : gitPathLine(data);
-  return common ? [gitDir, realpathSync(resolve(gitDir, common))] : void 0;
-}
-async function reviewTarget(repositoryPath, gitPath, source) {
-  const repository = realpathSync(repositoryPath);
-  const executable = realpathSync(gitPath);
-  const metadata = gitMetadata(repository);
-  if (!metadata)
-    return refusal2("review_repository_invalid");
-  const checkout = identity(repository);
-  const protectedDirs = [checkout, ...metadata.map(identity)];
-  if (protectedDirs.some((dir) => pathIsWithin(dir, source) || pathIsWithin(dir, executable))) {
-    return refusal2("review_authority_invalid");
-  }
-  const target = { executable, repository };
-  const root = await git(target, "rev-parse", "--show-toplevel");
-  const observed = gitPathLine(root);
-  if (!observed || !sameFile(identity(observed), checkout))
-    return refusal2("review_repository_invalid");
-  return target;
-}
-var refusal2 = (reason) => ({ error: { code: reason, message: "The implementation review dossier could not be prepared." } });
-function loadReviewAuthority(source, reviewId, plan) {
-  const text2 = readRegularFile(openReadOnly(source), MAX_REVIEW_BYTES, true);
-  if (text2 === void 0 || text2.length > MAX_RESPONSE_CHARS)
-    return refusal2("review_authority_invalid");
-  const authority = readReviewAuthority(JSON.parse(text2), reviewId, plan);
-  return authority ?? refusal2("review_authority_invalid");
-}
-async function prepareImplementationReview(paths, reviewId, plan, define2) {
-  const { authority: path, repository: repositoryPath, repositoryId, git: gitPath } = paths;
-  if (!path || !repositoryPath || !repositoryId || !gitPath || !reviewId || !isAbsolute2(path) || !isAbsolute2(repositoryPath) || !isAbsolute2(gitPath)) {
-    return refusal2("review_authority_unavailable");
-  }
-  try {
-    const source = realpathSync(path);
-    const target = await reviewTarget(repositoryPath, gitPath, source);
-    if ("error" in target)
-      return target;
-    const authority = loadReviewAuthority(source, reviewId, plan);
-    if ("error" in authority)
-      return authority;
-    if (authority.repository_id !== repositoryId)
-      return refusal2("review_repository_invalid");
-    const { base_revision: base, reviewed_revision: head } = authority;
-    if (base === head)
-      return refusal2("review_revision_invalid");
-    try {
-      if (!await verifyRevisions(target, base, head))
-        return refusal2("review_revision_invalid");
-    } catch {
-      return refusal2("review_revision_invalid");
-    }
-    const diff2 = await runGit(target.executable, target.repository, [
-      "diff",
-      "--binary",
-      "--full-index",
-      "--find-renames",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-color",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
-      "--no-relative",
-      "--ignore-submodules=none",
-      "--submodule=short",
-      `-O${GIT_NULL_PATH}`,
-      base,
-      head,
-      "--"
-    ], base);
-    return { implementation_review: {
-      version: 1,
-      status: "ready_for_review",
-      review_id: authority.review_id,
-      run_id: plan.run_id,
-      step: plan.proposal.step,
-      repository_id: authority.repository_id,
-      base_revision: base,
-      reviewed_revision: head,
-      plan_sha256: plan.plan_sha256,
-      approval_sha256: authority.decision.approval_sha256,
-      diff_sha256: reviewDigest(diff2),
-      diff: diff2,
-      acceptance: define2.acceptance.map((criterion) => ({ ...criterion, status: "evidence_required" }))
-    } };
-  } catch (error62) {
-    return refusal2(error62?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "review_response_too_large" : "review_evidence_unavailable");
-  }
-}
-
-// packages/mcp-server/dist/quality-score-drain.js
-function drainQualityScores(state, repo) {
-  if (repo !== null) {
-    for (const score of state.quality_scores) {
-      try {
-        repo.recordQualityScore({
-          prdId: state.run_id,
-          prdContext: score.prd_context,
-          rulesChecked: score.rules_checked,
-          rulesPassed: score.rules_passed,
-          criticalViolations: score.critical_violations,
-          totalScore: score.total_score,
-          auditFlagsRaised: null
-        });
-      } catch (error62) {
-        console.error(`[prd-gen] quality score of ${state.run_id} not recorded: ${String(error62)}`);
-      }
-    }
-  }
-  return { ...state, quality_scores: [] };
-}
-
 // packages/benchmark/dist/calibration/mismatch-fire-rate.js
 import { readFileSync as readFileSync3, readdirSync as readdirSync2, existsSync as existsSync5 } from "node:fs";
-import { join as join6 } from "node:path";
+import { join as join5 } from "node:path";
 
 // packages/benchmark/dist/calibration/clopper-pearson.js
 var MAX_ITER = 100;
@@ -60024,7 +59803,7 @@ function loadDataset(dataDir) {
   const files = readdirSync2(dataDir).filter((f) => f.startsWith("mismatch-fire-rate.") && f.endsWith(".jsonl"));
   const out = [];
   for (const f of files) {
-    const text2 = readFileSync3(join6(dataDir, f), "utf-8");
+    const text2 = readFileSync3(join5(dataDir, f), "utf-8");
     for (const line of text2.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed)
@@ -60189,7 +59968,7 @@ async function main() {
     throw new Error("PRE_REGISTERED_SEED has been mutated post-registration \u2014 refuse to analyze.");
   }
   runPreflightInjectionCheck();
-  const dataDir = process.argv[2] ?? join6(process.cwd(), "packages/benchmark/calibration/data");
+  const dataDir = process.argv[2] ?? join5(process.cwd(), "packages/benchmark/calibration/data");
   const runs2 = loadDataset(dataDir);
   if (runs2.length === 0) {
     console.log(`[mismatch-fire-rate] no data rows found under ${dataDir}; run the calibration runner first.`);
@@ -66647,7 +66426,7 @@ function filterRegExp(array2, regexp) {
   }
   return Array.prototype.filter.call(array2, (entry) => regexp.test(entry));
 }
-function join7(array2, separator) {
+function join6(array2, separator) {
   return Array.prototype.join.call(array2, separator);
 }
 function identify(a) {
@@ -86289,8 +86068,8 @@ var createFunctionAssignmentNode = /* @__PURE__ */ factory(name217, dependencies
       var evalExpr = expr._compile(math2, childArgNames);
       var name323 = this.name;
       var params = this.params;
-      var signature = join7(this.types, ",");
-      var syntax = name323 + "(" + join7(this.params, ", ") + ")";
+      var signature = join6(this.types, ",");
+      var syntax = name323 + "(" + join6(this.params, ", ") + ")";
       return function evalFunctionAssignmentNode(scope, args, context) {
         var signatures = {};
         signatures[signature] = function() {
@@ -102730,7 +102509,7 @@ var fraction = /* @__PURE__ */ createFraction({
   Fraction: Fraction2,
   typed: typed2
 });
-var identity2 = /* @__PURE__ */ createIdentity({
+var identity = /* @__PURE__ */ createIdentity({
   BigNumber,
   DenseMatrix,
   SparseMatrix,
@@ -103148,7 +102927,7 @@ var qr = /* @__PURE__ */ createQr({
   conj,
   divideScalar,
   equal,
-  identity: identity2,
+  identity,
   isZero,
   matrix,
   multiplyScalar,
@@ -103262,7 +103041,7 @@ var inv = /* @__PURE__ */ createInv({
   addScalar,
   det,
   divideScalar,
-  identity: identity2,
+  identity,
   matrix,
   multiply,
   typed: typed2,
@@ -103316,7 +103095,7 @@ var pow2 = /* @__PURE__ */ createPow({
   Complex: Complex2,
   config: config3,
   fraction,
-  identity: identity2,
+  identity,
   inv,
   matrix,
   multiply,
@@ -103370,7 +103149,7 @@ var sort = /* @__PURE__ */ createSort({
 var sqrtm = /* @__PURE__ */ createSqrtm({
   abs: abs2,
   add: add2,
-  identity: identity2,
+  identity,
   inv,
   map: map3,
   max: max2,
@@ -103432,7 +103211,7 @@ var dotPow = /* @__PURE__ */ createDotPow({
 var expm = /* @__PURE__ */ createExpm({
   abs: abs2,
   add: add2,
-  identity: identity2,
+  identity,
   inv,
   multiply,
   typed: typed2
@@ -104069,7 +103848,7 @@ var rotate = /* @__PURE__ */ createRotate({
   typed: typed2
 });
 var schur = /* @__PURE__ */ createSchur({
-  identity: identity2,
+  identity,
   matrix,
   multiply,
   norm,
@@ -104081,7 +103860,7 @@ var sylvester = /* @__PURE__ */ createSylvester({
   abs: abs2,
   add: add2,
   concat: concat2,
-  identity: identity2,
+  identity,
   index,
   lusolve,
   matrix,
@@ -104197,7 +103976,7 @@ var parse5 = createParse({
   numeric: numeric2,
   typed: typed2
 });
-var resolve2 = createResolve({
+var resolve = createResolve({
   ConstantNode,
   FunctionNode,
   OperatorNode,
@@ -104275,7 +104054,7 @@ var simplify = createSimplify({
   equal,
   parse: parse5,
   replacer,
-  resolve: resolve2,
+  resolve,
   simplifyConstant,
   simplifyCore,
   typed: typed2
@@ -104459,7 +104238,7 @@ var rationalize = createRationalize({
   diag,
   equal,
   fraction,
-  identity: identity2,
+  identity,
   isInteger: isInteger3,
   kron,
   mapSlices,
@@ -104630,7 +104409,7 @@ var rationalize = createRationalize({
   median,
   parse: parse5,
   polynomialRoot,
-  resolve: resolve2,
+  resolve,
   simplifyConstant,
   std,
   zeta,
@@ -104886,7 +104665,7 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync as writeFileSync2, rmSync } from "fs";
 import { createRequire } from "module";
 import { tmpdir } from "os";
-import { dirname as dirname5, join as join8 } from "path";
+import { dirname as dirname4, join as join7 } from "path";
 
 // packages/benchmark/dist/calibration/oracle-errors.js
 var OracleUnavailableError = class _OracleUnavailableError extends Error {
@@ -104906,7 +104685,7 @@ var TSC_PROBE_TIMEOUT_MS = 1e4;
 function tscCandidates(resolvePackageJson = () => createRequire(import.meta.url).resolve("typescript/package.json")) {
   const candidates = [];
   try {
-    const entry = join8(dirname5(resolvePackageJson()), "bin", "tsc");
+    const entry = join7(dirname4(resolvePackageJson()), "bin", "tsc");
     candidates.push({ command: process.execPath, prefixArgs: [entry] });
   } catch {
   }
@@ -104937,8 +104716,8 @@ async function codeOracle(payload) {
     tscVersion = execFileSync(tscBin.command, [...tscBin.prefixArgs, "--version"], { timeout: TSC_PROBE_TIMEOUT_MS, stdio: "pipe" }).toString().trim();
   } catch {
   }
-  const tempDir = mkdtempSync(join8(tmpdir(), "prd-gen-code-oracle-"));
-  const snippetFile = join8(tempDir, "snippet.ts");
+  const tempDir = mkdtempSync(join7(tmpdir(), "prd-gen-code-oracle-"));
+  const snippetFile = join7(tempDir, "snippet.ts");
   try {
     writeFileSync2(snippetFile, snippet2, "utf8");
     let compilesCleanly;
@@ -105016,8 +104795,8 @@ async function invokeOracle(input2) {
 
 // packages/mcp-server/dist/observation-log-path.js
 import { homedir as homedir3 } from "node:os";
-import { join as join9 } from "node:path";
-var OBSERVATION_LOG_PATH = join9(homedir3(), ".prd-gen", "judge-observation-log.jsonl");
+import { join as join8 } from "node:path";
+var OBSERVATION_LOG_PATH = join8(homedir3(), ".prd-gen", "judge-observation-log.jsonl");
 
 // packages/mcp-server/dist/observation-writer.js
 var _unavailableOracleWarnFired = null;
@@ -105085,9 +104864,9 @@ function drainReliabilityObservations(state, repo) {
 }
 
 // packages/mcp-server/dist/reliability-wiring.js
-import { join as join10 } from "node:path";
+import { join as join9 } from "node:path";
 import { homedir as homedir4 } from "node:os";
-var DEFAULT_RELIABILITY_DB_PATH = join10(homedir4(), ".prd-gen", "reliability.db");
+var DEFAULT_RELIABILITY_DB_PATH = join9(homedir4(), ".prd-gen", "reliability.db");
 var _reliabilityRepo = void 0;
 var _reliabilityProvider = void 0;
 function getReliabilityRepo() {
@@ -105152,156 +104931,49 @@ function checkReliabilityHealth() {
   };
 }
 
-// packages/mcp-server/dist/build-conclude-opts.js
-function buildConcludeOpts(input2) {
-  const { consensus_strategy, run_id, claim_types, claims } = input2;
-  const reliabilityRepo = getReliabilityRepo();
-  const reliabilityProvider = getConsensusReliabilityProvider();
-  if (claim_types === void 0 && reliabilityRepo !== null) {
-    console.warn("[reliability] WARNING: conclude_verification called without claim_types \u2014 observations will NOT be flushed to the calibration repository for this batch. This may produce one-sided censoring across runs.");
+// packages/mcp-server/dist/evidence-drain.js
+var _trackerResolved = false;
+var _tracker = null;
+function getTracker() {
+  if (!_trackerResolved) {
+    _trackerResolved = true;
+    const repo = getEvidenceRepo();
+    if (repo)
+      _tracker = new EffectivenessTracker(repo);
   }
-  const claimTypesMap = claim_types !== void 0 ? new Map(Object.entries(claim_types)) : void 0;
-  const onObservation = reliabilityRepo !== null && claimTypesMap !== void 0 ? (obs) => writeObservation(reliabilityRepo, obs, run_id) : void 0;
-  return {
-    strategy: consensus_strategy,
-    reliabilityProvider: reliabilityProvider ?? void 0,
-    runId: run_id,
-    claimTypes: claimTypesMap,
-    claims,
-    onObservation
-  };
+  return _tracker;
+}
+function drainStrategyExecutions(state) {
+  if (state.strategy_executions.length === 0)
+    return state;
+  const tracker = getTracker();
+  if (tracker) {
+    for (const exec of state.strategy_executions) {
+      try {
+        tracker.recordExecution({ ...exec, sessionId: state.run_id });
+      } catch {
+      }
+    }
+  }
+  return { ...state, strategy_executions: [] };
+}
+function drainEvidenceQueues(state) {
+  const drained = drainStrategyExecutions(state);
+  const scored = drained.quality_scores.length === 0 ? drained : drainQualityScores(drained, getEvidenceRepo());
+  if (scored.reliability_observations.length === 0)
+    return scored;
+  return drainReliabilityObservations(scored, getReliabilityRepo());
 }
 
-// packages/mcp-server/dist/bound-full-state.js
-function serializedChars(value) {
-  return JSON.stringify(value).length;
-}
-function wireChars(payload) {
-  return JSON.stringify(payload, null, 2).length;
-}
-function boundFullStateResponse(state) {
-  const work = { ...state };
-  const applied = [];
-  const budget = MAX_RESPONSE_CHARS;
-  const originalChars = wireChars({ state: work });
-  const shippedChars = () => selfMeasuredChars(wireChars({
-    state: work,
-    __bounded: {
-      original_chars: originalChars,
-      final_chars: 0,
-      budget_chars: budget,
-      applied
-    }
-  }));
-  const fits = () => shippedChars() <= budget;
-  const untouched = shippedChars();
-  if (untouched <= budget) {
-    return {
-      state: work,
-      __bounded: {
-        original_chars: originalChars,
-        final_chars: untouched,
-        budget_chars: budget,
-        applied
-      }
-    };
-  }
-  for (const field of ["codebase_grounding", "prd_validation"]) {
-    if (!fits() && work[field] != null) {
-      const reclaimed = serializedChars(work[field]);
-      const stub = {
-        omitted: true,
-        chars: reclaimed,
-        hint: `re-fetch via get_pipeline_state(run_id, format:"grounding")`
-      };
-      work[field] = stub;
-      applied.push({ field, kind: "omitted", reclaimed_chars: reclaimed });
-    }
-  }
-  if (!fits() && Array.isArray(work.clarifications) && work.clarifications.length > 0) {
-    const full = work.clarifications;
-    const before = serializedChars(full);
-    let kept = full.slice();
-    while (kept.length > 1) {
-      work.clarifications = kept;
-      if (fits())
-        break;
-      kept = kept.slice(1);
-    }
-    work.clarifications = kept;
-    const dropped = full.length - kept.length;
-    if (dropped > 0) {
-      const reclaimed = before - serializedChars(kept);
-      applied.push({
-        field: "clarifications",
-        kind: "elided",
-        reclaimed_chars: reclaimed,
-        dropped
-      });
-    }
-  }
-  if (!fits() && Array.isArray(work.sections) && work.sections.length > 0) {
-    const sections = work.sections;
-    let reclaimed = 0;
-    const stripped = sections.map((s) => {
-      if (typeof s.content === "string" && s.content.length > 0) {
-        reclaimed += serializedChars(s.content);
-        return {
-          ...s,
-          content: {
-            omitted: true,
-            chars: serializedChars(s.content),
-            hint: "section markdown is in the exported PRD file (written_files)"
-          }
-        };
-      }
-      return s;
-    });
-    if (reclaimed > 0) {
-      work.sections = stripped;
-      applied.push({
-        field: "sections[].content",
-        kind: "omitted",
-        reclaimed_chars: reclaimed
-      });
-    }
-  }
-  return {
-    state: work,
-    __bounded: {
-      original_chars: originalChars,
-      final_chars: shippedChars(),
-      budget_chars: budget,
-      applied
-    }
-  };
-}
-function boundGroundingResponse(state) {
-  const applied = [];
-  const base = {
-    run_id: state.run_id,
-    codebase_grounding: state.codebase_grounding,
-    prd_validation: state.prd_validation,
-    __bounded: { budget_chars: MAX_RESPONSE_CHARS, applied }
-  };
-  if (wireChars(base) <= MAX_RESPONSE_CHARS || state.prd_validation == null) {
-    return base;
-  }
-  const reclaimed = serializedChars(state.prd_validation);
-  applied.push({ field: "prd_validation", kind: "omitted", reclaimed_chars: reclaimed });
-  return {
-    ...base,
-    prd_validation: {
-      omitted: true,
-      chars: reclaimed,
-      hint: `re-fetch via get_pipeline_state(run_id, format:"validation")`
-    },
-    __bounded: { budget_chars: MAX_RESPONSE_CHARS, applied }
-  };
+// packages/mcp-server/dist/retry-policy-wiring.js
+function withRetryPolicy(state) {
+  const arm = getRetryArmForRun(state.run_id);
+  const maxAttempts = getMaxAttemptsForRun(state.run_id, MAX_ATTEMPTS_BASELINE);
+  return state.retry_policy !== null ? state : { ...state, retry_policy: { maxAttempts, arm } };
 }
 
 // packages/mcp-server/dist/bound-envelope-action.js
-function wireChars2(value) {
+function wireChars(value) {
   return JSON.stringify(value, null, 2).length;
 }
 function sealed(payload, originalChars, applied, budgetChars) {
@@ -105311,7 +104983,7 @@ function sealed(payload, originalChars, applied, budgetChars) {
     budget_chars: budgetChars,
     applied
   };
-  const finalChars = selfMeasuredChars(wireChars2({ ...payload, __bounded: marker }));
+  const finalChars = selfMeasuredChars(wireChars({ ...payload, __bounded: marker }));
   return { ...payload, __bounded: { ...marker, final_chars: finalChars } };
 }
 function isSpawnAction(action) {
@@ -105328,7 +105000,7 @@ function stubFor(chars, nextOffset) {
   };
 }
 function batchOf(payload, action) {
-  const promptChars = action.invocations.map((inv2) => typeof inv2.prompt === "string" && inv2.prompt.length > 0 ? wireChars2(inv2.prompt) : 0);
+  const promptChars = action.invocations.map((inv2) => typeof inv2.prompt === "string" && inv2.prompt.length > 0 ? wireChars(inv2.prompt) : 0);
   return { payload, action, promptChars };
 }
 function withPromptsKept(batch, kept, seal) {
@@ -105352,7 +105024,7 @@ function withPromptsKept(batch, kept, seal) {
   return seal({ ...payload, action: { ...action, invocations } }, [omission]);
 }
 function boundEnvelopeResponse(payload, budgetChars = MAX_RESPONSE_CHARS) {
-  const originalChars = wireChars2(payload);
+  const originalChars = wireChars(payload);
   const seal = (p, applied) => sealed(p, originalChars, applied, budgetChars);
   const whole = seal(payload, []);
   if (whole.__bounded.final_chars <= budgetChars)
@@ -105374,135 +105046,6 @@ function boundEnvelopeResponse(payload, budgetChars = MAX_RESPONSE_CHARS) {
   if (candidate === null || candidate.__bounded.final_chars > budgetChars)
     return noPrompt;
   return candidate;
-}
-
-// packages/mcp-server/dist/page-action-response.js
-function wireChars3(value) {
-  return JSON.stringify(value, null, 2).length;
-}
-function isSpawnAction2(action) {
-  if (action === null || typeof action !== "object")
-    return false;
-  const a = action;
-  return a.kind === "spawn_subagents" && Array.isArray(a.invocations);
-}
-function selfMeasuredChars2(zeroChars) {
-  for (let digits2 = 1; ; digits2++) {
-    const size2 = zeroChars - 1 + digits2;
-    if (String(size2).length === digits2)
-      return size2;
-  }
-}
-function pageOf2(runId, action, { offset, count: count2, total }, budgetChars) {
-  const end = offset + count2;
-  const draft = {
-    run_id: runId,
-    action,
-    __page: {
-      offset,
-      count: count2,
-      total,
-      next_offset: end < total ? end : null,
-      final_chars: 0,
-      budget_chars: budgetChars
-    }
-  };
-  const finalChars = selfMeasuredChars2(wireChars3(draft));
-  return { ...draft, __page: { ...draft.__page, final_chars: finalChars } };
-}
-function pageActionResponse(runId, action, offset, budgetChars = MAX_RESPONSE_CHARS) {
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    return { error: `invocation_offset ${offset} is not a non-negative integer` };
-  }
-  if (!isSpawnAction2(action)) {
-    if (offset !== 0) {
-      return { error: `invocation_offset ${offset} out of range: the last action is not a spawn_subagents batch` };
-    }
-    return pageOf2(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
-  }
-  const all = action.invocations;
-  const total = all.length;
-  if (total === 0 && offset === 0) {
-    return pageOf2(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
-  }
-  if (offset >= total) {
-    return { error: `invocation_offset ${offset} out of range: the batch has ${total} invocations` };
-  }
-  const build = (count2) => pageOf2(runId, { ...action, invocations: all.slice(offset, offset + count2) }, { offset, count: count2, total }, budgetChars);
-  return largestFittingPage(build, total - offset, budgetChars);
-}
-function largestFittingPage(build, remaining, budgetChars) {
-  let best = build(1);
-  let fit = 1;
-  let over = remaining + 1;
-  for (let probe = 2; probe <= remaining; probe *= 2) {
-    const candidate = build(probe);
-    if (candidate.__page.final_chars > budgetChars) {
-      over = probe;
-      break;
-    }
-    best = candidate;
-    fit = probe;
-  }
-  if (over === remaining + 1 && fit < remaining) {
-    const last = build(remaining);
-    if (last.__page.final_chars <= budgetChars)
-      return last;
-    over = remaining;
-  }
-  let lo = fit + 1;
-  let hi = over - 1;
-  while (lo <= hi) {
-    const mid = lo + hi >>> 1;
-    const candidate = build(mid);
-    if (candidate.__page.final_chars <= budgetChars) {
-      best = candidate;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return best;
-}
-
-// packages/mcp-server/dist/page-plan-response.js
-function planWireText(value) {
-  return JSON.stringify(value, null, 2);
-}
-function pageOf3(plan, offset, count2, budgetChars) {
-  const total = plan.judge_requests.length;
-  const end = offset + count2;
-  const judge_requests = plan.judge_requests.slice(offset, end);
-  const marker = {
-    offset,
-    count: count2,
-    total,
-    next_offset: end < total ? end : null,
-    final_chars: 0,
-    budget_chars: budgetChars
-  };
-  const draft = offset === 0 ? { claims: plan.claims, judge_requests, mechanical_claims: plan.mechanical_claims, __page: marker } : { judge_requests, __page: marker };
-  const finalChars = selfMeasuredChars(planWireText(draft).length);
-  return { ...draft, __page: { ...marker, final_chars: finalChars } };
-}
-function pagePlanResponse(plan, offset, budgetChars = MAX_RESPONSE_CHARS) {
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    return { error: `request_offset ${offset} is not a non-negative integer` };
-  }
-  const total = plan.judge_requests.length;
-  if (total === 0 && offset === 0)
-    return pageOf3(plan, 0, 0, budgetChars);
-  if (offset >= total) {
-    return { error: `request_offset ${offset} out of range: the plan has ${total} judge requests` };
-  }
-  const count2 = largestFittingCount((n) => pageOf3(plan, offset, n, budgetChars).__page.final_chars, total - offset, budgetChars);
-  return pageOf3(plan, offset, count2, budgetChars);
-}
-var PLAN_PAGING_DESCRIPTION = "The response is paged under the 100,000-char MCP response budget: each page holds whole judge requests from request_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and request_offset set to next_offset until it is null, and dispatch the judge requests of every page. claims and mechanical_claims are on the page at offset 0 only.";
-function planPageResult(plan, offset) {
-  const page = pagePlanResponse(plan, offset ?? 0);
-  const content = [{ type: "text", text: planWireText(page) }];
-  return "error" in page ? { content, isError: true } : { content };
 }
 
 // packages/mcp-server/dist/kept-runs.js
@@ -105590,10 +105133,10 @@ var KeptRuns = class {
 };
 
 // packages/mcp-server/dist/run-files.js
-import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, renameSync, rmSync as rmSync2, statSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join11 } from "node:path";
-var RUNS_DIR = join11(homedir5(), ".prd-gen", "runs");
+import { join as join10 } from "node:path";
+var RUNS_DIR = join10(homedir5(), ".prd-gen", "runs");
 var RUN_ID = /^run_[0-9a-z]+_[0-9a-z]*$/;
 var FILE_VERSION = 1;
 var RUN_FILE = ".json";
@@ -105608,7 +105151,7 @@ var RunFiles = class {
    *                is not of the form the server generates.
    */
   pathOf(runId) {
-    return RUN_ID.test(runId) ? join11(this.dir, runId + RUN_FILE) : null;
+    return RUN_ID.test(runId) ? join10(this.dir, runId + RUN_FILE) : null;
   }
   /**
    * precondition:  `state.run_id` is an id the server generated.
@@ -105715,9 +105258,9 @@ var RunFiles = class {
     for (const name323 of names) {
       if (!name323.endsWith(suffix))
         continue;
-      const path = join11(this.dir, name323);
+      const path = join10(this.dir, name323);
       try {
-        entries.push({ path, mtimeMs: statSync2(path).mtimeMs });
+        entries.push({ path, mtimeMs: statSync(path).mtimeMs });
       } catch {
       }
     }
@@ -105760,7 +105303,7 @@ function isFinishedRunFile(path) {
   }
 }
 
-// packages/mcp-server/dist/pipeline-tools.js
+// packages/mcp-server/dist/pipeline-runs.js
 var MAX_CONCURRENT_RUNS = Number(process.env.PRD_MAX_CONCURRENT_RUNS ?? 8);
 var runs = new KeptRuns(new RunFiles(RUNS_DIR), {
   onDrop: (runId) => {
@@ -105770,38 +105313,6 @@ var runs = new KeptRuns(new RunFiles(RUNS_DIR), {
 function runNotFound(runId, found) {
   const error62 = found.kind === "unknown" ? `unknown run_id: ${runId}` : `the state kept for run_id ${runId} cannot be read: ${found.reason}`;
   return { content: [{ type: "text", text: JSON.stringify({ error: error62 }) }], isError: true };
-}
-var _trackerResolved = false;
-var _tracker = null;
-function getTracker() {
-  if (!_trackerResolved) {
-    _trackerResolved = true;
-    const repo = getEvidenceRepo();
-    if (repo)
-      _tracker = new EffectivenessTracker(repo);
-  }
-  return _tracker;
-}
-function drainStrategyExecutions(state) {
-  if (state.strategy_executions.length === 0)
-    return state;
-  const tracker = getTracker();
-  if (tracker) {
-    for (const exec of state.strategy_executions) {
-      try {
-        tracker.recordExecution({ ...exec, sessionId: state.run_id });
-      } catch {
-      }
-    }
-  }
-  return { ...state, strategy_executions: [] };
-}
-function drainEvidenceQueues(state) {
-  const drained = drainStrategyExecutions(state);
-  const scored = drained.quality_scores.length === 0 ? drained : drainQualityScores(drained, getEvidenceRepo());
-  if (scored.reliability_observations.length === 0)
-    return scored;
-  return drainReliabilityObservations(scored, getReliabilityRepo());
 }
 var inFlight = /* @__PURE__ */ new Set();
 function generateRunId() {
@@ -105829,19 +105340,6 @@ function envelope(state, action, messages = []) {
     }
   };
 }
-function describeRequestSizes() {
-  const sentences = RequestSizeSchema.options.flatMap((size2) => {
-    const { displayName, plan } = REQUEST_SIZE_CONFIGS[size2];
-    if (plan === null)
-      return [];
-    const { sections, clarificationRange, notFor } = plan;
-    const exempt = notFor.join(", ");
-    return [
-      `'${size2}' (${displayName}) is the fast path for a small, self-contained change: ${sections.length} sections (${sections.join(", ")}) and ${clarificationRange[0]} to ${clarificationRange[1]} clarification rounds, in place of those of the kind. It is not for: ${exempt}, which keeps the rounds and sections of its kind.`
-    ];
-  });
-  return sentences.join(" ");
-}
 function architectOsRequired() {
   return {
     content: [{ type: "text", text: JSON.stringify({ error: ARCHITECT_OS_BOUNDARY }) }],
@@ -105856,261 +105354,802 @@ var planningSizeErrors = {
 function planningSizeError(kind) {
   return { content: [{ type: "text", text: JSON.stringify({ error: planningSizeErrors[kind] }) }], isError: true };
 }
-function registerPipelineTools(server2) {
-  const startPipeline = server2.tool("start_pipeline", "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.", {
-    feature_description: external_exports.string().describe("What the PRD is about \u2014 passed to all prompts"),
-    semantic_review: external_exports.boolean().optional().describe("Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks."),
-    codebase_path: external_exports.string().optional().describe("Absolute path to the codebase. Triggers index_codebase via ai-architect-mcp-codebase."),
-    skip_preflight: external_exports.boolean().optional().describe("If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall."),
-    prd_context: PRDContextSchema.optional().describe("The kind of PRD the request calls for, declared by the host, which has the whole conversation where the server has only feature_description. Omit it and the server reads the kind from the words of feature_description, or asks the user. get_prd_context_info gives the clarification range and the section count of a kind."),
-    request_size: RequestSizeSchema.optional().describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`)
-  }, { destructiveHint: true }, async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size, semantic_review }) => {
-    const inFlightCount = runs.inFlightCount();
-    if (inFlightCount >= MAX_CONCURRENT_RUNS) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error: "run_capacity_exceeded",
-              message: `pipeline run capacity reached: ${inFlightCount}/${MAX_CONCURRENT_RUNS} runs in flight. Retry after an in-flight run completes (current_step:'complete'), or raise PRD_MAX_CONCURRENT_RUNS.`,
-              in_flight: inFlightCount,
-              max_concurrent_runs: MAX_CONCURRENT_RUNS,
-              retryable: true
-            }, null, 2)
-          }
-        ],
-        isError: true
-      };
-    }
-    const run_id = generateRunId();
-    const reviewModel = process.env.PRD_GEN_SEMANTIC_REVIEW_MODEL?.trim() || void 0;
-    const initial = newPipelineState({
-      run_id,
-      feature_description,
-      codebase_path: codebase_path ?? null,
-      skip_preflight: skip_preflight ?? false,
-      prd_context: prd_context ?? null,
-      request_size: request_size ?? REQUEST_SIZE_DEFAULT,
-      semantic_review: semantic_review || Boolean(reviewModel),
-      semantic_review_model: reviewModel
-    });
-    const arm = getRetryArmForRun(run_id);
-    const maxAttempts = getMaxAttemptsForRun(run_id, MAX_ATTEMPTS_BASELINE);
-    const initialWithPolicy = initial.retry_policy !== null ? initial : { ...initial, retry_policy: { maxAttempts, arm } };
-    const { state, action, messages } = step({ state: initialWithPolicy });
-    const drained = drainEvidenceQueues(state);
-    runs.keep(drained, action);
+
+// packages/mcp-server/dist/tools/start-pipeline.js
+function describeRequestSizes() {
+  const sentences = RequestSizeSchema.options.flatMap((size2) => {
+    const { displayName, plan } = REQUEST_SIZE_CONFIGS[size2];
+    if (plan === null)
+      return [];
+    const { sections, clarificationRange, notFor } = plan;
+    const exempt = notFor.join(", ");
+    return [
+      `'${size2}' (${displayName}) is the fast path for a small, self-contained change: ${sections.length} sections (${sections.join(", ")}) and ${clarificationRange[0]} to ${clarificationRange[1]} clarification rounds, in place of those of the kind. It is not for: ${exempt}, which keeps the rounds and sections of its kind.`
+    ];
+  });
+  return sentences.join(" ");
+}
+var startPipelineInput = () => ({
+  feature_description: external_exports.string().describe("What the PRD is about \u2014 passed to all prompts"),
+  semantic_review: external_exports.boolean().optional().describe("Request one additional host judge for scope and declared edge-case coverage. Define requires a clear result for both checks."),
+  codebase_path: external_exports.string().optional().describe("Absolute path to the codebase. Triggers index_codebase via ai-architect-mcp-codebase."),
+  skip_preflight: external_exports.boolean().optional().describe("If true, skip the preflight step that probes Cortex (and ai-architect when codebase_path is set). Default false. Use only when you accept degraded section generation without persistent memory recall."),
+  prd_context: PRDContextSchema.optional().describe("The kind of PRD the request calls for, declared by the host, which has the whole conversation where the server has only feature_description. Omit it and the server reads the kind from the words of feature_description, or asks the user. get_prd_context_info gives the clarification range and the section count of a kind."),
+  request_size: RequestSizeSchema.optional().describe(`The size of the request, declared by the host: the server never reads a size from feature_description. ${describeRequestSizes()} Declare prd_context with it: the exemption holds for a kind the run knows, and a kind read from the words of feature_description can miss an incident. Omit it for a request of ordinary size.`)
+});
+var handleStartPipeline = async ({ feature_description, codebase_path, skip_preflight, prd_context, request_size, semantic_review }) => {
+  const inFlightCount = runs.inFlightCount();
+  if (inFlightCount >= MAX_CONCURRENT_RUNS) {
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(boundEnvelopeResponse(envelope(drained, action, messages)), null, 2)
+          text: JSON.stringify({
+            error: "run_capacity_exceeded",
+            message: `pipeline run capacity reached: ${inFlightCount}/${MAX_CONCURRENT_RUNS} runs in flight. Retry after an in-flight run completes (current_step:'complete'), or raise PRD_MAX_CONCURRENT_RUNS.`,
+            in_flight: inFlightCount,
+            max_concurrent_runs: MAX_CONCURRENT_RUNS,
+            retryable: true
+          }, null, 2)
         }
-      ]
+      ],
+      isError: true
     };
+  }
+  const run_id = generateRunId();
+  const reviewModel = process.env.PRD_GEN_SEMANTIC_REVIEW_MODEL?.trim() || void 0;
+  const initial = newPipelineState({
+    run_id,
+    feature_description,
+    codebase_path: codebase_path ?? null,
+    skip_preflight: skip_preflight ?? false,
+    prd_context: prd_context ?? null,
+    request_size: request_size ?? REQUEST_SIZE_DEFAULT,
+    semantic_review: semantic_review || Boolean(reviewModel),
+    semantic_review_model: reviewModel
   });
-  const submitActionResult = server2.tool("submit_action_result", "Feed an ActionResult to the pipeline runner; receive the next NextAction.", {
-    run_id: external_exports.string(),
-    // Use the canonical ActionResultSchema directly. Pre-fix this duplicated
-    // the discriminated union inline; adding a new ActionResult kind would
-    // have required updating both the canonical schema in orchestration AND
-    // this inline copy with no compile-time enforcement of synchrony
-    // (cross-audit feynman HIGH-1, Phase 3+4 follow-up, 2026-04).
-    result: ActionResultSchema
-  }, { destructiveHint: true }, async ({ run_id, result }) => {
-    if (inFlight.has(run_id)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error: `concurrent submission rejected for run_id ${run_id}`
-            })
-          }
-        ],
-        isError: true
-      };
-    }
-    inFlight.add(run_id);
-    try {
-      const found = runs.find(run_id);
-      if (found.kind !== "found")
-        return runNotFound(run_id, found);
-      if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) || isRetiredImplementationAnswer(found.run.state, result))
-        return architectOsRequired();
-      const { state, action } = found.run;
-      const out = state.semantic_review_requested && state.current_step === "complete" && action ? { state, action, messages: [] } : step({ state: recordLegacyDefineRefusal(state, action), result });
-      const drained = drainEvidenceQueues(out.state);
-      runs.keep(drained, out.action);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(boundEnvelopeResponse(envelope(drained, out.action, out.messages)), null, 2)
-          }
-        ]
-      };
-    } finally {
-      inFlight.delete(run_id);
-    }
-  });
-  const getPipelineState = server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", {
-    run_id: external_exports.string(),
-    format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"]).default("summary"),
-    invocation_offset: external_exports.number().int().min(0).default(0),
-    plan_step: external_exports.string().optional().describe("Operator-selected architect-os Step name for plan and review formats."),
-    review_id: ReviewIdSchema.optional().describe("Operator-assigned review dossier identifier.")
-  }, { readOnlyHint: true }, async ({ run_id, format: format6, invocation_offset, plan_step, review_id }) => {
+  const initialWithPolicy = withRetryPolicy(initial);
+  const { state, action, messages } = step({ state: initialWithPolicy });
+  const drained = drainEvidenceQueues(state);
+  runs.keep(drained, action);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(boundEnvelopeResponse(envelope(drained, action, messages)), null, 2)
+      }
+    ]
+  };
+};
+function registerStartPipeline(server2) {
+  return server2.tool("start_pipeline", "Initialize a new PRD pipeline run. Returns run_id and the first NextAction the host must execute.", startPipelineInput(), { destructiveHint: true }, handleStartPipeline);
+}
+
+// packages/mcp-server/dist/tools/submit-action-result.js
+var submitActionResultInput = () => ({
+  run_id: external_exports.string(),
+  // Use the canonical ActionResultSchema directly. Pre-fix this duplicated
+  // the discriminated union inline; adding a new ActionResult kind would
+  // have required updating both the canonical schema in orchestration AND
+  // this inline copy with no compile-time enforcement of synchrony
+  // (cross-audit feynman HIGH-1, Phase 3+4 follow-up, 2026-04).
+  result: ActionResultSchema
+});
+var handleSubmitActionResult = async ({ run_id, result }) => {
+  if (inFlight.has(run_id)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `concurrent submission rejected for run_id ${run_id}`
+          })
+        }
+      ],
+      isError: true
+    };
+  }
+  inFlight.add(run_id);
+  try {
     const found = runs.find(run_id);
     if (found.kind !== "found")
       return runNotFound(run_id, found);
-    const state = found.run.state;
-    if (format6 === "define_handoff_v1" || format6 === "verified_plan_v1" || format6 === "implementation_review_v1") {
-      const define2 = readDefineHandoff(state, found.run.action);
-      const sourceText = JSON.stringify(define2);
-      if (sourceText.length > MAX_RESPONSE_CHARS)
-        return planningSizeError("define");
-      if (format6 === "define_handoff_v1" || "error" in define2) {
-        return { content: [{ type: "text", text: sourceText }], isError: "error" in define2 };
-      }
-      const plan = buildVerifiedPlan(define2.handoff, state.feature_description, plan_step);
-      const text2 = JSON.stringify(plan);
-      if (text2.length > MAX_RESPONSE_CHARS)
-        return planningSizeError("plan");
-      if (format6 === "verified_plan_v1" || "error" in plan) {
-        return { content: [{ type: "text", text: text2 }], isError: "error" in plan };
-      }
-      const review = await prepareImplementationReview({
-        authority: process.env.PRD_GEN_REVIEW_AUTHORITY,
-        repository: process.env.PRD_GEN_REVIEW_REPOSITORY,
-        repositoryId: process.env.PRD_GEN_REVIEW_REPOSITORY_ID,
-        git: process.env.PRD_GEN_REVIEW_GIT
-      }, review_id, plan.verified_plan, define2.handoff);
-      const reviewText = JSON.stringify(review);
-      if (reviewText.length > MAX_RESPONSE_CHARS)
-        return planningSizeError("review");
-      return { content: [{ type: "text", text: reviewText }], isError: "error" in review };
-    }
-    let payload;
-    if (format6 === "full") {
-      payload = boundFullStateResponse(state);
-    } else if (format6 === "grounding") {
-      payload = boundGroundingResponse(state);
-    } else if (format6 === "validation") {
-      payload = {
-        run_id: state.run_id,
-        prd_validation: state.prd_validation
-      };
-    } else if (format6 === "action") {
-      if (isLegacyExecutionCheckpoint(state, found.run.action))
-        return architectOsRequired();
-      const page = pageActionResponse(
-        state.run_id,
-        refreshImplementationGateQuestion(state, found.run.action),
-        // zod applies the default over MCP; a direct handler call (tests,
-        // in-process hosts) may omit the field.
-        invocation_offset ?? 0
-      );
-      if ("error" in page) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(page) }],
-          isError: true
-        };
-      }
-      payload = page;
-    } else {
-      payload = envelope(state, null);
-    }
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(payload, null, 2) }
-      ]
-    };
-  });
-  const planSectionVerificationTool = server2.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " + PLAN_PAGING_DESCRIPTION, {
-    section_type: SectionTypeSchema,
-    content: external_exports.string(),
-    codebase_excerpts: external_exports.array(external_exports.string()).default([]),
-    memory_excerpts: external_exports.array(external_exports.string()).default([]),
-    request_offset: external_exports.number().int().min(0).default(0)
-  }, { readOnlyHint: true }, async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
-    const plan = planSectionVerification(section_type, content, {
-      codebase_excerpts,
-      memory_excerpts,
-      include_prd_excerpt: true
-    });
-    return planPageResult(plan, request_offset);
-  });
-  const planDocumentVerificationTool = server2.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document. " + PLAN_PAGING_DESCRIPTION, {
-    sections: external_exports.array(external_exports.object({
-      type: SectionTypeSchema,
-      content: external_exports.string()
-    })).min(1),
-    codebase_excerpts: external_exports.array(external_exports.string()).default([]),
-    memory_excerpts: external_exports.array(external_exports.string()).default([]),
-    request_offset: external_exports.number().int().min(0).default(0)
-  }, { readOnlyHint: true }, async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
-    const plan = planDocumentVerification(sections, {
-      codebase_excerpts,
-      memory_excerpts,
-      include_prd_excerpt: true
-    });
-    return planPageResult(plan, request_offset);
-  });
-  const concludeVerification = server2.tool("conclude_verification", "Aggregate JudgeVerdict[] from spawned subagents into a VerificationReport (consensus + dissent). IMPORTANT: omitting claim_types when a reliability repository is open suppresses observation flushing for this batch \u2014 the calibration data will be missing for these runs (one-sided censoring).", {
-    scope: external_exports.enum(["section", "document"]).default("section"),
-    section_type: SectionTypeSchema.optional(),
-    verdicts: external_exports.array(JudgeVerdictSchema),
-    consensus_strategy: external_exports.enum(["weighted_average", "bayesian"]).default("weighted_average"),
-    run_id: external_exports.string().optional().describe("Pipeline run_id \u2014 required for calibrated Bayesian reliability weights (CC-3 control-arm seam uses this to partition treatment vs control runs). When absent, falls back to Beta(7,3) prior for all judges."),
-    claim_types: external_exports.record(external_exports.string(), external_exports.string()).optional().describe("Map of claim_id \u2192 claim_type. When provided, enables per-(judge \xD7 claim_type) reliability lookup. Omit to fall back to per-agent scalar priors. Source: derive from plan_section_verification / plan_document_verification response: { [req.claim.claim_id]: req.claim.claim_type } for each entry in judge_requests[]. TODO(Wave-E): auto-populate from plan state when server-side session context is available."),
-    claims: external_exports.array(external_exports.object({
-      claim_id: external_exports.string(),
-      claim_type: ClaimSchema.shape.claim_type,
-      text: external_exports.string().optional().default(""),
-      evidence: external_exports.string().optional().default(""),
-      source_section: external_exports.string().optional(),
-      external_grounding: external_exports.object({
-        type: ExternalGroundingTypeSchema,
-        payload: external_exports.unknown()
-      }).optional()
-    })).optional().describe("OPTIONAL. Pass the Claim objects from the corresponding plan_section_verification / plan_document_verification response if you want oracle-based ground truth (breaks Curie A2 annotator-circularity for grounded claims). Claims that carry external_grounding will have their truth resolved by the appropriate oracle; claims without it fall back to consensus-majority (back-compat preserved). Shape mirrors the Claim type but only text and evidence are required for grounding propagation \u2014 omit them to pass minimal objects. source: Curie A2.3, PHASE_4_PLAN.md \xA74.1 Wave F closure.")
-  }, { destructiveHint: true }, async ({ scope, section_type, verdicts, consensus_strategy, run_id, claim_types, claims }) => {
-    let claimsMap;
-    if (claims !== void 0 && claims.length > 0) {
-      const map4 = /* @__PURE__ */ new Map();
-      for (const raw of claims) {
-        const parsed = ClaimSchema.safeParse({
-          ...raw,
-          text: raw.text ?? "",
-          evidence: raw.evidence ?? ""
-        });
-        if (parsed.success) {
-          map4.set(parsed.data.claim_id, parsed.data);
-        }
-      }
-      if (map4.size > 0)
-        claimsMap = map4;
-    }
-    const concludeOpts = buildConcludeOpts({ consensus_strategy, run_id, claim_types, claims: claimsMap });
-    const report = scope === "document" ? concludeDocument(verdicts, concludeOpts) : concludeSection(section_type ?? "overview", verdicts, concludeOpts);
+    if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) || isRetiredImplementationAnswer(found.run.state, result))
+      return architectOsRequired();
+    const { state, action } = found.run;
+    const out = state.semantic_review_requested && state.current_step === "complete" && action ? { state, action, messages: [] } : step({ state: recordLegacyDefineRefusal(state, action), result });
+    const drained = drainEvidenceQueues(out.state);
+    runs.keep(drained, out.action);
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(report, null, 2)
+          text: JSON.stringify(boundEnvelopeResponse(envelope(drained, out.action, out.messages)), null, 2)
         }
       ]
     };
+  } finally {
+    inFlight.delete(run_id);
+  }
+};
+function registerSubmitActionResult(server2) {
+  return server2.tool("submit_action_result", "Feed an ActionResult to the pipeline runner; receive the next NextAction.", submitActionResultInput(), { destructiveHint: true }, handleSubmitActionResult);
+}
+
+// packages/mcp-server/dist/implementation-review.js
+import { execFile } from "node:child_process";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync as statSync2 } from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute2, join as join11, resolve as resolve2 } from "node:path";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+var GIT_NULL_PATH = "/dev/null";
+var MAX_REVIEW_BYTES = 4 * MAX_RESPONSE_CHARS;
+var MAX_GIT_MARKER_BYTES = 1 << 20;
+var utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function identity2(path) {
+  return statSync2(path, { bigint: true });
+}
+function pathIsWithin(boundary, path) {
+  let current = path;
+  for (; ; ) {
+    if (sameFile(boundary, identity2(current)))
+      return true;
+    const parent = dirname5(current);
+    if (parent === current)
+      return false;
+    current = parent;
+  }
+}
+async function git({ executable, repository }, ...args) {
+  return runGit(executable, repository, args);
+}
+async function runGit(executable, repository, args, attributes) {
+  const { stdout } = await execute(executable, [
+    "--no-pager",
+    "--no-replace-objects",
+    "-C",
+    repository,
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.quotePath=true",
+    "-c",
+    `core.attributesFile=${GIT_NULL_PATH}`,
+    ...attributes ? [`--attr-source=${attributes}`] : [],
+    ...args
+  ], {
+    cwd: dirname5(executable),
+    encoding: null,
+    maxBuffer: MAX_REVIEW_BYTES,
+    env: {
+      SystemRoot: process.env.SystemRoot,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_ATTR_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: GIT_NULL_PATH,
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_ALLOW_PROTOCOL: "",
+      GIT_GRAFT_FILE: GIT_NULL_PATH,
+      GIT_OPTIONAL_LOCKS: "0",
+      LC_ALL: "C"
+    }
   });
+  return utf8.decode(stdout);
+}
+async function verifyRevisions(repository, base, head) {
+  for (const revision of [base, head]) {
+    const resolved = await git(repository, "rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`);
+    if (resolved !== revision + "\n")
+      return false;
+  }
+  await git(repository, "merge-base", "--is-ancestor", base, head);
+  return true;
+}
+function openReadOnly(path) {
+  return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+}
+function readRegularFile(fd, maxBytes, singleLink) {
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > maxBytes || singleLink && info.nlink !== 1)
+      return void 0;
+    const content = Buffer.alloc(info.size + 1);
+    let length = 0;
+    for (; ; ) {
+      const read = readSync(fd, content, { offset: length, length: content.length - length, position: null });
+      if (read === 0)
+        break;
+      length += read;
+      if (length === content.length)
+        return void 0;
+    }
+    if (length !== info.size)
+      return void 0;
+    return utf8.decode(content.subarray(0, length));
+  } finally {
+    closeSync(fd);
+  }
+}
+function readGitMarker(path) {
+  let fd;
+  try {
+    fd = openReadOnly(path);
+  } catch (error62) {
+    if (error62.code === "ENOENT")
+      return null;
+    throw error62;
+  }
+  return readRegularFile(fd, MAX_GIT_MARKER_BYTES, false);
+}
+function gitPathLine(text2) {
+  return /^([^\r\n]+)[\r\n]*$/.exec(text2)?.[1];
+}
+function gitMetadata(repository) {
+  const dotGit = join11(repository, ".git");
+  const info = statSync2(dotGit);
+  let directory = dotGit;
+  if (!info.isDirectory()) {
+    if (!info.isFile())
+      return void 0;
+    const marker = readGitMarker(dotGit);
+    const prefix = "gitdir: ";
+    if (!marker?.startsWith(prefix))
+      return void 0;
+    const path = gitPathLine(marker.slice(prefix.length));
+    if (!path)
+      return void 0;
+    directory = resolve2(repository, path);
+  }
+  const gitDir = realpathSync(directory);
+  const data = readGitMarker(join11(gitDir, "commondir"));
+  if (data === null)
+    return [gitDir];
+  const common = data === void 0 ? void 0 : gitPathLine(data);
+  return common ? [gitDir, realpathSync(resolve2(gitDir, common))] : void 0;
+}
+async function reviewTarget(repositoryPath, gitPath, source) {
+  const repository = realpathSync(repositoryPath);
+  const executable = realpathSync(gitPath);
+  const metadata = gitMetadata(repository);
+  if (!metadata)
+    return refusal2("review_repository_invalid");
+  const checkout = identity2(repository);
+  const protectedDirs = [checkout, ...metadata.map(identity2)];
+  if (protectedDirs.some((dir) => pathIsWithin(dir, source) || pathIsWithin(dir, executable))) {
+    return refusal2("review_authority_invalid");
+  }
+  const target = { executable, repository };
+  const root = await git(target, "rev-parse", "--show-toplevel");
+  const observed = gitPathLine(root);
+  if (!observed || !sameFile(identity2(observed), checkout))
+    return refusal2("review_repository_invalid");
+  return target;
+}
+var refusal2 = (reason) => ({ error: { code: reason, message: "The implementation review dossier could not be prepared." } });
+function loadReviewAuthority(source, reviewId, plan) {
+  const text2 = readRegularFile(openReadOnly(source), MAX_REVIEW_BYTES, true);
+  if (text2 === void 0 || text2.length > MAX_RESPONSE_CHARS)
+    return refusal2("review_authority_invalid");
+  const authority = readReviewAuthority(JSON.parse(text2), reviewId, plan);
+  return authority ?? refusal2("review_authority_invalid");
+}
+async function prepareImplementationReview(paths, reviewId, plan, define2) {
+  const { authority: path, repository: repositoryPath, repositoryId, git: gitPath } = paths;
+  if (!path || !repositoryPath || !repositoryId || !gitPath || !reviewId || !isAbsolute2(path) || !isAbsolute2(repositoryPath) || !isAbsolute2(gitPath)) {
+    return refusal2("review_authority_unavailable");
+  }
+  try {
+    const source = realpathSync(path);
+    const target = await reviewTarget(repositoryPath, gitPath, source);
+    if ("error" in target)
+      return target;
+    const authority = loadReviewAuthority(source, reviewId, plan);
+    if ("error" in authority)
+      return authority;
+    if (authority.repository_id !== repositoryId)
+      return refusal2("review_repository_invalid");
+    const { base_revision: base, reviewed_revision: head } = authority;
+    if (base === head)
+      return refusal2("review_revision_invalid");
+    try {
+      if (!await verifyRevisions(target, base, head))
+        return refusal2("review_revision_invalid");
+    } catch {
+      return refusal2("review_revision_invalid");
+    }
+    const diff2 = await runGit(target.executable, target.repository, [
+      "diff",
+      "--binary",
+      "--full-index",
+      "--find-renames",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
+      `-O${GIT_NULL_PATH}`,
+      base,
+      head,
+      "--"
+    ], base);
+    return { implementation_review: {
+      version: 1,
+      status: "ready_for_review",
+      review_id: authority.review_id,
+      run_id: plan.run_id,
+      step: plan.proposal.step,
+      repository_id: authority.repository_id,
+      base_revision: base,
+      reviewed_revision: head,
+      plan_sha256: plan.plan_sha256,
+      approval_sha256: authority.decision.approval_sha256,
+      diff_sha256: reviewDigest(diff2),
+      diff: diff2,
+      acceptance: define2.acceptance.map((criterion) => ({ ...criterion, status: "evidence_required" }))
+    } };
+  } catch (error62) {
+    return refusal2(error62?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "review_response_too_large" : "review_evidence_unavailable");
+  }
+}
+
+// packages/mcp-server/dist/bound-full-state.js
+function serializedChars(value) {
+  return JSON.stringify(value).length;
+}
+function wireChars2(payload) {
+  return JSON.stringify(payload, null, 2).length;
+}
+function boundFullStateResponse(state) {
+  const work = { ...state };
+  const applied = [];
+  const budget = MAX_RESPONSE_CHARS;
+  const originalChars = wireChars2({ state: work });
+  const shippedChars = () => selfMeasuredChars(wireChars2({
+    state: work,
+    __bounded: {
+      original_chars: originalChars,
+      final_chars: 0,
+      budget_chars: budget,
+      applied
+    }
+  }));
+  const fits = () => shippedChars() <= budget;
+  const untouched = shippedChars();
+  if (untouched <= budget) {
+    return {
+      state: work,
+      __bounded: {
+        original_chars: originalChars,
+        final_chars: untouched,
+        budget_chars: budget,
+        applied
+      }
+    };
+  }
+  for (const field of ["codebase_grounding", "prd_validation"]) {
+    if (!fits() && work[field] != null) {
+      const reclaimed = serializedChars(work[field]);
+      const stub = {
+        omitted: true,
+        chars: reclaimed,
+        hint: `re-fetch via get_pipeline_state(run_id, format:"grounding")`
+      };
+      work[field] = stub;
+      applied.push({ field, kind: "omitted", reclaimed_chars: reclaimed });
+    }
+  }
+  if (!fits() && Array.isArray(work.clarifications) && work.clarifications.length > 0) {
+    const full = work.clarifications;
+    const before = serializedChars(full);
+    let kept = full.slice();
+    while (kept.length > 1) {
+      work.clarifications = kept;
+      if (fits())
+        break;
+      kept = kept.slice(1);
+    }
+    work.clarifications = kept;
+    const dropped = full.length - kept.length;
+    if (dropped > 0) {
+      const reclaimed = before - serializedChars(kept);
+      applied.push({
+        field: "clarifications",
+        kind: "elided",
+        reclaimed_chars: reclaimed,
+        dropped
+      });
+    }
+  }
+  if (!fits() && Array.isArray(work.sections) && work.sections.length > 0) {
+    const sections = work.sections;
+    let reclaimed = 0;
+    const stripped = sections.map((s) => {
+      if (typeof s.content === "string" && s.content.length > 0) {
+        reclaimed += serializedChars(s.content);
+        return {
+          ...s,
+          content: {
+            omitted: true,
+            chars: serializedChars(s.content),
+            hint: "section markdown is in the exported PRD file (written_files)"
+          }
+        };
+      }
+      return s;
+    });
+    if (reclaimed > 0) {
+      work.sections = stripped;
+      applied.push({
+        field: "sections[].content",
+        kind: "omitted",
+        reclaimed_chars: reclaimed
+      });
+    }
+  }
   return {
-    start_pipeline: startPipeline,
-    submit_action_result: submitActionResult,
-    get_pipeline_state: getPipelineState,
+    state: work,
+    __bounded: {
+      original_chars: originalChars,
+      final_chars: shippedChars(),
+      budget_chars: budget,
+      applied
+    }
+  };
+}
+function boundGroundingResponse(state) {
+  const applied = [];
+  const base = {
+    run_id: state.run_id,
+    codebase_grounding: state.codebase_grounding,
+    prd_validation: state.prd_validation,
+    __bounded: { budget_chars: MAX_RESPONSE_CHARS, applied }
+  };
+  if (wireChars2(base) <= MAX_RESPONSE_CHARS || state.prd_validation == null) {
+    return base;
+  }
+  const reclaimed = serializedChars(state.prd_validation);
+  applied.push({ field: "prd_validation", kind: "omitted", reclaimed_chars: reclaimed });
+  return {
+    ...base,
+    prd_validation: {
+      omitted: true,
+      chars: reclaimed,
+      hint: `re-fetch via get_pipeline_state(run_id, format:"validation")`
+    },
+    __bounded: { budget_chars: MAX_RESPONSE_CHARS, applied }
+  };
+}
+
+// packages/mcp-server/dist/page-action-response.js
+function wireChars3(value) {
+  return JSON.stringify(value, null, 2).length;
+}
+function isSpawnAction2(action) {
+  if (action === null || typeof action !== "object")
+    return false;
+  const a = action;
+  return a.kind === "spawn_subagents" && Array.isArray(a.invocations);
+}
+function selfMeasuredChars2(zeroChars) {
+  for (let digits2 = 1; ; digits2++) {
+    const size2 = zeroChars - 1 + digits2;
+    if (String(size2).length === digits2)
+      return size2;
+  }
+}
+function pageOf2(runId, action, { offset, count: count2, total }, budgetChars) {
+  const end = offset + count2;
+  const draft = {
+    run_id: runId,
+    action,
+    __page: {
+      offset,
+      count: count2,
+      total,
+      next_offset: end < total ? end : null,
+      final_chars: 0,
+      budget_chars: budgetChars
+    }
+  };
+  const finalChars = selfMeasuredChars2(wireChars3(draft));
+  return { ...draft, __page: { ...draft.__page, final_chars: finalChars } };
+}
+function pageActionResponse(runId, action, offset, budgetChars = MAX_RESPONSE_CHARS) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    return { error: `invocation_offset ${offset} is not a non-negative integer` };
+  }
+  if (!isSpawnAction2(action)) {
+    if (offset !== 0) {
+      return { error: `invocation_offset ${offset} out of range: the last action is not a spawn_subagents batch` };
+    }
+    return pageOf2(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
+  }
+  const all = action.invocations;
+  const total = all.length;
+  if (total === 0 && offset === 0) {
+    return pageOf2(runId, action, { offset: 0, count: 0, total: 0 }, budgetChars);
+  }
+  if (offset >= total) {
+    return { error: `invocation_offset ${offset} out of range: the batch has ${total} invocations` };
+  }
+  const build = (count2) => pageOf2(runId, { ...action, invocations: all.slice(offset, offset + count2) }, { offset, count: count2, total }, budgetChars);
+  return largestFittingPage(build, total - offset, budgetChars);
+}
+function largestFittingPage(build, remaining, budgetChars) {
+  let best = build(1);
+  let fit = 1;
+  let over = remaining + 1;
+  for (let probe = 2; probe <= remaining; probe *= 2) {
+    const candidate = build(probe);
+    if (candidate.__page.final_chars > budgetChars) {
+      over = probe;
+      break;
+    }
+    best = candidate;
+    fit = probe;
+  }
+  if (over === remaining + 1 && fit < remaining) {
+    const last = build(remaining);
+    if (last.__page.final_chars <= budgetChars)
+      return last;
+    over = remaining;
+  }
+  let lo = fit + 1;
+  let hi = over - 1;
+  while (lo <= hi) {
+    const mid = lo + hi >>> 1;
+    const candidate = build(mid);
+    if (candidate.__page.final_chars <= budgetChars) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+// packages/mcp-server/dist/tools/get-pipeline-state.js
+var getPipelineStateInput = () => ({
+  run_id: external_exports.string(),
+  format: external_exports.enum(["full", "summary", "grounding", "validation", "action", "define_handoff_v1", "verified_plan_v1", "implementation_review_v1"]).default("summary"),
+  invocation_offset: external_exports.number().int().min(0).default(0),
+  plan_step: external_exports.string().optional().describe("Operator-selected architect-os Step name for plan and review formats."),
+  review_id: ReviewIdSchema.optional().describe("Operator-assigned review dossier identifier.")
+});
+var handleGetPipelineState = async ({ run_id, format: format6, invocation_offset, plan_step, review_id }) => {
+  const found = runs.find(run_id);
+  if (found.kind !== "found")
+    return runNotFound(run_id, found);
+  const state = found.run.state;
+  if (format6 === "define_handoff_v1" || format6 === "verified_plan_v1" || format6 === "implementation_review_v1") {
+    const define2 = readDefineHandoff(state, found.run.action);
+    const sourceText = JSON.stringify(define2);
+    if (sourceText.length > MAX_RESPONSE_CHARS)
+      return planningSizeError("define");
+    if (format6 === "define_handoff_v1" || "error" in define2) {
+      return { content: [{ type: "text", text: sourceText }], isError: "error" in define2 };
+    }
+    const plan = buildVerifiedPlan(define2.handoff, state.feature_description, plan_step);
+    const text2 = JSON.stringify(plan);
+    if (text2.length > MAX_RESPONSE_CHARS)
+      return planningSizeError("plan");
+    if (format6 === "verified_plan_v1" || "error" in plan) {
+      return { content: [{ type: "text", text: text2 }], isError: "error" in plan };
+    }
+    const review = await prepareImplementationReview({
+      authority: process.env.PRD_GEN_REVIEW_AUTHORITY,
+      repository: process.env.PRD_GEN_REVIEW_REPOSITORY,
+      repositoryId: process.env.PRD_GEN_REVIEW_REPOSITORY_ID,
+      git: process.env.PRD_GEN_REVIEW_GIT
+    }, review_id, plan.verified_plan, define2.handoff);
+    const reviewText = JSON.stringify(review);
+    if (reviewText.length > MAX_RESPONSE_CHARS)
+      return planningSizeError("review");
+    return { content: [{ type: "text", text: reviewText }], isError: "error" in review };
+  }
+  let payload;
+  if (format6 === "full") {
+    payload = boundFullStateResponse(state);
+  } else if (format6 === "grounding") {
+    payload = boundGroundingResponse(state);
+  } else if (format6 === "validation") {
+    payload = {
+      run_id: state.run_id,
+      prd_validation: state.prd_validation
+    };
+  } else if (format6 === "action") {
+    if (isLegacyExecutionCheckpoint(state, found.run.action))
+      return architectOsRequired();
+    const page = pageActionResponse(state.run_id, refreshImplementationGateQuestion(state, found.run.action), invocation_offset ?? 0);
+    if ("error" in page) {
+      return {
+        content: [{ type: "text", text: JSON.stringify(page) }],
+        isError: true
+      };
+    }
+    payload = page;
+  } else {
+    payload = envelope(state, null);
+  }
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(payload, null, 2) }
+    ]
+  };
+};
+function registerGetPipelineState(server2) {
+  return server2.tool("get_pipeline_state", "Read the current pipeline state by run_id. format:'summary' (default) returns the lightweight envelope; format:'full' returns the whole state, bounded to the Claude Code 100,000-char MCP response budget by shedding least-relevant detail first (observable __bounded markers; full grounding re-fetchable via format:'grounding'); format:'grounding' returns the codebase_grounding (+ prd_validation when it fits) blobs format:'full' sheds first; format:'validation' returns prd_validation alone (the blob format:'grounding' sheds when the pair overshoots); format:'action' returns the last action (refreshing a pending verification question) with full spawn_subagents prompts \u2014 the recovery path when a start_pipeline/submit_action_result response's __bounded.applied records action.invocations[].prompt: the prompts from that record's next_offset on are omitted stubs, and next_offset is the invocation_offset to read them from. It is paged under the same budget: each page holds whole invocations from invocation_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", getPipelineStateInput(), { readOnlyHint: true }, handleGetPipelineState);
+}
+
+// packages/mcp-server/dist/page-plan-response.js
+function planWireText(value) {
+  return JSON.stringify(value, null, 2);
+}
+function pageOf3(plan, offset, count2, budgetChars) {
+  const total = plan.judge_requests.length;
+  const end = offset + count2;
+  const judge_requests = plan.judge_requests.slice(offset, end);
+  const marker = {
+    offset,
+    count: count2,
+    total,
+    next_offset: end < total ? end : null,
+    final_chars: 0,
+    budget_chars: budgetChars
+  };
+  const draft = offset === 0 ? { claims: plan.claims, judge_requests, mechanical_claims: plan.mechanical_claims, __page: marker } : { judge_requests, __page: marker };
+  const finalChars = selfMeasuredChars(planWireText(draft).length);
+  return { ...draft, __page: { ...marker, final_chars: finalChars } };
+}
+function pagePlanResponse(plan, offset, budgetChars = MAX_RESPONSE_CHARS) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    return { error: `request_offset ${offset} is not a non-negative integer` };
+  }
+  const total = plan.judge_requests.length;
+  if (total === 0 && offset === 0)
+    return pageOf3(plan, 0, 0, budgetChars);
+  if (offset >= total) {
+    return { error: `request_offset ${offset} out of range: the plan has ${total} judge requests` };
+  }
+  const count2 = largestFittingCount((n) => pageOf3(plan, offset, n, budgetChars).__page.final_chars, total - offset, budgetChars);
+  return pageOf3(plan, offset, count2, budgetChars);
+}
+var PLAN_PAGING_DESCRIPTION = "The response is paged under the 100,000-char MCP response budget: each page holds whole judge requests from request_offset (default 0), and __page.next_offset is the offset of the next page, null on the last one. Call again with the same arguments and request_offset set to next_offset until it is null, and dispatch the judge requests of every page. claims and mechanical_claims are on the page at offset 0 only.";
+function planPageResult(plan, offset) {
+  const page = pagePlanResponse(plan, offset ?? 0);
+  const content = [{ type: "text", text: planWireText(page) }];
+  return "error" in page ? { content, isError: true } : { content };
+}
+
+// packages/mcp-server/dist/tools/plan-verification.js
+var planSectionInput = () => ({
+  section_type: SectionTypeSchema,
+  content: external_exports.string(),
+  codebase_excerpts: external_exports.array(external_exports.string()).default([]),
+  memory_excerpts: external_exports.array(external_exports.string()).default([]),
+  request_offset: external_exports.number().int().min(0).default(0)
+});
+var handlePlanSection = async ({ section_type, content, codebase_excerpts, memory_excerpts, request_offset }) => {
+  const plan = planSectionVerification(section_type, content, {
+    codebase_excerpts,
+    memory_excerpts,
+    include_prd_excerpt: true
+  });
+  return planPageResult(plan, request_offset);
+};
+var planDocumentInput = () => ({
+  sections: external_exports.array(external_exports.object({
+    type: SectionTypeSchema,
+    content: external_exports.string()
+  })).min(1),
+  codebase_excerpts: external_exports.array(external_exports.string()).default([]),
+  memory_excerpts: external_exports.array(external_exports.string()).default([]),
+  request_offset: external_exports.number().int().min(0).default(0)
+});
+var handlePlanDocument = async ({ sections, codebase_excerpts, memory_excerpts, request_offset }) => {
+  const plan = planDocumentVerification(sections, {
+    codebase_excerpts,
+    memory_excerpts,
+    include_prd_excerpt: true
+  });
+  return planPageResult(plan, request_offset);
+};
+function registerPlanVerificationTools(server2) {
+  const planSectionVerificationTool = server2.tool("plan_section_verification", "Extract claims from a PRD section and select judges. Returns JudgeRequest[] the host must execute via Agent tool in parallel. " + PLAN_PAGING_DESCRIPTION, planSectionInput(), { readOnlyHint: true }, handlePlanSection);
+  const planDocumentVerificationTool = server2.tool("plan_document_verification", "Same as plan_section_verification but across all sections of a document. " + PLAN_PAGING_DESCRIPTION, planDocumentInput(), { readOnlyHint: true }, handlePlanDocument);
+  return {
     plan_section_verification: planSectionVerificationTool,
-    plan_document_verification: planDocumentVerificationTool,
-    conclude_verification: concludeVerification
+    plan_document_verification: planDocumentVerificationTool
+  };
+}
+
+// packages/mcp-server/dist/build-conclude-opts.js
+function buildConcludeOpts(input2) {
+  const { consensus_strategy, run_id, claim_types, claims } = input2;
+  const reliabilityRepo = getReliabilityRepo();
+  const reliabilityProvider = getConsensusReliabilityProvider();
+  if (claim_types === void 0 && reliabilityRepo !== null) {
+    console.warn("[reliability] WARNING: conclude_verification called without claim_types \u2014 observations will NOT be flushed to the calibration repository for this batch. This may produce one-sided censoring across runs.");
+  }
+  const claimTypesMap = claim_types !== void 0 ? new Map(Object.entries(claim_types)) : void 0;
+  const onObservation = reliabilityRepo !== null && claimTypesMap !== void 0 ? (obs) => writeObservation(reliabilityRepo, obs, run_id) : void 0;
+  return {
+    strategy: consensus_strategy,
+    reliabilityProvider: reliabilityProvider ?? void 0,
+    runId: run_id,
+    claimTypes: claimTypesMap,
+    claims,
+    onObservation
+  };
+}
+
+// packages/mcp-server/dist/tools/conclude-verification.js
+var concludeClaimsInput = () => external_exports.array(external_exports.object({
+  claim_id: external_exports.string(),
+  claim_type: ClaimSchema.shape.claim_type,
+  text: external_exports.string().optional().default(""),
+  evidence: external_exports.string().optional().default(""),
+  source_section: external_exports.string().optional(),
+  external_grounding: external_exports.object({
+    type: ExternalGroundingTypeSchema,
+    payload: external_exports.unknown()
+  }).optional()
+})).optional().describe("OPTIONAL. Pass the Claim objects from the corresponding plan_section_verification / plan_document_verification response if you want oracle-based ground truth (breaks Curie A2 annotator-circularity for grounded claims). Claims that carry external_grounding will have their truth resolved by the appropriate oracle; claims without it fall back to consensus-majority (back-compat preserved). Shape mirrors the Claim type but only text and evidence are required for grounding propagation \u2014 omit them to pass minimal objects. source: Curie A2.3, PHASE_4_PLAN.md \xA74.1 Wave F closure.");
+var concludeVerificationInput = () => ({
+  scope: external_exports.enum(["section", "document"]).default("section"),
+  section_type: SectionTypeSchema.optional(),
+  verdicts: external_exports.array(JudgeVerdictSchema),
+  consensus_strategy: external_exports.enum(["weighted_average", "bayesian"]).default("weighted_average"),
+  run_id: external_exports.string().optional().describe("Pipeline run_id \u2014 required for calibrated Bayesian reliability weights (CC-3 control-arm seam uses this to partition treatment vs control runs). When absent, falls back to Beta(7,3) prior for all judges."),
+  claim_types: external_exports.record(external_exports.string(), external_exports.string()).optional().describe("Map of claim_id \u2192 claim_type. When provided, enables per-(judge \xD7 claim_type) reliability lookup. Omit to fall back to per-agent scalar priors. Source: derive from plan_section_verification / plan_document_verification response: { [req.claim.claim_id]: req.claim.claim_type } for each entry in judge_requests[]. TODO(Wave-E): auto-populate from plan state when server-side session context is available."),
+  claims: concludeClaimsInput()
+});
+var handleConcludeVerification = async ({ scope, section_type, verdicts, consensus_strategy, run_id, claim_types, claims }) => {
+  let claimsMap;
+  if (claims !== void 0 && claims.length > 0) {
+    const map4 = /* @__PURE__ */ new Map();
+    for (const raw of claims) {
+      const parsed = ClaimSchema.safeParse({
+        ...raw,
+        text: raw.text ?? "",
+        evidence: raw.evidence ?? ""
+      });
+      if (parsed.success) {
+        map4.set(parsed.data.claim_id, parsed.data);
+      }
+    }
+    if (map4.size > 0)
+      claimsMap = map4;
+  }
+  const concludeOpts = buildConcludeOpts({ consensus_strategy, run_id, claim_types, claims: claimsMap });
+  const report = scope === "document" ? concludeDocument(verdicts, concludeOpts) : concludeSection(section_type ?? "overview", verdicts, concludeOpts);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(report, null, 2)
+      }
+    ]
+  };
+};
+function registerConcludeVerification(server2) {
+  return server2.tool("conclude_verification", "Aggregate JudgeVerdict[] from spawned subagents into a VerificationReport (consensus + dissent). IMPORTANT: omitting claim_types when a reliability repository is open suppresses observation flushing for this batch \u2014 the calibration data will be missing for these runs (one-sided censoring).", concludeVerificationInput(), { destructiveHint: true }, handleConcludeVerification);
+}
+
+// packages/mcp-server/dist/pipeline-tools.js
+function registerPipelineTools(server2) {
+  return {
+    start_pipeline: registerStartPipeline(server2),
+    submit_action_result: registerSubmitActionResult(server2),
+    get_pipeline_state: registerGetPipelineState(server2),
+    ...registerPlanVerificationTools(server2),
+    conclude_verification: registerConcludeVerification(server2)
   };
 }
 
