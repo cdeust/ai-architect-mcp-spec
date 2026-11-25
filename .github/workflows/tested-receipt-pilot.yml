@@ -1,0 +1,32 @@
+name: Tested receipt pilot
+
+# SEC-009, phase B. Calls the protected producer on main for the pull requests
+# that matter most (packages, lockfile, release workflow). The merge commit's
+# receipt comes from pipeline-after-merge.yml: a merge made by the resolver's
+# GITHUB_TOKEN starts no push workflow. This workflow is not a
+# required check and does not wake the merge resolver: its result cannot hold,
+# delay or allow a merge. Phase C removes it and calls the producer from the
+# ordinary Pipeline for every pull request.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ["packages/**", "pnpm-lock.yaml", ".github/workflows/release.yml"]
+
+permissions: {}
+
+concurrency:
+  group: tested-receipt-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  receipt:
+    # The producer's own jobs narrow these to what each of them needs.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # Deliberately the default branch, not a SHA: the receipt is valid only when its
+    # signing certificate names tested-receipt.yml@refs/heads/main, the one
+    # producer a pull request cannot choose or edit.
+    uses: cdeust/ai-architect-mcp-spec/.github/workflows/tested-receipt.yml@main # zizmor: ignore[unpinned-uses]

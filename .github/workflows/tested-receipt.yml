@@ -1,0 +1,171 @@
+name: Tested receipt
+
+# SEC-009, phase B (observation). The protected producer of the "tests passed"
+# receipt. Callers must reference it by its full path on the default branch:
+#   uses: cdeust/ai-architect-mcp-spec/.github/workflows/tested-receipt.yml@main
+# GitHub then runs this file as it is on main, whatever the caller's branch says,
+# and the signing certificate names it (job_workflow_ref) as the signer. A pull
+# request can rename or drop its own Pipeline jobs; it cannot change which jobs
+# this file runs, which recipes they run, or what the signer attests.
+# Sources: https://docs.github.com/en/actions/sharing-automations/reusing-workflows
+# https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-and-reusable-workflows-to-achieve-slsa-v1-build-level-3
+
+on:
+  workflow_call:
+    inputs:
+      tested_sha:
+        # Only for a merge commit, and only from the post-merge chain of main:
+        # a pull request run takes its head from the event and must pass nothing.
+        type: string
+        required: false
+        default: ""
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  recipes:
+    # The commands come from ci.json on the default branch, never from the tested
+    # commit: a pull request cannot redefine what "the tests" are before it merges.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tested_sha: ${{ steps.subject.outputs.tested_sha }}
+      unit: ${{ steps.recipes.outputs.unit }}
+      regression: ${{ steps.recipes.outputs.regression }}
+      e2e: ${{ steps.recipes.outputs.e2e }}
+    steps:
+      - name: Identify the tested commit
+        id: subject
+        env:
+          EVENT: ${{ github.event_name }}
+          CALLER: ${{ github.workflow_ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MERGED: ${{ inputs.tested_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request)
+              [ -z "$MERGED" ] || { echo "::error::a pull request receipt takes no tested_sha"; exit 1; }
+              sha=$PR_HEAD ;;
+            workflow_run)
+              # github.workflow_ref names the caller, which a pull request cannot edit on main.
+              [ "$CALLER" = "$GITHUB_REPOSITORY/.github/workflows/pipeline-after-merge.yml@refs/heads/main" ] \
+                || { echo "::error::merge receipts come from pipeline-after-merge.yml on main only"; exit 1; }
+              sha=$MERGED
+              [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tested_sha is not a full SHA"; exit 1; }
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status)
+              case "$status" in identical|ahead) ;; *) echo "::error::$sha is not on main"; exit 1 ;; esac ;;
+            *) echo "::error::no receipt for event $EVENT"; exit 1 ;;
+          esac
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tested commit is not a full SHA"; exit 1; }
+          echo "tested_sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Read the recipes of the default branch
+        id: recipes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/contents/ci.json" --jq .content | base64 -d > "$RUNNER_TEMP/ci.json"
+          python3 - "$RUNNER_TEMP/ci.json" <<'PY'
+          import json, os, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for key in ("unit", "regression", "e2e"):
+                  value = data.get(key)
+                  if not isinstance(value, str) or not value or "\n" in value:
+                      sys.exit(f"ci.json on the default branch: {key} must be one command line")
+                  out.write(f"{key}={value}\n")
+          PY
+
+  unit:
+    needs: recipes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.recipes.outputs.tested_sha }}
+          persist-credentials: false
+      - name: Run the unit command of the default branch
+        env:
+          CI_COMMAND: ${{ needs.recipes.outputs.unit }}
+        run: bash -eo pipefail -c "$CI_COMMAND"
+
+  regression:
+    needs: recipes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.recipes.outputs.tested_sha }}
+          persist-credentials: false
+      - name: Run the regression command of the default branch
+        env:
+          CI_COMMAND: ${{ needs.recipes.outputs.regression }}
+        run: bash -eo pipefail -c "$CI_COMMAND"
+
+  e2e:
+    needs: recipes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.recipes.outputs.tested_sha }}
+          persist-credentials: false
+      - name: Run the e2e command of the default branch
+        env:
+          CI_COMMAND: ${{ needs.recipes.outputs.e2e }}
+        run: bash -eo pipefail -c "$CI_COMMAND"
+
+  sign:
+    # The only job with signing rights. It checks out nothing, runs no code of the
+    # tested commit and reads no artifact: its subject is built from the runner's
+    # own record of this run (needs.*.result) and of the event.
+    needs: [recipes, unit, regression, e2e]
+    if: ${{ !cancelled() && needs.recipes.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Write the receipt subject
+        env:
+          TESTED_SHA: ${{ needs.recipes.outputs.tested_sha }}
+          UNIT: ${{ needs.unit.result }}
+          REGRESSION: ${{ needs.regression.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          python3 - "$RUNNER_TEMP/tested-receipt.json" <<'PY'
+          import json, os, sys
+          subject = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "tested_sha": os.environ["TESTED_SHA"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "jobs": {"unit": os.environ["UNIT"], "regression": os.environ["REGRESSION"],
+                       "e2e": os.environ["E2E"]},
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as out:
+              out.write(json.dumps(subject, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Attest the receipt
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/tested-receipt.json
+          predicate-type: https://github.com/cdeust/ai-architect-mcp-spec/tested-receipt/v1
+          predicate-path: ${{ runner.temp }}/tested-receipt.json
+          # A storage record describes a published artifact and needs
+          # artifact-metadata: write; a receipt is not one.
+          create-storage-record: false
