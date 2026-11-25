@@ -59,6 +59,10 @@ log="$FIXTURE_LOG/ssh.$$"
   echo "pid=$$"
   echo "arguments=$*"
   echo "parent=$PPID"
+  # Git runs GIT_SSH_COMMAND through /bin/sh -c. dash (Linux) keeps that shell as
+  # our parent, bash (macOS sh) replaces itself: record which one Git is.
+  echo "parent_command=$(ps -o comm= -p "$PPID" | sed 's|.*/||')"
+  echo "grandparent=$(ps -o ppid= -p "$PPID" | tr -d ' ')"
   echo "socket=${SSH_AUTH_SOCK-}"
   echo "agent=${SSH_AGENT_PID-}"
   echo "key_in_environment=${SSH_KEY+yes}"
@@ -280,8 +284,13 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             if (fixture.log / "agent-starts").exists() else []
         starts = [first for first in starts if first != "-k"]
         self.assertEqual(len(starts), 1, "exactly one signing agent is started: %r" % starts)
-        # At the step's exit only the ssh client may still be ending (on EOF, below).
-        clients = {record["pid"] for record in fixture.transports()}
+        # At the step's exit only the ssh client, and the shell Git ran it through,
+        # may still be ending (on EOF, below).
+        clients = set()
+        for record in fixture.transports():
+            clients.add(record["pid"])
+            if record["parent_command"] != "git":
+                clients.add(record["parent"])
         group = [row for row in processes() if row[1] == str(fixture.process.pid)
                  and not row[2].startswith("Z") and row[0] not in clients and row[4] not in clients]
         self.assertEqual(group, [], "a child of the step outlived it")
@@ -299,9 +308,11 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             self.assertEqual(probe.returncode, 2, "the same probe that reached the agent no longer does")
             # The ssh client ends on its own once Git is gone, as a real client does on
             # EOF; it gets TRANSPORT_EXIT_S, Git and the agent get nothing.
-            self.assertFalse(alive(int(record["parent"])), "Git outlived the step")
+            shell = record["parent_command"] != "git"
+            git_pid = record["grandparent"] if shell else record["parent"]
+            self.assertFalse(alive(int(git_pid)), "Git outlived the step")
             deadline = time.monotonic() + TRANSPORT_EXIT_S
-            for pid in (record["pid"],):
+            for pid in (record["pid"], record["parent"]) if shell else (record["pid"],):
                 while alive(int(pid)) and time.monotonic() < deadline:
                     time.sleep(0.02)
                 self.assertFalse(alive(int(pid)), "a transport process outlived the step")

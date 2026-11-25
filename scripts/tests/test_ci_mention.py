@@ -103,3 +103,149 @@ class MentionJobs(unittest.TestCase):
             self.assertFalse((root / "example").exists())
             with self.assertRaises(subprocess.CalledProcessError):
                 apply(store, revision, b"invalid patch", env)
+
+
+class MentionPublication(unittest.TestCase):
+    """publish() against a real local Git remote: what it writes, and that a refused
+    request writes nothing. https://github.com/ is redirected to the fixture remote
+    with url.insteadOf through GIT_CONFIG_PARAMETERS, which publish() passes through;
+    the code under test is unchanged."""
+
+    REPO = "owner/spec"
+    RUN = "42"
+
+    def setUp(self):
+        import os
+        import runpy
+        import subprocess
+        import tempfile
+        from unittest.mock import patch
+        self.module = runpy.run_path(str(ROOT / "scripts/ci-mention/request.py"))
+        self.subprocess = subprocess
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.remote = self.root / "hosting" / "owner" / "spec.git"
+        self.remote.parent.mkdir(parents=True)
+        self.git("init", "-q", "--bare", str(self.remote))
+        self.git("-C", str(self.remote), "config", "uploadpack.allowAnySHA1InWant", "true")
+        work = self.root / "work"
+        self.git("init", "-q", str(work))
+        (work / "file").write_text("before\n")
+        self.git("-C", str(work), "add", "file")
+        self.git("-C", str(work), "-c", "user.name=o", "-c", "user.email=o@o", "commit", "-qm", "base")
+        self.revision = self.git("-C", str(work), "rev-parse", "HEAD")
+        self.git("-C", str(work), "push", "-q", str(self.remote), "HEAD:refs/heads/main")
+        (work / "file").write_text("after\n")
+        self.patch_bytes = subprocess.run(["git", "-C", str(work), "diff", "--binary"], check=True,
+                                          capture_output=True).stdout
+        self.scratch = self.root / "runner"
+        (self.scratch / "proposal").mkdir(parents=True)
+        self.write_proposal(self.patch_bytes, "Done.")
+        environment = {"BASE_SHA": self.revision, "EXPECTED_BRANCH": "claude/issue-7-42",
+                       "GITHUB_RUN_ID": self.RUN,
+                       "GIT_CONFIG_PARAMETERS": f"'url.file://{self.root / 'hosting'}/.insteadof'='https://github.com/'"}
+        patcher = patch.dict(os.environ, environment)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.calls, self.issue_state, self.existing_pulls, self.comments = [], "open", [], []
+
+    def git(self, *args):
+        return self.subprocess.run(["git", *args], check=True, capture_output=True,
+                                   text=True).stdout.strip()
+
+    def write_proposal(self, patch, answer):
+        (self.scratch / "proposal" / "change.patch").write_bytes(patch)
+        (self.scratch / "proposal" / "answer.md").write_text(answer)
+
+    def api(self, path, method="GET", body=None):
+        self.calls.append((method, path, body))
+        if path == "issues/7":
+            return {"state": self.issue_state}
+        if path.startswith("pulls?") and method == "GET":
+            return self.existing_pulls
+        if path == "pulls" and method == "POST":
+            return {"html_url": "https://github.com/owner/spec/pull/9"}
+        if path.startswith("issues/7/comments?") and method == "GET":
+            return self.comments
+        if path == "issues/7/comments" and method == "POST":
+            return {}
+        raise AssertionError((method, path))
+
+    def candidate(self, branch="claude/issue-7-42", revision=None, pull_request=False):
+        return self.module["Target"](branch, revision or self.revision, "main", pull_request)
+
+    def publish(self, candidate):
+        event = {"issue": {"number": 7, "title": "Owner request", "state": "open",
+                           "created_at": "2026-11-25T10:00:00Z"},
+                 "comment": {"created_at": "2026-11-25T10:01:00Z"}}
+        self.module["publish"](event, self.REPO, "installation-token", candidate, self.api, self.scratch)
+
+    def branches(self):
+        out = self.git("--git-dir", str(self.remote), "for-each-ref", "--format=%(refname)", "refs/heads")
+        return set(out.split())
+
+    def writes(self):
+        return [call for call in self.calls if call[0] != "GET"]
+
+    def assert_refused(self, candidate, message):
+        with self.assertRaisesRegex(ValueError, message):
+            self.publish(candidate)
+        self.assertEqual(self.branches(), {"refs/heads/main"}, "a refused request pushed a branch")
+        self.assertEqual(self.writes(), [], "a refused request wrote to GitHub")
+
+    def test_issue_request_pushes_the_patch_opens_a_draft_and_answers_once(self):
+        self.publish(self.candidate())
+        branch = "refs/heads/claude/issue-7-42"
+        self.assertEqual(self.branches(), {"refs/heads/main", branch})
+        commit = self.git("--git-dir", str(self.remote), "rev-parse", branch)
+        self.assertEqual(self.git("--git-dir", str(self.remote), "rev-parse", commit + "^"), self.revision)
+        self.assertEqual(self.git("--git-dir", str(self.remote), "show", commit + ":file"), "after")
+        self.assertEqual(self.git("--git-dir", str(self.remote), "log", "-1", "--format=%an %ad", "--date=iso-strict",
+                                  commit), "Claude 2026-11-25T10:01:00Z")
+        pulls = [body for method, path, body in self.writes() if path == "pulls"]
+        self.assertEqual(pulls, [{"head": "claude/issue-7-42", "base": "main", "title": "Owner request",
+                                  "body": "Requested in #7.", "draft": True}])
+        comments = [body["body"] for method, path, body in self.writes() if path == "issues/7/comments"]
+        self.assertEqual(comments, ["Done.\n\nDraft pull request: https://github.com/owner/spec/pull/9"
+                                    "\n\n<!-- owner-mention-run 42 -->"])
+
+    def test_existing_draft_is_reused_and_an_existing_answer_is_not_repeated(self):
+        self.existing_pulls = [{"html_url": "https://github.com/owner/spec/pull/5"}]
+        self.comments = [{"user": {"login": "claude[bot]"}, "body": "earlier\n\n<!-- owner-mention-run 42 -->"}]
+        self.publish(self.candidate())
+        self.assertIn("refs/heads/claude/issue-7-42", self.branches())
+        self.assertEqual(self.writes(), [])
+
+    def test_pull_request_target_receives_the_commit_and_no_new_pull_request(self):
+        import os
+        os.environ["EXPECTED_BRANCH"] = "feature"
+        self.publish(self.candidate(branch="feature", pull_request=True))
+        self.assertIn("refs/heads/feature", self.branches())
+        self.assertEqual([path for method, path, body in self.writes()], ["issues/7/comments"])
+
+    def test_changed_branch_is_refused_without_writes(self):
+        self.assert_refused(self.candidate(branch="claude/issue-7-43"), "target changed")
+
+    def test_invalid_base_revision_is_refused_without_writes(self):
+        import os
+        os.environ["BASE_SHA"] = "not-a-sha"
+        self.assert_refused(self.candidate(), "target changed")
+
+    def test_closed_request_is_refused_without_writes(self):
+        self.issue_state = "closed"
+        self.assert_refused(self.candidate(), "closed during preparation")
+
+    def test_advanced_head_is_refused_before_any_push(self):
+        self.assert_refused(self.candidate(revision="b" * 40), "advanced during preparation")
+
+    def test_answer_only_request_on_an_advanced_head_is_refused_without_writes(self):
+        self.write_proposal(b"", "Only an answer.")
+        self.assert_refused(self.candidate(revision="b" * 40), "advanced during preparation")
+
+    def test_answer_only_request_posts_the_answer_and_pushes_nothing(self):
+        self.write_proposal(b"", "Only an answer.")
+        self.publish(self.candidate())
+        self.assertEqual(self.branches(), {"refs/heads/main"})
+        self.assertEqual(self.writes(), [("POST", "issues/7/comments",
+                                          {"body": "Only an answer.\n\n<!-- owner-mention-run 42 -->"})])
