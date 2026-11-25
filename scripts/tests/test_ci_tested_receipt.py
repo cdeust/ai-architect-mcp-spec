@@ -294,3 +294,61 @@ class ReceiptWorkflows(unittest.TestCase):
         after = (self.ROOT / "pipeline-after-merge.yml").read_text()
         self.assertIn("workflows: [Pipeline, PR Review]", after)
         self.assertNotIn("Tested receipt", after)
+
+
+class BoundedVerifier(unittest.TestCase):
+    def setUp(self):
+        self.ns = resolver()
+
+    def test_github_reads_carry_their_timeout_to_urlopen(self):
+        seen = []
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b"{}"
+        self.ns["urlopen"] = lambda request, timeout=None: seen.append(timeout) or Response()
+        self.ns["GitHub"]("t", timeout=self.ns["RECEIPT_TIMEOUT_S"]).request("GET", "/x")
+        self.ns["GitHub"]("t").request("GET", "/x")
+        self.assertEqual(seen, [self.ns["RECEIPT_TIMEOUT_S"], None])
+
+    def test_gh_verifies_the_exact_identity_issuer_predicate_and_runner(self):
+        import os
+        from unittest.mock import patch
+        calls = []
+
+        class Done:
+            returncode, stdout = 0, '[{"ok": true}]'
+        with patch("subprocess.run", lambda *a, **k: calls.append((a, k)) or Done()), \
+                patch.dict(os.environ, {"GITHUB_REPOSITORY": REPO}):
+            self.assertEqual(self.ns["gh_attestation_verify"]("/tmp/subject", PRODUCER), [{"ok": True}])
+        (argv,), options = calls[0]
+        self.assertEqual(argv, ["gh", "attestation", "verify", "/tmp/subject", "--repo", REPO,
+                                "--cert-identity", PRODUCER,
+                                "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
+                                "--predicate-type", PREDICATE, "--deny-self-hosted-runners", "--format", "json"])
+        self.assertEqual(options["timeout"], self.ns["RECEIPT_TIMEOUT_S"])
+
+    def test_a_refused_or_unreadable_verification_is_an_error(self):
+        import os
+        from unittest.mock import patch
+        for code, out in ((1, ""), (0, "not json")):
+            class Done:
+                returncode, stdout = code, out
+            with patch("subprocess.run", lambda *a, Done=Done, **k: Done()), \
+                    patch.dict(os.environ, {"GITHUB_REPOSITORY": REPO}), \
+                    self.assertRaises(self.ns["PostMergeError"]):
+                self.ns["gh_attestation_verify"]("/tmp/subject", PRODUCER)
+
+
+class SignerContract(unittest.TestCase):
+    def test_the_signer_attests_failures_too_and_creates_no_storage_record(self):
+        producer = (Path(__file__).resolve().parents[2] / ".github/workflows/tested-receipt.yml").read_text()
+        sign = producer.split("\n  sign:\n", 1)[1]
+        self.assertIn("    if: ${{ !cancelled() && needs.recipes.result == 'success' }}\n", sign)
+        self.assertIn("          create-storage-record: false\n", sign)
