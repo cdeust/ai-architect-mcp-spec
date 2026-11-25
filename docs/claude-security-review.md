@@ -21,9 +21,14 @@ The workflow has two jobs.
      (`--json-schema`), which becomes the job output `findings`.
 2. **`publish`** has `contents: read` and `pull-requests: write`. It runs on a fresh
    checkout of `main` and holds no secret.
-   - It validates that JSON against the schema in `scripts/ci_security_review.py`:
-     types, paths, bounds, and a confidence of 8 or more.
-   - It neutralises `@` mentions, `Verdict:` lines and HTML.
+   - It validates that JSON against the schema in `scripts/ci_security_review.py`,
+     the one the engine also receives. It checks types, paths, bounds and a
+     confidence of 8 or more. A finding that breaks the schema is dropped, and the
+     drop is counted in the comment. An output whose shape breaks the schema is
+     refused.
+   - It normalises the text (NFKC, format characters removed). It then neutralises
+     `@` mentions, `#` references, markdown links, `Verdict:` lines and HTML.
+   - It cuts the comment at 60,000 characters.
    - It posts one comment as `github-actions[bot]`.
 
 ## Engine
@@ -36,7 +41,10 @@ already uses.
 - **Mode.** It runs in agent mode: it has a prompt and no `track_progress`. Agent
   mode creates no tracking comment, installs no comment tool, and never checks the
   pull request head out (`src/modes/agent/index.ts` has no `setupBranch`). The
-  working tree the model reads is therefore `main`, the base the diff applies to.
+  working tree the model reads is therefore `main`. The action restores `.claude`,
+  `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.gitmodules` and `.husky` from the pull
+  request's base branch, which is `main` unless the PR is stacked on another
+  branch.
 - **Bots.** `allowed_bots` lists `claude[bot]` and `chatgpt-codex-connector[bot]`,
   so their pushes are reviewed. With bots allowed, the action authenticates git
   through a helper, so `.git/config` holds no token (`git-config.ts`).
@@ -49,11 +57,18 @@ already uses.
   false positives added.
 
 The diff is the pull request's own diff from the API
-(`application/vnd.github.diff`): the changes the PR introduces over its base. It
-is cut at 1,000,000 bytes, and the cut file says so. Later rounds also get the
-diff since the last attempted head (`compare/<reviewed>...<head>`). The prompt
-says that merges from main appear in that second diff, and that only what the PR
-diff also contains is reviewed.
+(`application/vnd.github.diff`): the changes the PR introduces over its base.
+
+- When GitHub refuses it (too large), the per-file patches of `pulls/{n}/files`
+  replace it.
+- When neither can be read, the round stops before the engine and spends nothing.
+  A clean comment never stands for a review of nothing.
+- It is cut at 1,000,000 bytes, and the cut file says so.
+
+A later round also gets the diff since the last published review
+(`compare/<reviewed>...<head>`). The prompt says that merges from main appear
+there, and that only what the PR diff also contains is reviewed. When that diff
+cannot be read, the round reviews the whole diff.
 
 ### Why `claude-code-security-review` is not the engine
 
@@ -101,15 +116,15 @@ The budget counts the step by that name.
 | Spoofing: fork or Dependabot code gets the subscription token | Only `pull_request` triggers it, never `pull_request_target`. The job `if` is the trust rule of `claude-review.yml` (a head in this repository, not a draft, the actor is not `dependabot[bot]`), plus: the author is not `dependabot[bot]`. | contracts `trigger`, `trusted-authors`; mutations `fork-allowed`, `dependabot-author` and a `pull_request_target` trigger |
 | Tampering: the PR's `.claude/`, `CLAUDE.md`, hooks or scripts run in the review | Both jobs check out `main` with `persist-credentials: false`, and every script and instruction file comes from it. In agent mode the PR head is never checked out, and the action restores `.claude`, `CLAUDE.md` and `.mcp.json` from the base anyway (`restore-config.ts`). Root-owned, read-only managed settings disable all hooks. No step runs after the engine in its job. | contracts `checkout-main`, `managed-settings`, `order`, `engine-inputs`; mutations `head-checkout-added`, `publish-on-head`, `settings-writable`, `step-after-engine`, `track_progress`, and removing the install step |
 | Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. It has no shell either (managed deny on `Bash`). `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs and arguments are an exact set. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `bash-allowed`, `comment-tool`, `--permission-mode auto`, `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
-| Elevation through another bot: an injected `@codex review` or `Verdict:` line in the comment | `publish` breaks every `@` mention with a zero-width space, turns `Verdict:` into `Verdict​:` (zero-width space) whatever its case, and escapes HTML before it posts. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests` (hostile text, resolver and Codex patterns), `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts` |
+| Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`, and removes format and combining characters. It then puts a zero-width space after every `@` and every `#` before a digit, escapes `[` and `]`, turns `Verdict:` into `Verdict​:` whatever its case, and escapes HTML. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests`: hostile text with lookalikes, joiners and combining marks, and the resolver's own `_claude_verdicts` reading a published comment as if `claude[bot]` had written it. Also `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts`. |
 | Information disclosure: the token reaches a comment, a log or an artifact (the repository is public) | Managed settings deny reads of `/proc`, `/sys`, `/dev`, `/etc`, `/tmp`, `/var`, `/opt`, the runner install directories, `RUNNER_TEMP`, the action directory, `~/.claude`, `~/.config`, `~/.local`, `~/.ssh`, `~/.docker`, `~/.npmrc`, `~/.gitconfig` and every `.git/` directory. This is a deny list over the action's bare `Read` allow. Whether the CLI resolves links before it matches these rules has not been observed. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set. `publish` holds no secret, and no artifact is uploaded. | contracts `secrets`, `engine-scrub`; mutations `second-secret`, `all-secrets` (`toJSON(secrets)`), `indexed-secret`, `secret-in-publish`; the exact deny list; `test_the_input_folder_is_outside_git_which_the_engine_may_not_read` |
 | Tampering: an upstream action is changed | Every `uses:` is pinned to a full commit SHA with a version comment, and Dependabot (`github-actions`) updates both. The local quota action is main's copy. | contracts `unpinned`, `pin-comment`; mutation `@main` |
 | Elevation: a token wider than needed | `permissions: {}` at the top. The review job is read-only. Only `publish` has `pull-requests: write`, and it holds no secret. There is no `id-token`, so the session never holds the Claude App token, whose default request includes `contents: write` (`src/github/token.ts`). | contracts `workflow-permissions`, `job-permissions`, `published`, `engine-inputs`; mutations `app-token`, `publish-wide` |
 | Injection into `run:` | No `run:` contains `${{ }}`: values pass through `env:`, including the model's JSON, which reaches `publish` as an environment variable. actionlint and zizmor (pedantic) report nothing. | contract `expression-in-run` |
-| Denial of service and cost: a retry loop on the subscription | A PR gets at most 3 attempts. An attempt is any run whose engine step ran, whatever it concluded (`budget`, ADR-1119), so a failing review cannot loop. A head already attempted is never attempted again, whether after a reopen, a `ready_for_review` or a push back to an earlier head. A round runs only when the subscription quota action reports headroom with usage credits off. Concurrency allows one run per PR, and `timeout-minutes` is 30. | `BudgetTests`, `JqFilterTests`, `GuardScriptTests`; contracts `concurrency`, `timeout`, `gated`; mutations `budget-ungated`, `quota-ungated`, `decide-ungated` |
+| Denial of service and cost: a retry loop on the subscription | A PR gets at most 3 attempts (`budget`, ADR-1119). An attempt is any job attempt whose engine step ran, whatever it concluded, re-runs included: every attempt of every run is read with `filter=all`, and so are this run's earlier attempts. A failing review or a re-run therefore cannot loop. A head already attempted is never attempted again, whether after a reopen, a `ready_for_review`, a re-run or a push back to an earlier head. A later round starts from the last published review, never from an attempt that published nothing. A round runs only when the subscription quota action reports headroom with usage credits off. Concurrency allows one run per PR, and `timeout-minutes` is 30. | `BudgetTests`, `JqFilterTests`, `GuardScriptTests`; contracts `concurrency`, `timeout`, `gated`; mutations `budget-ungated`, `quota-ungated`, `decide-ungated` |
 | Repudiation, and false positives that block a merge | The review is advisory. The only required check is `merge`, and the workflow name is outside every `workflow_run` list. The comment names the head and links the run attempt. | contract `wakes-merge`, `test_the_merge_resolver_never_reads_this_workflow`, `PublishTests` |
 | A missing secret, a first PR whose files are not on main yet, or an unreadable quota | The job ends green and states the reason in its summary. The quota step is the only `continue-on-error` step, and its outcome is read. | `GuardScriptTests`; contracts `quota-soft`, `continue-on-error` |
-| Malformed model output | `publish` refuses output that breaks the schema, and the run turns red. The attempt still counts. | `test_output_that_breaks_the_schema_is_refused`; mutations `publish-raw-findings`, `output-dropped` |
+| Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding that breaks it, and refuses an output whose shape breaks it; the attempt still counts. The bounds keep the worst-case JSON under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. The comment is cut at 60,000 characters, under GitHub's 65,536, and keeps its run link. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
 
 Each contract is a named check over the parsed workflow. The mutation tests
 remove each guard in turn and require the matching check to fail
@@ -127,6 +142,10 @@ remove each guard in turn and require the matching check to fail
   - that agent mode leaves the main checkout and `.claude-security-review/` in place;
   - that `--json-schema` yields `structured_output` (`run-claude-sdk.ts`);
   - that the actor check works with a `pull-requests: read` workflow token.
+- No attack test has run against the live engine: no canary has asked it to read
+  `/proc/self/environ`, run Bash, or call a tool outside its list and checked that
+  each attempt is refused. That test needs a paid model turn on a runner, and it
+  belongs to the first real run.
 - The false-positive rate is not measured. It decides when the review may become
   blocking.
 
@@ -141,3 +160,9 @@ remove each guard in turn and require the matching check to fail
   run counts as an attempt. A condition on the actor name would be spoofable
   (zizmor `bot-conditions`), so none is used.
 - Inline comments: each finding gives its `file:line` in the one comment instead.
+- Bare URLs in the model's text stay as text, and GitHub autolinks them. Markdown
+  links and images cannot be formed.
+- Project settings (`settingSources` user, project and local, set by the action)
+  load from the restored base. The managed settings override the keys that matter
+  here: Bash, hooks and reads. On a PR stacked on another branch, that branch's
+  `.claude/settings.json` is the one restored.
