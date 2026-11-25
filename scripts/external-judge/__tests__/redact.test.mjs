@@ -120,3 +120,35 @@ test("redact: recognizes case variants of a raw internationalized host and its A
     assert.equal(redact(text, { baseUrl }), "***REDACTED***");
   }
 });
+
+test("redact: a percent-encoded credential is masked in either hex case, per character, and as form encoding", () => {
+  const apiKey = "sk-sec+ret/val=123:abc@xyz é";
+  const encoded = encodeURIComponent(apiKey);
+  assert.notEqual(encoded, encoded.toLowerCase());
+  const forms = [
+    encoded, encoded.toLowerCase(), encoded.replace(/%[0-9A-F]{2}/g, (m, i) => i % 2 ? m.toLowerCase() : m),
+    "sk-sec%2bret%2fval%3d123%3aabc%40xyz+%c3%a9", "%73k-sec%2Bret/val=123:abc@xyz é", "sk-sec+ret/val=123:abc@xyz+é",
+  ];
+  for (const form of forms) assert.equal(redact(`k=${form};`, { apiKey }), "k=***REDACTED***;", form);
+  // Only the credential's own characters are folded: a different key is not masked.
+  assert.equal(redact("sk-sec%2bret%2fval%3d123%3aabc%40xyz2", { apiKey: "sk-sec+ret/val=123:abc@xyz" }), "***REDACTED***2");
+  assert.equal(redact("sk-sec%2bret", { apiKey: "sk-sec+ret/val" }), "sk-sec%2bret");
+});
+
+test("redact: an origin is masked with its default port written or omitted, and other ports stay exact", () => {
+  const hidden = "***REDACTED***";
+  for (const [scheme, port] of [["https", 443], ["http", 80]]) {
+    const origin = `${scheme}://judge.example`;
+    for (const baseUrl of [`${origin}/v1/`, `${origin}:${port}/v1/`, `${origin}:${port}`, origin, origin.toUpperCase() + `:${port}/v1`]) {
+      const texts = [origin, `${origin}:${port}`, `${origin}:0${port}`];
+      if (baseUrl.includes("/v1")) texts.push(`${origin}/v1`, `${origin}:${port}/v1/`);
+      for (const text of texts) assert.equal(redact(text, { baseUrl }), hidden, `${baseUrl} / ${text}`);
+      // A different port is a different origin: only the host part is masked and the port stays visible.
+      assert.equal(redact(`${origin}:${port}0`, { baseUrl }), `${hidden}:${port}0`);
+    }
+  }
+  const explicit = { baseUrl: "https://judge.example:8443/v1" };
+  assert.equal(redact("https://judge.example:8443/v1 https://judge.example:8443", explicit), `${hidden} ${hidden}`);
+  assert.equal(redact("https://judge.example:443", explicit), "https://judge.example:443");
+  assert.equal(redact("https://[::1]:443/ https://[::1]", { baseUrl: "https://[::1]/" }), `${hidden} ${hidden}`);
+});
