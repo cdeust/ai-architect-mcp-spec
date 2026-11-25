@@ -11,7 +11,7 @@ Check requirements, acceptance criteria and test traceability before a specifica
 | Portable verifier | `validate_prd_section` checks one Markdown section. `validate_prd_document` adds cross-section checks for requirement IDs, acceptance criteria and test links. | [MCP handlers](packages/mcp-server/src/index.ts) · [Portable runtime smoke test](scripts/smoke-portable-hosts.mjs) |
 | Symbol references | Supply `known_symbols` to report unresolved inline-code references as advisory findings. The optional graph integration belongs to the full workflow. | [Validation handlers](packages/mcp-server/src/index.ts) · [Symbol check](packages/mcp-server/src/symbol-check.ts) |
 | Full PRD workflow | The server emits the next action and records the result. The host runs model calls, asks questions and writes exported artifacts. The packaged `/generate-prd` command requests a model review of scope and declared edge cases. | [Host command](packages/skill/commands/generate-prd.md) · [MCP stdio scenarios](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) |
-| Planning handoff | An eligible checkpoint exposes validated requirements and acceptance criteria. Spec derives a proposal for one Step and binds it to the Define data with SHA-256. Architect OS prepares the preview and owns approval and execution. | [Define contract](packages/orchestration/src/define-handoff.ts) · [Plan projection](packages/orchestration/src/verified-plan.ts) · [Architect OS Plan](https://github.com/cdeust/architect-os/blob/227768523d7a586acb40c39e254bf98d988a9e56/docs/plan.md) |
+| Planning handoff | An eligible checkpoint exposes validated requirements and acceptance criteria, and the generated tickets' estimates, prerequisites and criteria when the run generated them. Spec derives a proposal for one Step and binds it to the Define data with SHA-256. Architect OS prepares the preview and owns approval and execution. | [Define contract](packages/orchestration/src/define-handoff.ts) · [Plan projection](packages/orchestration/src/verified-plan.ts) · [Architect OS Plan](https://github.com/cdeust/architect-os/blob/227768523d7a586acb40c39e254bf98d988a9e56/docs/plan.md) |
 | Implementation review dossier | With an operator-approved record, Spec returns a Git comparison for the pinned revisions and marks each acceptance criterion `evidence_required`. | [Review contract](packages/mcp-server/src/implementation-review.ts) · [MCP stdio scenarios](packages/mcp-server/src/__tests__/define-boundary-stdio.test.ts) |
 
 The verifier reports whether the input satisfies its implemented rules. A report with no violations establishes structural conformance. Factual accuracy and implementation behavior require their own evidence. [Rule implementation](packages/validation/src/hard-output-rules/)
@@ -28,11 +28,11 @@ The full packaged workflow uses the companion tools and model actions described 
 
 ### Read a planning handoff
 
-Use `get_pipeline_state` with the saved `run_id`. An eligible checkpoint is a successful automatic completion or a legacy checkpoint with a pending decision that permits a handoff.
+Use `get_pipeline_state` with the saved `run_id`. An eligible checkpoint is a successful automatic completion, a legacy checkpoint with a pending decision that permits a handoff, or a finished run whose gate kept a passed Define, while the checkpoint still projects it.
 
 | Format | Result |
 | --- | --- |
-| `define_handoff_v1` | Validated requirements and acceptance criteria with explicit requirement references. |
+| `define_handoff_v1` | Validated requirements and acceptance criteria with explicit requirement references, and `tickets` (`id`, `story_points`, `depends_on`, `acceptance_ids`) when the run generated them. |
 | `verified_plan_v1` | A deterministic proposal for the `plan_step` you supply. The hashes bind the run, Define file and proposal file. The file format is compact UTF-8 JSON with a trailing newline. |
 | `implementation_review_v1` | A read-only dossier for the `plan_step` and `review_id` you supply. The trusted launcher config binds the approved manifest and exact Git revisions. The dossier can be `ready_for_review` while every criterion still needs behavioral evidence. |
 

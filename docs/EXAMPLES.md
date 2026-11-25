@@ -177,13 +177,15 @@ For the canned-dispatcher smoke run on a trial tier feature, every scheduled sec
         invocations: [{
           invocation_id: "jira_generation_engineer",
           subagent_type: "zetetic-team-subagents:engineer",
-          description: "Generate JIRA tickets",
+          description: "Generate JIRA tickets from PRD",
           prompt: "<...source PRD content...>",
           isolation: "none"
         }]
       }
     }
 ```
+
+The engineer answers with one JSON object of tickets, in the form the prompt's rules give. The reducer validates it against the document's acceptance criteria, keeps it as `jira_result` and renders `07-jira-tickets.md` from it. A refused or missing reply withholds 07 (named in `00-run-notes.md` as failed validation) and refuses the Define handoff.
 
 ### Step 10 — File export
 

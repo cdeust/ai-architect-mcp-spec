@@ -20,11 +20,19 @@ From the producer root, run `pnpm build` followed by `pnpm exec vitest run packa
 
 ## Define v1
 
-A host can opt into planning data by calling `get_pipeline_state` with its `run_id` and `format: "define_handoff_v1"`. The response has one `handoff` object with `version: 1`, `run_id`, `requirements` and `acceptance`. Each requirement has `id` and `text`. Each acceptance criterion adds `requirement_ids`. The schema rejects unknown fields, duplicate IDs, unresolved references and requirements without acceptance coverage.
+A host can opt into planning data by calling `get_pipeline_state` with its `run_id` and `format: "define_handoff_v1"`. The response has one `handoff` object with `version: 1`, `run_id`, `requirements` and `acceptance`, and `tickets` when the run generated them. Each requirement has `id` and `text`. Each acceptance criterion adds `requirement_ids`. Each ticket has `id` (`TICKET-NNN`), `story_points` (a positive Fibonacci safe integer), `depends_on` and `acceptance_ids`, in that order; the titles and descriptions stay in `07-jira-tickets.md`. The schema rejects unknown fields, duplicate IDs or links, unresolved references, requirements without acceptance coverage, unknown prerequisites or criteria and dependency cycles. The tickets are structurally checked; their estimates are not judged.
 
 End the criterion's text with its explicit references in parentheses, for example `Check the receipt (FR-001, NFR-002).` A mention inside the criterion, example code, comments or a link destination does not supply traceability.
 
-Read the handoff while the implementation question is pending. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff. It returns an MCP error for missing evidence, an invalid document, a completed decision or an oversized response. The read preserves the saved decision and action order. Hosts keep command arguments and executor policy in their own trusted configuration.
+Read the handoff while the implementation question is pending, or after the run finished: every exit of the gate keeps the Define that passed (`passed_define`), and a finished run serves it while the checkpoint still projects the same document and intent and its terminal action agrees with the retained verification, until the finished run is dropped. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff; for a finished run, that readiness was judged when the gate advanced.
+
+| Code | Cause |
+| --- | --- |
+| `define_not_pending` | No pending implementation question and no Define kept when the run finished. |
+| `define_not_ready` | Missing or failed evidence or policy; a terminal action that disagrees with the retained verification; a checkpoint that no longer projects the kept Define; `jira_tickets_invalid`, `jira_tickets_missing` or `jira_tickets_skipped` when the run's ticket result failed; a scope-review finding. |
+| `define_document_invalid` | The schema (including `TICKET_*` codes), a blocking document rule, or `sourced_publication_policy`. |
+
+An oversized response returns `define_response_too_large`. The read preserves the saved decision and action order. Hosts keep command arguments and executor policy in their own trusted configuration.
 
 The original delivery fixture fails the Define v1 read. A second deterministic replay adds the three acceptance references to its testing draft and produces the handoff before and after restart. The stdio suite can also run against a reconstructed plugin by setting `PRD_GEN_TEST_PLUGIN_ROOT` to the staged plugin root containing `.mcp.json`.
 
