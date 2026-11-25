@@ -84,6 +84,26 @@ def apply_patch(store, revision, patch, git_env):
     return git("commit-tree", tree, "-p", revision, "-m", "Apply owner-requested Claude changes").decode().strip()
 
 
+# The previous action passed the owner's comments to the model
+# (include_comments_by_actor: repository owner). Only earlier comments by the
+# owner are kept, newest last, so a request can refer to the discussion above it.
+THREAD_COMMENTS = 50
+
+
+def owner_thread(event, api):
+    owner = event["repository"]["owner"]["login"]
+    trigger = event.get("comment") or {}
+    comments, page = [], 1
+    while True:
+        rows = api(f"issues/{int(event['issue']['number'])}/comments?per_page=100&page={page}")
+        comments += [{"created_at": row["created_at"], "body": row["body"]} for row in rows
+                     if row["user"]["login"] == owner and row["id"] != trigger.get("id")
+                     and (not trigger or row["created_at"] <= trigger["created_at"])]
+        if len(rows) < 100:
+            return comments[-THREAD_COMMENTS:]
+        page += 1
+
+
 def publish(event, repository, token, candidate, api, scratch):
     revision = os.environ["BASE_SHA"]
     if candidate.branch != os.environ["EXPECTED_BRANCH"] or not re.fullmatch("[0-9a-f]{40}", revision):
@@ -153,6 +173,8 @@ def main(mode):
         if mode == "publish":
             publish(event, repository, token, candidate, api, Path(os.environ["RUNNER_TEMP"]))
         else:
+            thread = Path(os.environ["RUNNER_TEMP"]) / "owner-thread.json"
+            thread.write_text(json.dumps(owner_thread(event, api)))
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                 print(f"revision={candidate.revision}", file=output)
                 print(f"branch={candidate.branch}", file=output)

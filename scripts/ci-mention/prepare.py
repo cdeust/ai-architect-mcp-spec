@@ -27,7 +27,9 @@ def main():
     workspace = Path(os.environ["GITHUB_WORKSPACE"]) / "candidate"
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     issue = event["issue"]
-    prompt = json.dumps({"title": issue["title"], "body": issue.get("body"),
+    # Earlier owner comments, read with the read-only token before this step.
+    thread = json.loads((scratch / "owner-thread.json").read_text())
+    prompt = json.dumps({"title": issue["title"], "body": issue.get("body"), "owner_comments": thread,
                          "request": event.get("comment", {}).get("body", issue.get("body"))})
     broker = HERE / "node_modules/.bin/mcp-server-filesystem"
     cli = CONTROL / ".github/actions/claude-subscription-quota/node_modules/.bin/claude"

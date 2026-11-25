@@ -27,6 +27,8 @@ class MentionJobs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             (tmp / "proposal").mkdir()
+            thread = [{"created_at": "2026-11-25T09:00:00Z", "body": "earlier owner correction"}]
+            (tmp / "owner-thread.json").write_text(json.dumps(thread))
             event = tmp / "event.json"
             event.write_text(json.dumps({"issue": {"title": "request", "body": "owner message"}}))
             with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event), "RUNNER_TEMP": directory,
@@ -36,6 +38,9 @@ class MentionJobs(unittest.TestCase):
                 module["main"]()
             command, = run.call_args.args
             environment = run.call_args.kwargs["env"]
+            prompt = json.loads(run.call_args.kwargs["input"])
+            self.assertEqual(prompt["owner_comments"], thread)
+            self.assertEqual(prompt["request"], "owner message")
             self.assertEqual(set(environment), {"HOME", "PATH", "CLAUDE_CODE_OAUTH_TOKEN", "ENABLE_TOOL_SEARCH",
                                                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"})
             self.assertEqual(command[command.index("--tools") + 1], "")
@@ -78,6 +83,32 @@ class MentionJobs(unittest.TestCase):
                 pr["head"].update(repo={"full_name": head_repo}, ref=branch)
                 with self.assertRaises(ValueError):
                     resolve(event, repo, sha, "12", api)
+
+    def test_owner_thread_keeps_earlier_owner_comments_only(self):
+        import runpy
+        thread = runpy.run_path(str(ROOT / "scripts/ci-mention/request.py"))["owner_thread"]
+
+        def row(identity, login, created, body):
+            return {"id": identity, "user": {"login": login}, "created_at": created, "body": body}
+        pages = {1: [row(i, "owner", f"2026-11-24T00:{i:02d}:00Z", f"note {i}") for i in range(100)],
+                 2: [row(200, "someone", "2026-11-25T08:00:00Z", "not the owner"),
+                     row(201, "claude[bot]", "2026-11-25T08:30:00Z", "bot reply"),
+                     row(202, "owner", "2026-11-25T09:00:00Z", "the correction"),
+                     row(203, "owner", "2026-11-25T10:00:00Z", "@claude implement my previous comment"),
+                     row(204, "owner", "2026-11-25T11:00:00Z", "written after the request")]}
+        calls = []
+
+        def api(path):
+            calls.append(path)
+            return pages[int(path.rsplit("page=", 1)[1])]
+        event = {"repository": {"owner": {"login": "owner"}}, "issue": {"number": 7},
+                 "comment": {"id": 203, "created_at": "2026-11-25T10:00:00Z"}}
+        kept = thread(event, api)
+        self.assertEqual(calls, ["issues/7/comments?per_page=100&page=1", "issues/7/comments?per_page=100&page=2"])
+        self.assertEqual(len(kept), 50)
+        self.assertEqual(kept[-1], {"created_at": "2026-11-25T09:00:00Z", "body": "the correction"})
+        self.assertEqual(kept[0]["body"], "note 51")
+        self.assertNotIn("not the owner", [c["body"] for c in kept])
 
     def test_publisher_applies_only_to_bare_index(self):
         import os

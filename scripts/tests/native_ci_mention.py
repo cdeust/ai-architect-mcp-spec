@@ -47,6 +47,7 @@ def exercise(control):
         candidate = tmp / "candidate"
         candidate.mkdir()
         (tmp / "proposal").mkdir()
+        (tmp / "owner-thread.json").write_text("[]")  # written by request.py resolve
         event = tmp / "event.json"
         event.write_text(json.dumps({"issue": {"title": "fixture", "body": "Write the fixture."}}))
         edited = candidate / "edit.txt"
