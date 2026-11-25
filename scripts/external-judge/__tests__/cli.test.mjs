@@ -64,7 +64,7 @@ test("diagnostics for a stray argument or a missing value never repeat the value
 });
 
 test("--min-agreement accepts only a ratio from 0 to 1, because it sets the admission gate", () => {
-  for (const value of ["0", "0.7", "1", "1.0", ".5", "0.", "00.5"]) {
+  for (const value of ["0", "0.7", "1", "1.0", ".5", ".55", "0.", "00.5"]) {
     assert.equal(parseFlags([`--min-agreement=${value}`], "calibrate").minAgreement, value);
   }
   for (const value of ["", " ", "abc", "-1", "+0.5", "1.01", "2", "1e0", "0x1", "Infinity", "NaN", "0.5 ", "1.5.2"]) {

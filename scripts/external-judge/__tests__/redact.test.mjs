@@ -152,3 +152,19 @@ test("redact: an origin is masked with its default port written or omitted, and 
   assert.equal(redact("https://judge.example:443", explicit), "https://judge.example:443");
   assert.equal(redact("https://[::1]:443/ https://[::1]", { baseUrl: "https://[::1]/" }), `${hidden} ${hidden}`);
 });
+
+test("redact: encoding pads single-digit bytes, folds only a space to plus, keeps a raw lone surrogate and folds raw-host case both ways", () => {
+  const hidden = "***REDACTED***";
+  // A control character encodes as %09, not %9.
+  assert.equal(redact("k=ab%09cd", { apiKey: "ab\tcd" }), `k=${hidden}`);
+  assert.equal(redact("k=ab%9cd", { apiKey: "ab\tcd" }), "k=ab%9cd");
+  // `+` stands for a space only; it is not a wildcard for other characters.
+  assert.equal(redact("+b a+b", { apiKey: "ab" }), "+b a+b");
+  assert.equal(redact("a+b", { apiKey: "a b" }), hidden);
+  // The raw literal is masked as written, even when it is not well-formed UTF-16.
+  assert.equal(redact("k=x\ud800y;", { apiKey: "x\ud800y" }), `k=${hidden};`);
+  // A raw non-ASCII host folds case in both directions.
+  for (const [baseUrl, text] of [["https://MÜNCHEN.example/x", "https://münchen.example/x"], ["https://münchen.example/x", "https://MÜNCHEN.example/x"]]) {
+    assert.equal(redact(text, { baseUrl }), hidden, text);
+  }
+});
