@@ -66,17 +66,19 @@ the prompt was written before the contract, and the repository's own standards a
    merges. The only exception is a real conflict (`mergeable_state` is `dirty`): merge the
    main branch into the branch with a merge commit, resolve it, rerun the touched tests,
    check that the merge did not change the meaning of either side, and push normally.
-5. **One pull request in flight.** A pull request is in flight while a check runs on it, a
-   review runs on it, or it waits for the owner's approval or for the merge. While one is in flight, open no
-   other pull request (issue, relaunch or next slice) and push to no other branch.
+5. **Several pull requests may be open; each is carried to its merge.** Owner decision of
+   25 November 2026: "Une PR n'a rien à faire en draft. Si elle n'est pas prête elle n'a pas
+   à être poussée. Si elle est prête elle doit être corrigée jusqu'à être mergée." A pull
+   request is opened ready, never as a draft. Its author fixes it, push after push, until
+   it merges. Several pull requests may be open at the same time. When one conflicts with
+   `main` (`mergeable_state` is `dirty`), it takes `main` by a merge commit (rule 4).
 6. **No comment after an approve.** An approve is a bot's `Verdict: approve` or the owner's
    label. No reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
 7. **Owner decisions are left alone.** Leave a pull request on the branch
    `ci/budget-counts-contract-reviews` and anything labelled `hold` or `do-not-merge` alone.
-   Routines leave drafts alone. A session may push to its own draft and mark it ready
-   under rule 10. Leave another session's draft alone.
+   A pull request opened by another session is that session's to fix.
 8. **The work is verified before the pull request exists** (Cortex ADR-1132). Before
    opening a pull request, and before each push to one, run the `unit` and `regression`
    commands of `ci.json` on a clean copy of the commit, a worktree under
@@ -99,34 +101,26 @@ the prompt was written before the contract, and the repository's own standards a
    it; what fails without the key, a validator that requires it or a reader that refuses
    its absence, comes with the key or after it; a key the validator requires leaves
    `ci.json` after the validator stopped requiring it.
-10. **Work in small batches, in a draft.** Open a draft pull request as soon as the first
-    gated commit exists, and push each gated batch to it. Routines leave drafts alone
-    (rule 7), and draft pushes spend none of rule 2's three reviews because the review
-    jobs skip drafts ([budget job](../.github/workflows/claude-review.yml#L28),
-    [review job](../.github/workflows/claude-review.yml#L67)). In
-    [PR #374](https://github.com/cdeust/ai-architect-mcp-spec/pull/374) (2026-11-19),
-    the autopilot pushed its own fix (`42423f2`) while the session's commits were still
-    local, so the branch diverged. Owner decision of 19 November 2026: sessions
-    work in small batches.
-    Mark the pull request ready only after a reviewer other than its author has read its
-    current head and its body carries the counts of rule 8. That review is owed by the
-    contract; the merge itself waits for the owner's approval (rule 1). For a batch pushed from a local
-    machine, require a passed delivery-gate verdict on that head's tree. For a hosted
-    session with no local verdict, require a successful Pipeline run on the current head
-    with the contract, unit and regression jobs passing. Marking it ready starts the optional
-    review ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
+10. **Push only what is ready.** A pull request exists only once its first commit is ready:
+    a passed delivery-gate verdict on that tree for a push from a local machine, or, for a
+    hosted session with no local verdict, a successful Pipeline run with the contract, unit
+    and regression jobs passing. It is opened ready for review, never as a draft. Before it
+    is opened, a reviewer other than its author has read its head, and its body carries the
+    counts of rule 8. That review is owed by the contract; the merge itself waits for the
+    owner's approval (rule 1). Opening it ready starts the optional review
+    ([`opened`](../.github/workflows/claude-review.yml#L7)).
     For every push from a local machine, the delivery gate's pre-push hook requires a
-    passed verdict on the tip. Make each batch worth a gate run, such as one pass or one slice,
-    and keep commits local between gate runs only for the length of that work.
-    Run `git fetch` before working on the branch and before every push. Read and
-    integrate commits pushed by another author, including the autopilot, before pushing.
+    passed verdict on the tip. Make each push worth a gate run, such as one fix or one
+    slice. In [PR #374](https://github.com/cdeust/ai-architect-mcp-spec/pull/374)
+    (2026-11-19), the autopilot pushed its own fix (`42423f2`) while the session's commits
+    were still local, so the branch diverged: run `git fetch` before working on the branch
+    and before every push, and integrate commits pushed by another author before pushing.
     If the local and remote tips of the working branch diverge, merge the fetched working
-    branch tip, resolve conflicts and run the full delivery gate on the resulting tree before
-    a local push. A conflict with `main` follows rule 4. Never force a push. Once the pull
-    request is ready, keep local commits ahead of its remote head
-    for at most one gate run, except while a `PR Review` run is in progress (rule 2).
-    Under rule 5, a draft with a running check is in flight. This is this repository's
-    addition to the `cdeust/Cortex` contract, and the same rule is owed there.
+    branch tip, resolve conflicts and run the full delivery gate on the resulting tree
+    before a local push. A conflict with `main` follows rule 4. Never force a push. Keep
+    local commits ahead of the remote head for at most one gate run, and never push while
+    a `PR Review` run is in progress on the pull request (rule 2). This is this
+    repository's addition to the `cdeust/Cortex` contract.
 
 ## The delivery gate
 
@@ -174,8 +168,7 @@ agent and routine that works on this repository.
    does what the issue asks. "Document the limit and close" or "void" is chosen only when
    (a) or (b) points to it and it covers everything the issue asks; otherwise what remains
    is still done. A decision chooses among what the issue asks; it adds no scope.
-2. **Write the decision, then act.** At most one written decision per pass, and only
-   when no pull request of the repository is in flight. Read the issue's comments again
+2. **Write the decision, then act.** At most one written decision per pass. Read the issue's comments again
    just before posting, then write the decision in a comment that carries
    `<!-- ci-autopilot decision -->`: what is kept, the reason with its source, what is
    set aside, how to go back. A decision written that way holds for later passes: it is
