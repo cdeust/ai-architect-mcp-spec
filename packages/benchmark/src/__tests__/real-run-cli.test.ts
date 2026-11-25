@@ -9,11 +9,12 @@ import { cannedInvoke } from "../real-run/canned-ports.js";
 import { expect, it, vi } from "vitest";
 
 import { harness, localCli, posixTest, tempDirectory } from "./real-run-cli-harness.js";
+import { CHILD_TIMEOUT_MS } from "../../../../vitest.shared.mts";
 
 const cwd = fileURLToPath(new URL("../../", import.meta.url));
 function cli(...args: string[]) {
   return spawnSync(process.execPath, ["dist/src/real-run/cli.js", ...args], {
-    cwd, encoding: "utf8", env: { PATH: "" },
+    cwd, encoding: "utf8", env: { PATH: "" }, timeout: CHILD_TIMEOUT_MS,
   });
 }
 

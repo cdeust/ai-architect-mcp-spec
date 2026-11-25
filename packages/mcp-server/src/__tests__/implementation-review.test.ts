@@ -8,6 +8,9 @@ import { buildVerifiedPlan, MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
 import { prepareImplementationReview } from "../implementation-review.js";
 import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
 
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts, which this package's tsc cannot import; the guard in scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
+
 vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
   return { ...fs, fstatSync: vi.fn(fs.fstatSync), openSync: vi.fn(fs.openSync), readSync: vi.fn(fs.readSync), statSync: vi.fn(fs.statSync) };
@@ -328,7 +331,7 @@ it("refuses an incomplete authority read and closes the opened descriptor", asyn
 it("does not block on a non-regular authority", async () => {
   if (process.platform === "win32") return;
   const fifo = join(root, "authority.pipe");
-  execFileSync("/usr/bin/mkfifo", [fifo]);
+  execFileSync("/usr/bin/mkfifo", [fifo], { timeout: CHILD_TIMEOUT_MS });
   expect(await review({ ...paths, authority: fifo })).toMatchObject({ error: { code: "review_authority_invalid" } });
 });
 

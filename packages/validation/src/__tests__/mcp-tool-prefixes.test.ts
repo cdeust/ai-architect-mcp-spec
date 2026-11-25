@@ -23,6 +23,9 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts, which this package's tsc cannot import; the guard in scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
+
 const REPO_ROOT = resolve(__dirname, "../../../..");
 
 interface ProjectMcpIdentity {
@@ -102,6 +105,7 @@ function trackedFiles(): string[] {
     cwd: REPO_ROOT,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    timeout: CHILD_TIMEOUT_MS,
   })
     .split("\0")
     .filter(Boolean);

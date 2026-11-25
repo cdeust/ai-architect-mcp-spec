@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import { checkSymbolExistence } from "../index.js";
+import { cpuMillis } from "./cpu-clock.js";
 
 /** Below this a sample is mostly clock granularity. */
 const MIN_SAMPLE_MS = 0.5;
@@ -37,12 +38,12 @@ function growthRatio(small: number, large: number, pairs = 7): number {
   let fastestSmall = Infinity;
   let fastestLarge = Infinity;
   for (let i = 0; i < pairs; i++) {
-    let t = performance.now();
+    let t = cpuMillis();
     checkSymbolExistence(ps, gs);
-    fastestSmall = Math.min(fastestSmall, performance.now() - t);
-    t = performance.now();
+    fastestSmall = Math.min(fastestSmall, cpuMillis() - t);
+    t = cpuMillis();
     checkSymbolExistence(pl, gl);
-    fastestLarge = Math.min(fastestLarge, performance.now() - t);
+    fastestLarge = Math.min(fastestLarge, cpuMillis() - t);
   }
   return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
 }
@@ -74,12 +75,12 @@ function normalizationRatio(small: number, large: number, pairs = 5): number {
   let fastestSmall = Infinity;
   let fastestLarge = Infinity;
   for (let i = 0; i < pairs; i++) {
-    let t = performance.now();
+    let t = cpuMillis();
     checkSymbolExistence("`Ghost.run()`", gs);
-    fastestSmall = Math.min(fastestSmall, performance.now() - t);
-    t = performance.now();
+    fastestSmall = Math.min(fastestSmall, cpuMillis() - t);
+    t = cpuMillis();
     checkSymbolExistence("`Ghost.run()`", gl);
-    fastestLarge = Math.min(fastestLarge, performance.now() - t);
+    fastestLarge = Math.min(fastestLarge, cpuMillis() - t);
   }
   return fastestLarge / Math.max(fastestSmall, MIN_SAMPLE_MS);
 }

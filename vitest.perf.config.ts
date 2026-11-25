@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { TEST_TIMEOUT_MS } from "./vitest.shared.mts";
 
 /**
  * Timing-sensitive assertions, run alone.
@@ -20,6 +21,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     name: "perf",
+    testTimeout: TEST_TIMEOUT_MS,
     include: ["packages/*/src/**/*.perf.ts"],
     exclude: ["**/dist/**", "**/node_modules/**", "**/.claude/**"],
     fileParallelism: false,

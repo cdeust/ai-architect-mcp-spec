@@ -41,6 +41,11 @@ import {
   verdict,
 } from "./check-health-stdio.mjs";
 
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts. Not imported: this file runs under
+// `node --test` (pnpm test:portable), and node 22.12 cannot load a .mts. The guard in
+// scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LAUNCHER = join(ROOT, "bin", "ensure-deps.mjs");
 const manifest = () => JSON.parse(readFileSync(join(ROOT, ".mcp.json"), "utf8"));
@@ -106,6 +111,7 @@ function launch(root, extraArgs = [], env = {}) {
     encoding: "utf8",
     input: "",
     env: { ...process.env, ...env },
+    timeout: CHILD_TIMEOUT_MS,
   });
 }
 
@@ -172,7 +178,7 @@ test("a failed install stops the launch with npm's status and does not start the
 });
 
 test("the launcher refuses to start without a plugin root", () => {
-  const run = spawnSync(process.execPath, [LAUNCHER], { encoding: "utf8", input: "" });
+  const run = spawnSync(process.execPath, [LAUNCHER], { encoding: "utf8", input: "", timeout: CHILD_TIMEOUT_MS });
   assert.equal(run.status, 1);
   assert.match(run.stderr, /usage: ensure-deps\.mjs <plugin-root>/);
 });
@@ -357,7 +363,7 @@ test("a legacy install can finish without the new launcher replacing its lock", 
 });
 
 test("abandoned legacy installations are isolated, including unpublished owner records", () => {
-  const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+  const dead = spawnSync(process.execPath, ["-e", ""], { timeout: CHILD_TIMEOUT_MS }).pid;
   for (const record of [String(dead), "", "not a pid"]) {
     const { root, serverDir } = fakePlugin({ provisioned: false });
     const lock = join(serverDir, LOCK_NAME);
@@ -377,7 +383,7 @@ test("a terminated provisioning owner leaves an isolated stage and two successor
   const interrupted = spawnSync(process.execPath, ["--input-type=module", "-e",
     `import { provisionRuntime } from ${JSON.stringify(provider)};
      provisionRuntime(process.argv[1], dir => { console.log(dir); process.exit(24); });`, serverDir],
-    { encoding: "utf8" });
+    { encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
   assert.equal(interrupted.status, 24, interrupted.stderr);
   const abandoned = interrupted.stdout.trim();
   assert.equal(existsSync(join(abandoned, "package-lock.json")), true);
@@ -441,6 +447,7 @@ test("one entry-point check serves every script, and holds through a linked dire
   const run = spawnSync(process.execPath, [join(binLink, "ensure-deps.mjs"), plugin.root], {
     encoding: "utf8",
     input: "",
+    timeout: CHILD_TIMEOUT_MS,
   });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(JSON.parse(run.stdout.trim()).ajv, true);

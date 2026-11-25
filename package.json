@@ -10,6 +10,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:latency": "node scripts/latency-injection.mjs",
+    "test:perf:load": "node scripts/perf-load-injection.mjs",
     "test:portable": "node --test scripts/portable-distribution.test.mjs scripts/plugin-launcher.test.mjs",
     "test:portable:runtime": "node scripts/smoke-portable-hosts.mjs",
     "check:identity": "node scripts/check-distribution-identity.mjs",
