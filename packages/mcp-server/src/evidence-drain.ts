@@ -23,6 +23,7 @@ function getTracker(): EffectivenessTracker | null {
   if (!_trackerResolved) {
     _trackerResolved = true;
     const repo = getEvidenceRepo();
+    // Stryker disable next-line ConditionalExpression: equivalent: a tracker built on a missing repository only throws inside the try below, which swallows it, so the drained state is the same
     if (repo) _tracker = new EffectivenessTracker(repo);
   }
   return _tracker;
@@ -41,6 +42,7 @@ function getTracker(): EffectivenessTracker | null {
 function drainStrategyExecutions(state: PipelineState): PipelineState {
   if (state.strategy_executions.length === 0) return state;
   const tracker = getTracker();
+  // Stryker disable next-line ConditionalExpression: equivalent: without a tracker the call below throws inside the try, which swallows it, so the drained state is the same
   if (tracker) {
     for (const exec of state.strategy_executions) {
       try {

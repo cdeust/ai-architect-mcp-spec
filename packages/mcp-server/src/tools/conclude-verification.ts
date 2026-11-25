@@ -70,7 +70,7 @@ const handleConcludeVerification: ToolCallback<ReturnType<typeof concludeVerific
     //   defaulted to empty string when omitted by the caller).
     // Invariant: parse errors never abort the pipeline — malformed claims are skipped.
     let claimsMap: ReadonlyMap<string, Claim> | undefined;
-    if (claims !== undefined && claims.length > 0) {
+    if (claims !== undefined) {
       const map = new Map<string, Claim>();
       for (const raw of claims) {
         const parsed = ClaimSchema.safeParse({

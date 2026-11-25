@@ -49,10 +49,11 @@ it("releases the evidence for an expired completed run and tolerates an absent r
   expect(() => evidence.onDrop!(run_id)).not.toThrow();
 });
 
-it("uses a time component and a six-character random suffix for a typical generated run id", async () => {
-  vi.spyOn(Math, "random").mockReturnValue(0.123456);
+it("builds a run id from the base-36 clock and the first six base-36 digits of the random fraction", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+  vi.spyOn(Math, "random").mockReturnValue(0.123456789);
   const { generateRunId } = await import("../pipeline-runs.js");
-  expect(generateRunId()).toMatch(/^run_[a-z0-9]+_[a-z0-9]{6}$/);
+  expect(generateRunId()).toBe("run_loyw3v28_4fzzzx");
 });
 
 it("assigns the baseline retry budget and the run's benchmark arm", () => {
