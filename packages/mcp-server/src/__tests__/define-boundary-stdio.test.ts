@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -532,6 +533,9 @@ it("serves the ticketed Define of the gate after PRD only, across restarts", asy
       { id: "TICKET-003", story_points: 3, depends_on: ["TICKET-002"], acceptance_ids: ["AC-003"] },
     ]);
     const planAtGate = await server.call("get_pipeline_state", planArgs);
+    // The reply text is the Define the plan binds: architect-os writes it plus LF.
+    expect(JSON.parse(planAtGate.text).verified_plan.define_sha256)
+      .toBe(createHash("sha256").update(atGate.text + "\n").digest("hex"));
     expect(readFileSync(join(output, "07-jira-tickets.md"), "utf8")).toContain("#### TICKET-003 — Deliver AC-003");
 
     let envelope = await call<Envelope>(server, "submit_action_result", {
@@ -567,15 +571,14 @@ it("serves the ticketed Define of the gate after PRD only, across restarts", asy
     for (const response of await reread(estimate)) {
       expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready", message: expect.stringContaining("no longer projects") } });
     }
+    // A checkpoint whose "passed" tickets form a cycle is not a valid checkpoint: it does not load.
     const cycle = { ...state, jira_result: { status: "passed" as const, tickets: [{ ...first!, depends_on: [second!.id] }, ...state.jira_result.tickets.slice(1)] } };
     await server.close();
-    expect(() => files.write(cycle, done)).not.toThrow();
+    files.write(cycle, done);
     server = await start();
     const refusedCycle = await server.call("get_pipeline_state", args);
     expect(refusedCycle.isError).toBe(true);
-    expect(JSON.parse(refusedCycle.text)).toMatchObject({
-      error: { code: "define_document_invalid", message: expect.stringContaining("TICKET_DEPENDENCY_CYCLE") },
-    });
+    expect(JSON.parse(refusedCycle.text)).not.toHaveProperty("handoff");
   } finally {
     await server?.close();
     rmSync(output, { recursive: true, force: true });

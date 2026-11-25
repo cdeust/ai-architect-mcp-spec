@@ -61,7 +61,8 @@ const handleGetPipelineState: ToolCallback<ReturnType<typeof getPipelineStateInp
       // Bound the full-state serialization to the 100,000-char MCP budget.
       // The per-field input caps (Phase 1c) overlap, so a worst-case state
       // overshoots the AGGREGATE budget; boundFullStateResponse degrades by
-      // priority (grounding → clarifications → section content), recording
+      // priority (grounding → clarifications → section content → tickets and
+      // the kept Define), recording
       // every shed in __bounded. source: bound-full-state.ts.
       payload = boundFullStateResponse(state);
     } else if (format === "grounding") {
@@ -134,8 +135,9 @@ export function registerGetPipelineState(server: McpServer): RegisteredTool {
     "next_offset is the invocation_offset to read them from. It is " +
     "paged under the same budget: each page holds whole invocations from " +
     "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-    "page, null on the last one. format:'define_handoff_v1' returns validated planning data, with the ticket estimates and prerequisites when the run generated them, " +
-    "from the pending specification question or the snapshot kept when the run finished. " +
+    "page, null on the last one. format:'define_handoff_v1' returns validated planning data, with the generated tickets' estimates, prerequisites and criteria " +
+    "(structurally checked, not judged) when the run generated them, from the pending specification question or, once the gate advanced, " +
+    "from the Define it kept while the checkpoint still projects it (until the finished run is dropped). " +
     "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
     "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.",
     getPipelineStateInput(),
