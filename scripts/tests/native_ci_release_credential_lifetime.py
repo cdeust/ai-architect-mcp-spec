@@ -52,7 +52,9 @@ SSH_WRAPPER = """#!/bin/sh
 # the agent it was given, then serves the Git command against the local receiver.
 set -u
 log="$FIXTURE_LOG/ssh.$$"
-"$FIXTURE_REAL_SSH" -G "$@" > "$log.config" 2>&1
+# OpenSSH reads the user's configuration from the passwd home, not $HOME, so the
+# hostile file stands in for it here. It comes first: a later -F wins, as in ssh.
+"$FIXTURE_REAL_SSH" -G -F "$FIXTURE_HOSTILE_CONFIG" "$@" > "$log.config" 2>&1
 {
   echo "pid=$$"
   echo "arguments=$*"
@@ -75,6 +77,16 @@ for command; do :; done
 exec sh -c "$command"
 """
 
+PYTHON_WRAPPER = """#!/usr/bin/env bash
+# Stand-in for python3 that is slow to stop: it forwards SIGTERM to the real
+# interpreter only after FIXTURE_PUBLISHER_STOP_S, so the step must wait for it.
+"$FIXTURE_REAL_PYTHON" "$@" <&0 &
+child=$!
+trap 'sleep "$FIXTURE_PUBLISHER_STOP_S"; kill -TERM "$child" 2>/dev/null; wait "$child"; exit $?' TERM
+wait "$child"
+exit $?
+"""
+
 AGENT_WRAPPER = """#!/bin/sh
 printf '%s\n' "${1-}" >> "$FIXTURE_LOG/agent-starts"  # one line per call
 exec "$FIXTURE_REAL_AGENT" "$@"
@@ -83,13 +95,13 @@ exec "$FIXTURE_REAL_AGENT" "$@"
 
 def alive(pid):
     """A zombie has released its memory, sockets and keys: it is not alive."""
-    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10)
     return out.returncode == 0 and out.stdout.strip() != "" and not out.stdout.strip().startswith("Z")
 
 
 def processes():
     rows = subprocess.run(["ps", "-Ao", "pid=,pgid=,stat=,args="], capture_output=True, text=True,
-                          check=True).stdout.splitlines()
+                          check=True, timeout=10).stdout.splitlines()
     return [row.split(None, 3) for row in rows if len(row.split(None, 3)) == 4]
 
 
@@ -122,7 +134,7 @@ class Fixture:
         (home / ".ssh" / "config").write_text(HOSTILE_SSH_CONFIG)
         bin_dir = root / "bin"
         bin_dir.mkdir()
-        for name, body in (("ssh", SSH_WRAPPER), ("ssh-agent", AGENT_WRAPPER)):
+        for name, body in (("ssh", SSH_WRAPPER), ("ssh-agent", AGENT_WRAPPER), ("python3", PYTHON_WRAPPER)):
             (bin_dir / name).write_text(body)
             (bin_dir / name).chmod(0o700)
         work = root / "work"
@@ -160,6 +172,9 @@ class Fixture:
             "FIXTURE_PUBLIC_KEY": str(self.public),
             "FIXTURE_REAL_SSH": shutil.which("ssh"),
             "FIXTURE_REAL_AGENT": shutil.which("ssh-agent"),
+            "FIXTURE_REAL_PYTHON": shutil.which("python3"),
+            "FIXTURE_PUBLISHER_STOP_S": "0.3",
+            "FIXTURE_HOSTILE_CONFIG": str(home / ".ssh" / "config"),
         }
         self.runner_entries = set(os.listdir(self.runner_temp))
         self.process = None
@@ -261,7 +276,7 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             self.assertFalse(socket.exists(), "the agent socket outlived the step")
             self.assertFalse(socket.parent.exists(), "the socket directory outlived the step")
             probe = subprocess.run(["ssh-add", "-l"], cwd=fixture.repo, capture_output=True,
-                                   env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]))
+                                   env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]), timeout=10)
             self.assertEqual(probe.returncode, 2, "the same probe that reached the agent no longer does")
             # Git and its ssh client end on their own once the publisher is gone, as a
             # real client does on EOF; they get TRANSPORT_EXIT_S, the agent gets nothing.
@@ -394,6 +409,40 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             self.assert_released(fixture)
         self.each_workflow(check)
 
+    def stuck_agent(self, path, hook_tail):
+        fixture = self.fixture(path)
+        hook = fixture.remote / "hooks" / "pre-receive"
+        hook.write_text('#!/bin/sh\npid=$(cat "$FIXTURE_LOG/agent-pid")\nkill -STOP "$pid"\n'
+                        + hook_tail + ': > "$FIXTURE_LOG/agent-stopped"\nexit 0\n')
+        hook.chmod(0o700)
+        fixture.env["FIXTURE_RECORD_AGENT"] = "1"
+        fixture.start()
+        return fixture
+
+    def test_signal_during_the_grace_period_does_not_cut_the_release_short(self):
+        def check(path):
+            fixture = self.stuck_agent(path, "")
+            deadline = time.monotonic() + 30
+            while not (fixture.log / "agent-stopped").exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            time.sleep(1.2)  # the release is now inside its 2 s grace for the agent
+            os.kill(fixture.process.pid, signal.SIGTERM)
+            status, output = fixture.finish(timeout=RUNNER_SIGINT_WINDOW_S)
+            self.assertEqual(status, 1, output)
+            self.assertIn("::error::the signing agent did not stop on SIGTERM", output)
+            self.assert_released(fixture)
+        self.each_workflow(check)
+
+    def test_agent_slow_to_stop_gets_its_grace_and_the_step_succeeds(self):
+        def check(path):
+            # Stopped during the push, the agent resumes 1 s later and only then acts on SIGTERM.
+            fixture = self.stuck_agent(path, '( sleep 1; kill -CONT "$pid" ) >/dev/null 2>&1 &\n')
+            status, output = fixture.finish()
+            self.assertEqual(status, 0, output)
+            self.assertNotIn("::error::", output)
+            self.assert_released(fixture)
+        self.each_workflow(check)
+
     def test_killed_step_leaves_an_agent_that_stops_by_itself(self):
         """No step code runs after SIGKILL. The agent must be bound to the step's command."""
         def check(path):
@@ -411,7 +460,7 @@ class ReleaseCredentialLifetime(unittest.TestCase):
                 time.sleep(0.1)
             self.assertFalse(alive(int(record["agent"])), "the agent kept the key after the step was killed")
             probe = subprocess.run(["ssh-add", "-l"], capture_output=True,
-                                   env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]))
+                                   env=dict(fixture.env, SSH_AUTH_SOCK=record["socket"]), timeout=10)
             self.assertEqual(probe.returncode, 2)
         self.each_workflow(check)
 
