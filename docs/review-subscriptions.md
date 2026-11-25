@@ -71,6 +71,18 @@ owner's approval. The owner can always merge by hand.
 A pull request that changes this rule is judged by the resolver of `main`. The
 owner merges it by hand, on a green gate and an independent review.
 
+## Known divergence from the CI generator
+
+`pipeline-post-merge.yml` and `pipeline-after-merge.yml` are rendered by
+zetetic-team-subagents `render-ci`. The owner paused that repository on
+2026-11-25, so its template still renders the bot verdict gate. This repository
+carries the owner-approval resolver in the rendered copies, and both files say
+so in their header. A re-render would overwrite the change and bring back a merge
+that waits for a bot verdict. Nobody runs `render-ci` here until the template
+carries the change. If someone does, `GeneratorDivergenceTests` in
+`scripts/tests/test_ci_review_owner_approval.py` fails in the regression job. The
+change will next be carried to architect-os.
+
 ## Threat model
 
 Tests: `scripts/tests/test_ci_review_owner_approval.py`.

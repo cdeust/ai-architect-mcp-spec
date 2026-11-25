@@ -196,6 +196,25 @@ class BotsAreOptionalTests(unittest.TestCase):
         self.assertFalse((WORKFLOWS / "review-subscription.yml").exists())
 
 
+class GeneratorDivergenceTests(unittest.TestCase):
+    """zetetic-team-subagents render-ci still renders the bot verdict gate.
+
+    The owner paused that repository on 2026-11-25, so the template is not
+    changed yet. A re-render would silently bring the old gate back.
+    """
+
+    def test_a_re_render_of_the_old_resolver_fails_here(self):
+        post = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
+        after = (WORKFLOWS / "pipeline-after-merge.yml").read_text()
+        for text in (post, after):
+            self.assertIn("KNOWN DIVERGENCE (owner decision of 2026-11-25)", text)
+        self.assertIn("_owner_approves(pr, head, repository, api)", post)
+        for rendered in ("render-ci: native-verdict begin", "_selected_review_approves", "REVIEW_WORKFLOW_NAME",
+                         "_review_approves("):
+            self.assertNotIn(rendered, post)
+        self.assertNotIn("workflows: [Pipeline, PR Review]", after)
+
+
 class AgentsDoNotApproveTests(unittest.TestCase):
     """The session guard of delivery-gate.json, through its own guardDecision."""
 
