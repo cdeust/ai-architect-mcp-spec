@@ -201,8 +201,9 @@ class MentionPublication(unittest.TestCase):
         commit = self.git("--git-dir", str(self.remote), "rev-parse", branch)
         self.assertEqual(self.git("--git-dir", str(self.remote), "rev-parse", commit + "^"), self.revision)
         self.assertEqual(self.git("--git-dir", str(self.remote), "show", commit + ":file"), "after")
-        self.assertEqual(self.git("--git-dir", str(self.remote), "log", "-1", "--format=%an %ad", "--date=iso-strict",
-                                  commit), "Claude 2026-11-25T10:01:00Z")
+        # The instant, not Git's spelling of it (Z or +00:00 depends on the version).
+        self.assertEqual(self.git("--git-dir", str(self.remote), "log", "-1", "--format=%an %at %cn %ct", commit),
+                         "Claude 1795600860 Claude 1795600860")  # 2026-11-25T10:01:00Z
         pulls = [body for method, path, body in self.writes() if path == "pulls"]
         self.assertEqual(pulls, [{"head": "claude/issue-7-42", "base": "main", "title": "Owner request",
                                   "body": "Requested in #7.", "draft": True}])

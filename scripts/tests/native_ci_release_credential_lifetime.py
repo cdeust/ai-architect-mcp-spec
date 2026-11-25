@@ -122,6 +122,11 @@ def processes():
     return [[pid, pgid, stat, args, ppid] for pid, pgid, stat, ppid, args in (r for r in split if len(r) == 5)]
 
 
+def default_signals():
+    for sig in (signal.SIGINT, signal.SIGQUIT):
+        signal.signal(sig, signal.SIG_DFL)
+
+
 def git(*args, **kwargs):
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True, **kwargs)
 
@@ -199,8 +204,12 @@ class Fixture:
     def start(self, block=False):
         env = dict(self.env, **({"FIXTURE_BLOCK": "1"} if block else {}))
         # actions/runner runs `shell: bash` as: bash --noprofile --norc -eo pipefail {0}
+        # The runner starts the step with default signal dispositions. A suite started
+        # in the background of a non-interactive shell inherits SIGINT and SIGQUIT
+        # ignored, and bash cannot trap a signal ignored on entry: restore them.
         self.process = subprocess.Popen(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(self.script)],
                                         cwd=self.repo, env=env, start_new_session=True,
+                                        preexec_fn=default_signals,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return self.process
 
