@@ -33,12 +33,13 @@ the prompt was written before the contract, and the repository's own standards a
 
 1. **The owner's approval decides the merge.** Owner decision of 25 November 2026. The
    protected resolver merges a pull request when the required checks of its head are
-   green and the owner approved that head: the label `owner-approved` is on the pull
-   request, the owner's account set it last, and it was set after the head's first
-   Pipeline run. A push after the label makes the approval stale, and the workflow
-   `Owner approval` removes the label. No agent sets the label, as no agent merges by
-   hand: only the owner, or the owner's bot on the owner's explicit consent for this pull
-   request and this head. The session guard refuses the commands that set it. The one
+   green and the owner approved that exact head. The owner sets the label
+   `owner-approved`; the workflow `Owner approval`, run from `main`, records the event
+   with the pull request's head commit and who set it. The resolver merges only if the
+   owner's newest approval record names the current head, and no push and no removal of
+   the label came after it. Any other head, including one approved earlier and returned
+   to, needs a new approval. No agent sets the label, as no agent merges by hand: the
+   owner sets it. The session guard refuses the commands that set it. The one
    merge without the owner's approval is a low-risk Dependabot update (ADR-1126). The
    owner can always merge by hand. The review bots (Claude, Codex, any security review)
    are optional: they give advice, and their absence, failure or exhausted quota blocks

@@ -59,8 +59,9 @@ WAITS = (
     "merge held: Pipeline has not succeeded on this head",
     "merge held: the owner has not approved this head",
     "merge held: the approval label was not set by the owner",
-    "merge held: the approval predates this head",
-    "merge held: no Pipeline run dates this head",
+    "merge held: the approval names another head",
+    "merge held: a push came after the approval",
+    "merge held: the approval was removed after it was given",
     "PR head advanced after testing",
 )
 

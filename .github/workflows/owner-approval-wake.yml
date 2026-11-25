@@ -1,0 +1,20 @@
+name: Owner approval wake
+# Wakes the resolver (pipeline-after-merge.yml) when the owner's approval label
+# is set. It runs from the pull request and decides nothing: the resolver reads
+# the approval record of `Owner approval` (run from main) and the label's
+# events itself. A pull request that changes this file can only delay a merge.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  wake:
+    name: Wake the resolver
+    if: github.event.label.name == 'owner-approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5 # source: operational cap; no step does work.
+    steps:
+      - name: Wake the resolver
+        run: echo "The resolver reads the approval record itself"

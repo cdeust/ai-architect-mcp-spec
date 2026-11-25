@@ -37,36 +37,51 @@ account settings: CI does not read or guard it.
 GitHub refuses an approving review from the author of a pull request, and agents
 push under the owner's account.
 [Approving a pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews)
-The approval is therefore the label `owner-approved`, set in one action by the
-owner, or by the owner's bot on the owner's explicit consent for this pull request
-and this head. No agent sets it.
+The approval is therefore the label `owner-approved`, set by the owner in one
+action. No agent sets it.
+
+The approval is bound to a head commit, not to a date. `Owner approval`
+(`owner-approval.yml`) runs on `pull_request_target`, so GitHub runs it as it is
+on `main` and a pull request cannot change it. GitHub documents that this event
+runs in the context of the default branch, with `GITHUB_SHA` the last commit of
+that branch: the run's own commit is not the head. The run's title is the record,
+defined on `main`: `Owner approval <labeled|synchronize> PR <n> label <label> at
+<head commit> by <actor>`.
+[Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
 
 The protected resolver (`pipeline-post-merge.yml`, run from `main` by
-`pipeline-after-merge.yml`) merges when every row of the left column holds:
+`pipeline-after-merge.yml`) merges when every row holds:
 
 | Condition | Read from |
 | --- | --- |
 | The required Pipeline jobs of the head succeeded | the Pipeline run, `_validate_jobs` |
 | The label `owner-approved` is on the pull request | the pull request |
-| The last `labeled`/`unlabeled` event of that label is `labeled`, by the repository owner's account of type User | the issue events |
-| That event is after the head's first `pull_request` Pipeline run | the Pipeline runs of the head |
+| The newest `labeled` record of that label for this pull request has the owner's user account as actor, triggering actor and title actor | the runs of `owner-approval.yml`, event `pull_request_target`, since the pull request was opened |
+| That record names the current head commit | its title |
+| No `synchronize` record and no `unlabeled` event of the label came after it | the records, the issue events |
 | No `hold` or `do-not-merge` label, no "do not merge" title | the pull request |
 
 | Pipeline | Approval | Outcome |
 | --- | --- | --- |
-| Green | Set by the owner after the head was pushed | Merge |
-| Green | Absent, removed, or last set by another account | Held, green run, notice |
-| Green | Set before the current head (a push came after it) | Held: `the approval predates this head` |
-| Running | Set by the owner after the push | Held while the Pipeline runs; its completion merges, with no new label |
+| Green | The owner's newest record names this head | Merge |
+| Green | No record: absent, or set with `GITHUB_TOKEN`, which starts no run | Held: `the owner has not approved this head` |
+| Green | Set by another account, an app, or rerun by another account | Held: `the approval label was not set by the owner` |
+| Green | Names another head (a push, a head reused from another PR, a return to an earlier head) | Held: `the approval names another head` |
+| Green | A push or a removal came after it | Held: `a push came after the approval` or `the approval was removed after it was given` |
+| Running | The owner's record names this head | Held while the Pipeline runs; its completion merges, with no new label |
 | Red | Any | Not merged: the failed job is named |
 
 A held merge ends the resolver run green with a notice. The next completion of
-the Pipeline or of `Owner approval` wakes the resolver again. The `Owner approval`
-workflow runs on `labeled` and on `synchronize`. On `synchronize` it removes the
-label, so a pushed head always needs a new approval. A label set in the seconds
-between a push and the creation of its Pipeline run counts as stale and must be
-set again. A low-risk Dependabot update (ADR-1126) is the one merge without the
-owner's approval. The owner can always merge by hand.
+the Pipeline or of `Owner approval wake` wakes the resolver again.
+`Owner approval wake` runs from the pull request on `labeled` and only wakes the
+resolver: a pull request that changes it can delay a merge, never cause one,
+because the resolver reads the records from `main` itself. On `synchronize`,
+`Owner approval` removes the label so the pull request shows the truth; the
+resolver does not rely on that removal. A rerun of an approval record keeps its
+title, so it never approves another head; a rerun by another account changes the
+triggering actor and the resolver refuses it. A low-risk Dependabot update
+(ADR-1126) is the one merge without the owner's approval. The owner can always
+merge by hand.
 
 A pull request that changes this rule is judged by the resolver of `main`. The
 owner merges it by hand, on a green gate and an independent review.
@@ -89,9 +104,12 @@ Tests: `scripts/tests/test_ci_review_owner_approval.py`.
 
 | Threat | Defence | Test |
 | --- | --- | --- |
-| An agent sets the label itself | An agent pushes with the owner's token, so GitHub's events cannot tell it from the owner. The defences are the contract (rule 1), the session guard that refuses `--add-label owner-approved`, any quoted label and label writes through the API, and the event log, which names who set the label and when. The GitHub MCP tools that edit issues are not covered by the guard. | `test_the_session_guard_refuses_setting_the_approval_label` |
-| A push slipped in after the approval | The approval must follow the head's first Pipeline run. `Owner approval` removes the label on each push. The merge sends the tested head SHA. | `test_the_approval_table` ("approval predates a push"), `test_the_approval_workflow_clears_a_stale_label_on_every_push` |
-| An approval given on another head | Same date check. A label set before the current head counts for no head after it. | `test_the_earliest_run_of_the_head_dates_it` |
+| An agent sets the label itself | An agent pushes with the owner's token, so GitHub's events cannot tell it from the owner. The defences are the contract (rule 1), the session guard, and the event log, which names who set the label and when. The guard is a barrier of use, not a proof of identity (see the session guard below). | `test_the_session_guard_refuses_setting_the_approval_label` |
+| A push slipped in after the approval, a head reused from another PR, a return to an earlier head, a rerun of an old run, a push with `GITHUB_TOKEN` that starts no workflow | The approval is bound to the head commit in the record. Only the newest record counts, and a later `synchronize` record or `unlabeled` event voids it. | `test_the_approval_table`, `test_a_rerun_of_an_old_head_needs_a_new_approval` |
+| The pull request changes the approval workflows | `Owner approval` runs from `main` (`pull_request_target`); only its records count, and the records of the PR's own workflows are refused. The wake decides nothing. | `test_the_record_runs_from_main_and_its_title_matches_the_resolver`, `test_the_wake_decides_nothing`, rows "a record from the PR's own workflow" and "another workflow file" |
+| A label set with `GITHUB_TOKEN` or by an app | `GITHUB_TOKEN` events start no run, so there is no record. An app is the actor of its record and is refused. | rows "label but no record", "set by an app" |
+| The owner labels while a push lands (time of check, time of use) | The record names the head at the moment of the label, which may be a head the owner did not read. Before labelling, the owner checks that the head shown is the one read; the record's title names it afterwards. | not testable: inherent to a label |
+| The Pipeline run is the pull request's own (`pipeline.yml` runs from the PR): a PR can empty its jobs and keep their names | The owner's review of the diff; no bot reads it any more. This predates this change. | none |
 | A fork or Dependabot pull request | The resolver merges only same-repository heads. A label set by a bot, or by any account other than the owner's user account, does not approve. Dependabot keeps only the low-risk path. | `test_the_approval_table` ("set by a bot", "bot with the owner's login") |
 | A required check removed by the pull request itself | The required job names are in the resolver, which runs from `main`. A missing or failed job holds the merge. | `test_a_failed_or_absent_review_job_does_not_fail_the_merge_gate` (positive control) |
 | A review bot absent, failed or out of quota | No job of `PR Review` is read by the resolver, and none wakes it. | `test_the_resolver_reads_no_bot_verdict`, `test_review_bots_do_not_wake_the_resolver` |

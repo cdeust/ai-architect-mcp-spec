@@ -247,8 +247,8 @@ jobs:
               return list(indexed.values())
 
 
-          # source: .github/workflows/owner-approval.yml, `name: Owner approval`.
-          APPROVAL_WORKFLOW_NAME = "Owner approval"
+          # source: .github/workflows/owner-approval-wake.yml, `name: Owner approval wake`.
+          APPROVAL_WORKFLOW_NAME = "Owner approval wake"
 
 
           def _pipeline_of_approval(approval, repository, api):
@@ -260,7 +260,7 @@ jobs:
               the merge is held, and the Pipeline's own completion will wake the resolver.
               """
               require(
-                  approval.get("path") == ".github/workflows/owner-approval.yml"
+                  approval.get("path") == ".github/workflows/owner-approval-wake.yml"
                   and approval.get("event") == "pull_request"
                   and approval.get("status") == "completed"
                   and approval.get("conclusion") == "success",
@@ -549,26 +549,39 @@ jobs:
           STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
 
 
-          def _head_since(head, repository, api):
-              """When the head became the PR head: its first pull_request Pipeline run."""
-              created = [
-                  run.get("created_at")
-                  for run in api.records(
-                      f"/repos/{repository}/actions/workflows/pipeline.yml/runs"
-                      f"?head_sha={head}&event=pull_request",
-                      "workflow_runs",
-                  )
-                  if run.get("head_sha") == head and run.get("event") == "pull_request"
-              ]
-              require(
-                  created and all(isinstance(value, str) and re.fullmatch(STAMP, value) for value in created),
-                  "merge held: no Pipeline run dates this head",
-              )
-              return min(created)
+          # The record run of `Owner approval` (.github/workflows/owner-approval.yml),
+          # run from main by pull_request_target: its title is defined there, so no
+          # pull request can change it. A pull_request_target run's head_sha is the
+          # base branch's commit, so the head commit is read from the title.
+          RECORD_PATH = ".github/workflows/owner-approval.yml"
+          RECORD_TITLE = re.compile(
+              r"Owner approval (labeled|synchronize) PR ([1-9][0-9]*) label (\S+) at ([0-9a-f]{40}) by (\S+)"
+          )
+
+
+          def _records(pr, repository, api):
+              """The approval records of this pull request, oldest first."""
+              found = []
+              for run in api.records(
+                  f"/repos/{repository}/actions/workflows/owner-approval.yml/runs"
+                  f"?event=pull_request_target&created=%3E%3D{pr['created_at']}",
+                  "workflow_runs",
+              ):
+                  match = RECORD_TITLE.fullmatch(run.get("display_title") or "")
+                  if not (
+                      match and int(match[2]) == pr["number"]
+                      and run.get("path") == RECORD_PATH
+                      and run.get("event") == "pull_request_target"
+                      and isinstance(run.get("created_at"), str)
+                      and re.fullmatch(STAMP, run["created_at"])
+                  ):
+                      continue
+                  found.append((run["created_at"], run.get("id"), match, run))
+              return sorted(found, key=lambda record: (record[0], record[1]))
 
 
           def _owner_approves(pr, head, repository, api):
-              """The owner labelled this head after it became the head, and nobody removed it."""
+              """The owner's newest approval names this exact head, and nothing undid it."""
               require(
                   any(label.get("name") == APPROVAL_LABEL for label in pr.get("labels") or []),
                   "merge held: the owner has not approved this head",
@@ -576,24 +589,36 @@ jobs:
               owner = (api.request("GET", f"/repos/{repository}").get("owner") or {})
               require(owner.get("type") == "User" and owner.get("login"),
                       "repository owner is not a user account")
-              events = [
-                  event for event in api.records(f"/repos/{repository}/issues/{pr['number']}/events")
-                  if event.get("event") in ("labeled", "unlabeled")
+              require(isinstance(pr.get("created_at"), str) and re.fullmatch(STAMP, pr["created_at"]),
+                      "pull request has no creation date")
+              records = _records(pr, repository, api)
+              approvals = [record for record in records
+                           if record[2][1] == "labeled" and record[2][3] == APPROVAL_LABEL]
+              require(approvals, "merge held: the owner has not approved this head")
+              at, _, title, run = approvals[-1]
+              by_owner = all(
+                  (person or {}).get("login") == owner["login"] and (person or {}).get("type") == "User"
+                  for person in (run.get("actor"), run.get("triggering_actor"))
+              )
+              require(by_owner and title[5] == owner["login"],
+                      "merge held: the approval label was not set by the owner")
+              require(title[4] == head, "merge held: the approval names another head")
+              require(
+                  not any(record[0] > at and record[2][1] == "synchronize" for record in records),
+                  "merge held: a push came after the approval",
+              )
+              removed = [
+                  event.get("created_at")
+                  for event in api.records(f"/repos/{repository}/issues/{pr['number']}/events")
+                  if event.get("event") == "unlabeled"
                   and (event.get("label") or {}).get("name") == APPROVAL_LABEL
               ]
-              require(events and events[-1].get("event") == "labeled",
-                      "merge held: the owner has not approved this head")
-              actor = events[-1].get("actor") or {}
               require(
-                  actor.get("login") == owner["login"] and actor.get("type") == "User",
-                  "merge held: the approval label was not set by the owner",
+                  all(isinstance(when, str) and re.fullmatch(STAMP, when) for when in removed)
+                  and not any(when >= at for when in removed),
+                  "merge held: the approval was removed after it was given",
               )
-              labelled = events[-1].get("created_at")
-              require(
-                  isinstance(labelled, str) and re.fullmatch(STAMP, labelled)
-                  and labelled > _head_since(head, repository, api),
-                  "merge held: the approval predates this head",
-              )
+
 
           def _merge_open_pr(pr, merge_path, head, api, repository):
               require(

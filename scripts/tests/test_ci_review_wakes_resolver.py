@@ -24,8 +24,8 @@ def resolver():
 
 def review(**changes):
     run = {
-        "name": "Owner approval",
-        "path": ".github/workflows/owner-approval.yml",
+        "name": "Owner approval wake",
+        "path": ".github/workflows/owner-approval-wake.yml",
         "event": "pull_request",
         "status": "completed",
         "conclusion": "success",
@@ -96,9 +96,9 @@ class ReviewWakesResolverTests(unittest.TestCase):
 
     def test_both_workflows_wake_the_resolver(self):
         caller = (WORKFLOWS / "pipeline-after-merge.yml").read_text()
-        self.assertIn("workflows: [Pipeline, Owner approval]", caller)
-        approval_name = (WORKFLOWS / "owner-approval.yml").read_text().splitlines()[0]
-        self.assertEqual(approval_name, "name: Owner approval")
+        self.assertIn("workflows: [Pipeline, Owner approval wake]", caller)
+        approval_name = (WORKFLOWS / "owner-approval-wake.yml").read_text().splitlines()[0]
+        self.assertEqual(approval_name, "name: Owner approval wake")
 
 
 if __name__ == "__main__":

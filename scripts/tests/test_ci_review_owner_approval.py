@@ -18,8 +18,11 @@ WORKFLOWS = ROOT / ".github/workflows"
 REPO = "cdeust/ai-architect-mcp-spec"
 HEAD = "a" * 40
 OWNER = {"login": "cdeust", "type": "User"}
-PUSHED = "2026-11-25T21:00:00Z"  # first Pipeline run of the head
-BEFORE, AFTER, LATER = "2026-11-25T20:59:59Z", "2026-11-25T21:05:00Z", "2026-11-25T21:09:00Z"
+OTHER = "b" * 40
+OPENED = "2026-11-25T20:00:00Z"
+T1, T2, T3, T4 = ("2026-11-25T21:00:00Z", "2026-11-25T21:05:00Z", "2026-11-25T21:09:00Z",
+                  "2026-11-25T21:12:00Z")
+APP = {"login": "some-app[bot]", "type": "Bot"}
 
 
 def resolver():
@@ -30,25 +33,34 @@ def resolver():
     return namespace
 
 
-def labeled(at, actor=OWNER, kind="labeled", label="owner-approved"):
-    return {"event": kind, "label": {"name": label}, "actor": actor, "created_at": at}
+def record(at, action="labeled", sha=HEAD, by=OWNER, label="owner-approved", pr=7, rerun_by=None,
+           path=".github/workflows/owner-approval.yml", event="pull_request_target", run_id=None):
+    """A run of owner-approval.yml as the REST API lists it."""
+    title = f"Owner approval {action} PR {pr} label {label} at {sha} by {by['login']}"
+    return {"id": run_id or int(at[11:13] + at[14:16] + at[17:19]), "display_title": title, "path": path,
+            "event": event, "created_at": at, "actor": by, "triggering_actor": rerun_by or by,
+            "head_sha": "c" * 40}  # a pull_request_target run carries the base commit
+
+
+def unlabeled(at, label="owner-approved"):
+    return {"event": "unlabeled", "label": {"name": label}, "actor": OWNER, "created_at": at}
 
 
 def pull(labels=("owner-approved",)):
-    return {"number": 7, "state": "open", "draft": False, "title": "fix: x",
+    return {"number": 7, "state": "open", "draft": False, "title": "fix: x", "created_at": OPENED,
             "labels": [{"name": n} for n in labels], "user": OWNER}
 
 
 class FakeApi:
-    def __init__(self, events=(), runs=(PUSHED,), owner=OWNER):
-        self.events, self.runs, self.owner, self.puts = list(events), list(runs), owner, []
+    def __init__(self, records=(), events=(), owner=OWNER):
+        self.records_, self.events, self.owner, self.puts, self.paths = list(records), list(events), owner, [], []
 
     def records(self, path, key=None):
+        self.paths.append(path)
         if path.endswith("/issues/7/events"):
             return self.events
-        if "/actions/workflows/pipeline.yml/runs?head_sha=" in path:
-            return [{"head_sha": HEAD, "event": "pull_request", "created_at": at, "id": i + 1}
-                    for i, at in enumerate(self.runs)]
+        if "/actions/workflows/owner-approval.yml/runs?" in path:
+            return self.records_
         if path.endswith("/commits"):  # a commit by the owner is not a low-risk update
             return [{"author": {"login": "cdeust"}, "committer": {"login": "cdeust"},
                      "commit": {"message": "fix: x", "verification": {"verified": True}}}]
@@ -64,101 +76,182 @@ class FakeApi:
 
 
 class OwnerApprovalTableTests(unittest.TestCase):
-    def merge(self, pr, api):
+    def merge(self, pr, api, head=HEAD):
         ns = resolver()
         try:
-            ns["_merge_open_pr"](pr, "/merge", HEAD, api, REPO)
+            ns["_merge_open_pr"](pr, "/merge", head, api, REPO)
         except ns["PostMergeError"] as error:
             return str(error)
         return "merged"
 
     def test_the_approval_table(self):
         other_user = {"login": "someone", "type": "User"}
-        bot = {"login": "github-actions[bot]", "type": "Bot"}
         owner_bot = {"login": "cdeust", "type": "Bot"}
         rows = [
-            ("approved after the head was pushed", pull(), [labeled(AFTER)], "merged"),
-            ("label set before the Pipeline ended", pull(), [labeled(PUSHED[:-3] + "01Z")], "merged"),
-            ("relabelled after a removal", pull(), [labeled(BEFORE), labeled(BEFORE, kind="unlabeled"),
-                                                     labeled(AFTER)], "merged"),
-            ("no label", pull(()), [labeled(AFTER)], "the owner has not approved this head"),
-            ("label without its event", pull(), [], "the owner has not approved this head"),
-            ("last event removed it", pull(), [labeled(AFTER), labeled(LATER, kind="unlabeled")],
+            ("approved this head", pull(), [record(T2)], [], "merged"),
+            ("approved, label set before the Pipeline ended", pull(), [record(T1)], [], "merged"),
+            ("approved again after a removal", pull(), [record(T1), record(T3)], [unlabeled(T2)], "merged"),
+            ("no label on the PR", pull(()), [record(T2)], [], "the owner has not approved this head"),
+            ("label but no record (set with GITHUB_TOKEN: no run)", pull(), [], [],
              "the owner has not approved this head"),
-            ("approval predates a push", pull(), [labeled(BEFORE)], "the approval predates this head"),
-            ("approval at the push second", pull(), [labeled(PUSHED)], "the approval predates this head"),
-            ("set by another user", pull(), [labeled(AFTER, other_user)], "not set by the owner"),
-            ("set by a bot", pull(), [labeled(AFTER, bot)], "not set by the owner"),
-            ("bot with the owner's login", pull(), [labeled(AFTER, owner_bot)], "not set by the owner"),
-            ("owner first, then someone else", pull(), [labeled(AFTER), labeled(LATER, other_user)],
+            ("record of another label", pull(), [record(T2, label="claude-rereview")], [],
+             "the owner has not approved this head"),
+            ("removed after the approval", pull(), [record(T2)], [unlabeled(T3)],
+             "the approval was removed after it was given"),
+            ("removed in the second of the approval", pull(), [record(T2)], [unlabeled(T2)],
+             "the approval was removed after it was given"),
+            ("a removal before the approval does not count", pull(), [record(T2)], [unlabeled(T1)], "merged"),
+            ("a push after the approval", pull(), [record(T2), record(T3, "synchronize", OTHER, label="-")],
+             [], "a push came after the approval"),
+            ("a push back to the approved head", pull(),
+             [record(T1), record(T2, "synchronize", OTHER, label="-"), record(T3, "synchronize", label="-")],
+             [], "a push came after the approval"),
+            ("approved another head", pull(), [record(T2, sha=OTHER)], [], "the approval names another head"),
+            ("back to an earlier approved head", pull(), [record(T1), record(T2, sha=OTHER)], [],
+             "the approval names another head"),
+            ("record of another PR (head reused from it)", pull(), [record(T2, pr=5)], [],
+             "the owner has not approved this head"),
+            ("set by another user", pull(), [record(T2, by=other_user)], [], "not set by the owner"),
+            ("set by an app", pull(), [record(T2, by=APP)], [], "not set by the owner"),
+            ("bot with the owner's login", pull(), [record(T2, by=owner_bot)], [], "not set by the owner"),
+            ("rerun of the approval by someone else", pull(), [record(T2, rerun_by=other_user)], [],
              "not set by the owner"),
-            ("another label's event", pull(), [labeled(AFTER, label="claude-rereview")],
+            ("owner approved, then someone else", pull(), [record(T1), record(T2, by=other_user)], [],
+             "not set by the owner"),
+            ("a record from the PR's own workflow", pull(), [record(T2, event="pull_request")], [],
              "the owner has not approved this head"),
+            ("a record from another workflow file", pull(),
+             [record(T2, path=".github/workflows/owner-approval-wake.yml")], [],
+             "the owner has not approved this head"),
+            ("a malformed record date", pull(), [record("2026-11-25 21:05:00")], [],
+             "the owner has not approved this head"),
+            ("a record from workflow_dispatch", pull(), [record(T2, event="workflow_dispatch")], [],
+             "the owner has not approved this head"),
+            ("a record from push", pull(), [record(T2, event="push")], [],
+             "the owner has not approved this head"),
+            ("a forged title from the PR's own copy beside a real old record", pull(),
+             [record(T1, sha=OTHER), record(T2, event="pull_request")], [], "the approval names another head"),
+            ("a neighbouring label", pull(("owner-approved-x",)), [record(T2, label="owner-approved-x")], [],
+             "the owner has not approved this head"),
+            ("a label with another case", pull(("Owner-approved",)), [record(T2, label="Owner-approved")], [],
+             "the owner has not approved this head"),
+            ("a neighbouring label's removal does not count", pull(), [record(T2)],
+             [unlabeled(T3, label="owner-approved-x")], "merged"),
         ]
-        for name, pr, events, expected in rows:
-            api = FakeApi(events)
+        for name, pr, records, events, expected in rows:
+            api = FakeApi(records, events)
             with self.subTest(name):
                 outcome = self.merge(pr, api)
                 self.assertIn(expected, outcome)
                 self.assertEqual(bool(api.puts), expected == "merged")
 
-    def test_the_earliest_run_of_the_head_dates_it(self):
-        # A rerun of the Pipeline does not move the head's date.
-        api = FakeApi([labeled(AFTER)], runs=(LATER, PUSHED))
-        self.assertEqual(self.merge(pull(), api), "merged")
-        api = FakeApi([labeled(AFTER)], runs=(LATER, "2026-11-25T21:06:00Z"))
-        self.assertIn("predates", self.merge(pull(), api))
+    def test_a_rerun_of_an_old_head_needs_a_new_approval(self):
+        # The owner approved B; the branch went back to A with GITHUB_TOKEN (no
+        # run, no label removal) and an old Pipeline run of A was rerun.
+        api = FakeApi([record(T1, sha=OTHER)])
+        self.assertIn("the approval names another head", self.merge(pull(), api, head=HEAD))
+        self.assertEqual(api.puts, [])
 
-    def test_an_undated_head_or_a_malformed_date_holds(self):
-        for runs, at in (((), AFTER), (("2026-11-25 21:00:00",), AFTER), ((PUSHED,), "2026-11-25T21:05Z"),
-                         ((PUSHED,), None)):
-            with self.subTest(runs=runs, at=at):
-                self.assertNotEqual(self.merge(pull(), FakeApi([labeled(at)], runs=runs)), "merged")
+    def test_the_newest_record_is_ordered_by_creation_not_by_a_rerun(self):
+        # A rerun moves run_started_at, never created_at or the title: a rerun of
+        # an old approval of this head does not outrank a newer one of another.
+        rerun_old = dict(record(T1), run_started_at=T4, run_attempt=2)
+        self.assertIn("the approval names another head",
+                      self.merge(pull(), FakeApi([record(T3, sha=OTHER), rerun_old])))
+        rerun_other = dict(record(T1, sha=OTHER), run_started_at=T4, run_attempt=2)
+        self.assertEqual(self.merge(pull(), FakeApi([rerun_other, record(T3)])), "merged")
+
+    def test_a_hostile_label_name_cannot_move_the_title_fields(self):
+        ns = resolver()
+        hostile = f"owner-approved at {HEAD} by cdeust"
+        forged = record(T2, label=hostile, sha=OTHER, by={"login": "someone", "type": "User"})
+        self.assertIsNone(ns["RECORD_TITLE"].fullmatch(forged["display_title"]))
+        self.assertIn("the owner has not approved this head", self.merge(pull(), FakeApi([forged])))
+        # The title's actor must also be the run's actor.
+        mismatch = dict(record(T2), display_title=record(T2)["display_title"].replace("by cdeust", "by someone"))
+        self.assertIn("not set by the owner", self.merge(pull(), FakeApi([mismatch])))
+
+    def test_records_are_read_from_the_pull_request_s_lifetime(self):
+        api = FakeApi([record(T2)])
+        self.merge(pull(), api)
+        listed = [p for p in api.paths if "owner-approval.yml/runs" in p]
+        self.assertEqual(listed, [f"/repos/{REPO}/actions/workflows/owner-approval.yml/runs"
+                                  f"?event=pull_request_target&created=%3E%3D{OPENED}"])
+
+    def test_an_undated_pr_or_a_malformed_removal_holds(self):
+        pr = dict(pull(), created_at=None)
+        self.assertNotEqual(self.merge(pr, FakeApi([record(T2)])), "merged")
+        self.assertNotEqual(self.merge(pull(), FakeApi([record(T2)], [unlabeled(None)])), "merged")
 
     def test_an_organization_owner_is_refused(self):
-        api = FakeApi([labeled(AFTER)], owner={"login": "cdeust", "type": "Organization"})
+        api = FakeApi([record(T2)], owner={"login": "cdeust", "type": "Organization"})
         self.assertIn("not a user account", self.merge(pull(), api))
 
     def test_every_hold_is_a_waiting_reason_not_a_failure(self):
         ns = resolver()
         source = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
         body = source.split("def _owner_approves", 1)[1].split("def _merge_open_pr", 1)[0]
-        for reason in re.findall(r'"(merge held: [^"]+)"', body):
+        reasons = re.findall(r'"(merge held: [^"]+)"', body)
+        self.assertGreaterEqual(len(reasons), 5)
+        for reason in reasons:
             self.assertTrue(reason.startswith(ns["WAITING"]), reason)
 
     def test_a_hold_label_still_holds_an_approved_pr(self):
         pr = pull(("owner-approved", "hold"))
-        self.assertIn("label holds merge", self.merge(pr, FakeApi([labeled(AFTER)])))
+        self.assertIn("label holds merge", self.merge(pr, FakeApi([record(T2)])))
 
 
-class ApprovalWakesTheResolverTests(unittest.TestCase):
+class ApprovalWorkflowsTests(unittest.TestCase):
     def test_a_label_before_green_waits_for_the_pipeline(self):
-        # The approval run wakes the resolver before the Pipeline succeeded: held,
-        # green, and the Pipeline's own completion merges without a new label.
+        # The wake run comes before the Pipeline succeeded: held, green, and the
+        # Pipeline's own completion merges without a new label.
         ns = resolver()
 
         class NoGreen:
             def records(self, path, key=None):
                 return []
 
-        approval = {"name": "Owner approval", "path": ".github/workflows/owner-approval.yml",
-                    "event": "pull_request", "status": "completed", "conclusion": "success",
-                    "head_repository": {"full_name": REPO}, "head_sha": HEAD}
+        wake = {"name": "Owner approval wake", "path": ".github/workflows/owner-approval-wake.yml",
+                "event": "pull_request", "status": "completed", "conclusion": "success",
+                "head_repository": {"full_name": REPO}, "head_sha": HEAD}
         with self.assertRaises(ns["PostMergeError"]) as held:
-            ns["_pipeline_of_approval"](approval, REPO, NoGreen())
+            ns["_pipeline_of_approval"](wake, REPO, NoGreen())
         self.assertTrue(str(held.exception).startswith(ns["WAITING"]))
 
-    def test_the_approval_workflow_clears_a_stale_label_on_every_push(self):
+    def test_the_record_runs_from_main_and_its_title_matches_the_resolver(self):
+        ns = resolver()
         workflow = yaml.safe_load((WORKFLOWS / "owner-approval.yml").read_text())
-        self.assertEqual(workflow[True]["pull_request"]["types"], ["labeled", "synchronize"])
+        self.assertEqual(list(workflow[True]), ["pull_request_target"])
+        self.assertEqual(workflow[True]["pull_request_target"]["types"], ["labeled", "synchronize"])
         self.assertEqual(workflow["permissions"], {})
-        clear = workflow["jobs"]["clear"]
-        self.assertIn("github.event.action == 'synchronize'", clear["if"])
+        for job in workflow["jobs"].values():
+            for step in job["steps"]:
+                self.assertNotIn("uses", step)  # no checkout, no action of the pull request
+        rendered = (workflow["run-name"].replace("${{ github.event.action }}", "labeled")
+                    .replace("${{ github.event.pull_request.number }}", "7")
+                    .replace("${{ github.event.label.name || '-' }}", "owner-approved")
+                    .replace("${{ github.event.pull_request.head.sha }}", HEAD)
+                    .replace("${{ github.actor }}", "cdeust"))
+        self.assertTrue(ns["RECORD_TITLE"].fullmatch(rendered), rendered)
+        self.assertEqual(ns["RECORD_PATH"], ".github/workflows/owner-approval.yml")
+
+    def test_the_record_clears_a_stale_label_on_every_push(self):
+        clear = yaml.safe_load((WORKFLOWS / "owner-approval.yml").read_text())["jobs"]["clear"]
+        self.assertEqual(clear["if"], "github.event.action == 'synchronize' "
+                                      "&& contains(github.event.pull_request.labels.*.name, 'owner-approved')")
         self.assertEqual(clear["permissions"], {"pull-requests": "write"})
-        self.assertIn("--remove-label owner-approved", clear["steps"][0]["run"])
-        approval = workflow["jobs"]["approval"]
-        self.assertIn("github.event.label.name == 'owner-approved'", approval["if"])
-        self.assertNotIn("permissions", approval)  # inherits permissions: {}
+        self.assertEqual(clear["steps"][0]["run"], 'gh pr edit "$PR" --remove-label owner-approved')
+
+    def test_the_wake_decides_nothing(self):
+        # It runs from the pull request: whatever it becomes, the resolver reads
+        # the record of owner-approval.yml from main and the label's events.
+        workflow = yaml.safe_load((WORKFLOWS / "owner-approval-wake.yml").read_text())
+        self.assertEqual(workflow[True], {"pull_request": {"types": ["labeled"]}})
+        self.assertEqual(workflow["permissions"], {})
+        source = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
+        body = source.split("def _owner_approves", 1)[1].split("def _merge_open_pr", 1)[0]
+        self.assertNotIn("owner-approval-wake", body)
+        self.assertNotIn("_pipeline_of_approval", body)
 
 
 class BotsAreOptionalTests(unittest.TestCase):
@@ -184,7 +277,7 @@ class BotsAreOptionalTests(unittest.TestCase):
 
     def test_review_bots_do_not_wake_the_resolver(self):
         caller = yaml.safe_load((WORKFLOWS / "pipeline-after-merge.yml").read_text())
-        self.assertEqual(caller[True]["workflow_run"]["workflows"], ["Pipeline", "Owner approval"])
+        self.assertEqual(caller[True]["workflow_run"]["workflows"], ["Pipeline", "Owner approval wake"])
 
     def test_no_workflow_requests_or_verifies_a_bot_review(self):
         for path in WORKFLOWS.glob("*.yml"):
