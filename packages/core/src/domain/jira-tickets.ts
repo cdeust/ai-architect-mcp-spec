@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 export const AcceptanceIdSchema = z.string().regex(/^AC-\d{1,9}$/);
-const TICKET_ID = /^TICKET-\d{3}$/;
+// TICKET-001 to TICKET-999: there is no ticket zero, so at most 999 tickets (owner decision, 2026-11-25).
+const TICKET_ID = /^TICKET-(?!000)\d{3}$/;
 const TicketId = z.string().regex(TICKET_ID);
 const unique = (ids: string[]) => new Set(ids).size === ids.length;
 

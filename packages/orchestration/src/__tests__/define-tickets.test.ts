@@ -134,6 +134,7 @@ describe("Define v1 tickets", () => {
     for (const [tickets, cause] of [
       [[{ ...first, depends_on: ["TICKET-002"] }, second], "TICKET_DEPENDENCY_CYCLE"],
       [[{ ...first, depends_on: ["TICKET-009"] }], "TICKET_DEPENDENCY_UNKNOWN"],
+      [[{ ...first, id: "TICKET-000" }], "tickets[0].id"],
     ] as const) {
       expect(readDefineHandoff(ready(passed([...tickets])), pending)).toMatchObject({ error: {
         code: "define_document_invalid", message: expect.stringContaining(cause),

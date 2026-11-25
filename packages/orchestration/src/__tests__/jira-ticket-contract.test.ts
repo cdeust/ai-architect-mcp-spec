@@ -70,6 +70,8 @@ describe("Jira generation contract", () => {
     ["duplicate criterion", [{ ...first, acceptance_ids: ["AC-001", "AC-001"] }], "TICKET_ACCEPTANCE_DUPLICATE"],
     ["no criteria", [{ ...first, acceptance_ids: [] }], "tickets[0].acceptance_ids"],
     ["four-digit ID", [{ ...first, id: "TICKET-0001" }], "tickets[0].id"],
+    ["ticket zero", [{ ...first, id: "TICKET-000" }], "tickets[0].id"],
+    ["prerequisite zero", [{ ...first, depends_on: ["TICKET-000"] }], "tickets[0].depends_on[0]"],
     ["prefixed ID", [{ ...first, id: "XTICKET-001" }], "tickets[0].id"],
     ["malformed prerequisite", [{ ...first, depends_on: ["TICKET-01"] }], "tickets[0].depends_on[0]"],
     ["multi-line title", [{ ...first, title: "x\n## Phase 9 (0 SP)" }], "TICKET_TEXT_NOT_SINGLE_LINE"],
@@ -175,6 +177,10 @@ describe("Jira generation contract", () => {
       responses: [{ invocation_id: "jira_generation_engineer", raw_text: JSON.stringify({ tickets: [{ ...first, acceptance_ids: ["AC-002"] }] }) }],
     } }).state.jira_result;
     expect(refused).toMatchObject({ status: "failed", detail: "TICKET_ACCEPTANCE_UNKNOWN: TICKET-001 → AC-002" });
+  });
+
+  it.each(["TICKET-001", "TICKET-999"])("accepts the ticket ID %s", id => {
+    expect(submit(JSON.stringify({ tickets: [{ ...first, id }] })).state.jira_result).toMatchObject({ status: "passed" });
   });
 
   it("accepts a diamond graph", () => {
