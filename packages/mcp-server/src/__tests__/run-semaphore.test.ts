@@ -85,5 +85,10 @@ describe("global run semaphore — start_pipeline", () => {
     expect(body.in_flight).toBe(CAP);
     expect(body.max_concurrent_runs).toBe(CAP);
     expect(typeof body.message).toBe("string");
+    expect(body.message).toBe(
+      `pipeline run capacity reached: ${CAP}/${CAP} runs in flight. ` +
+        "Retry after an in-flight run completes (current_step:'complete'), " +
+        "or raise PRD_MAX_CONCURRENT_RUNS.",
+    );
   });
 });

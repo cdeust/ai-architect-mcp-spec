@@ -31,9 +31,11 @@
  */
 
 import { resolveConfig } from "./lib/config.mjs";
+import { parseFlags, writeCliError } from "./lib/cli.mjs";
 import { isEntry } from "../../bin/is-entry.mjs";
 import { runJudge } from "./lib/judge-core.mjs";
 import { buildClaimPrompt } from "./lib/prompt-builder.mjs";
+import { redact } from "./lib/redact.mjs";
 // Imported as a MODULE, not read with `readFileSync`, and the difference is
 // the point. Every claim's evidence is posted to a third-party LLM endpoint,
 // so a runtime read makes the corpus substitutable at run time — point the
@@ -44,28 +46,6 @@ import { buildClaimPrompt } from "./lib/prompt-builder.mjs";
 // (verified on 20.20.2 and 22.x, the CI matrix) — no warning on stderr,
 // which judge.mjs's contract depends on staying clean.
 import groundTruthFixture from "./fixtures/ground-truth.json" with { type: "json" };
-
-/**
- * @param {string[]} argv
- * @returns {Record<string, string>}
- */
-function parseFlags(argv) {
-  /** @type {Record<string, string>} */
-  const flags = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith("--")) continue;
-    const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--")) {
-      flags[key] = next;
-      i++;
-    } else {
-      flags[key] = "true";
-    }
-  }
-  return flags;
-}
 
 /**
  * Validate and return the statically imported ground-truth fixture.
@@ -191,7 +171,7 @@ function formatReport(summaryObj, threshold) {
 }
 
 async function main() {
-  const flags = parseFlags(process.argv.slice(2));
+  const flags = parseFlags(process.argv.slice(2), "calibrate");
   const threshold = Number(flags.minAgreement ?? 0.7);
   const config = resolveConfig(flags, process.env);
 
@@ -199,26 +179,23 @@ async function main() {
   const rows = await runCalibration(groundTruth, config, runJudge);
   const summaryObj = summarize(rows);
 
-  process.stdout.write(formatReport(summaryObj, threshold) + "\n");
+  process.stdout.write(`${redact(formatReport(summaryObj, threshold), config)}\n`);
 
-  if (summaryObj.scored === 0) {
+  if (summaryObj.skipped === summaryObj.total) {
     process.stdout.write(
-      `\nNothing to calibrate — all ${summaryObj.total} claims skipped (no credentials for provider "${config.provider}"). Exiting 0.\n`,
+      redact(`\nNothing to calibrate — all ${summaryObj.total} claims skipped (no credentials for provider "${config.provider}"). Exiting 0.\n`, config),
     );
-    process.exit(0);
+    return;
   }
 
   const admitted = summaryObj.agreementRate !== null && summaryObj.agreementRate >= threshold;
   process.stdout.write(
-    `\nAdmission gate: ${admitted ? "PASS" : "FAIL"} (agreement ${summaryObj.agreementRate === null ? "N/A" : (summaryObj.agreementRate * 100).toFixed(1) + "%"} vs threshold ${(threshold * 100).toFixed(0)}%)\n`,
+    redact(`\nAdmission gate: ${admitted ? "PASS" : "FAIL"} (agreement ${summaryObj.agreementRate === null ? "N/A" : (summaryObj.agreementRate * 100).toFixed(1) + "%"} vs threshold ${(threshold * 100).toFixed(0)}%)\n`, config),
   );
-  process.exit(admitted ? 0 : 1);
+  process.exitCode = admitted ? 0 : 1;
 }
 
 // Only run main() when invoked directly (not when imported by tests).
 if (isEntry(import.meta.url)) {
-  main().catch((err) => {
-    process.stderr.write(`calibrate.mjs: unexpected failure: ${err instanceof Error ? err.stack : String(err)}\n`);
-    process.exit(2);
-  });
+  main().catch((err) => writeCliError("calibrate.mjs", err));
 }

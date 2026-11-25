@@ -27,6 +27,7 @@ export interface ToolResponse {
 export interface StdioServer {
   listTools(): Promise<string[]>;
   call(name: string, args: Record<string, unknown>): Promise<ToolResponse>;
+  requestResult(method: "tools/list" | "tools/call", params: object): Promise<unknown>;
   /** Stops the server and removes its scratch directory. */
   close(): Promise<void>;
 }
@@ -143,6 +144,7 @@ export async function startStdioServer(
   send({ jsonrpc: "2.0", method: "notifications/initialized" });
 
   return {
+    requestResult: resultOf,
     async listTools() {
       const result = (await resultOf("tools/list", {})) as { tools: Array<{ name: string }> };
       return result.tools.map((tool) => tool.name);

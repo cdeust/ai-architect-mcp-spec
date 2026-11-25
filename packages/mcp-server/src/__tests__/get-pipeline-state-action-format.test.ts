@@ -10,9 +10,11 @@
  *
  * source: e2e run_mrlqa0aj_u2rh15 (2026-07-15).
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, beforeAll, vi } from "vitest";
 import { z } from "zod";
-import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState, type NextAction } from "@prd-gen/orchestration";
+import { buildVerifiedPlan, MAX_RESPONSE_CHARS, newPipelineState, PipelineStateSchema, type NextAction } from "@prd-gen/orchestration";
 import { RUNS_DIR, RunFiles } from "../run-files.js";
 import { prepareImplementationReview } from "../implementation-review.js";
 
@@ -50,6 +52,19 @@ beforeAll(async () => {
 function parse(res: { content: Array<{ text: string }> }): Record<string, unknown> {
   return JSON.parse(res.content[0].text);
 }
+
+it("keeps the supplied codebase and performs preflight by default", async () => {
+  const codebase_path = "/fixtures/copy-example";
+  const response = await handlers.get("start_pipeline")!({
+    feature_description: "Add a copy button", codebase_path,
+  });
+  expect(response.isError, response.content[0]?.text).toBeFalsy();
+  const started = parse(response);
+  expect(started.action).toMatchObject({ kind: "call_cortex_tool", correlation_id: "preflight_cortex_probe" });
+  const { run_id } = started;
+  const saved = await handlers.get("get_pipeline_state")!({ run_id, format: "full" });
+  expect(parse(saved)).toMatchObject({ state: { codebase_path, preflight_status: null } });
+});
 
 describe("get_pipeline_state format:'action'", () => {
   it("every start_pipeline/submit_action_result envelope carries a __bounded marker (empty applied when under budget)", async () => {
@@ -384,4 +399,70 @@ it("keeps the response for a legacy completed run", async () => {
   expect(reply).toMatchObject({
     current_step: "complete", action: { kind: "done", summary: "Pipeline already complete." },
   });
+});
+
+it("reads the summary, grounding and validation independently of the saved action", async () => {
+  const run_id = "run_state_selectors";
+  const codebase_grounding = { matched_symbols: "copyExample" };
+  const prd_validation = { findings: "none" };
+  const source = newPipelineState({ run_id, feature_description: "Copy configuration", prd_context: "feature" });
+  const section = {
+    section_type: "overview", status: "passed", content: "Copy configuration.",
+    attempt: 1, violation_count: 0, last_violations: [], attempt_log: [],
+  };
+  const state = PipelineStateSchema.parse({
+    ...source, codebase_grounding, prd_validation, sections: [section],
+  });
+  new RunFiles(RUNS_DIR).write(state, null);
+  const getState = handlers.get("get_pipeline_state")!;
+
+  expect(parse(await getState({ run_id, format: "grounding" }))).toEqual({
+    run_id, codebase_grounding, prd_validation, __bounded: { budget_chars: MAX_RESPONSE_CHARS, applied: [] },
+  });
+  expect(parse(await getState({ run_id, format: "validation" }))).toEqual({ run_id, prd_validation });
+  expect(parse(await getState({ run_id, format: "summary" }))).toMatchObject({
+    run_id, current_step: state.current_step, action: null, messages: [],
+    state_summary: {
+      sections: [{ section_type: "overview", status: "passed", attempt: 1, violation_count: 0 }],
+    },
+  });
+});
+
+it("refuses unknown submissions and distinguishes an unreadable run file", async () => {
+  const run_id = "run_unreadable_state";
+  const submit = handlers.get("submit_action_result")!;
+  const result = { kind: "subagent_batch_result", batch_id: "prior", responses: [] };
+  const unknown = await submit({ run_id, result });
+  expect(unknown.isError).toBe(true);
+  expect(parse(unknown)).toEqual({ error: `unknown run_id: ${run_id}` });
+
+  mkdirSync(RUNS_DIR, { recursive: true });
+  writeFileSync(join(RUNS_DIR, `${run_id}.json`), "{");
+  const unreadable = await submit({ run_id, result });
+  expect(unreadable.isError).toBe(true);
+  expect(parse(unreadable)).toEqual({
+    error: expect.stringContaining(`the state kept for run_id ${run_id} cannot be read: not JSON`),
+  });
+});
+
+it("rejects a second submission during the first lookup and releases the guard afterward", async () => {
+  const { runs } = await import("../pipeline-runs.js");
+  const run_id = "run_reentrant_submission";
+  const submit = handlers.get("submit_action_result")!;
+  const args = { run_id, result: { kind: "subagent_batch_result", batch_id: "prior", responses: [] } };
+  let competing: ReturnType<ToolHandler> | undefined;
+  const find = vi.spyOn(runs, "find").mockImplementationOnce(() => {
+    competing = submit(args);
+    return { kind: "unknown" };
+  });
+  try {
+    const first = await submit(args);
+    expect(parse(first)).toEqual({ error: `unknown run_id: ${run_id}` });
+    const second = await competing;
+    expect(second?.isError).toBe(true);
+    expect(parse(second!)).toEqual({ error: `concurrent submission rejected for run_id ${run_id}` });
+    expect(parse(await submit(args))).toEqual({ error: `unknown run_id: ${run_id}` });
+  } finally {
+    find.mockRestore();
+  }
 });

@@ -21,6 +21,7 @@ scripts/external-judge/
   judge.mjs            CLI: run one judge prompt against one external model
   calibrate.mjs         CLI: run the 10-claim calibration sweep + admission gate
   lib/
+    cli.mjs              documented options and safe CLI diagnostics
     config.mjs           provider presets + env/flag resolution
     openai-client.mjs     fetch wrapper: 429 backoff, timeout, Mistral throttle
     verdict-extract.mjs   tolerant JSON-verdict extraction from a raw reply
@@ -42,7 +43,7 @@ scripts/external-judge/
     ground-truth.json      10 claims, claim-scoped inline evidence, recorded
                             verdicts. Loaded by static `import ... with
                             { type: "json" }`, never read at run time
-  __tests__/               node --test unit tests (no network)
+  __tests__/               node --test unit and loopback contract tests
 ```
 
 ## Provider setup
@@ -51,7 +52,7 @@ scripts/external-judge/
 
 1. Go to <https://aistudio.google.com/apikey> and click "Create API key"
    (2 clicks, no billing setup required for the free tier).
-2. `export GEMINI_API_KEY=...` (or pass `--api-key` directly).
+2. Supply `GEMINI_API_KEY` in the process environment.
 3. Base URL and a default model are pre-filled by `--provider gemini`
    (`https://generativelanguage.googleapis.com/v1beta/openai/`,
    `gemini-2.0-flash` — source: <https://ai.google.dev/gemini-api/docs/openai>,
@@ -62,7 +63,7 @@ scripts/external-judge/
 
 1. Go to <https://console.mistral.ai/> → API Keys → create a key under the
    Experiment (free) plan.
-2. `export MISTRAL_API_KEY=...`.
+2. Supply `MISTRAL_API_KEY` in the process environment.
 3. Base URL and a default model are pre-filled by `--provider mistral`
    (`https://api.mistral.ai/v1/`, `mistral-small-latest` — source:
    <https://docs.mistral.ai/getting-started/models/>, accessed 2026-07-15).
@@ -82,11 +83,36 @@ node scripts/external-judge/judge.mjs --provider gemini < /tmp/prompt.txt
 # From a pipe:
 cat /tmp/prompt.txt | node scripts/external-judge/judge.mjs --provider mistral
 
-# Custom (non-preset) OpenAI-compatible endpoint:
+# Custom endpoint, with EXTERNAL_JUDGE_API_KEY already set in the environment:
+export EXTERNAL_JUDGE_ALLOWED_ORIGINS=https://my-endpoint.example
 node scripts/external-judge/judge.mjs \
-  --base-url https://my-endpoint/v1/ --model my-model --api-key sk-... \
+  --base-url https://my-endpoint.example/v1/ --model my-model \
   < /tmp/prompt.txt
 ```
+
+Both commands accept credentials only through the process environment and
+reject `--api-key`. `GEMINI_API_KEY` and `MISTRAL_API_KEY` authorize only the
+origin of their respective preset. `EXTERNAL_JUDGE_API_KEY` authorizes only
+origins in `EXTERNAL_JUDGE_ALLOWED_ORIGINS`, even when a preset is selected.
+Set that comma-separated list of exact origins (scheme, host and optional
+port) in the trusted launcher environment. The base URL may include an API
+path. An origin entry cannot include a path, and neither setting accepts
+credentials, queries or fragments.
+
+Requests require HTTPS. For a local test server, HTTP to a numeric loopback
+address (`127.0.0.0/8` or `[::1]`) is allowed only when its origin, including
+the port, appears in the list. Requests never follow redirects. HTTP errors
+report their status code. The judge discards provider error payloads and
+masks the configured credential and endpoint in output text and `--debug`.
+
+The matcher covers the literal credential and its `encodeURIComponent` form.
+It matches endpoint schemes and hosts regardless of case, keeps path case
+significant and accepts trailing slashes. The authorized provider already
+receives the credential. It can transform it into arbitrary text in a successful
+verdict. Base64, truncated credentials, other encodings and isolated hostname
+fragments are outside this literal matcher's guarantee. Masking every possible
+substring would also erase ordinary verdict text. HTTP error diagnostics carry
+only the status and discard the remote body.
 
 Output (stdout, one JSON line):
 ```json
@@ -225,10 +251,16 @@ pnpm run test:external-judge
 node --test scripts/external-judge/__tests__/*.test.mjs
 ```
 
-All tests mock `fetch` (or exercise pure functions) — **zero real network
-calls**, safe for CI. `judge.mjs`/`calibrate.mjs` themselves are not run in
-CI (they require live credentials by design); only the `lib/` unit tests
-and the prompt-construction/ground-truth tests run automatically. To add
-this to CI, add a step running `pnpm run test:external-judge` alongside the
-existing `pnpm test` step in `.github/workflows/ci.yml` — not done in this
-change (out of scope: this PR touches `scripts/` + `docs/` only).
+The tests use synthetic prompts and credentials. Transport tests start servers
+on loopback and check the real CLI, including the number of requests received.
+The suite makes no provider calls and runs independently of the repository's
+Vitest suite.
+
+To replay the regression and mutation checks with the repository's locked
+development dependencies, run the following from its root. The mutation runner
+copies the judge to a fresh directory under `TMPDIR` and prints the location
+of one Stryker JSON report per production file.
+
+```sh
+pnpm run test:external-judge && node scripts/external-judge/mutation.mjs
+```
