@@ -60,6 +60,18 @@ describe("the wall-clock limits of the test suite", () => {
     expect(CHILD_TIMEOUT_MS).toBeLessThan(TEST_TIMEOUT_MS);
   });
 
+  it("keeps the local copies of the child limit equal to the shared one", () => {
+    const copies = [];
+    for (const dir of ["packages", "scripts"]) {
+      for (const file of testSources(join(ROOT, dir))) {
+        const copy = /^const CHILD_TIMEOUT_MS = ([\d_]+);/m.exec(readFileSync(file, "utf8"));
+        if (copy) copies.push([relative(ROOT, file), Number(copy[1].replaceAll("_", ""))]);
+      }
+    }
+    expect(copies.length).toBe(3);
+    for (const [, value] of copies) expect(value).toBe(CHILD_TIMEOUT_MS);
+  });
+
   it("sets the test timeout of every project except the delivery gate", async () => {
     const root = readFileSync(join(ROOT, "vitest.config.mts"), "utf8");
     const projects = [...root.matchAll(/"\.\/([^"]+vitest\.config\.m?ts)"/g)].map(m => m[1]).filter(p => !p.startsWith("scripts/gate/"));

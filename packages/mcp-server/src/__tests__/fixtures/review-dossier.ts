@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CHILD_TIMEOUT_MS } from "../../../../../vitest.shared.mts";
+
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts, which this package's tsc cannot import; the guard in scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 

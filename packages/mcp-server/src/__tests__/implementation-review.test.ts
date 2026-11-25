@@ -7,7 +7,9 @@ import { DefineHandoffV1Schema } from "@prd-gen/core";
 import { buildVerifiedPlan, MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
 import { prepareImplementationReview } from "../implementation-review.js";
 import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
-import { CHILD_TIMEOUT_MS } from "../../../../vitest.shared.mts";
+
+// source: TEST_TIMEOUT_MS - 5 s of vitest.shared.mts, which this package's tsc cannot import; the guard in scripts/release/test-timeouts.test.mjs checks the two are equal.
+const CHILD_TIMEOUT_MS = 25_000;
 
 vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
