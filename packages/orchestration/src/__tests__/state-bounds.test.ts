@@ -17,6 +17,8 @@ import {
   MAX_PIPELINE_ERRORS,
   type PipelineState,
 } from "../index.js";
+import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
+import { TRUNCATED } from "../types/state/helpers.js";
 
 function freshState(): PipelineState {
   return newPipelineState({
@@ -72,6 +74,17 @@ describe("PipelineState — bounded-I/O caps", () => {
       error_kinds: kinds,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("appendError — entry size", () => {
+  it("cuts an entry longer than ERROR_MESSAGE_CHARS with a visible mark and keeps one at the limit", () => {
+    const long = appendError(freshState(), "x".repeat(ERROR_MESSAGE_CHARS + 1), "structural").errors.at(-1)!;
+    expect(long).toHaveLength(ERROR_MESSAGE_CHARS);
+    expect(long.endsWith(TRUNCATED)).toBe(true);
+    expect(long.startsWith("x".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length))).toBe(true);
+    const exact = "y".repeat(ERROR_MESSAGE_CHARS);
+    expect(appendError(freshState(), exact, "structural").errors.at(-1)).toBe(exact);
   });
 });
 
