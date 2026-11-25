@@ -353,12 +353,13 @@ def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
 
 
 def canonical(text: str) -> str:
-    """Prose as the comment will show it: NFKC, one line ending, no control, format or
-    combining character. Paths never go through this: they are shown escaped."""
+    """Prose as the comment will show it: NFKC, one line ending, no control, format,
+    combining, surrogate, private-use or unassigned character. Paths never go through
+    this: they are shown escaped."""
     text = unicodedata.normalize("NFKC", text)
     text = LINE_BREAKS.sub("\n", text)
-    return "".join(ch for ch in text if ch in "\n\t"
-                   or unicodedata.category(ch) not in {"Cc", "Cf", "Mn", "Me"})
+    return "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch)
+                   not in {"Cc", "Cf", "Mn", "Me", "Cs", "Co", "Cn"})
 
 
 # Characters a path may hold that the comment must not act on (a mention, a reference,
@@ -374,20 +375,21 @@ def display_path(path: str) -> str:
     return "".join(PATH_ESCAPES.get(ch, ch) for ch in json.dumps(path)[1:-1])
 
 
-def prose(text: str, limit: int) -> str:
-    """Neutralised prose on one line: a line break in it cannot start a heading, a list
-    item or a forged finding of its own."""
-    return " ".join(neutral(text.strip()[:limit]).split())
-
-
 def neutral(text: str) -> str:
-    """Text the comment can carry: no mention, reference, link, verdict line or HTML."""
-    text = canonical(text)
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    text = text.replace("[", "\\[").replace("]", "\\]")
+    """Text for a code span: no backtick (it would close the span), no mention, no
+    `#<digit>` reference and no verdict line, even for a scanner reading the raw body."""
+    text = canonical(text).replace("`", "'")
     text = text.replace("@", "@" + ZERO_WIDTH)
     text = REFERENCE.sub("#" + ZERO_WIDTH, text)
     return VERDICT.sub(lambda m: f"{m.group(1)}Verdict{ZERO_WIDTH}:", text)
+
+
+def prose(text: str, limit: int) -> str:
+    """Model prose as one inline code span on one line. Markdown renders nothing inside
+    a code span: no link, autolink, `GH-123` or URL reference, image, HTML or emphasis;
+    and a line break cannot start a heading or a forged finding."""
+    flat = " ".join(neutral(text.strip()[:limit]).split())
+    return f"`{flat}`" if flat else "`(empty)`"
 
 
 def _valid(item) -> bool:

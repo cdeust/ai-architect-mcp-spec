@@ -31,12 +31,16 @@ The workflow has two jobs.
      written as a JSON escape. A look-alike or an invisible character therefore
      cannot pass for `/` or `..`, and nothing in a path can act as a mention, a
      reference or a link.
-   - It puts each prose field (summary, description, scenario, recommendation) on a
-     single line, so a line break in it cannot start a heading or a forged finding. A finding that breaks the schema is dropped, and the
+   - It renders each prose field (summary, description, scenario, recommendation)
+     as one inline code span on one line. Markdown renders nothing inside a code
+     span: no link, autolink, `GH-123` or URL reference, image, HTML or emphasis.
+     A line break in the text cannot start a heading or a forged finding either.
+     Backticks are replaced, and mentions, `#<digit>` and `Verdict:` are still
+     broken for any scanner that reads the raw body. A finding that breaks the schema is dropped, and the
      drop is counted in the comment. An output whose shape breaks the schema is
      refused.
-   - It normalises the text (NFKC, format characters removed). It then neutralises
-     `@` mentions, `#` references, markdown links, `Verdict:` lines and HTML.
+   - It normalises the text: NFKC, then control, format, combining, surrogate,
+     private-use and unassigned characters removed.
    - It cuts the comment at 60,000 characters.
    - It posts one comment as `github-actions[bot]`.
 
@@ -137,7 +141,7 @@ The budget counts the step by that name.
 | Spoofing: fork or Dependabot code gets the subscription token | Only `pull_request` triggers it, never `pull_request_target`. The job `if` is the trust rule of `claude-review.yml` (a head in this repository, not a draft, the actor is not `dependabot[bot]`), plus: the author is not `dependabot[bot]`. | contracts `trigger`, `trusted-authors`; mutations `fork-allowed`, `dependabot-author` and a `pull_request_target` trigger |
 | Tampering: the PR's `.claude/`, `CLAUDE.md`, hooks or scripts run in the review | Both jobs check out `main` with `persist-credentials: false`, and every script and instruction file comes from it. In agent mode the PR head is never checked out, and the action restores `.claude`, `CLAUDE.md` and `.mcp.json` from the base anyway (`restore-config.ts`). Root-owned, read-only managed settings disable all hooks. No step runs after the engine in its job. | contracts `checkout-main`, `managed-settings`, `order`, `engine-inputs`; mutations `head-checkout-added`, `publish-on-head`, `settings-writable`, `step-after-engine`, `track_progress`, and removing the install step |
 | Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. It has no shell either (managed deny on `Bash`). `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs and arguments are an exact set. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `bash-allowed`, `comment-tool`, `--permission-mode auto`, `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
-| Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`. It then turns every line ending into a newline and removes control, format and combining characters. It then puts a zero-width space after every `@` and every `#` before a digit, escapes `[` and `]`, turns `Verdict:` into `Verdict​:` whatever its case, and escapes HTML. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests`: hostile text with lookalikes, joiners and combining marks, and the resolver's own `_claude_verdicts` reading a published comment as if `claude[bot]` had written it. Also `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts`. |
+| Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`. It then turns every line ending into a newline and removes control, format and combining characters. It then puts a zero-width space after every `@` and every `#` before a digit, replaces backticks, and turns `Verdict:` into `Verdict​:` whatever its case. Each prose field then becomes one code span on one line, which renders no link, reference, mention or HTML. Paths are shown as ASCII escapes. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests`: hostile text with lookalikes, joiners and combining marks, and the resolver's own `_claude_verdicts` reading a published comment as if `claude[bot]` had written it. Also `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts`. |
 | Information disclosure: the token reaches a comment, a log or an artifact (the repository is public) | Managed settings deny reads of `/proc`, `/sys`, `/dev`, `/etc`, `/tmp`, `/var`, `/opt`, the runner install directories, `RUNNER_TEMP`, the action directory, `~/.claude`, `~/.config`, `~/.local`, `~/.ssh`, `~/.docker`, `~/.npmrc`, `~/.gitconfig` and every `.git/` directory. This is a deny list over the action's bare `Read` allow. Whether the CLI resolves links before it matches these rules has not been observed. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set. `publish` holds no secret, and no artifact is uploaded. | contracts `secrets`, `engine-scrub`; mutations `second-secret`, `all-secrets` (`toJSON(secrets)`), `indexed-secret`, `secret-in-publish`; the exact deny list; `test_the_input_folder_is_outside_git_which_the_engine_may_not_read` |
 | Tampering: an upstream action is changed | Every `uses:` is pinned to a full commit SHA with a version comment, and Dependabot (`github-actions`) updates both. The local quota action is main's copy. | contracts `unpinned`, `pin-comment`; mutation `@main` |
 | Elevation: a token wider than needed | `permissions: {}` at the top. The review job is read-only. Only `publish` has `pull-requests: write`, and it holds no secret. There is no `id-token`, so the session never holds the Claude App token, whose default request includes `contents: write` (`src/github/token.ts`). | contracts `workflow-permissions`, `job-permissions`, `published`, `engine-inputs`; mutations `app-token`, `publish-wide` |
@@ -181,8 +185,7 @@ remove each guard in turn and require the matching check to fail
   run counts as an attempt. A condition on the actor name would be spoofable
   (zizmor `bot-conditions`), so none is used.
 - Inline comments: each finding gives its `file:line` in the one comment instead.
-- Bare URLs in the model's text stay as text, and GitHub autolinks them. Markdown
-  links and images cannot be formed.
-- `GH-123`-style references stay as text.
+- The model's text is shown verbatim inside code spans, URLs included. It is not
+  rendered, so nothing in it links, references or mentions.
 - That managed settings still load under `--setting-sources user` was read in the
   SDK code and documentation. It has not been observed.
