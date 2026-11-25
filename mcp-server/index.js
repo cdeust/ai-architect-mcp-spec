@@ -47551,42 +47551,75 @@ lexer.inline.ruler.at("html_inline", (state, silent) => {
   return matched;
 });
 var BLOCK_QUOTE_TAG = /^<\/?blockquote(?=[ \t\n/>])/i;
-function parseWithoutHtmlQuotes(content, plainParser) {
-  const env = {};
-  const tokens = plainParser.parse(content, env);
-  if (!content.toLowerCase().includes("<blockquote"))
-    return tokens;
-  let depth = 0;
+function quoteTags(content) {
+  const [inline3] = lexer.parseInline(content, {});
+  return inline3.children.filter((child) => child.type === "html_inline" && BLOCK_QUOTE_TAG.test(child.content)).map((source) => ({ source }));
+}
+function scopedInlines(tokens) {
+  const inlines = [];
+  const scopes = [{}];
   let markdownDepth = 0;
   for (const token of tokens) {
     if (token.type === "blockquote_open")
       markdownDepth++;
     if (token.type === "blockquote_close")
       markdownDepth--;
-    if (markdownDepth > 0 || token.type !== "inline")
+    if (markdownDepth > 0)
       continue;
-    const visible = [];
-    let cursor = 0;
-    const [inline3] = lexer.parseInline(token.content, env);
-    for (const child of inline3.children) {
-      if (child.type !== "html_inline" || !BLOCK_QUOTE_TAG.test(child.content))
-        continue;
-      const offset = child.meta.offset;
-      if (child.content.startsWith("</")) {
-        if (depth === 0)
-          continue;
-        depth--;
-        cursor = offset + child.content.length;
+    if (token.type.startsWith("heading_") || ["li", "td", "th"].includes(token.tag)) {
+      if (token.nesting === 1)
+        scopes.push({});
+      else
+        scopes.pop().end = inlines.length;
+    } else if (token.type === "inline") {
+      inlines.push({ token, tags: quoteTags(token.content), scope: scopes.at(-1) });
+    }
+  }
+  return inlines;
+}
+function pairQuotes(inlines) {
+  const open2 = [];
+  for (const [index2, { scope, tags }] of inlines.entries()) {
+    while (open2.length && (open2.at(-1).scope.end ?? Infinity) <= index2)
+      open2.pop();
+    for (const tag2 of tags) {
+      if (tag2.source.content.startsWith("</")) {
+        const opener = open2.pop();
+        if (opener)
+          opener.tag.closer = tag2;
       } else {
-        if (depth === 0)
-          visible.push(token.content.slice(cursor, offset));
-        depth++;
+        open2.push({ tag: tag2, scope });
       }
     }
-    if (depth === 0)
+  }
+}
+function removePairedQuotes(inlines) {
+  let closing;
+  for (const { token, tags } of inlines) {
+    const visible = [];
+    let cursor = 0;
+    for (const tag2 of tags) {
+      const offset = tag2.source.meta.offset;
+      if (tag2 === closing) {
+        cursor = offset + tag2.source.content.length;
+        closing = void 0;
+      } else if (!closing && tag2.closer) {
+        visible.push(token.content.slice(cursor, offset));
+        closing = tag2.closer;
+      }
+    }
+    if (!closing)
       visible.push(token.content.slice(cursor));
     token.content = visible.join("");
   }
+}
+function parseWithoutHtmlQuotes(content, plainParser) {
+  const tokens = plainParser.parse(content, {});
+  if (!content.toLowerCase().includes("<blockquote"))
+    return tokens;
+  const inlines = scopedInlines(tokens);
+  pairQuotes(inlines);
+  removePairedQuotes(inlines);
   return tokens;
 }
 

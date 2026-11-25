@@ -35,6 +35,7 @@ import { checkDocumentMeasurableRequirements } from "../hard-output-rules/rules/
 import { checkDocumentTestableAcceptanceCriteria } from "../hard-output-rules/rules/testable-acceptance-criteria-rules.js";
 import { checkDocumentContradictoryRequirements } from "../hard-output-rules/rules/contradictory-requirement-rules.js";
 import { checkDocumentConsistentControlNames } from "../hard-output-rules/rules/control-name-rules.js";
+import { DEFINE_REQUIREMENT_OPTIONS, requirementDefinitions } from "../hard-output-rules/rules/requirement-definitions.js";
 
 /**
  * Floor for a single sample, in milliseconds. Below this, two timings are
@@ -127,6 +128,18 @@ function expectSubQuadratic(build: (n: number) => string, section: Parameters<ty
 }
 
 describe("polynomial-ReDoS patterns stay sub-quadratic", () => {
+  it("reads long lists with isolated mentions of HTML blockquote tags", () => {
+    // source: P03 workload, one mention per ten items and 2,000 items at the larger size
+    const build = (count: number) => Array.from({ length: count }, (_, i) =>
+      `- FR-${i}: Render the ${i % 10 === 0 ? "<blockquote>" : "paragraph"} element.`).join("\n");
+    const run = (input: string) => requirementDefinitions(input, undefined, DEFINE_REQUIREMENT_OPTIONS);
+    const small = build(1_000);
+    const large = build(2_000);
+    run(small);
+    run(large);
+    expect(growthRatio(run, small, large)).toBeLessThan(QUADRATIC_GROWTH_CEILING);
+  });
+
   it("modifier runs on a declaration line (typeStartPattern)", () => {
     expectSubQuadratic(
       (n) => ["```kotlin", "abstract ".repeat(n), "```"].join("\n"),
