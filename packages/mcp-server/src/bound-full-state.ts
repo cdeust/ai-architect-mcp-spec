@@ -308,8 +308,24 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     }
   }
 
-  // ── Shed 4: generated tickets, then the kept Define ─────────────────────────
-  // A failed jira_result is small and is a diagnosis: it is kept whole.
+  shedTicketsAndDefine(work, fits, applied);
+
+  return {
+    state: work,
+    __bounded: {
+      original_chars: originalChars,
+      final_chars: shippedChars(),
+      budget_chars: budget,
+      applied,
+    },
+  };
+}
+
+/**
+ * Shed 4: generated tickets, then the kept Define. A failed jira_result is
+ * small and is a diagnosis: it is kept whole.
+ */
+function shedTicketsAndDefine(work: Record<string, unknown>, fits: () => boolean, applied: Degradation[]): void {
   const jira = work.jira_result as PipelineState["jira_result"] | null | undefined;
   if (!fits() && jira?.status === "passed") {
     const reclaimed = serializedChars(jira.tickets);
@@ -330,16 +346,6 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     } satisfies OmittedStub;
     applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
   }
-
-  return {
-    state: work,
-    __bounded: {
-      original_chars: originalChars,
-      final_chars: shippedChars(),
-      budget_chars: budget,
-      applied,
-    },
-  };
 }
 
 /**
