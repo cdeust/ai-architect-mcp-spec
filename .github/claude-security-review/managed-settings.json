@@ -1,0 +1,31 @@
+{
+  "disableAllHooks": true,
+  "allowManagedHooksOnly": true,
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Bash",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Read(//proc/**)",
+      "Read(//sys/**)",
+      "Read(//dev/**)",
+      "Read(//etc/**)",
+      "Read(//tmp/**)",
+      "Read(//home/runner/work/_temp/**)",
+      "Read(//home/runner/work/_actions/**)",
+      "Read(~/.claude/**)",
+      "Read(~/.claude.json)",
+      "Read(~/.config/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.docker/**)",
+      "Read(~/.npmrc)",
+      "Read(~/.gitconfig)",
+      "Read(**/.git/config)"
+    ]
+  }
+}

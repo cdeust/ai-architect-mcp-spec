@@ -1,0 +1,61 @@
+Adapted from anthropics/claude-code-security-review at
+0c6a49f1fa56a1d472575da86a94dbc1edb78eda (.claude/commands/security-review.md, "FALSE POSITIVE
+FILTERING"), MIT License, Copyright (c) 2025 Anthropic. The repository-specific part is this
+repository's own.
+
+You do not need to run commands to reproduce the vulnerability: read the code to decide whether
+it is real. Do not write to any file.
+
+HARD EXCLUSIONS, exclude findings matching these patterns:
+1. Denial of service or resource exhaustion, except a new super-linear regex over untrusted
+   validator input (see the scan instructions).
+2. Secrets or credentials stored on disk if they are otherwise secured.
+3. Rate limiting concerns or service overload scenarios.
+4. Memory consumption or CPU exhaustion issues, with the same regex exception as rule 1.
+5. Lack of input validation on non-security-critical fields without proven security impact.
+6. Input sanitization concerns for GitHub Actions workflows unless they are clearly triggerable
+   via untrusted input.
+7. A lack of hardening measures. Only flag concrete vulnerabilities.
+8. Race conditions or timing attacks that are theoretical rather than practical.
+9. Vulnerabilities in outdated third-party libraries: Dependabot and `pnpm audit` handle them.
+10. Memory safety issues in memory-safe languages.
+11. Files that are only unit tests or only used to run tests.
+12. Log spoofing: writing unsanitized input to logs is not a vulnerability.
+13. SSRF that only controls the path, not the host or protocol.
+14. User-controlled content in AI prompts is not by itself a vulnerability.
+15. Regex injection.
+16. Findings in documentation files such as markdown.
+17. A lack of audit logs.
+
+PRECEDENTS:
+1. Logging high-value secrets in plaintext is a vulnerability. Logging URLs is assumed safe.
+2. UUIDs can be assumed unguessable.
+3. Environment variables and CLI flags are trusted values.
+4. Resource leaks (memory, file descriptors) are not vulnerabilities.
+5. Tabnabbing, XS-Leaks, prototype pollution and open redirects only at very high confidence.
+6. Most vulnerabilities in GitHub Actions workflows are not exploitable in practice: require a
+   concrete attack path from an untrusted trigger (fork pull request, issue or comment text,
+   workflow_run of untrusted code) to a secret, a write token or code execution.
+7. Only include MEDIUM findings if they are obvious and concrete.
+8. Logging non-PII data is not a vulnerability.
+9. Command injection in shell scripts only with a specific path for untrusted input.
+
+KNOWN FALSE POSITIVES IN THIS REPOSITORY:
+1. The MCP server runs with the user's own privileges over stdio: there is no privilege boundary
+   between the server and the person who started it. "The user can make the server read their
+   own file" is not a finding; a path chosen by tool input outside the workspace is.
+2. Workflow jobs gated on `github.event.pull_request.head.repo.full_name == github.repository`
+   and `github.actor != 'dependabot[bot]'` run only for authors with write access; secrets there
+   are not reachable by fork code.
+3. `workflow_run` workflows of this repository run from the default branch and check out
+   `main` or a tested SHA with `persist-credentials: false`; reading run metadata there is not
+   execution of pull request code.
+4. The external-judge harness (scripts/external-judge) posts prompts to an operator-configured
+   LLM endpoint by design and opt-in (docs/ASSURANCE-CASE.md, claim 2).
+5. Fixtures and corpora under `__tests__`, `fixtures` and `scripts/external-judge/fixtures`
+   contain deliberately hostile text.
+
+For each remaining finding, assign a confidence from 1 to 10:
+- 1 to 3: likely false positive or noise.
+- 4 to 6: needs investigation.
+- 7 to 10: likely a true vulnerability.

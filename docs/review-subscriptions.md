@@ -1,5 +1,8 @@
 # PR review subscriptions
 
+The advisory security review, outside this contract, is described in
+[claude-security-review.md](claude-security-review.md).
+
 The PR workflow first enforces the review-round budget. Its budget job records
 one default-branch workflow run ID for that attempt. GitHub can send multiple
 `workflow_run` events as jobs start. Only the recorded workflow reads quota,
