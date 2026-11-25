@@ -41,7 +41,10 @@ The workflow has two jobs.
      refused.
    - It normalises the text: NFKC, then control, format, combining, surrogate,
      private-use and unassigned characters removed.
-   - It cuts the comment at 60,000 characters.
+   - It bounds each prose field after normalisation, because NFKC can turn one
+     character into eighteen. It keeps the comment under 60,000 characters by
+     dropping whole findings, and says how many it dropped. A cut never falls
+     inside a line, so it cannot leave a code span open.
    - It posts one comment as `github-actions[bot]`.
 
 ## Engine
@@ -149,7 +152,7 @@ The budget counts the step by that name.
 | Denial of service and cost: a retry loop on the subscription | A PR gets at most 3 attempts (`budget`, ADR-1119). An attempt is any job attempt whose engine step ran, whatever it concluded, re-runs included: every attempt of every run is read with `filter=all`, and so are this run's earlier attempts. A `publish` re-run alone counts for the engine attempt before it. A failing review or a re-run therefore cannot loop. A head already attempted is never attempted again, whether after a reopen, a `ready_for_review`, a re-run or a push back to an earlier head. A later round starts from the last published review, never from an attempt that published nothing. A round runs only when the subscription quota action reports headroom with usage credits off. Concurrency allows one run per PR, and `timeout-minutes` is 30. | `BudgetTests`, `JqFilterTests`, `GuardScriptTests`; contracts `concurrency`, `timeout`, `gated`; mutations `budget-ungated`, `quota-ungated`, `decide-ungated` |
 | Repudiation, and false positives that block a merge | The review is advisory. The only required check is `merge`, and the workflow name is outside every `workflow_run` list. The comment names the head and links the run attempt. | contract `wakes-merge`, `test_the_merge_resolver_never_reads_this_workflow`, `PublishTests` |
 | A missing secret, a first PR whose files are not on main yet, or an unreadable quota | The job ends green and states the reason in its summary. The quota step is the only `continue-on-error` step, and its outcome is read. | `GuardScriptTests`; contracts `quota-soft`, `continue-on-error` |
-| Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding that breaks it, and refuses an output whose shape breaks it; the attempt still counts. The bounds keep the worst-case JSON under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. The comment is cut at 60,000 characters, under GitHub's 65,536, and keeps its run link. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
+| Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding that breaks it, and refuses an output whose shape breaks it; the attempt still counts. The bounds keep the worst-case JSON under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. The comment stays under 60,000 characters, under GitHub's 65,536: whole findings are dropped, the drop is stated, and the run link is kept. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
 
 Each contract is a named check over the parsed workflow. The mutation tests
 remove each guard in turn and require the matching check to fail

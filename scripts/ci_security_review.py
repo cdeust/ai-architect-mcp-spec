@@ -388,7 +388,8 @@ def prose(text: str, limit: int) -> str:
     """Model prose as one inline code span on one line. Markdown renders nothing inside
     a code span: no link, autolink, `GH-123` or URL reference, image, HTML or emphasis;
     and a line break cannot start a heading or a forged finding."""
-    flat = " ".join(neutral(text.strip()[:limit]).split())
+    # Bounded after neutralising: NFKC can expand one character into eighteen (U+FDFA).
+    flat = " ".join(neutral(text.strip()[:limit]).split())[:limit].rstrip()
     return f"`{flat}`" if flat else "`(empty)`"
 
 
@@ -458,11 +459,9 @@ def render(kept: list[Record], dropped: int, summary: str, env) -> str:
             "Advisory: it neither approves nor blocks.", "", f"Summary: {summary}", ""]
     if dropped:
         head += [f"{dropped} finding(s) did not match the output schema and are not shown.", ""]
-    body = []
-    if not kept:
-        body.append("No high-confidence security finding.")
+    blocks = [] if kept else [["No high-confidence security finding."]]
     for number, item in enumerate(kept, 1):
-        body += [
+        blocks.append([
             f"### Vuln {number}: {item['category']}: `{item['file'].replace('`', '')}:{item['line']}`",
             f"* Severity: {item['severity'].title()}",
             f"* Confidence: {item['confidence']}/10",
@@ -470,13 +469,21 @@ def render(kept: list[Record], dropped: int, summary: str, env) -> str:
             f"* Exploit scenario: {item['exploit_scenario']}",
             f"* Recommendation: {item['recommendation']}",
             "",
-        ]
+        ])
     tail = ["", f"[View job run]({env['RUN_URL']})"]
-    text = "\n".join(head + body)
-    room = COMMENT_LIMIT - len("\n".join(tail)) - 100
-    if len(text) > room:
-        text = text[:room] + "\n\n[Comment cut: the remaining findings are in the job run.]"
-    return text + "\n" + "\n".join(tail)
+    # Whole findings only: a cut inside a line could leave a code span open and let
+    # the text before the cut render.
+    room = COMMENT_LIMIT - len("\n".join(tail)) - 200
+    lines, shown = list(head), 0
+    for block in blocks:
+        if len("\n".join(lines + block)) > room:
+            break
+        lines += block
+        shown += 1
+    if shown < len(blocks):
+        lines += [f"{len(blocks) - shown} finding(s) not shown: the comment would exceed "
+                  "GitHub's size limit.", ""]
+    return "\n".join(lines) + "\n" + "\n".join(tail)
 
 
 def publish(gh_input, env) -> str:
