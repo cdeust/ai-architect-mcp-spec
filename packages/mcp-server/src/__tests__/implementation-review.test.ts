@@ -7,6 +7,7 @@ import { DefineHandoffV1Schema } from "@prd-gen/core";
 import { buildVerifiedPlan, MAX_RESPONSE_CHARS } from "@prd-gen/orchestration";
 import { prepareImplementationReview } from "../implementation-review.js";
 import { digest, makeReviewAuthority, makeReviewRepo } from "./fixtures/review-dossier.js";
+import { CHILD_TIMEOUT_MS } from "../../../../vitest.shared.mts";
 
 vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -328,7 +329,7 @@ it("refuses an incomplete authority read and closes the opened descriptor", asyn
 it("does not block on a non-regular authority", async () => {
   if (process.platform === "win32") return;
   const fifo = join(root, "authority.pipe");
-  execFileSync("/usr/bin/mkfifo", [fifo]);
+  execFileSync("/usr/bin/mkfifo", [fifo], { timeout: CHILD_TIMEOUT_MS });
   expect(await review({ ...paths, authority: fifo })).toMatchObject({ error: { code: "review_authority_invalid" } });
 });
 

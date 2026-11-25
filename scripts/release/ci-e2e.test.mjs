@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { CHILD_TIMEOUT_MS } from "../../vitest.shared.mts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const COMMAND = JSON.parse(readFileSync(join(ROOT, "ci.json"), "utf8")).e2e;
@@ -47,6 +48,7 @@ function execute({ root, log }, fail = null) {
   writeFileSync(log, "");
   const result = spawnSync("/bin/bash", ["-eo", "pipefail", "-c", COMMAND], {
     cwd: ROOT,
+    timeout: CHILD_TIMEOUT_MS,
     encoding: "utf8",
     env: {
       ...process.env,

@@ -169,6 +169,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- No test now relies on Vitest's 5 s default timeout. Every project except the delivery gate sets `testTimeout` from `vitest.shared.mts` (30 s), and every synchronous child started by a test carries a limit of its own below it, so a hang ends as `ETIMEDOUT` instead of a silent wait. A guard test enforces both. This closes the Windows failure of #403 (`real-run-cli.test.ts` at 5 s against about 1.1 s idle); `pnpm test:latency` replays it by injecting write latency.
+
 - Define now preserves literal `<blockquote>` mentions and the requirements that follow them. Closed HTML quotations still exclude their contents from document validation and the Define v1 handoff.
 
 - PR Review verifies the verdict in a separate read-only job after a successful review (#361). A successful review action without a detectable verdict for its run now fails the workflow, so it does not spend a review round.

@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CHILD_TIMEOUT_MS } from "../../../../vitest.shared.mts";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
 
@@ -102,6 +103,7 @@ function trackedFiles(): string[] {
     cwd: REPO_ROOT,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    timeout: CHILD_TIMEOUT_MS,
   })
     .split("\0")
     .filter(Boolean);

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { CHILD_TIMEOUT_MS } from "../../../../../vitest.shared.mts";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -9,7 +10,7 @@ function reviewGitPath(): string {
   const windows = process.platform === "win32";
   const command = windows ? "where.exe" : "/bin/sh";
   const args = windows ? ["git.exe"] : ["-c", "command -v git"];
-  return execFileSync(command, args, { encoding: "utf8" }).trim().split(/\r?\n/)[0]!;
+  return execFileSync(command, args, { encoding: "utf8", timeout: CHILD_TIMEOUT_MS }).trim().split(/\r?\n/)[0]!;
 }
 
 export function makeReviewRepo(root: string) {
@@ -19,6 +20,7 @@ export function makeReviewRepo(root: string) {
   const git = (...args: string[]) => execFileSync(gitExecutable, ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: CHILD_TIMEOUT_MS,
     env: { SystemRoot: process.env.SystemRoot, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
   }).trim();
   const revision = (message: string) => {

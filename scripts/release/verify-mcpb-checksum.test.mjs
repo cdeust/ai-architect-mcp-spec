@@ -21,6 +21,7 @@ import {
   sha256Hex,
   namesThisScript,
 } from "./verify-mcpb-checksum.mjs";
+import { CHILD_TIMEOUT_MS } from "../../vitest.shared.mts";
 
 const REAL = "d6f0ce83456f65ffd7663966362612fa2224c7670dbc419d72db7cfccfc10815";
 const serverJson = (sha) => ({
@@ -106,7 +107,7 @@ describe("run as a command", () => {
     const dir = mkdtempSync(join(tmpdir(), "verify mcpb "));
     try {
       const script = copyWithEntryHelper(dir);
-      const run = spawnSync(process.execPath, [script], { encoding: "utf8" });
+      const run = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
       expect(run.status).toBe(2);
       expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
     } finally {
@@ -128,6 +129,7 @@ describe("run as a command", () => {
       const script = copyWithEntryHelper(real);
       const run = spawnSync(process.execPath, [join(link, relative(real, script))], {
         encoding: "utf8",
+        timeout: CHILD_TIMEOUT_MS,
       });
       expect(run.status).toBe(2);
       expect(run.stderr).toContain("usage: verify-mcpb-checksum.mjs");
@@ -162,12 +164,14 @@ describe("never exits 0 without verifying", () => {
       writeFileSync(join(dir, "server.json"), JSON.stringify(serverJson(sha256Hex(bytes))));
       const run = spawnSync(process.execPath, [SCRIPT, join(dir, "x.mcpb"), join(dir, "server.json")], {
         encoding: "utf8",
+        timeout: CHILD_TIMEOUT_MS,
       });
       expect(run.status).toBe(0);
       expect(run.stdout).toMatch(/^OK: server\.json checksum matches /);
       writeFileSync(join(dir, "server.json"), JSON.stringify(serverJson(REAL)));
       const bad = spawnSync(process.execPath, [SCRIPT, join(dir, "x.mcpb"), join(dir, "server.json")], {
         encoding: "utf8",
+        timeout: CHILD_TIMEOUT_MS,
       });
       expect(bad.status).toBe(1);
       expect(bad.stdout).toBe("");
@@ -184,6 +188,7 @@ describe("never exits 0 without verifying", () => {
       `await import(${JSON.stringify(SCRIPT_URL)});`;
     const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
       encoding: "utf8",
+      timeout: CHILD_TIMEOUT_MS,
     });
     expect(run.status).toBe(2);
     expect(run.stdout).toBe("");
