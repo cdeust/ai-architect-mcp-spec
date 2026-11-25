@@ -167,8 +167,8 @@ jobs:
 
           def _validate_jobs(jobs):
               # Owner rule 2026-10-29: the required jobs are the tests and their
-              # aggregate `merge`; the Claude verdict is read by
-              # _review_approves. Overall success alone accepts skipped jobs.
+              # aggregate `merge`; the owner's approval is read by
+              # _owner_approves. Overall success alone accepts skipped jobs.
               # ADR-1133: environment and install ran on the three systems, or both on
               # Linux alone. True is returned for Linux alone: resolve() then requires a
               # documentation-only pull request.
@@ -241,30 +241,30 @@ jobs:
               return list(indexed.values())
 
 
-          # source: .github/workflows/claude-review.yml, `name: PR Review`.
-          REVIEW_WORKFLOW_NAME = "PR Review"
+          # source: .github/workflows/owner-approval.yml, `name: Owner approval`.
+          APPROVAL_WORKFLOW_NAME = "Owner approval"
 
 
-          def _pipeline_of_review(review, repository, api):
-              """The successful Pipeline run of the head a completed review ran on.
+          def _pipeline_of_approval(approval, repository, api):
+              """The successful Pipeline run of the head the owner's approval ran on.
 
-              The review and the Pipeline finish in either order (ADR-1127). When the
-              review ends last, its completion wakes the resolver, which then needs the
+              The approval and the Pipeline finish in either order (ADR-1127). When the
+              label comes last, its workflow wakes the resolver, which then needs the
               Pipeline run of the same head: the newest one that succeeded. Without one
               the merge is held, and the Pipeline's own completion will wake the resolver.
               """
               require(
-                  review.get("path") == ".github/workflows/claude-review.yml"
-                  and review.get("event") == "pull_request"
-                  and review.get("status") == "completed"
-                  and review.get("conclusion") == "success",
-                  "source review did not complete successfully",
+                  approval.get("path") == ".github/workflows/owner-approval.yml"
+                  and approval.get("event") == "pull_request"
+                  and approval.get("status") == "completed"
+                  and approval.get("conclusion") == "success",
+                  "source approval did not complete successfully",
               )
               require(
-                  review.get("head_repository", {}).get("full_name") == repository,
+                  approval.get("head_repository", {}).get("full_name") == repository,
                   "source head repository differs",
               )
-              head = full_sha(review.get("head_sha"))
+              head = full_sha(approval.get("head_sha"))
               path = f"/repos/{repository}/actions/workflows/pipeline.yml/runs"
               runs = [
                   run
@@ -290,9 +290,9 @@ jobs:
               source = event.get("workflow_run")
               require(isinstance(source, dict), "missing workflow_run")
               prefix = f"/repos/{repository}"
-              woken_by_review = source.get("name") == REVIEW_WORKFLOW_NAME
-              if woken_by_review:
-                  source = _pipeline_of_review(source, repository, api)
+              woken_by_approval = source.get("name") == APPROVAL_WORKFLOW_NAME
+              if woken_by_approval:
+                  source = _pipeline_of_approval(source, repository, api)
               _validate_run(source, repository)
               run = api.request("GET", f"{prefix}/actions/runs/{source['id']}")
               _validate_run(run, repository)
@@ -304,7 +304,7 @@ jobs:
                   run.get("run_attempt") == source.get("run_attempt"),
                   "source run has a newer attempt",
               )
-              run["woken_by_review"] = woken_by_review
+              run["woken_by_approval"] = woken_by_approval
               jobs = _effective_jobs(
                   api.records(f"{prefix}/actions/runs/{run['id']}/jobs?filter=all", "jobs"), run
               )
@@ -361,54 +361,6 @@ jobs:
                   "workflow_runs",
               )
               return any(_push_covers_commit(push, sha) for push in pushes)
-
-
-          def _ran_the_review(run, prefix, api):
-              """True when this run's `Claude review` job executed the `PR Review` step."""
-              jobs = api.records(f"{prefix}/actions/runs/{run['id']}/jobs", "jobs")
-              return any(
-                  job.get("name") == "Claude review"
-                  and any(
-                      step.get("name") == "PR Review" and step.get("conclusion") == "success"
-                      for step in job.get("steps") or []
-                  )
-                  for job in jobs
-              )
-
-
-          def _review_approves(number, head, repository, api):
-              """The Claude review of this exact head decides the merge (ADR-1121).
-
-              A verdict counts only when its comment links the run id of a claude-review.yml
-              run of this head whose `PR Review` step succeeded. A review of an older head
-              links another run, and a run that skipped the review (past the cap) has no
-              such step, so neither can approve a newer head. The latest verdict wins.
-              """
-              prefix = f"/repos/{repository}"
-              runs = [
-                  run
-                  for run in api.records(
-                      f"{prefix}/actions/workflows/claude-review.yml/runs?head_sha={head}",
-                      "workflow_runs",
-                  )
-                  if run.get("head_sha") == head and run.get("conclusion") == "success"
-              ]
-              reviewed = [run for run in runs if _ran_the_review(run, prefix, api)]
-              require(reviewed, "merge held: no Claude review ran on this head")
-              links = [f"/actions/runs/{run['id']}" for run in reviewed]
-              verdicts = []
-              for comment in api.records(f"{prefix}/issues/{number}/comments"):
-                  user = comment.get("user") or {}
-                  body = comment.get("body") or ""
-                  if user.get("login") != "claude[bot]" or user.get("type") != "Bot":
-                      continue
-                  if not any(re.search(re.escape(link) + r"(?!\d)", body) for link in links):
-                      continue
-                  found = re.findall(r"^Verdict: (approve|block)\s*$", body, re.M)
-                  if found:
-                      verdicts.append((comment["updated_at"], found[-1]))
-              require(verdicts, "merge held: Claude has not posted a verdict on this head")
-              require(max(verdicts)[1] == "approve", "merge held: Claude review verdict is block")
 
 
           # The ci.json key that names the files a low-risk dependency update may touch
@@ -581,292 +533,61 @@ jobs:
               )
 
 
-          # render-ci: native-verdict begin
-          """Read native Codex code review state from complete GitHub GraphQL pages.
-
-          Connector identity and summary schema:
-          https://github.com/cdeust/ai-architect-mcp-spec/pull/391#issuecomment-7078116054
-          """
-
-          import json
-
-          BOT = {"login": "chatgpt-codex-connector", "__typename": "Bot", "id": "BOT_kgDOC98s_g"}
-          SUMMARY = "<!-- codex-pull-request-review-summary -->"
-          PREFIX = "<!-- codex-review-state:v1 "
-          QUERY = """query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
-            repository(owner:$owner, name:$repo) {
-              pullRequest(number:$pr) {
-                headRefOid state isDraft
-                comments(first:100, after:$endCursor) {
-                  pageInfo { hasNextPage endCursor }
-                  nodes { body lastEditedAt author { __typename login ... on Bot { id } }
-                          editor { __typename login ... on Bot { id } } }
-                }
-              }
-            }
-          }"""
+          # Owner decision of 2026-11-25: the review bots are optional, and the merge
+          # rests on the owner's approval of the current head. Agents push under the
+          # owner's account, and GitHub refuses an author's approving review of their
+          # own pull request, so the approval is the label below, set by the owner.
+          # https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/approving-a-pull-request-with-required-reviews
+          APPROVAL_LABEL = "owner-approved"
+          # GitHub's REST timestamps, which then compare in time order as strings.
+          STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
 
 
-          def native_comments(page, sha, *, allow_draft_read=False):
-              if page.get("errors"):
-                  raise ValueError("Unable to authenticate GitHub review")
-              pull = page["data"]["repository"]["pullRequest"]
-              if pull["headRefOid"] != sha or pull["state"] != "OPEN":
-                  raise ValueError("PR closed or head changed")
-              if type(pull["isDraft"]) is not bool or (pull["isDraft"] and not allow_draft_read):
-                  raise ValueError("PR is a draft or draft state is unverified")
-              return pull["comments"]
-
-
-          def state(pages, sha, *, allow_draft_read=False):
-              """Return the authenticated exact-head verdict and whether CI requested it."""
-              states = []
-              requested = False
-              more = True
-              marker = f"@codex review\n\n<!-- ci-codex-review {sha} -->"
-              for page in pages:
-                  if not more:
-                      raise ValueError("Unexpected native review page")
-                  comments = native_comments(page, sha, allow_draft_read=allow_draft_read)
-                  more = comments["pageInfo"]["hasNextPage"]
-                  if type(more) is not bool:
-                      raise ValueError("Invalid native review pagination")
-                  for row in comments["nodes"]:
-                      author, body = row["author"], row["body"]
-                      if author and author["__typename"] == "Bot" and author["login"] == "github-actions" and body == marker:
-                          requested = True
-                      if author != BOT or not body.startswith(SUMMARY + "\n"):
-                          continue
-                      expected_editor = None if row["lastEditedAt"] is None else BOT
-                      if row["editor"] != expected_editor:
-                          raise ValueError("Unverified editor of native Codex summary")
-                      line = body.split("\n", 2)[1]
-                      if not line.startswith(PREFIX) or not line.endswith(" -->"):
-                          raise ValueError("Native Codex review schema changed")
-                      review = json.loads(line[len(PREFIX):-4])["code_review"]
-                      if review is None or review["commit_sha"] != sha:
-                          continue
-                      status = review["status"]
-                      if status == "completed":
-                          flags = review.get("has_any_findings"), review.get("has_unresolved_findings")
-                          if any(type(flag) is not bool for flag in flags) or flags == (False, True):
-                              raise ValueError("Invalid Codex findings")
-                          status = "block" if flags[1] else "approve"
-                      elif status not in {"running", "queued"}:
-                          raise ValueError("Codex did not complete a code review")
-                      states.append(status)
-              if more:
-                  raise ValueError("Incomplete native review pagination")
-              if len(states) > 1:
-                  raise ValueError("Ambiguous Codex review summaries")
-              return (states[0] if states else None), requested
-
-
-          def _native_pages(number, head, repository, api):
-              owner, name = repository.split("/")
-              variables = {"owner": owner, "repo": name, "pr": number}
-              seen = set()
-              while True:
-                  page = api.request("POST", "/graphql", {"query": QUERY, "variables": variables})
-                  yield page
-                  info = native_comments(page, head)["pageInfo"]
-                  if info["hasNextPage"] is False:
-                      return
-                  cursor = info["endCursor"]
-                  if not isinstance(cursor, str) or not cursor or cursor in seen:
-                      raise ValueError("Invalid native review cursor")
-                  seen.add(cursor)
-                  variables = {**variables, "endCursor": cursor}
-
-
-          def _attempt_jobs(run, attempt, repository, api):
-              path = f"/repos/{repository}/actions/runs/{run['id']}/attempts/{attempt}/jobs"
-              jobs = list(api.records(path, "jobs"))
-              require(all(job.get("run_attempt") == attempt for job in jobs), "job attempt differs")
-              return _effective_jobs(jobs, run)
-
-
-          def _route_provider(repository, api, run, attempt, jobs):
-              markers = [
-                  (step, re.fullmatch(r"Subscription decision run ([1-9][0-9]*)", step.get("name") or ""))
-                  for job in jobs if job["name"] == "Claude review budget" and _succeeded(job)
-                  for step in job.get("steps") or []
-                  if (step.get("name") or "").startswith("Subscription decision run ")
-              ]
-              if len(markers) != 1:
-                  return None
-              step, match = markers[0]
-              if not match or not _succeeded(step):
-                  return None
-              route_id = int(match[1])
-              prefix = f"/repos/{repository}/actions"
-              route = api.request("GET", f"{prefix}/runs/{route_id}")
-              if not (
-                  type(route.get("id")) is int and route["id"] == route_id
-                  and route.get("path") == ".github/workflows/review-subscription.yml"
-                  and route.get("event") == "workflow_run" and route.get("head_branch") == "main"
-                  and (route.get("head_repository") or {}).get("full_name") == repository
-                  and (route.get("repository") or {}).get("full_name") == repository
-                  and route.get("display_title") == f"Route PR Review {run['id']} attempt {attempt}"
-                  and type(route.get("run_attempt")) is int and route["run_attempt"] == 1
-                  and _succeeded(route)
-              ):
-                  return None
-              full_sha(route.get("head_sha"))
-              providers = {"Select Claude": "claude", "Request Codex": "codex", "Reuse Codex": "codex"}
-              selected = [
-                  providers[step["name"]] for job in _attempt_jobs(route, route["run_attempt"], repository, api)
-                  if job["name"] == "select" and _succeeded(job)
-                  for step in job.get("steps") or [] if step.get("name") in providers and _succeeded(step)
-              ]
-              return selected[0] if len(selected) == 1 else None
-
-
-          def _succeeded(record):
-              return record.get("status") == "completed" and record.get("conclusion") == "success"
-
-
-          def _review_runs(number, head, repository, api):
-              prefix = f"/repos/{repository}/actions"
-              review_path = ".github/workflows/claude-review.yml"
-              runs = [
-                  run for run in api.records(
-                      f"{prefix}/workflows/claude-review.yml/runs?head_sha={head}&event=pull_request",
+          def _head_since(head, repository, api):
+              """When the head became the PR head: its first pull_request Pipeline run."""
+              created = [
+                  run.get("created_at")
+                  for run in api.records(
+                      f"/repos/{repository}/actions/workflows/pipeline.yml/runs"
+                      f"?head_sha={head}&event=pull_request",
                       "workflow_runs",
                   )
-                  if run.get("path") == review_path and run.get("event") == "pull_request"
-                  and run.get("head_sha") == head
-                  and (run.get("head_repository") or {}).get("full_name") == repository
-                  and (run.get("repository") or {}).get("full_name") == repository
-                  and [pr.get("number") for pr in run.get("pull_requests") or []] == [number]
-                  and type(run.get("id")) is int and run["id"] > 0
+                  if run.get("head_sha") == head and run.get("event") == "pull_request"
               ]
-              return sorted(runs, key=lambda run: run["id"])
-
-
-          def _provider_admissions(runs, repository, api):
-              admissions = []
-              for run in runs:
-                  attempt = run.get("run_attempt")
-                  require(type(attempt) is int and attempt > 0, "invalid review run attempt")
-                  for candidate in range(1, attempt + 1):
-                      jobs = _attempt_jobs(run, candidate, repository, api)
-                      provider = _route_provider(repository, api, run, candidate, jobs)
-                      if provider:
-                          admissions.append((provider, run, candidate, {job["name"]: job for job in jobs}))
-              latest = runs[-1]
               require(
-                  admissions and admissions[-1][1:3] == (latest, latest["run_attempt"]),
-                  "merge held: latest review admission is unverified",
+                  created and all(isinstance(value, str) and re.fullmatch(STAMP, value) for value in created),
+                  "merge held: no Pipeline run dates this head",
               )
-              return admissions
+              return min(created)
 
 
-          REVIEW_JOBS = {
-              "claude": {
-                  "Claude review": ("PR Review",),
-                  "Verify Claude review verdict": ("Verify the verdict for this run",),
-              },
-              "codex": {
-                  "Codex GitHub review": ("PR Review",),
-                  "Verify native Codex review verdict": (
-                      "Read the OpenAI verdict from GitHub again", "Enforce the code review",
-                  ),
-              },
-          }
-
-
-          def _verified_steps(job, expected_steps):
-              steps = job.get("steps") or []
-              for name in expected_steps:
-                  matches = [step for step in steps if step.get("name") == name]
-                  if len(matches) != 1 or not _succeeded(matches[0]):
-                      return False
-              return True
-
-
-          def _verified_job(job, expected_steps):
-              return _succeeded(job) and _verified_steps(job, expected_steps)
-
-
-          def _successful_review_job(provider, run, jobs):
-              return _succeeded(run) and all(
-                  _verified_job(jobs.get(name, {}), steps) for name, steps in REVIEW_JOBS[provider].items()
-              )
-
-
-          def _claude_verdicts(number, admissions, repository, api):
-              origin = f"https://github.com/{repository}/actions/runs/"
-              links = {
-                  f"]({origin}{run['id']}/attempts/{attempt})": (run["id"], attempt)
-                  for provider, run, attempt, _ in admissions if provider == "claude"
-              }
-              if not links:
-                  return {}
-              verdicts = {}
-              for comment in api.records(f"/repos/{repository}/issues/{number}/comments"):
-                  user, body = comment.get("user") or {}, comment.get("body") or ""
-                  if user.get("login") != "claude[bot]" or user.get("type") != "Bot":
-                      continue
-                  matched = [identity for link, identity in links.items() if link in body]
-                  found = re.findall(r"^Verdict: (approve|block)\s*$", body, re.M)
-                  if matched and found:
-                      require(len(matched) == 1 and len(found) == 1, "ambiguous Claude verdict evidence")
-                      verdicts.setdefault(matched[0], set()).add(found[0])
-              return verdicts
-
-
-          def _selected_review_approves(number, head, repository, api):
-              runs = _review_runs(number, head, repository, api)
-              require(runs, "merge held: no candidate review run on this PR head")
-              admissions = _provider_admissions(runs, repository, api)
-              provider, run, attempt, jobs = admissions[-1]
-
-              native = None
-              if any(selected == "codex" for selected, _, _, _ in admissions):
-                  native, _ = state(_native_pages(number, head, repository, api), head)
-                  require(native != "block", "merge held: native Codex review verdict is block")
-                  require(native not in ("running", "queued"), "merge held: native Codex verdict is pending")
-              claude = _claude_verdicts(number, admissions, repository, api)
+          def _owner_approves(pr, head, repository, api):
+              """The owner labelled this head after it became the head, and nobody removed it."""
               require(
-                  not any("block" in verdicts for verdicts in claude.values()),
-                  "merge held: Claude review verdict is block",
+                  any(label.get("name") == APPROVAL_LABEL for label in pr.get("labels") or []),
+                  "merge held: the owner has not approved this head",
               )
-
-              for previous_provider, previous_run, previous_attempt, previous_jobs in admissions[:-1]:
-                  if previous_provider == "codex" and native is None:
-                      require(
-                          not _verified_steps(
-                              previous_jobs.get("Verify native Codex review verdict", {}),
-                              ("Read the OpenAI verdict from GitHub again",),
-                          ),
-                          "merge held: historical native Codex verdict evidence is missing",
-                      )
-                  if previous_provider == "claude" and (previous_run["id"], previous_attempt) not in claude:
-                      require(
-                          not _verified_steps(
-                              previous_jobs.get("Verify Claude review verdict", {}),
-                              ("Verify the verdict for this run",),
-                          ),
-                          "merge held: historical Claude verdict evidence is missing",
-                      )
-
-              if provider == "codex":
-                  require(native == "approve", "merge held: native Codex verdict is pending")
-                  require(
-                      _successful_review_job(provider, run, jobs),
-                      "merge held: no admitted native Codex review ran on this head",
-                  )
-              else:
-                  require(
-                      _successful_review_job(provider, run, jobs),
-                      "merge held: no admitted Claude review ran on this head",
-                  )
-                  require(
-                      "approve" in claude.get((run["id"], attempt), ()),
-                      "merge held: no verdict from an admitted Claude attempt",
-                  )
-          # render-ci: native-verdict end
+              owner = (api.request("GET", f"/repos/{repository}").get("owner") or {})
+              require(owner.get("type") == "User" and owner.get("login"),
+                      "repository owner is not a user account")
+              events = [
+                  event for event in api.records(f"/repos/{repository}/issues/{pr['number']}/events")
+                  if event.get("event") in ("labeled", "unlabeled")
+                  and (event.get("label") or {}).get("name") == APPROVAL_LABEL
+              ]
+              require(events and events[-1].get("event") == "labeled",
+                      "merge held: the owner has not approved this head")
+              actor = events[-1].get("actor") or {}
+              require(
+                  actor.get("login") == owner["login"] and actor.get("type") == "User",
+                  "merge held: the approval label was not set by the owner",
+              )
+              labelled = events[-1].get("created_at")
+              require(
+                  isinstance(labelled, str) and re.fullmatch(STAMP, labelled)
+                  and labelled > _head_since(head, repository, api),
+                  "merge held: the approval predates this head",
+              )
 
           def _merge_open_pr(pr, merge_path, head, api, repository):
               require(
@@ -882,9 +603,10 @@ jobs:
                   "PR label holds merge",
               )
               if _is_low_risk(pr, repository, api):
-                  print("post-merge: low-risk dependency update, no review required")
+                  # The one merge without the owner's approval (ADR-1126).
+                  print("post-merge: low-risk dependency update, no approval required")
               else:
-                  _selected_review_approves(pr["number"], head, repository, api)
+                  _owner_approves(pr, head, repository, api)
               result = api.request(
                   "PUT",
                   merge_path,
@@ -930,13 +652,13 @@ jobs:
                       "pr_number": str(number),
                       "reason": "An exact-SHA main push Pipeline already exists",
                   }
-              if already_merged and run.get("woken_by_review"):
+              if already_merged and run.get("woken_by_approval"):
                   # The Pipeline's completion merged this PR and tests the merge commit.
                   return {
                       "tested_sha": sha,
                       "run_tests": "false",
                       "pr_number": str(number),
-                      "reason": "Already merged when the review completed",
+                      "reason": "Already merged when the approval completed",
                   }
               return {
                   "tested_sha": sha,

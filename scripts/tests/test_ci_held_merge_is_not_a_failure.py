@@ -57,18 +57,10 @@ def run_main(outcome):
 
 WAITS = (
     "merge held: Pipeline has not succeeded on this head",
-    "merge held: no Claude review ran on this head",
-    "merge held: Claude has not posted a verdict on this head",
-    "merge held: Claude review verdict is block",
-    "merge held: native Codex review verdict is block",
-    "merge held: native Codex verdict is pending",
-    "merge held: historical native Codex verdict evidence is missing",
-    "merge held: historical Claude verdict evidence is missing",
-    "merge held: latest review admission is unverified",
-    "merge held: no admitted Claude review ran on this head",
-    "merge held: no admitted native Codex review ran on this head",
-    "merge held: no candidate review run on this PR head",
-    "merge held: no verdict from an admitted Claude attempt",
+    "merge held: the owner has not approved this head",
+    "merge held: the approval label was not set by the owner",
+    "merge held: the approval predates this head",
+    "merge held: no Pipeline run dates this head",
     "PR head advanced after testing",
 )
 

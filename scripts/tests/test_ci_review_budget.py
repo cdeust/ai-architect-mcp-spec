@@ -168,14 +168,15 @@ class JqFilterTests(unittest.TestCase):
         self.assertEqual(json.loads(self.jq(expr, new)), ["success"])
 
     def test_native_round_requires_a_successful_independent_read_even_for_a_block(self):
-        workflow = yaml.safe_load(REVIEW.read_text())
-        job = workflow["jobs"]["verdict-codex"]
-        proof, enforce = job["steps"][-2:]
+        # Runs from before 2026-11-25 carried a native Codex review and its
+        # independent read; their rounds still count against the budget.
+        job = {"name": budget.NATIVE_PROOF_JOB}
+        proof, enforce = {"name": budget.NATIVE_PROOF_STEP}, {"name": "Enforce the code review"}
         for read_status, expected in (("success", "codex"), ("failure", None)):
             with self.subTest(read_status=read_status):
                 jobs = [
                     {"name": budget.BUDGET_JOB, "steps": []},
-                    {"name": workflow["jobs"]["codex"]["name"], "steps": [
+                    {"name": "Codex GitHub review", "steps": [
                         {"name": budget.ACTION_STEP, "conclusion": "success"},
                     ]},
                     {"name": job["name"], "steps": [
@@ -252,43 +253,14 @@ class WorkflowWiringTests(unittest.TestCase):
             if step.get("uses", "").startswith("anthropics/claude-code-action@")
         )
 
-    def test_verdict_is_verified_after_a_successful_review_in_a_fresh_job(self):
-        job = self.jobs["verdict"]
-        self.assertEqual(job["needs"], "review")
-        self.assertNotIn("if", job)  # The default success condition excludes failed and skipped reviews.
-        self.assertNotIn("continue-on-error", job)
-        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
-        checkout, check = job["steps"]
-        self.assertEqual(checkout["uses"], self.jobs["budget"]["steps"][0]["uses"])
-        self.assertEqual(
-            checkout["with"], {"ref": "main", "fetch-depth": 1, "persist-credentials": False}
-        )
-        self.assertNotIn("continue-on-error", check)
-        self.assertEqual(check["run"], "python3 -I scripts/ci_review_verdict.py")
-        self.assertEqual(
-            check["env"],
-            {
-                "GH_TOKEN": "${{ github.token }}",
-                "GH_REPO": "${{ github.repository }}",
-                "PR": "${{ github.event.pull_request.number }}",
-                "RUN_ID": "${{ github.run_id }}",
-                "RUN_ATTEMPT": "${{ github.run_attempt }}",
-            },
-        )
-
-    def test_native_verification_has_its_own_read_only_job(self):
-        job = self.jobs["verdict-codex"]
-        self.assertEqual(job["needs"], "codex")
-        self.assertNotIn("continue-on-error", job)
-        self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
-        checkout, read, enforce = job["steps"]
-        self.assertEqual(checkout["with"]["ref"], "main")
-        self.assertFalse(checkout["with"]["persist-credentials"])
-        self.assertEqual(read["env"]["HEAD_SHA"], "${{ github.event.pull_request.head.sha }}")
-        self.assertEqual(read["env"]["REVIEWER"], "codex-existing")
-        self.assertEqual(read["run"], "python3 -I scripts/ci_review_codex.py")
-        self.assertEqual(enforce["env"]["VERDICT"], "${{ steps.proof.outputs.verdict }}")
-        self.assertEqual(enforce["run"], 'test "$VERDICT" = approve')
+    def test_the_review_is_optional_and_nothing_verifies_its_verdict(self):
+        # Owner decision of 2026-11-25: no job of this workflow gates the merge.
+        self.assertEqual(set(self.jobs), {"budget", "review"})
+        self.assertIs(self.action()["continue-on-error"], True)
+        summary = self.jobs["review"]["steps"][-1]
+        self.assertEqual(summary["if"], "always()")
+        self.assertEqual(summary["env"], {"OUTCOME": "${{ steps.claude.outcome }}"})
+        self.assertIn("GITHUB_STEP_SUMMARY", summary["run"])
 
     def test_reviews_of_one_pr_are_admitted_one_at_a_time(self):
         self.assertEqual(
@@ -306,17 +278,10 @@ class WorkflowWiringTests(unittest.TestCase):
         job = self.jobs["budget"]
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("secrets.", yaml.safe_dump(job))
-        count, admit, nominate, marker = job["steps"][-4:]
+        count, admit = job["steps"][-2:]
         self.assertEqual(count["run"], "python3 -I scripts/ci_review_budget.py")
         self.assertEqual(admit["name"], "Admit a subscription review round")
         self.assertEqual(admit["if"], "steps.count.outputs.skip == 'false'")
-        self.assertEqual(nominate["if"], admit["if"])
-        self.assertEqual(nominate["run"], "python3 -I scripts/ci_review_route.py nominate")
-        self.assertEqual(marker["name"], "Subscription decision run ${{ steps.nominate.outputs.id }}")
-        self.assertEqual(marker["if"], "steps.nominate.outputs.id != ''")
-        self.assertEqual(job["outputs"]["route_run"], "${{ steps.nominate.outputs.id }}")
-        self.assertEqual(self.jobs["admission"]["steps"][-1]["env"]["ROUTE_RUN"],
-                         "${{ needs.budget.outputs.route_run }}")
 
     def test_budget_checks_out_main_and_keeps_no_credentials(self):
         checkout = self.jobs["budget"]["steps"][0]
@@ -325,9 +290,7 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_review_waits_for_the_budget_and_honours_its_skip(self):
         review = self.jobs["review"]
-        self.assertEqual(set(review["needs"]), {"budget", "admission"})
-        self.assertEqual(self.jobs["admission"]["needs"], "budget")
-        self.assertIn("needs.admission.outputs.reviewer == 'claude'", review["if"])
+        self.assertEqual(review["needs"], "budget")
         self.assertIn("needs.budget.outputs.skip != 'true'", review["if"])
 
     def test_budget_and_review_share_the_same_event_predicate(self):

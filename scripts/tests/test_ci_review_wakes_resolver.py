@@ -1,5 +1,6 @@
-"""The review's completion wakes the resolver too, so the merge does not depend on
-which of the review and the Pipeline finishes first (ADR-1127)."""
+"""The owner's approval wakes the resolver too, so the merge does not depend on
+which of the approval and the Pipeline finishes first (ADR-1127). The review
+bots wake nothing: they are optional (owner decision of 2026-11-25)."""
 
 from pathlib import Path
 import textwrap
@@ -23,8 +24,8 @@ def resolver():
 
 def review(**changes):
     run = {
-        "name": "PR Review",
-        "path": ".github/workflows/claude-review.yml",
+        "name": "Owner approval",
+        "path": ".github/workflows/owner-approval.yml",
         "event": "pull_request",
         "status": "completed",
         "conclusion": "success",
@@ -46,12 +47,12 @@ class FakeApi:
 class ReviewWakesResolverTests(unittest.TestCase):
     def pipeline_of(self, source, pipelines):
         api = FakeApi(pipelines)
-        return resolver()["_pipeline_of_review"](source, REPO, api), api
+        return resolver()["_pipeline_of_approval"](source, REPO, api), api
 
     def held(self, source, pipelines, message):
         ns = resolver()
         with self.assertRaises(ns["PostMergeError"]) as caught:
-            ns["_pipeline_of_review"](source, REPO, FakeApi(pipelines))
+            ns["_pipeline_of_approval"](source, REPO, FakeApi(pipelines))
         self.assertIn(message, str(caught.exception))
 
     def test_the_newest_successful_pipeline_of_the_head_is_the_source(self):
@@ -86,18 +87,18 @@ class ReviewWakesResolverTests(unittest.TestCase):
     def test_a_pr_merged_before_the_review_ended_is_not_tested_twice(self):
         text = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
         body = text.split("def resolve(event", 1)[1].split("def main", 1)[0]
-        held = body.split('run.get("woken_by_review")', 1)[1].split("return {", 2)[1]
+        held = body.split('run.get("woken_by_approval")', 1)[1].split("return {", 2)[1]
         self.assertIn('"run_tests": "false"', held)
         self.assertLess(
-            body.index('run.get("woken_by_review")'),
+            body.index('run.get("woken_by_approval")'),
             body.index('"run_tests": "true"'),
         )
 
     def test_both_workflows_wake_the_resolver(self):
         caller = (WORKFLOWS / "pipeline-after-merge.yml").read_text()
-        self.assertIn("workflows: [Pipeline, PR Review]", caller)
-        review_name = (WORKFLOWS / "claude-review.yml").read_text().splitlines()[0]
-        self.assertEqual(review_name, "name: PR Review")
+        self.assertIn("workflows: [Pipeline, Owner approval]", caller)
+        approval_name = (WORKFLOWS / "owner-approval.yml").read_text().splitlines()[0]
+        self.assertEqual(approval_name, "name: Owner approval")
 
 
 if __name__ == "__main__":

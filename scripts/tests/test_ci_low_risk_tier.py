@@ -138,7 +138,7 @@ class LowRiskTierTests(unittest.TestCase):
             api.puts, [("PUT", "/merge", {"sha": HEAD, "merge_method": "squash"})]
         )
 
-    def test_any_other_pr_still_needs_the_review(self):
+    def test_any_other_pr_still_needs_the_owner_s_approval(self):
         ns = resolver()
         for api in (
             FakeApi([commit((MAJOR,))], ("pnpm-lock.yaml",)),
@@ -146,7 +146,7 @@ class LowRiskTierTests(unittest.TestCase):
         ):
             with self.assertRaises(ns["PostMergeError"]) as caught:
                 ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
-            self.assertIn("no candidate review run on this PR head", str(caught.exception))
+            self.assertIn("the owner has not approved this head", str(caught.exception))
             self.assertEqual(api.puts, [])
 
     def test_a_hold_label_still_holds_a_low_risk_pr(self):

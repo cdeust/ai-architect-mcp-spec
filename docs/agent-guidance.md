@@ -31,20 +31,33 @@ a scheduled routine, the local manager. It follows the contract of `cdeust/Corte
 source of truth for CI. Where the prompt of a routine says otherwise, this section wins:
 the prompt was written before the contract, and the repository's own standards apply.
 
-1. **The selected review decides the merge.** The default-branch quota workflow identifies
-   the provider for this review run and attempt. Claude posts a run-linked verdict. Codex
-   publishes an authenticated GitHub App receipt on the current head. A separate read-only
-   CI job verifies the selected provider's verdict. The protected resolver checks the
-   admission, successful run, and verdict again before merging. See the
-   [subscription review contract](review-subscriptions.md).
-2. **Three reviews per branch.** A push to a pull request ready for review triggers review
-   admission. The budget counts successful workflow runs for that pull request and branch
-   whose review action step succeeded. Push once per verdict, with every blocker of that
+1. **The owner's approval decides the merge.** Owner decision of 25 November 2026. The
+   protected resolver merges a pull request when the required checks of its head are
+   green and the owner approved that head: the label `owner-approved` is on the pull
+   request, the owner's account set it last, and it was set after the head's first
+   Pipeline run. A push after the label makes the approval stale, and the workflow
+   `Owner approval` removes the label. No agent sets the label, as no agent merges by
+   hand: only the owner, or the owner's bot on the owner's explicit consent for this pull
+   request and this head. The session guard refuses the commands that set it. The one
+   merge without the owner's approval is a low-risk Dependabot update (ADR-1126). The
+   owner can always merge by hand. The review bots (Claude, Codex, any security review)
+   are optional: they give advice, and their absence, failure or exhausted quota blocks
+   nothing. A review by a session other than the author is still owed before the pull
+   request is marked ready (rule 10), but no mechanical check reads it. A pull request that
+   changes this merge rule is judged by the resolver of `main`, so the owner merges it by
+   hand, on a green gate and an independent review. See
+   [review and merge](review-subscriptions.md).
+2. **Three reviews per branch.** A push to a pull request ready for review triggers the
+   optional Claude review, within a cost cap. The budget counts successful workflow runs for
+   that pull request and branch whose review action step succeeded. A spent budget blocks no
+   merge: the review stops running. Push once per verdict, with every blocker of that
    verdict fixed, and never while a `PR Review` run is in progress on the pull request:
    the review would land on a commit that is no longer the head.
-3. **Budget spent without an approve on the head: a new branch.** Push the same commits to
-   `<branch>-r<N>`, open a pull request with the same title and body plus a "Continuation"
-   section naming the old one, leave one "Continued in #n" line on the old one, close it.
+3. **Budget spent: no new branch for the bots.** The review budget is a cost cap, not a
+   merge condition, so a spent budget does not call for a continuation branch. Open one only
+   when the owner asks for it: push the same commits to `<branch>-r<N>`, open a pull request
+   with the same title and body plus a "Continuation" section naming the old one, leave one
+   "Continued in #n" line on the old one, close it.
    A forced push of any kind, `--force-with-lease` included, is never used: it does not
    reset the budget and it rewrites a branch another agent may hold.
 4. **No comparison with the main branch.** Do not measure how far a branch is behind, do
@@ -54,9 +67,10 @@ the prompt was written before the contract, and the repository's own standards a
    main branch into the branch with a merge commit, resolve it, rerun the touched tests,
    check that the merge did not change the meaning of either side, and push normally.
 5. **One pull request in flight.** A pull request is in flight while a check runs on it, a
-   review runs on it, or an approve waits for the merge. While one is in flight, open no
+   review runs on it, or it waits for the owner's approval or for the merge. While one is in flight, open no
    other pull request (issue, relaunch or next slice) and push to no other branch.
-6. **No comment after an approve.** No reply to the notes, no summary, no acknowledgement.
+6. **No comment after an approve.** An approve is a bot's `Verdict: approve` or the owner's
+   label. No reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
 7. **Owner decisions are left alone.** Leave a pull request on the branch
@@ -95,11 +109,12 @@ the prompt was written before the contract, and the repository's own standards a
     local, so the branch diverged. Owner decision of 19 November 2026: sessions
     work in small batches.
     Mark the pull request ready only after a reviewer other than its author has read its
-    current head and its body carries the counts of rule 8. For a batch pushed from a local
+    current head and its body carries the counts of rule 8. That review is owed by the
+    contract; the merge itself waits for the owner's approval (rule 1). For a batch pushed from a local
     machine, require a passed delivery-gate verdict on that head's tree. For a hosted
     session with no local verdict, require a successful Pipeline run on the current head
-    with the contract, unit and regression jobs passing. Marking it ready starts the review
-    ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
+    with the contract, unit and regression jobs passing. Marking it ready starts the optional
+    review ([`ready_for_review`](../.github/workflows/claude-review.yml#L7)).
     For every push from a local machine, the delivery gate's pre-push hook requires a
     passed verdict on the tip. Make each batch worth a gate run, such as one pass or one slice,
     and keep commits local between gate runs only for the length of that work.
@@ -134,19 +149,10 @@ A session on a hosted runner or in a cloud session has no hook and no
 verdict, and cannot be asked for them: its push is let through, and the
 Pipeline judges it. The refusals of the guard apply there too, in the ways
 it knows (`CONTRIBUTING.md` lists what it does not read): no forced push, no
-`--no-verify`, no merge by hand, no write to the repository through the
-API. An agent whose machine cannot run the sandbox does not go around
+`--no-verify`, no merge by hand, no `owner-approved` label set by an agent,
+no write to the repository through the API. An agent whose machine cannot run the sandbox does not go around
 the gate: it holds under rule 3 of the next section (an access it does not
 have), naming the sandbox.
-
-### Installing trusted review actions
-
-A PR that introduces a composite action cannot use it from a checkout of
-`main` until the action has landed there. Install the action, its locked
-dependencies, and its read-only workflow before activating the PR job that
-consumes it. The owner-branch diagnostic exercises the candidate on GitHub
-Actions. The credential-bearing production workflow always reads the default
-branch. [Installation failure on #391](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45016524062)
 
 ## Issues: no issue waits for the owner
 

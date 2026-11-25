@@ -85,7 +85,19 @@
       },
       {
         "pattern": "${start}gh\\s+pr\\s+merge\\b",
-        "why": "no agent merges by hand in this repository: the review verdict decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
+        "why": "no agent merges by hand in this repository: the owner's approval decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
+      },
+      {
+        "pattern": "${start}gh\\s+(?:pr|issue)\\s+edit\\b.*\\s--add-label(?:\\s+|=)(?:\\S*owner-approved|\"\")",
+        "why": "no agent sets the owner's approval: only the owner, or the owner's bot on the owner's explicit consent for this PR and this head, labels a pull request owner-approved (docs/agent-guidance.md, CI contract, rule 1). A quoted label is refused because the guard cannot read it."
+      },
+      {
+        "pattern": "${start}gh\\s+label\\s+(?:create|edit|clone)\\b.*(?:owner-approved|\"\")",
+        "why": "no agent sets the owner's approval: only the owner, or the owner's bot on the owner's explicit consent for this PR and this head, labels a pull request owner-approved (docs/agent-guidance.md, CI contract, rule 1). A quoted label is refused because the guard cannot read it."
+      },
+      {
+        "pattern": "${start}gh\\s+api\\b(?=.*/labels\\b)(?!.*\\s(?:-X\\s*|--method[\\s=]+)GET\\b)(?=.*\\s(?:(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b|-f\\b|-F\\b|--field\\b|--raw-field\\b|--input\\b))",
+        "why": "the command writes labels through the API, where the guard cannot read which: the owner's approval label is the owner's alone (docs/agent-guidance.md, CI contract, rule 1)."
       },
       {
         "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=.*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",
