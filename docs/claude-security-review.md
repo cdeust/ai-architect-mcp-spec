@@ -26,9 +26,13 @@ The workflow has two jobs.
      8 or more. A path must be relative, made of non-empty segments with no `.` or
      `..` segment and no whitespace at either end of a segment. It must not start
      with a drive letter or `~`, must not contain `://`, and must not hold a
-     backslash, a backtick or a line break. The comment shows the path in ASCII,
-     with every other character as a JSON escape, so a look-alike or an invisible
-     character cannot pass for `/` or `..`. A finding that breaks the schema is dropped, and the
+     backslash, a backtick or a line break. The comment shows the path in ASCII.
+     Every character outside printable ASCII, and every one of `@ # & < > [ ]`, is
+     written as a JSON escape. A look-alike or an invisible character therefore
+     cannot pass for `/` or `..`, and nothing in a path can act as a mention, a
+     reference or a link.
+   - It puts each prose field (summary, description, scenario, recommendation) on a
+     single line, so a line break in it cannot start a heading or a forged finding. A finding that breaks the schema is dropped, and the
      drop is counted in the comment. An output whose shape breaks the schema is
      refused.
    - It normalises the text (NFKC, format characters removed). It then neutralises

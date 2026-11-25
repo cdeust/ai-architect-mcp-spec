@@ -89,10 +89,13 @@ COMMENT_LIMIT = 60_000
 SEVERITIES = ("HIGH", "MEDIUM")
 # A relative path of non-empty segments: no leading "/", "~" or drive letter, no
 # "://", no "." or ".." segment, no empty segment, no whitespace at a segment's ends,
-# no backslash, backtick or line break. Shown as ASCII with escapes (display_path), so
-# no look-alike or invisible character can pass for "/" or "..".
+# no backslash, backtick or line break ("//" also refuses "://"). Shown as ASCII with
+# escapes (display_path), so no look-alike or invisible character can pass for "/" or
+# "..". The engine's JSON Schema validator (JavaScript, if it enforces `pattern` at all)
+# reads this pattern more loosely around U+2028 and Unicode spaces; publish re-checks
+# every finding in Python, which is the gate.
 PATH_PATTERN = (
-    r"^(?![A-Za-z]:)(?!~)(?!.*://)(?!/)(?!.*//)(?!.*/$)"
+    r"^(?![A-Za-z]:)(?!~)(?!/)(?!.*//)(?!.*/$)"
     r"(?!(?:.*/)?\.{1,2}(?:/|$))(?!(?:.*/)?\s)(?!.*\s(?:/|$))[^\\`\n\r\t]+$"
 )
 CATEGORY_PATTERN = r"^[a-z][a-z0-9_]*$"
@@ -350,18 +353,31 @@ def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
 
 
 def canonical(text: str) -> str:
-    """The text as the comment will show it: NFKC, one line ending, no control, format
-    or combining character. Paths are validated on this form."""
+    """Prose as the comment will show it: NFKC, one line ending, no control, format or
+    combining character. Paths never go through this: they are shown escaped."""
     text = unicodedata.normalize("NFKC", text)
     text = LINE_BREAKS.sub("\n", text)
     return "".join(ch for ch in text if ch in "\n\t"
                    or unicodedata.category(ch) not in {"Cc", "Cf", "Mn", "Me"})
 
 
+# Characters a path may hold that the comment must not act on (a mention, a reference,
+# an entity, HTML, a link): shown as JSON escapes too. A raw backslash is refused in
+# paths, so "\u0040" can only be this escape.
+PATH_ESCAPES = {ch: f"\\u{ord(ch):04x}" for ch in "@#&<>[]"}
+
+
 def display_path(path: str) -> str:
-    """The path as the comment shows it: ASCII, every other character as a JSON escape,
-    so what is shown is exactly what the model named, look-alikes included."""
-    return neutral(json.dumps(path)[1:-1])
+    """The path as the comment shows it: ASCII, every character outside printable ASCII
+    and every character of PATH_ESCAPES as a JSON escape, so what is shown is what the
+    model named, look-alikes included, and nothing in it acts."""
+    return "".join(PATH_ESCAPES.get(ch, ch) for ch in json.dumps(path)[1:-1])
+
+
+def prose(text: str, limit: int) -> str:
+    """Neutralised prose on one line: a line break in it cannot start a heading, a list
+    item or a forged finding of its own."""
+    return " ".join(neutral(text.strip()[:limit]).split())
 
 
 def neutral(text: str) -> str:
@@ -426,18 +442,18 @@ def findings(raw: str) -> tuple[list[Record], int, str]:
                 "severity": item["severity"],
                 "category": item["category"],
                 "confidence": item["confidence"],
-                **{key: neutral(item[key].strip()[:MAX_TEXT])
+                **{key: prose(item[key], MAX_TEXT)
                    for key in ("description", "exploit_scenario", "recommendation")},
             }
         )
     dropped += max(0, len(data["findings"]) - MAX_FINDINGS)
-    return kept, dropped, neutral(data["summary"].strip()[:MAX_SUMMARY])
+    return kept, dropped, prose(data["summary"], MAX_SUMMARY)
 
 
 def render(kept: list[Record], dropped: int, summary: str, env) -> str:
     head = [f"## {MARKER}", "",
             f"Security review {env['ROUND']} of at most {env['CAP']}, head `{env['HEAD_SHA']}`. "
-            "Advisory: it neither approves nor blocks.", "", summary, ""]
+            "Advisory: it neither approves nor blocks.", "", f"Summary: {summary}", ""]
     if dropped:
         head += [f"{dropped} finding(s) did not match the output schema and are not shown.", ""]
     body = []

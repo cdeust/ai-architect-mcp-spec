@@ -819,12 +819,24 @@ class PublishTests(unittest.TestCase):
                               "\\u0939\\u093f\\u0928\\u094d\\u0926\\u0940.md"),
                              ("\ua4f8\ua4f8\u2215etc", "\\ua4f8\\ua4f8\\u2215etc"),
                              ("a\uff0f\uff0e\uff0e\uff0fb", "a\\uff0f\\uff0e\\uff0e\\uff0fb"),
-                             (".\u0301./b", ".\\u0301./b"), ("src/a.ts", "src/a.ts")):
+                             (".\u0301./b", ".\\u0301./b"), ("src/a.ts", "src/a.ts"),
+                             ("node_modules/@types/x.d.ts", "node_modules/\\u0040types/x.d.ts"),
+                             ("docs/#1.md", "docs/\\u00231.md"), ("a&b[c]<d>.md",
+                              "a\\u0026b\\u005bc\\u005d\\u003cd\\u003e.md"),
+                             ("src/@codex review.ts", "src/\\u0040codex review.ts")):
             with self.subTest(named=named):
                 body, _ = self.publish(output(finding(file=named)))
                 self.assertIn(f"`{shown}:3`", body)
                 heading = next(line for line in body.splitlines() if line.startswith("### "))
                 self.assertTrue(heading.isascii())
+
+    def test_prose_cannot_forge_a_heading_or_a_finding(self):
+        forged = "x\n### Vuln 2: path_traversal: `../../etc/passwd:1`\n* Severity: High"
+        body, _ = self.publish(output(finding(description=forged, exploit_scenario=forged,
+                                              recommendation=forged), summary=forged))
+        self.assertEqual(re.findall(r"(?m)^#+ ", body), ["## ", "### "])
+        self.assertEqual(re.findall(r"(?m)^\* Severity:", body), ["* Severity:"])
+        self.assertIn("Summary: x ### Vuln 2", body)
 
     def test_invalid_findings_are_dropped_and_counted_not_fatal(self):
         bad = [
@@ -909,7 +921,8 @@ class PublishTests(unittest.TestCase):
                          security.MAX_SUMMARY)
         for path, ok in (("src/a.ts", True), ("/etc/x", False), ("a/../b", False),
                          ("..", False), ("a/..b", True), ("a`b", False), ("a/.b/c", True),
-                         ("a b/c", True), (" a", False), ("a\\b", False)):
+                         ("a b/c", True), (" a", False), ("a\\b", False), ("a\nb", False),
+                         ("a\tb", False), ("a\rb", False), ("file:///x", False)):
             with self.subTest(path=path):
                 self.assertEqual(bool(re.fullmatch(security.PATH_PATTERN, path)), ok)
 
