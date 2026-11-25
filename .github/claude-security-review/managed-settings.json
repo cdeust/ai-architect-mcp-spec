@@ -11,6 +11,8 @@
       "NotebookEdit",
       "WebFetch",
       "WebSearch",
+      "mcp__github_ci",
+      "mcp__github_file_ops",
       "Read(//proc/**)",
       "Read(//sys/**)",
       "Read(//dev/**)",

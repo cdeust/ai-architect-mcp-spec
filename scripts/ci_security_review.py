@@ -7,12 +7,17 @@ before the review action, and never reads pull request content.
 `budget`: a security review counts when its run is a success of the same pull
 request and its action step ("Claude security review") succeeded. At CAP
 counted reviews no further one runs on the pull request (owner rule
-2026-11-04, ADR-1119, applied to this second review). Writes `round`, `cap`,
-`skip` and `reviewed_sha` to $GITHUB_OUTPUT. Any API or protocol error exits
+2026-11-04, ADR-1119, applied to this second review), and a head already
+reviewed is not reviewed again. Writes `round`, `cap`, `skip`, `reviewed_sha`
+and `head_reviewed` to $GITHUB_OUTPUT. Any API or protocol error exits
 non-zero: no silent fallback to "review".
 
-`prompt`: joins the versioned scan and false-positive instructions of the
-default branch into the action's prompt and writes it to $GITHUB_OUTPUT.
+`prompt`: writes the pull request diffs under .git, joins the versioned scan and
+false-positive instructions of the default branch into the action's prompt and
+writes it to $GITHUB_OUTPUT.
+
+`verify`: fails unless this run published its summary comment, so a run that
+reviewed nothing is not counted by `budget`.
 
 Sources: https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
 https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -51,6 +57,7 @@ INSTRUCTIONS = ROOT / ".github/claude-security-review"
 SCAN = INSTRUCTIONS / "scan-instructions.txt"
 FALSE_POSITIVES = INSTRUCTIONS / "false-positive-filtering.txt"
 MARKER = "<!-- claude-security-review -->"
+VERDICT = re.compile(r"^\s*Verdict:", re.MULTILINE)
 # Written by the workflow before the action runs. Inside .git, a pull request
 # cannot place or replace them, and the action's checkout leaves them alone.
 PR_DIFF = ".git/claude-security-review/pr.diff"
@@ -99,17 +106,51 @@ def reviewed(gh: Gh, repo: str, run: Record) -> bool:
     return "success" in conclusions
 
 
-def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str) -> Record:
+def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, head_sha: str) -> Record:
     # No bypass label: the review is advisory, a fourth one buys nothing the
     # merge waits for.
-    return decide(counted_runs(gh, repo, pr, run_id, head_ref), [], cap=CAP)
+    result = decide(counted_runs(gh, repo, pr, run_id, head_ref), [], cap=CAP)
+    # A reopened or ready_for_review event on a head already reviewed has
+    # nothing new: it spends no round.
+    result["head_reviewed"] = "true" if result["reviewed_sha"] == head_sha else "false"
+    if result["head_reviewed"] == "true":
+        result["skip"] = "true"
+    return result
+
+
+def verify(gh: Gh, repo: str, pr: int, run_id: int) -> str:
+    """The summary this run published: a github-actions[bot] comment with the marker
+    and this run's link, and no verdict line. Raises when there is none, so a run
+    that published nothing fails and is not counted by the budget.
+
+    The engine posts with the workflow's own token, so the author is
+    github-actions[bot]: the merge resolver reads verdicts of claude[bot] only.
+    """
+    jq = (
+        '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") '
+        "| {body, updated_at}"
+    )
+    link = re.compile(rf"/actions/runs/{run_id}(?![0-9])")
+    found = [
+        row["body"]
+        for row in _lines(gh([f"repos/{repo}/issues/{pr}/comments", "--paginate", "--jq", jq]))
+        if isinstance(row.get("body"), str)
+        and MARKER in row["body"]
+        and link.search(row["body"])
+    ]
+    if not found:
+        raise BudgetError("this run published no security review summary")
+    if any(VERDICT.search(body) for body in found):
+        raise BudgetError("the security review summary carries a verdict line")
+    return found[-1]
 
 
 def prompt(env) -> str:
     previous = env.get("REVIEWED_SHA", "")
     scope = (
         f"The previous security review read commit {previous}. Review only the changes in "
-        f"{SINCE_DIFF} and do not re-audit unchanged code."
+        f"{SINCE_DIFF} and do not re-audit unchanged code. Changes merged from main "
+        f"also appear there: review only what {PR_DIFF} contains too."
         if previous
         else "This is the first security review of this pull request: review the whole diff."
     )
@@ -136,8 +177,8 @@ def prompt(env) -> str:
             "your tracking comment (mcp__github_comment__update_claude_comment), including when "
             f"nothing is kept. Start it with the line {MARKER}, then the heading "
             '"Claude security review (advisory)", then the kept findings in the format above '
-            'or the line "No high-confidence security finding.", then the line '
-            f"\"[View job run]({env['RUN_URL']})\".",
+            'or the line "No high-confidence security finding.". The action adds the link '
+            "to this run in the comment's header.",
         ]
     )
 
@@ -162,9 +203,9 @@ def diffs(gh: Gh, repo: str, pr: int, head_sha: str, reviewed_sha: str, root: Pa
     for path, args in wanted:
         try:
             text = gh(args)
-        except subprocess.CalledProcessError as error:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             text = (
-                f"Diff unavailable from the GitHub API (exit {error.returncode}). "
+                f"Diff unavailable from the GitHub API ({type(error).__name__}). "
                 "Read the changed files listed in the prompt at the pull request head.\n"
             )
         path.write_text(text, encoding="utf-8")
@@ -182,7 +223,8 @@ def write_output(env, key: str, value: str) -> None:
 def main(argv: list[str]) -> int:
     env = os.environ
     if argv == ["budget"]:
-        result = budget(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]), env["HEAD_REF"])
+        result = budget(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
+                        env["HEAD_REF"], env["HEAD_SHA"])
         with open(output_file(env), "a", encoding="utf-8") as out:
             for key, value in result.items():
                 out.write(f"{key}={value}\n")
@@ -194,7 +236,11 @@ def main(argv: list[str]) -> int:
               env.get("REVIEWED_SHA", ""), Path(env["GITHUB_WORKSPACE"]))
         write_output(env, "prompt", prompt(env))
         return 0
-    print("usage: ci_security_review.py budget|prompt", file=sys.stderr)
+    if argv == ["verify"]:
+        verify(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]))
+        print("The security review summary of this run is published.")
+        return 0
+    print("usage: ci_security_review.py budget|prompt|verify", file=sys.stderr)
     return 2
 
 

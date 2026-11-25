@@ -32,8 +32,7 @@ jobs:
     timeout-minutes: 30 # source: operational cap, the real bound on one review's cost.
     permissions:
       contents: read
-      pull-requests: write # the action's tracking and inline comments
-      id-token: write # the action's Claude GitHub App token exchange (OIDC)
+      pull-requests: write # the review's tracking and inline comments
       actions: read # the budget reads this workflow's earlier runs
     steps:
       # Every file this job executes or hands to the model comes from main.
@@ -77,10 +76,13 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 -I scripts/ci_security_review.py budget
+      # An unreadable quota is a stated skip, not a red advisory job.
       - name: Measure Claude subscription quota
         id: quota
         if: steps.ready.outputs.ready == 'true' && steps.budget.outputs.skip == 'false'
+        continue-on-error: true
         # './' is the workspace, which holds the main checkout above: the quota
         # action is main's copy, never the pull request's.
         uses: ./.github/actions/claude-subscription-quota # zizmor: ignore[self-repository]
@@ -91,12 +93,18 @@ jobs:
         if: steps.ready.outputs.ready == 'true'
         env:
           SKIP: ${{ steps.budget.outputs.skip }}
+          HEAD_REVIEWED: ${{ steps.budget.outputs.head_reviewed }}
+          QUOTA: ${{ steps.quota.outcome }}
           ELIGIBLE: ${{ steps.quota.outputs.eligible }}
           REMAINING: ${{ steps.quota.outputs.remaining }}
         run: |
           set -euo pipefail
-          if [ "$SKIP" != false ]; then
+          if [ "$HEAD_REVIEWED" = true ]; then
+            reason="this head was already reviewed"
+          elif [ "$SKIP" != false ]; then
             reason="the review budget of this pull request is used"
+          elif [ "$QUOTA" != success ]; then
+            reason="the Claude subscription quota could not be read"
           elif [ "$ELIGIBLE" != true ]; then
             reason="the Claude subscription has no headroom or usage credits are on (remaining: ${REMAINING:-unknown})"
           else
@@ -127,7 +135,6 @@ jobs:
           REVIEWED_SHA: ${{ steps.budget.outputs.reviewed_sha }}
           ROUND: ${{ steps.budget.outputs.round }}
           CAP: ${{ steps.budget.outputs.cap }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: python3 -I scripts/ci_security_review.py prompt
       # source: same step as claude-review.yml; runs only in a private repository.
       - name: Authorize pinned action fetch
@@ -158,6 +165,10 @@ jobs:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The workflow's own token, not the Claude App's: comments come from
+          # github-actions[bot], whose text the merge resolver never reads as a
+          # verdict, and the session holds no contents: write token.
+          github_token: ${{ github.token }}
           track_progress: true
           allowed_bots: "claude[bot],chatgpt-codex-connector[bot]"
           prompt: ${{ steps.prompt.outputs.prompt }}
@@ -166,3 +177,12 @@ jobs:
             --permission-mode dontAsk
             --allowedTools "Task,mcp__github_inline_comment__create_inline_comment"
             --model "claude-opus-5-5"
+      # A run that published no summary fails, so the budget does not count it.
+      - name: Verify the published summary
+        if: steps.decide.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+        run: python3 -I scripts/ci_security_review.py verify
