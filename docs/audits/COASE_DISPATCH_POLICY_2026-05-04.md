@@ -4,6 +4,10 @@
 **Scope:** Parallel engineer dispatch in the agentic-ai monorepo
 **Trigger:** 15 locked worktrees observed; cross-agent contamination causing pre-push gate failures
 
+This audit records the May 2026 proposal. The old dispatch helper has been
+retired. For current worktree handling and the shared pre-push gate, follow
+the repository's [agent guidance](../agent-guidance.md#the-delivery-gate).
+
 ---
 
 ## §1 Option Matrix
@@ -33,7 +37,7 @@
 1. The main working tree (`/Users/cdeust/Developments/prd-spec-generator`) is designated read-only for all engineer agents — equivalent to "locking main."
 2. Worktree cleanup is made atomic with dispatch: the orchestrator removes the worktree before confirming success back to the user.
 
-**Coase condition:** the coordination cost of enforcing worktree isolation via policy + a 40-line script is lower than the transaction cost of cloning per agent or the ongoing transaction cost of contamination incidents (failed CI, manual `git worktree remove --force`, debug time).
+**Coase condition:** the coordination cost of enforcing worktree isolation is lower than the transaction cost of cloning per agent or the ongoing transaction cost of contamination incidents (failed CI, manual `git worktree remove --force`, debug time).
 
 ---
 
@@ -43,8 +47,7 @@
 
 1. Run `git -C /path/to/repo status --porcelain` — must be empty (ignoring `.claude/` via `.gitignore`). If not, ABORT dispatch and report the dirty file list.
 2. Run `git -C /path/to/repo worktree list --porcelain` — confirm the target worktree slot does not already exist.
-3. Run `scripts/dispatch-engineer.sh <agent-id> <branch-name>` — this creates the worktree, runs `pnpm install`, and returns the worktree path.
-4. Pass the exact worktree path to the engineer prompt (see §4). Never omit it.
+3. Pass the exact worktree path to the engineer prompt (see §4). Never omit it.
 
 ### After an engineer reports back
 
@@ -92,33 +95,14 @@ RULES:
 
 | Item | Type | Owner | Status |
 |---|---|---|---|
-| `scripts/dispatch-engineer.sh` | Script | Orchestrator invokes pre-dispatch | **To build** |
-| Pre-push hook: verify CWD is inside worktree | Hook (`.git/hooks/pre-push`) | Installed per worktree by dispatch script | **To build** |
 | Worktree cleanup verification (post-engineer) | Orchestrator-only policy | Orchestrator | **Policy defined in §3** |
 | `.gitignore` entry for `.claude/worktrees/` | Config | Repository | **To add** |
-| Contamination report log (`logs/contamination.log`) | Script output | `dispatch-engineer.sh` | **To build** |
 | CI step: reject PRs from agents that bypassed pre-push | CI workflow | CI (GitHub Actions) | **Future — not blocking** |
-
-### `scripts/dispatch-engineer.sh` contract
-
-Input: `<agent-id> <branch-name> [base-branch=main]`
-
-Steps (all must succeed or script exits non-zero):
-
-1. Assert `git status --porcelain` is clean (excluding `.claude/`).
-2. `git worktree add .claude/worktrees/<agent-id> -b <branch-name> <base-branch>`.
-3. `cd .claude/worktrees/<agent-id> && pnpm install --frozen-lockfile`.
-4. Install the per-worktree pre-push hook.
-5. Print the worktree path to stdout for the orchestrator to capture.
-
-### Per-worktree pre-push hook contract
-
-Runs `git status --porcelain` inside the worktree. If any tracked file path resolves outside the worktree root, prints `ISOLATION VIOLATION: <path>` and exits 1.
 
 ---
 
 ## Boundary verdict
 
-The boundary that minimizes cross-agent transaction cost is **Option A with Option C's lock rule**: one agent per worktree, main root locked to orchestrator-only access, cleanup atomically enforced by `dispatch-engineer.sh`. The coordination cost of this policy (one script, two hook checks, three orchestrator assertions) is an order of magnitude lower than the transaction cost of cloning per agent (disk, time, parallelism cap) or the ongoing contamination cost (debug time, forced worktree removal, failed CI runs).
+The proposed boundary was **Option A with Option C's lock rule**: one agent per worktree, main root reserved for the orchestrator, and cleanup verified before another dispatch.
 
 The 15 currently-locked worktrees are direct evidence that the cleanup step has zero enforcement today. The policy in §3 closes that gap.

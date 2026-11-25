@@ -11,11 +11,12 @@
  * Usage:
  *   node judge.mjs --provider gemini < /tmp/prompt.txt
  *   node judge.mjs --provider mistral --model mistral-small-latest < prompt.txt
- *   node judge.mjs --base-url https://... --model my-model --api-key sk-... < p.txt
+ *   node judge.mjs --base-url https://... --model my-model < p.txt
  *
  * Env (used when the matching flag is absent):
  *   EXTERNAL_JUDGE_BASE_URL, EXTERNAL_JUDGE_MODEL, EXTERNAL_JUDGE_API_KEY,
- *   EXTERNAL_JUDGE_TIMEOUT_MS, GEMINI_API_KEY, MISTRAL_API_KEY.
+ *   EXTERNAL_JUDGE_ALLOWED_ORIGINS, EXTERNAL_JUDGE_TIMEOUT_MS,
+ *   GEMINI_API_KEY, MISTRAL_API_KEY.
  *
  * Precondition: prompt text arrives on stdin (`… < prompt.txt`). This script
  * opens no files. Prompt text is opaque to it — it is not validated as a
@@ -34,30 +35,9 @@
  */
 
 import { resolveConfig } from "./lib/config.mjs";
+import { parseFlags, writeCliError } from "./lib/cli.mjs";
 import { runJudge } from "./lib/judge-core.mjs";
 import { redact } from "./lib/redact.mjs";
-
-/**
- * @param {string[]} argv
- * @returns {Record<string, string>}
- */
-function parseFlags(argv) {
-  /** @type {Record<string, string>} */
-  const flags = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg.startsWith("--")) continue;
-    const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--")) {
-      flags[key] = next;
-      i++;
-    } else {
-      flags[key] = "true";
-    }
-  }
-  return flags;
-}
 
 async function readStdin() {
   const chunks = [];
@@ -67,6 +47,7 @@ async function readStdin() {
 
 async function main() {
   const flags = parseFlags(process.argv.slice(2));
+  const config = resolveConfig(flags, process.env);
 
   // Prompt text arrives on stdin ONLY. `--prompt-file <p>` used to read the
   // path itself and post the bytes to a third-party endpoint — an
@@ -77,22 +58,22 @@ async function main() {
   // the exfiltration primitive.
   const promptText = await readStdin();
 
-  if (!promptText || !promptText.trim()) {
-    process.stderr.write("judge.mjs: empty prompt (stdin was empty — pass the prompt as `judge.mjs … < prompt.txt`)\n");
-    process.exit(2);
+  if (!promptText.trim()) {
+    process.stderr.write(`${redact("judge.mjs: empty prompt (pass the prompt as `judge.mjs … < prompt.txt`)", config)}\n`);
+    process.exitCode = 2;
+    return;
   }
 
-  const config = resolveConfig(flags, process.env);
-
-  if (flags.debug === "true") {
-    process.stderr.write(`judge.mjs debug config: ${JSON.stringify(redact({ ...config, apiKey: config.apiKey ? "set" : "" }))}\n`);
+  const debug = flags.debug === "true";
+  if (debug) {
+    process.stderr.write(`judge.mjs debug config: ${JSON.stringify(redact(config, config))}\n`);
   }
 
   const result = await runJudge(config, promptText);
+  if (debug && result.status === "error") {
+    process.stderr.write(`judge.mjs debug error: ${result.reason}\n`);
+  }
   process.stdout.write(JSON.stringify(result) + "\n");
 }
 
-main().catch((err) => {
-  process.stderr.write(`judge.mjs: unexpected failure: ${err instanceof Error ? err.stack : String(err)}\n`);
-  process.exit(2);
-});
+main().catch((err) => writeCliError("judge.mjs", err));

@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runJudge } from "../lib/judge-core.mjs";
 
+const allowedOrigins = ["https://x"];
+
 /**
  * fetch is monkey-patched here strictly for test isolation (mocking network
  * I/O without a real request) — the one justified exception documented in
@@ -48,7 +50,7 @@ test("runJudge: success path returns ok with parsed verdict, model, provider, la
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", timeoutMs: 5000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", allowedOrigins, timeoutMs: 5000 },
       "prompt text",
     );
     assert.equal(result.status, "ok");
@@ -68,12 +70,13 @@ test("runJudge: never fabricates a verdict on network error — returns status e
   };
   try {
     const result = await runJudge(
-      { provider: "mistral", baseUrl: "https://x/v1/", model: "mistral-small-latest", apiKey: "k", timeoutMs: 1000 },
+      { provider: "mistral", baseUrl: "https://x/v1/", model: "mistral-small-latest", apiKey: "fixture-key", allowedOrigins, timeoutMs: 1000 },
       "prompt text",
     );
     assert.equal(result.status, "error");
     assert.ok(!("verdict" in result));
-    assert.match(result.reason, /simulated network failure/);
+    assert.match(result.reason, /network error/);
+    assert.doesNotMatch(result.reason, /simulated network failure/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -88,7 +91,7 @@ test("runJudge: never fabricates a verdict when the model reply has no parseable
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "m", apiKey: "k", timeoutMs: 1000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "m", apiKey: "k", allowedOrigins, timeoutMs: 1000 },
       "prompt text",
     );
     assert.equal(result.status, "error");
@@ -118,7 +121,7 @@ test("runJudge: a batched reply (issue #119) returns every verdict with its clai
     );
   try {
     const result = await runJudge(
-      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", timeoutMs: 5000 },
+      { provider: "gemini", baseUrl: "https://x/v1/", model: "gemini-2.0-flash", apiKey: "k", allowedOrigins, timeoutMs: 5000 },
       "prompt text",
     );
     assert.equal(result.status, "ok");
@@ -127,4 +130,44 @@ test("runJudge: a batched reply (issue #119) returns every verdict with its clai
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("skips name the applicable key and redact configured literals in local diagnostics", async () => {
+  for (const [provider, label] of [["gemini", "EXTERNAL_JUDGE_API_KEY or GEMINI_API_KEY"],
+    ["mistral", "EXTERNAL_JUDGE_API_KEY or MISTRAL_API_KEY"], ["custom", "EXTERNAL_JUDGE_API_KEY"]]) {
+    const result = await runJudge({ provider, baseUrl: "credentials", apiKey: "" }, "");
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, `no ***REDACTED*** — set ${label}`);
+  }
+});
+
+test("missing model and missing URL both fail with a redacted reason before fetch", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("unexpected"); });
+  for (const [baseUrl, model] of [["https://x", ""], ["", "m"]]) {
+    assert.deepEqual(await runJudge({ baseUrl, model, apiKey: "model" }, ""),
+      { status: "error", reason: "missing config — a base URL and ***REDACTED*** are required" });
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("judge masks local exception messages as well as provider verdict text, preserving the taxonomy", async (t) => {
+  const config = { provider: "key", baseUrl: "https://x/v1", model: "key-model", apiKey: "key", allowedOrigins, timeoutMs: 1000 };
+  const times = [20, 27];
+  const content = JSON.stringify([{ claim_id: "key-id", verdict: "PASS", rationale: "key", caveats: ["key"], confidence: 1 }]);
+  const response = Response.json({ choices: [{ message: { content } }] });
+  t.mock.method(Date, "now", () => times.shift());
+  t.mock.method(globalThis, "fetch", async () => response);
+  assert.deepEqual(await runJudge(config, ""), {
+    status: "ok", model: "***REDACTED***-model", provider: "***REDACTED***", latency_ms: 7,
+    verdicts: [{ claim_id: "***REDACTED***-id", verdict: "PASS", rationale: "***REDACTED***", caveats: ["***REDACTED***"], confidence: 1 }],
+  });
+  const refused = { ...config, apiKey: "origin", allowedOrigins: [] };
+  assert.deepEqual(await runJudge(refused, ""), { status: "error", reason: "Base URL ***REDACTED*** is not authorized for the configured API key." });
+});
+
+test("a non-Error rejection receives the local fallback diagnostic", async (t) => {
+  // A response adapter can throw any JS value while releasing an error body.
+  t.mock.method(globalThis, "fetch", async () => ({ ok: false, status: 400, body: { cancel() { throw "fixture-private"; } } }));
+  assert.deepEqual(await runJudge({ provider: "custom", baseUrl: "https://x", allowedOrigins,
+    model: "m", apiKey: "key", timeoutMs: 1000 }, ""), { status: "error", reason: "unexpected judge failure" });
 });

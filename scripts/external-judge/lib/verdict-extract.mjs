@@ -111,10 +111,8 @@ export function extractVerdict(rawText) {
   let parsed;
   try {
     parsed = JSON.parse(candidate);
-  } catch (err) {
-    throw new Error(
-      `extractVerdict: candidate JSON object failed to parse: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  } catch {
+    throw new Error("extractVerdict: candidate JSON object failed to parse");
   }
 
   return toVerdict(parsed);
@@ -135,7 +133,7 @@ function toVerdict(parsed) {
 
   if (typeof obj.verdict !== "string" || !VERDICT_VALUES.includes(/** @type {any} */ (obj.verdict))) {
     throw new Error(
-      `extractVerdict: "verdict" must be one of ${VERDICT_VALUES.join(", ")}; got ${JSON.stringify(obj.verdict)}`,
+      `extractVerdict: "verdict" must be one of ${VERDICT_VALUES.join(", ")}`,
     );
   }
   if (typeof obj.rationale !== "string" || obj.rationale.trim().length === 0) {
@@ -184,11 +182,11 @@ export function extractVerdicts(rawText) {
   const parsed = firstParsedJson(rawText);
   if (!Array.isArray(parsed)) {
     const verdict = toVerdict(parsed);
-    const claimId = parsed && typeof parsed === "object" ? /** @type {Record<string, unknown>} */ (parsed).claim_id : undefined;
+    const claimId = /** @type {Record<string, unknown>} */ (parsed).claim_id;
     return { verdict: typeof claimId === "string" ? { claim_id: claimId, ...verdict } : verdict };
   }
   const verdicts = parsed.map((item, i) => {
-    const claimId = item && typeof item === "object" ? /** @type {Record<string, unknown>} */ (item).claim_id : undefined;
+    const claimId = item.claim_id;
     if (typeof claimId !== "string" || claimId.length === 0) {
       throw new Error(`extractVerdicts: element ${i} has no string "claim_id"`);
     }
@@ -211,8 +209,7 @@ export function extractVerdicts(rawText) {
  * @returns {unknown}
  */
 function firstParsedJson(text) {
-  /** @type {Error|undefined} */
-  let lastError;
+  let failure;
   let start = nextOpening(text, 0);
   while (start !== -1) {
     const candidate = findFirstBalanced(text, start);
@@ -222,17 +219,14 @@ function firstParsedJson(text) {
     try {
       const value = JSON.parse(candidate);
       if (isVerdictShaped(value)) return value;
-      lastError = new Error("a JSON value that is not a verdict or a list of verdicts");
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+      failure = "candidate JSON is not a verdict or a list of verdicts";
+    } catch {
+      // A parser error can quote provider text. Keep only the local classification.
+      failure = "candidate JSON failed to parse";
     }
     start = nextOpening(text, start + candidate.length);
   }
-  throw new Error(
-    lastError
-      ? `extractVerdicts: no candidate JSON parsed: ${lastError.message}`
-      : "extractVerdicts: no JSON array or object found in reply",
-  );
+  throw new Error(`extractVerdicts: ${failure ?? "no JSON array or object found in reply"}`);
 }
 
 /**
@@ -259,5 +253,5 @@ function isVerdictShaped(value) {
   const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
   /** @param {unknown} v */
   const answers = (v) => isObject(v) && ("verdict" in /** @type {object} */ (v) || "claim_id" in /** @type {object} */ (v));
-  return Array.isArray(value) ? value.length > 0 && value.every(isObject) && value.some(answers) : answers(value);
+  return Array.isArray(value) ? value.every(isObject) && value.some(answers) : answers(value);
 }
