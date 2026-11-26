@@ -878,7 +878,7 @@ jobs:
               echo "::error::the signing agent did not stop on SIGTERM"
               status=1
             fi
-            if [ -n "$publisher" ] && ! stop "$publisher" 10; then
+            if ! stop "$publisher" 10; then
               echo "::error::the publisher did not stop on SIGTERM"
               status=1
             fi
@@ -887,7 +887,6 @@ jobs:
               kill -KILL -- "-$(cat "$AGENT_DIR/transport")" 2>/dev/null || :
               rm -f -- "$AGENT_DIR/transport"
             fi
-            wait "$publisher" 2>/dev/null || :
             rm -f -- "$SSH_AUTH_SOCK"
             rmdir -- "$AGENT_DIR"
             exit "$status"
