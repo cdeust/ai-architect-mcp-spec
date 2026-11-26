@@ -115,7 +115,8 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
     rows = records(text)
     # The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
     # which hold the attempts, would fall off. Refuse rather than undercount.
-    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(rows)):
+    unique = {row.get("id") for row in rows}
+    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)):
         raise BudgetError("the API lists fewer runs of this branch than it counts")
     found, read = [], set()
     for row in rows:
@@ -173,13 +174,20 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
-COUNTED_NAMES = (JOB, ACTION_STEP, PUBLISH_JOB, PUBLISH_STEP)
+# Each name the budget counts by, with where it must stand: a job's `name:` sits at
+# the jobs' indent, a step's `- name:` at the steps' indent. JOB and ACTION_STEP are
+# the same string, so a match must say which of the two it is.
+COUNTED_NAMES = (("job", JOB), ("step", ACTION_STEP), ("job", PUBLISH_JOB),
+                 ("step", PUBLISH_STEP))
+NAME_LINE = {"job": r"^ {4}name: {name}\s*$", "step": r"^ {6}- name: {name}\s*$"}
 
 
 def names_present(definition: str) -> bool:
-    """Whether the workflow that runs still carries every name the budget counts by."""
-    return all(re.search(rf"^\s*(?:-\s+)?name:\s*{re.escape(name)}\s*$", definition,
-                         re.MULTILINE) for name in COUNTED_NAMES)
+    """Whether the workflow that runs still carries every name the budget counts by,
+    each as a job or a step name of this file's layout. A quoted or commented name, or
+    another layout, fails closed: that PR is not reviewed, and the summary says so."""
+    return all(re.search(NAME_LINE[kind].replace("{name}", re.escape(name)), definition,
+                         re.MULTILINE) for kind, name in COUNTED_NAMES)
 
 
 def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> Record:
@@ -193,14 +201,16 @@ def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> 
     current = gh([f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"]).strip()
     if not SHA.fullmatch(current):
         raise BudgetError("protocol")
+    if current != head_sha:
+        # Decided before reading an old merge commit GitHub may no longer serve.
+        return {"stale": "true", "renamed": "false"}
     content = gh([f"repos/{repo}/contents/.github/workflows/{WORKFLOW}", "--method", "GET",
                   "-f", f"ref={merge_sha}", "--jq", ".content"])
     try:
         definition = base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
     except ValueError as error:
         raise BudgetError("protocol") from error
-    return {"stale": "true" if current != head_sha else "false",
-            "renamed": "false" if names_present(definition) else "true"}
+    return {"stale": "false", "renamed": "false" if names_present(definition) else "true"}
 
 
 def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: str,

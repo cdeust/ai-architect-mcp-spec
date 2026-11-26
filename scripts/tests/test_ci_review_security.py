@@ -635,17 +635,43 @@ class BudgetTests(unittest.TestCase):
     def test_a_definition_without_a_counted_name_spends_no_round(self):
         text = WORKFLOW.read_text()
         self.assertEqual(set(security.COUNTED_NAMES),
-                         {security.JOB, security.ACTION_STEP, security.PUBLISH_JOB,
-                          security.PUBLISH_STEP})
-        for name in ("Claude security review", security.PUBLISH_JOB, security.PUBLISH_STEP):
-            with self.subTest(name=name):
-                renamed = text.replace(f"name: {name}\n", f"name: {name} (renamed)\n")
+                         {("job", security.JOB), ("step", security.ACTION_STEP),
+                          ("job", security.PUBLISH_JOB), ("step", security.PUBLISH_STEP)})
+        renames = {
+            "engine job only": ("    name: Claude security review\n",),
+            "engine step only": ("      - name: Claude security review\n",),
+            "publish job": (f"    name: {security.PUBLISH_JOB}\n",),
+            "publish step": (f"      - name: {security.PUBLISH_STEP}\n",),
+            "quoted": ("    name: Claude security review\n",),
+        }
+        for label, (line,) in renames.items():
+            with self.subTest(rename=label):
+                self.assertEqual(text.count(line), 1, line)
+                new = (line.replace("name: ", 'name: "').rstrip("\n") + '"\n'
+                       if label == "quoted" else line.rstrip("\n") + " (renamed)\n")
+                renamed = text.replace(line, new)
                 result = self.budget([], {}, workflow=renamed.encode())
                 self.assertEqual((result["skip"], result["renamed"]), ("true", "true"))
         # Any other change to the definition is not a reason to skip: no comparison with main.
         result = self.budget([], {}, workflow=(text + "\n# changed\n").encode())
         self.assertEqual((result["skip"], result["renamed"], result["stale"]),
                          ("false", "false", "false"))
+
+    def test_a_stale_run_never_reads_its_old_merge_commit(self):
+        base = fake_gh([], {}, current="c" * 40)
+
+        def gh(args):
+            if "/contents/" in args[0]:
+                raise subprocess.CalledProcessError(1, "gh")
+            return base(args)
+
+        result = security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD, MERGE)
+        self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
+
+    def test_repeated_rows_do_not_hide_a_run_from_the_refusal(self):
+        rows = [run(i, 1, str(i % 10) * 40) for i in range(1, 6)] + [run(5, 1, "5" * 40)]
+        with self.assertRaises(security.BudgetError):
+            self.budget(rows, {}, total=6)
 
     def test_a_row_repeated_by_pagination_counts_once(self):
         rows = [run(1, 1, "1" * 40), run(1, 1, "1" * 40)]

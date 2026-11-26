@@ -15,9 +15,10 @@ The workflow has two jobs.
 1. **`security-review`** has `contents: read`, `pull-requests: read` and `actions: read`.
    - It checks out `main` and runs the guards. The token and the files must be
      present on main. The event's head must still be the PR's head. The definition
-     that runs (the PR's, at its merge commit) must still carry the job and step names
-     the budget counts attempts by; a PR that renames them gets no security review,
-     and the summary says so. The budget must have room, and the
+     that runs (the PR's, at its merge commit) must still carry the job names and the
+     step names the budget counts attempts by, each at its job or step place in the
+     file. A PR that renames one of them, or quotes or comments it, gets no security
+     review, and the summary says so. The budget must have room, and the
      subscription must have quota.
    - It installs read-only managed settings and writes the pull request diff to
      `.claude-security-review/` in the workspace.
@@ -149,8 +150,8 @@ It could become the engine if all of these held:
 
 To replace the engine, change only the `Claude security review` step, its two
 prerequisites and the schema. Every other step above it is a guard and stays, and
-so does the publish job. The budget counts the step by that name: a PR that renames
-it gets no review, and after such a rename merges, earlier attempts recorded
+so does the publish job. The budget counts the step and its job by name: a PR that
+renames either gets no review, and after such a rename merges, earlier attempts recorded
 under the old name are no longer counted for open PRs.
 
 ## Guards
