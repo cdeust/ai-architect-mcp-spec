@@ -11,9 +11,10 @@ the job of that name) ran, whatever it concluded. It caps spend, not successes: 
 CAP attempts no further one runs (the cap of claude-review.yml, ADR-1119, owner rule
 2026-11-04, taken over for this second review by the task's decision of 2026-11-25),
 and a head already attempted is not attempted again. Nor does a run spend a round
-when its head is no longer the PR's head, or when the PR changes this workflow. The commit a
+when its head is no longer the PR's head, or when the workflow that runs lacks a
+name the budget counts by. The commit a
 later round starts from is the last one whose review was published. Writes
-`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed`, `stale` and `drifted` to
+`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed`, `stale` and `renamed` to
 $GITHUB_OUTPUT. Any
 API or protocol error exits non-zero: no silent fallback to "review".
 
@@ -38,7 +39,6 @@ import re
 import secrets
 import subprocess
 import sys
-import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -117,8 +117,12 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
     # which hold the attempts, would fall off. Refuse rather than undercount.
     if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(rows)):
         raise BudgetError("the API lists fewer runs of this branch than it counts")
-    found = []
+    found, read = [], set()
     for row in rows:
+        # Offset pagination can repeat a row when a run is created between pages.
+        if row.get("id") in read:
+            continue
+        read.add(row.get("id"))
         if len(found) >= CAP:
             break  # the round is refused anyway; reading further only spends API calls
         if pr not in row.get("prs", []):
@@ -169,17 +173,22 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
-def workflow_on_main() -> bytes:
-    return (ROOT / ".github/workflows" / WORKFLOW).read_bytes()
+COUNTED_NAMES = (JOB, ACTION_STEP, PUBLISH_JOB, PUBLISH_STEP)
+
+
+def names_present(definition: str) -> bool:
+    """Whether the workflow that runs still carries every name the budget counts by."""
+    return all(re.search(rf"^\s*(?:-\s+)?name:\s*{re.escape(name)}\s*$", definition,
+                         re.MULTILINE) for name in COUNTED_NAMES)
 
 
 def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> Record:
     """Why this event must not spend a round, before any count.
 
     `stale`: the event's head is no longer the PR's head (a re-run of an old run).
-    `drifted`: the PR changes this workflow. The budget reads job and step names from
-    main's copy and the run follows the PR's, so a renamed step would go uncounted;
-    such a PR is reviewed after the merge, from main's definition.
+    `renamed`: the definition that runs (the PR's, at its merge commit) lacks a job or
+    step name the budget counts attempts by, so its attempts could not be counted;
+    such a PR gets no security review, and the summary says so.
     """
     current = gh([f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"]).strip()
     if not SHA.fullmatch(current):
@@ -187,11 +196,11 @@ def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> 
     content = gh([f"repos/{repo}/contents/.github/workflows/{WORKFLOW}", "--method", "GET",
                   "-f", f"ref={merge_sha}", "--jq", ".content"])
     try:
-        theirs = base64.b64decode("".join(content.split()), validate=True)
+        definition = base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
     except ValueError as error:
         raise BudgetError("protocol") from error
     return {"stale": "true" if current != head_sha else "false",
-            "drifted": "true" if theirs != workflow_on_main() else "false"}
+            "renamed": "false" if names_present(definition) else "true"}
 
 
 def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: str,
@@ -202,6 +211,10 @@ def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: 
         if not SHA.fullmatch(sha):
             raise BudgetError("protocol")
     gate = preconditions(gh, repo, pr, head_sha, merge_sha)
+    if "true" in gate.values():
+        # A stated skip: nothing is counted, so no count can turn it red.
+        return {"round": 0, "cap": CAP, "skip": "true", "reviewed_sha": "",
+                "head_reviewed": "false", **gate}
     runs = attempted_runs(gh, repo, pr, run_id, run_attempt, head_ref, head_sha)
     result = decide(runs, [], cap=CAP)
     # A later round reviews only what changed since a review that was published;
@@ -214,7 +227,7 @@ def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: 
     seen = {run.get("head_sha") for run in runs}
     result["head_reviewed"] = "true" if head_sha in seen else "false"
     result.update(gate)
-    if "true" in (result["head_reviewed"], gate["stale"], gate["drifted"]):
+    if result["head_reviewed"] == "true":
         result["skip"] = "true"
     return result
 

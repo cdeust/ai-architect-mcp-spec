@@ -107,14 +107,14 @@ jobs:
           SKIP: ${{ steps.budget.outputs.skip }}
           HEAD_REVIEWED: ${{ steps.budget.outputs.head_reviewed }}
           STALE: ${{ steps.budget.outputs.stale }}
-          DRIFTED: ${{ steps.budget.outputs.drifted }}
+          RENAMED: ${{ steps.budget.outputs.renamed }}
           QUOTA: ${{ steps.quota.outcome }}
           ELIGIBLE: ${{ steps.quota.outputs.eligible }}
           REMAINING: ${{ steps.quota.outputs.remaining }}
         run: |
           set -euo pipefail
-          if [ "$DRIFTED" = true ]; then
-            reason="this pull request changes the security review workflow; it is reviewed from main's definition after the merge"
+          if [ "$RENAMED" = true ]; then
+            reason="the workflow that runs lacks a job or step name the budget counts by; this pull request gets no security review"
           elif [ "$STALE" = true ]; then
             reason="this run's head is no longer the pull request's head"
           elif [ "$HEAD_REVIEWED" = true ]; then

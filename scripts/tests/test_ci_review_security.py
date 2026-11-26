@@ -285,7 +285,7 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "6f3025756a0f04044b0bab399160be063056408564aac8d7b5288c79016a9c85"
+REVIEWED_WORKFLOW_SHA256 = "b6351ccdc3f56b7163876255628602b582a45b394f9dfeabbda4f8ed6a38a88f"
 
 
 def _keyed(value):
@@ -430,7 +430,7 @@ class GuardScriptTests(unittest.TestCase):
 
     def test_the_review_runs_only_inside_the_budget_and_the_quota(self):
         ok = {"SKIP": "false", "HEAD_REVIEWED": "false", "QUOTA": "success",
-              "STALE": "false", "DRIFTED": "false"}
+              "STALE": "false", "RENAMED": "false"}
         cases = [
             ({**ok, "ELIGIBLE": "true"}, "run=true\n", ""),
             ({**ok, "SKIP": "true", "QUOTA": "skipped"}, "run=false\n", "budget"),
@@ -441,8 +441,8 @@ class GuardScriptTests(unittest.TestCase):
             ({**ok, "QUOTA": "failure"}, "run=false\n", "could not be read"),
             ({**ok, "SKIP": "true", "STALE": "true", "QUOTA": "skipped"}, "run=false\n",
              "no longer the pull request's head"),
-            ({**ok, "SKIP": "true", "DRIFTED": "true", "QUOTA": "skipped"}, "run=false\n",
-             "changes the security review workflow"),
+            ({**ok, "SKIP": "true", "RENAMED": "true", "QUOTA": "skipped"}, "run=false\n",
+             "gets no security review"),
             ({**ok, "SKIP": "", "ELIGIBLE": "true"}, "run=false\n", "budget"),
         ]
         for env, expected, said in cases:
@@ -505,7 +505,7 @@ class BudgetTests(unittest.TestCase):
     def test_first_review_runs(self):
         self.assertEqual(self.budget([], {}), {"round": 1, "cap": 3, "skip": "false",
                                                "reviewed_sha": "", "head_reviewed": "false",
-                                               "stale": "false", "drifted": "false"})
+                                               "stale": "false", "renamed": "false"})
 
     def test_every_attempt_of_the_engine_counts_whatever_it_concluded(self):
         runs = [run(1, 1, "1" * 40), run(2, 2, "2" * 40), run(3, 3, "3" * 40),
@@ -625,15 +625,32 @@ class BudgetTests(unittest.TestCase):
                          2: jobs_of({"engine": "failure"})})
 
     def test_a_superseded_head_spends_no_round(self):
-        result = self.budget([], {}, current="c" * 40)
-        self.assertEqual((result["skip"], result["stale"], result["round"]), ("true", "true", 1))
+        calls = []
+        result = self.budget([run(1, 1)], {1: jobs_of({"engine": "success"})}, calls,
+                             current="c" * 40, total=5)
+        self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
+        # No count runs, so a count error (here: total above the rows) cannot turn it red.
+        self.assertFalse(any(c[0].endswith("/runs") for c in calls))
 
-    def test_a_pr_that_changes_this_workflow_is_reviewed_after_the_merge(self):
-        result = self.budget([], {}, workflow=WORKFLOW.read_bytes() + b"\n# changed\n")
-        self.assertEqual((result["skip"], result["drifted"]), ("true", "true"))
-        result = self.budget([], {})
-        self.assertEqual((result["skip"], result["drifted"], result["stale"]),
+    def test_a_definition_without_a_counted_name_spends_no_round(self):
+        text = WORKFLOW.read_text()
+        self.assertEqual(set(security.COUNTED_NAMES),
+                         {security.JOB, security.ACTION_STEP, security.PUBLISH_JOB,
+                          security.PUBLISH_STEP})
+        for name in ("Claude security review", security.PUBLISH_JOB, security.PUBLISH_STEP):
+            with self.subTest(name=name):
+                renamed = text.replace(f"name: {name}\n", f"name: {name} (renamed)\n")
+                result = self.budget([], {}, workflow=renamed.encode())
+                self.assertEqual((result["skip"], result["renamed"]), ("true", "true"))
+        # Any other change to the definition is not a reason to skip: no comparison with main.
+        result = self.budget([], {}, workflow=(text + "\n# changed\n").encode())
+        self.assertEqual((result["skip"], result["renamed"], result["stale"]),
                          ("false", "false", "false"))
+
+    def test_a_row_repeated_by_pagination_counts_once(self):
+        rows = [run(1, 1, "1" * 40), run(1, 1, "1" * 40)]
+        result = self.budget(rows, {1: jobs_of({"engine": "failure"})}, total=1)
+        self.assertEqual(result["round"], 2)
 
     def test_the_scan_stops_once_the_cap_is_reached(self):
         calls = []
