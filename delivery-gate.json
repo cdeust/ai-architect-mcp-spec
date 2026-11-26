@@ -8,8 +8,9 @@
       "name": "build",
       "profile": "offline",
       "command": [
-        "pnpm",
-        "build"
+        "node",
+        "scripts/check-dist-in-sync.mjs",
+        "--rebuild"
       ]
     },
     {

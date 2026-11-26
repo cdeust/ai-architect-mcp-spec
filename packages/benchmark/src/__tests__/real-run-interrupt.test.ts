@@ -1,3 +1,4 @@
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, rmSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -130,16 +131,17 @@ posixTest("drains a failed parallel batch before removing any process handler", 
     const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
     pilot.arms = [{ ...pilot.arms[0], name: "parallel", mode: "parallel" }];
     await writeFile(file, JSON.stringify(pilot));
-    const { batch, start } = await parallelStandIn(file, out, [
-      'echo $$ >> "$OUT/ready"',
-      'if /bin/mkdir "$OUT/claimed" 2>/dev/null; then',
-      '  while [ ! -f "$OUT/release" ]; do /bin/sleep 0.05; done',
-      '  exec /bin/cat "$OUT/reply-$START"', 'fi', 'exec /bin/sleep 30',
-    ]);
+    // Register the wait before announcing readiness. Each peer stays alive until
+    // the host kills it; only the elected child can release a complete reply.
+    const child = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
+    const { batch, start } = await parallelStandIn(file, out, ['exec "$NODE" "$BATCH_CHILD"']);
     let writes = 0;
-    const host = harness({ PATH: out, OUT: out, START: String(start) }, {
+    const host = harness({ PATH: out, OUT: out, START: String(start), NODE: process.execPath, BATCH_CHILD: child, DRIVER_PID: String(process.pid) }, {
       append(path, data, options) {
-        if (writes++ === start) throw new Error("journal unavailable");
+        if (writes++ === start) {
+          expect(JSON.parse(String(data)).error).toBeNull();
+          throw new Error("journal unavailable");
+        }
         appendFileSync(path, data, options);
       },
     });
@@ -163,11 +165,59 @@ posixTest("drains a failed parallel batch before removing any process handler", 
     expect(rows.slice(start).map(row => row.error)).toEqual(Array(batch.length - 1).fill("Claude CLI exited with SIGKILL: Claude CLI returned invalid or incomplete JSON"));
     for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   } finally {
-    for (const pid of pids) {
-      try { process.kill(-pid, "SIGKILL"); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-    }
+    // Also release any fixture that has not announced its PID yet.
+    await writeFile(join(out, "stop"), "");
     await run;
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+posixTest.each(["SIGTERM", "IPC disconnect"] as const)("the journal driver and its detached child release their pipes on %s", async interruption => {
+  const out = await tempDirectory("bench-driver-exit-");
+  const script = join(cwd, "src/__tests__/fixtures/journal-failure-driver.cjs");
+  const driver = spawn(process.execPath, [script], { env: { OUT: out }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  let pid = "";
+  let stderr = "";
+  const closed = () => (driver.exitCode !== null || driver.signalCode !== null)
+    && driver.stdout.closed && driver.stderr.closed && !driver.connected;
+  driver.stdout.setEncoding("utf8").on("data", text => { pid += text; });
+  driver.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
+  try {
+    await expect.poll(async () => (await readFile(join(out, "ready"), "utf8").catch(() => "")).trim(),
+      { timeout: 4000 }).toMatch(/^\d+$/);
+    const ready = (await readFile(join(out, "ready"), "utf8")).trim();
+    await expect.poll(() => pid).toBe(ready);
+    if (interruption === "SIGTERM") driver.kill("SIGTERM");
+    else driver.disconnect(); // Closing the worker's end is also what the OS does on worker loss.
+    // The detached child inherits these pipes; the driver exiting alone cannot close them.
+    await expect.poll(closed, { timeout: 4000 }).toBe(true);
+    if (interruption === "SIGTERM") expect(driver.signalCode).toBe("SIGTERM");
+    else expect(driver.exitCode).toBe(0);
+    expect(stderr).toContain("Journal fixture driver finished");
+  } finally {
+    if (!closed()) {
+      // Covers a failed readiness assertion, including a child yet to announce itself.
+      await writeFile(join(out, "stop"), "");
+      if (driver.connected) driver.disconnect();
+      driver.kill("SIGTERM");
+      await expect.poll(closed, { timeout: 4000 }).toBe(true);
+    }
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+posixTest("a journal fixture starting after teardown exits while its driver is still alive", async () => {
+  const out = await tempDirectory("bench-driver-stop-");
+  try {
+    await writeFile(join(out, "stop"), "");
+    const fixture = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
+    const child = spawnSync(process.execPath, [fixture], {
+      env: { OUT: out, DRIVER_PID: String(process.pid) }, encoding: "utf8", timeout: 4000,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(child.stderr).toContain("Journal fixture driver finished");
+  } finally {
     await rm(out, { recursive: true, force: true });
   }
 });
