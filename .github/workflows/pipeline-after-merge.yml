@@ -34,6 +34,24 @@ jobs:
       pull-requests: write
       actions: read
       issues: write
+      attestations: read
     uses: ./.github/workflows/pipeline-post-merge.yml
     secrets:
       RELEASE_TAG_SSH_KEY: ${{ secrets.RELEASE_TAG_SSH_KEY }}
+
+  # SEC-009, phase B: the receipt of the merge commit main now holds, from the
+  # protected producer on main. Observation only: it runs after the merge and
+  # its result changes nothing; phase C makes it the tests of record.
+  receipt:
+    needs: pipeline
+    if: needs.pipeline.outputs.run_tests == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # Deliberately the default branch, not a SHA: the receipt is valid only when its
+    # signing certificate names tested-receipt.yml@refs/heads/main, the one
+    # producer a pull request cannot choose or edit.
+    uses: cdeust/ai-architect-mcp-spec/.github/workflows/tested-receipt.yml@main # zizmor: ignore[unpinned-uses]
+    with:
+      tested_sha: ${{ needs.pipeline.outputs.tested_sha }}

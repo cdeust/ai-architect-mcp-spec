@@ -14,6 +14,11 @@ name: Pipeline post-merge tests
 
 on:
   workflow_call:
+    outputs:
+      tested_sha:
+        value: ${{ jobs.resolve.outputs.tested_sha }}
+      run_tests:
+        value: ${{ jobs.resolve.outputs.run_tests }}
     secrets:
       RELEASE_TAG_SSH_KEY:
         required: false
@@ -45,6 +50,7 @@ jobs:
       contents: write
       pull-requests: write
       actions: read
+      attestations: read
     outputs:
       tested_sha: ${{ steps.resolve.outputs.tested_sha }}
       run_tests: ${{ steps.resolve.outputs.run_tests }}
@@ -73,7 +79,9 @@ jobs:
           import os
           from pathlib import Path
           import re
+          import subprocess
           import sys
+          import tempfile
           from urllib.error import HTTPError, URLError
           from urllib.request import Request, urlopen
 
@@ -83,10 +91,13 @@ jobs:
 
 
           class GitHub:
-              def __init__(self, token: str):
+              def __init__(self, token: str, timeout=None):
                   if not token:
                       raise PostMergeError("GH_TOKEN is required")
                   self.token = token
+                  # None (no bound) for the merge decision, as before; a bound for
+                  # the SEC-009 observation, which must not delay the run.
+                  self.timeout = timeout
 
               def request(self, method: str, path: str, body=None):
                   request = Request(
@@ -100,7 +111,7 @@ jobs:
                       },
                   )
                   try:
-                      with urlopen(request) as response:
+                      with urlopen(request, timeout=self.timeout) as response:
                           return json.load(response)
                   except HTTPError as exc:
                       # Never print headers or the untrusted response body.
@@ -676,6 +687,111 @@ jobs:
               )
 
 
+          # SEC-009, phase B: observation only. The receipt is verified and reported on
+          # every resolution; nothing here can hold, delay or allow a merge. Phase C
+          # makes a missing or invalid receipt hold the merge (fail closed).
+          RECEIPT_WORKFLOW = ".github/workflows/tested-receipt.yml"
+          RECEIPT_CALLER = "tested-receipt-pilot.yml"
+          RECEIPT_PREDICATE = "https://github.com/cdeust/ai-architect-mcp-spec/tested-receipt/v1"
+          RECEIPT_ISSUER = "https://token.actions.githubusercontent.com"
+          # source: the job names of tested-receipt.yml, on the default branch.
+          RECEIPT_JOBS = ("unit", "regression", "e2e")
+          # Each GitHub read and the attestation check of the observation are bounded.
+          RECEIPT_TIMEOUT_S = 20
+
+
+          def receipt_subject(repository, sha, run_id, attempt):
+              """The exact bytes the protected signer writes when every receipt job passed."""
+              subject = {
+                  "repository": repository,
+                  "tested_sha": sha,
+                  "run_id": run_id,
+                  "run_attempt": attempt,
+                  "jobs": {name: "success" for name in RECEIPT_JOBS},
+              }
+              return json.dumps(subject, sort_keys=True, separators=(",", ":"))
+
+
+          def verify_receipt(repository, sha, run_id, attempt, verify):
+              """(True, detail) when a receipt signed by the protected producer on main
+              binds this commit, this run and this attempt to passing receipt jobs.
+
+              ``verify(path, identity)`` runs `gh attestation verify` and returns its
+              parsed JSON, or raises PostMergeError. The certificate identity names the
+              reusable workflow itself (its job_workflow_ref) at refs/heads/main, so an
+              attestation signed by any workflow a pull request can edit is refused.
+              """
+              identity = f"https://github.com/{repository}/{RECEIPT_WORKFLOW}@refs/heads/main"
+              invocation = f"https://github.com/{repository}/actions/runs/{run_id}/attempts/{attempt}"
+              subject = receipt_subject(repository, sha, run_id, attempt)
+              with tempfile.TemporaryDirectory() as temp:
+                  path = Path(temp) / "tested-receipt.json"
+                  path.write_text(subject, encoding="utf-8")
+                  results = verify(str(path), identity)
+              require(isinstance(results, list) and results, "no verified receipt")
+              for result in results:
+                  statement = (result.get("verificationResult") or {}).get("statement") or {}
+                  certificate = ((result.get("verificationResult") or {}).get("signature") or {}).get(
+                      "certificate") or {}
+                  if (
+                      statement.get("predicateType") == RECEIPT_PREDICATE
+                      and statement.get("predicate") == json.loads(subject)
+                      and certificate.get("subjectAlternativeName") == identity
+                      and certificate.get("runInvocationURI") == invocation
+                  ):
+                      return True, f"receipt of run {run_id} attempt {attempt} verified"
+              raise PostMergeError("receipt does not bind this run, attempt and subject")
+
+
+          def gh_attestation_verify(path, identity):
+              out = subprocess.run(
+                  ["gh", "attestation", "verify", path, "--repo", os.environ["GITHUB_REPOSITORY"],
+                   "--cert-identity", identity, "--cert-oidc-issuer", RECEIPT_ISSUER,
+                   "--predicate-type", RECEIPT_PREDICATE, "--deny-self-hosted-runners",
+                   "--format", "json"],
+                  capture_output=True, text=True, timeout=RECEIPT_TIMEOUT_S,
+              )
+              if out.returncode != 0:
+                  raise PostMergeError("gh attestation verify refused the receipt")
+              try:
+                  return json.loads(out.stdout)
+              except ValueError as exc:
+                  raise PostMergeError("gh attestation verify returned unreadable JSON") from exc
+
+
+          def observe_receipt(repository, sha, api, verify=None):
+              """One line for the job summary. Never raises: phase B only observes."""
+              verify = verify or gh_attestation_verify
+              try:
+                  runs = [
+                      run
+                      for run in api.records(
+                          f"/repos/{repository}/actions/workflows/{RECEIPT_CALLER}/runs?head_sha={sha}",
+                          "workflow_runs",
+                      )
+                      if run.get("head_sha") == sha
+                      and run.get("path") == f".github/workflows/{RECEIPT_CALLER}"
+                      and run.get("status") == "completed"
+                      and type(run.get("id")) is int
+                      and type(run.get("run_attempt")) is int
+                  ]
+                  if not runs:
+                      return f"SEC-009 receipt for {sha}: absent (no completed receipt run); not enforced"
+                  run = max(runs, key=lambda r: (r["id"], r["run_attempt"]))
+                  _, detail = verify_receipt(repository, sha, run["id"], run["run_attempt"], verify)
+                  return f"SEC-009 receipt for {sha}: valid, {detail}; not enforced"
+              except Exception as exc:  # observation must never change the resolution
+                  return f"SEC-009 receipt for {sha}: invalid ({exc}); not enforced"
+
+
+          def _report(line):
+              print(line)
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  with open(summary, "a", encoding="utf-8") as out:
+                      out.write(line + "\n")
+
+
           def resolve(event, repository: str, api: GitHub):
               run = _source_run(event, repository, api)
               number, pr = _pull_request(run, repository, api)
@@ -722,7 +838,25 @@ jobs:
           WAITING = ("merge held:", "PR head advanced after testing")
 
 
+          def _observe_after_decision():
+              """SEC-009 phase B: report the receipt once the merge is decided. Never
+              raises, never changes the exit status, every network call bounded."""
+              try:
+                  event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+                  sha = full_sha((event.get("workflow_run") or {}).get("head_sha"))
+                  api = GitHub(os.environ.get("GH_TOKEN", ""), timeout=RECEIPT_TIMEOUT_S)
+                  _report(observe_receipt(os.environ["GITHUB_REPOSITORY"], sha, api))
+              except Exception as exc:  # noqa: BLE001 - observation only
+                  print(f"SEC-009 receipt not observed ({type(exc).__name__}); not enforced")
+
+
           def main():
+              status = _decide()
+              _observe_after_decision()
+              return status
+
+
+          def _decide():
               try:
                   require(
                       os.environ.get("GITHUB_EVENT_NAME") == "workflow_run",
