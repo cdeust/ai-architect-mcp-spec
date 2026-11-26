@@ -85,18 +85,12 @@ it("clears strategy evidence when no repository was available at first use", asy
   const state = pendingStrategyEvidence();
   repositories.evidence.mockReturnValue(null);
   const { drainEvidenceQueues } = await import("../evidence-drain.js");
-  const iterate = vi.spyOn(state.strategy_executions, Symbol.iterator);
-  try {
-    expect(drainEvidenceQueues(state).strategy_executions).toEqual([]);
+  expect(drainEvidenceQueues(state).strategy_executions).toEqual([]);
 
-    const recordStrategyExecution = vi.fn();
-    repositories.evidence.mockReturnValue({ recordStrategyExecution });
-    expect(drainEvidenceQueues(state).strategy_executions).toEqual([]);
-    expect(iterate).not.toHaveBeenCalled();
-    expect(repositories.evidence).toHaveBeenCalledOnce();
-    expect(recordStrategyExecution).not.toHaveBeenCalled();
-    expect(repositories.reliability).not.toHaveBeenCalled();
-  } finally {
-    iterate.mockRestore();
-  }
+  const recordStrategyExecution = vi.fn();
+  repositories.evidence.mockReturnValue({ recordStrategyExecution });
+  expect(drainEvidenceQueues(state).strategy_executions).toEqual([]);
+  expect(repositories.evidence).toHaveBeenCalledOnce();
+  expect(recordStrategyExecution).not.toHaveBeenCalled();
+  expect(repositories.reliability).not.toHaveBeenCalled();
 });

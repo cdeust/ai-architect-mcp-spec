@@ -192,6 +192,23 @@ test("unknown options on both CLIs fail before transport with a fixed diagnostic
   }
 });
 
+test("a stray argument or a missing option value exits 2 on both CLIs without reaching the network or echoing it", async (t) => {
+  const server = await endpoint(t, (req, res) => res.end("{}"));
+  const base = ["--base-url", server.origin];
+  const cases = [
+    ["judge", [...base, "--debug", `STRAY-${key}`], "Unknown option."],
+    ["judge", [...base, `--debug=${key}`], "Unexpected option value."],
+    ["judge", [...base, "--model"], "Option requires a value."],
+    ["calibrate", [...base, "--timeout-ms"], "Option requires a value."],
+    ["calibrate", [...base, "--min-agreement", "2"], "Option --min-agreement must be a number from 0 to 1."],
+    ["calibrate", [...base, `--min-agreement=${key}`], "Option --min-agreement must be a number from 0 to 1."],
+  ];
+  for (const [script, args, message] of cases) {
+    assert.deepEqual(await cli(script, args), { code: 2, stdout: "", stderr: `${script}.mjs: ${message}\n` });
+  }
+  assert.equal(server.connections(), 0);
+});
+
 test("judge empty-input and calibration output mask literals from their configuration", async () => {
   const empty = await cli("judge", [], { EXTERNAL_JUDGE_API_KEY: "prompt" }, " \t");
   assert.deepEqual(empty, { code: 2, stdout: "",

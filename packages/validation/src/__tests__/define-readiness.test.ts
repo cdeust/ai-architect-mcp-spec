@@ -231,11 +231,11 @@ it("preserves the first definition row and the exact legacy shape of a table wit
   expect(requirementDefinitions(unlabeled, undefined, { readSource: true })).toStrictEqual([{ id: "FR-001", text: stop }]);
 });
 
-it("retains normative text outside inline quotes and masks unclosed and nested quoted content", () => {
+it("retains normative text after unclosed quotes and masks closed nested quotations", () => {
   const text = `<div><blockquote>\r\nOld example: <blockquote-example> and \`</blockquote>\`.\r\n</blockquote></div>\r\n${stop}`;
   const policy = (value: string) => [...readPublicationPolicies(value)].map(({ statement }) => statement);
   expect(policy(text)).toEqual([stop]);
-  expect(policy(`${stop}\n<blockquote>\n\n${publish}`)).toEqual([stop]);
+  expect(policy(`${stop}\n<blockquote>\n\n${publish}`)).toEqual([stop, publish]);
   expect(policy(`</blockquote>\n> <blockquote>\n\n${stop}`)).toEqual([stop]);
   expect(policy(`Text\n<!--\n<blockquote>\n-->\n\n${stop}`)).toEqual([stop]);
   expect(policy(`${stop}\n<!--\n<blockquote>\n${publish}`)).toEqual([stop]);

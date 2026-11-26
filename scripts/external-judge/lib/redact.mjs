@@ -20,6 +20,19 @@ function escapeLiteral(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Match a secret in any per-character percent-encoding: each character may appear
+ * raw or as its UTF-8 bytes in either hex case, and a space may also appear as `+`.
+ * This covers `encodeURIComponent`, form encoding and over-encoding alike.
+ */
+function encodedPattern(secret) {
+  return [...secret.toWellFormed()].map(char => {
+    const bytes = [...new TextEncoder().encode(char)].map(byte => "%" + byte.toString(16).padStart(2, "0"));
+    const encoded = bytes.join("").replace(/[a-f]/g, letter => `[${letter}${letter.toUpperCase()}]`);
+    return `(?:${escapeLiteral(char)}|${encoded}${char === " " ? "|\\+" : ""})`;
+  }).join("");
+}
+
 function literalPattern(apiKey, baseUrl) {
   // Each alternative has its literal length so overlapping secrets match longest first.
   const alternatives = [];
@@ -28,7 +41,7 @@ function literalPattern(apiKey, baseUrl) {
   }
   if (apiKey) {
     add(apiKey);
-    add(encodeURIComponent(apiKey.toWellFormed()));
+    add(apiKey, encodedPattern(apiKey));
   }
   if (baseUrl) {
     const url = URL.canParse(baseUrl) ? new URL(baseUrl) : undefined;
@@ -39,15 +52,20 @@ function literalPattern(apiKey, baseUrl) {
           add(form);
           continue;
         }
+        // The default port may be written or omitted; any other port is part of the literal.
+        const port = authority.match(/^(.*):(\d+)$/s);
+        const defaultPort = url.protocol === "https:" ? 443 : 80;
+        const isDefault = !port || Number(port[2]) === defaultPort;
+        const host = port && isDefault ? port[1] : authority;
         // Only the authority folds case. Preserve multi-character case mappings in raw IDNs.
-        const prefix = escapeLiteral(authority).replace(/\p{L}/gu, c =>
+        const prefix = escapeLiteral(host).replace(/\p{L}/gu, c =>
           `(?:${[...new Set([c, c.toLowerCase(), c.toUpperCase()])].join("|")})`);
         const path = form.slice(authority.length);
         let end = path.length;
         while (path[end - 1] === "/") end--;
         const stem = path.slice(0, end);
         for (const suffix of new Set([path, stem, stem + "/"])) {
-          add(authority + suffix, prefix + escapeLiteral(suffix));
+          add(authority + suffix, prefix + (isDefault ? `(?::0*${defaultPort}(?!\\d))?` : "") + escapeLiteral(suffix));
         }
       }
     } else {

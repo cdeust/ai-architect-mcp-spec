@@ -1,11 +1,15 @@
 import { API_KEY_FLAG_ERROR, ConfigError } from "./config.mjs";
 import { redact } from "./redact.mjs";
 
+/** Options that take a mandatory value, then boolean flags that take none. */
 const shared = [
   ["provider", "provider"], ["base-url", "baseUrl"], ["model", "model"], ["timeout-ms", "timeoutMs"],
-];
-const judge = new Map([...shared, ["debug", "debug"]]);
-const calibration = new Map([...shared, ["min-agreement", "minAgreement"]]);
+].map(([name, key]) => [name, { key, valued: true }]);
+const judge = new Map([...shared, ["debug", { key: "debug", valued: false }]]);
+const calibration = new Map([...shared, ["min-agreement", { key: "minAgreement", valued: true }]]);
+
+/** A ratio in [0, 1]; anything else (blank, signed, hex, NaN) would silently move the admission gate. */
+const RATIO = /^(?:\d+\.?\d*|\.\d+)$/;
 
 /** Parse both `--name value` and `--name=value` for either entry point. */
 export function parseFlags(argv, entry) {
@@ -19,17 +23,27 @@ export function parseFlags(argv, entry) {
     if (/^api[-_]?key$/i.test(name)) {
       throw new ConfigError(API_KEY_FLAG_ERROR);
     }
-    const key = options.get(name);
-    if (!key) throw new ConfigError("Unknown option.");
-    const next = argv[i + 1];
-    if (equals !== -1) {
-      flags[key] = arg.slice(equals + 1);
-    } else if (next !== undefined && !next.startsWith("-")) {
-      flags[key] = next;
-      i++;
-    } else {
-      flags[key] = "true";
+    const option = options.get(name);
+    if (!option) throw new ConfigError("Unknown option.");
+    if (!option.valued) {
+      // A flag takes no value; the next argument is parsed on its own, so a stray one is refused.
+      if (equals !== -1) throw new ConfigError("Unexpected option value.");
+      flags[option.key] = "true";
+      continue;
     }
+    const next = argv[i + 1];
+    let value;
+    if (equals !== -1) {
+      value = arg.slice(equals + 1);
+    } else if (next !== undefined && !next.startsWith("-")) {
+      value = next;
+      i++;
+    }
+    if (!value) throw new ConfigError("Option requires a value.");
+    if (option.key === "minAgreement" && !(RATIO.test(value) && Number(value) <= 1)) {
+      throw new ConfigError("Option --min-agreement must be a number from 0 to 1.");
+    }
+    flags[option.key] = value;
   }
   return flags;
 }

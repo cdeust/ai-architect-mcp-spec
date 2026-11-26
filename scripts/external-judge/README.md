@@ -105,9 +105,11 @@ the port, appears in the list. Requests never follow redirects. HTTP errors
 report their status code. The judge discards provider error payloads and
 masks the configured credential and endpoint in output text and `--debug`.
 
-The matcher covers the literal credential and its `encodeURIComponent` form.
+The matcher covers the literal credential and its percent-encoded forms: each
+character raw or encoded, in either hex case, and a space as `+`.
 It matches endpoint schemes and hosts regardless of case, keeps path case
-significant and accepts trailing slashes. The authorized provider already
+significant, accepts trailing slashes and accepts the default port (`:443` for
+HTTPS, `:80` for HTTP) written or omitted. The authorized provider already
 receives the credential. It can transform it into arbitrary text in a successful
 verdict. Base64, truncated credentials, other encodings and isolated hostname
 fragments are outside this literal matcher's guarantee. Masking every possible
@@ -154,6 +156,11 @@ node scripts/external-judge/calibrate.mjs --provider mistral
 # Tighter/looser admission threshold:
 node scripts/external-judge/calibrate.mjs --provider gemini --min-agreement 0.8
 ```
+
+`--min-agreement` is a ratio from 0 to 1; any other value is refused with exit
+code 2, because it sets the gate. On both scripts `--debug` is a flag that takes
+no value, every other option requires one, and a stray argument or a missing
+value is refused with exit code 2 and a message that does not repeat it.
 
 Exit code is 0 iff the agreement rate over scored (non-skipped) claims meets
 `--min-agreement` (default 0.7); 1 if it runs and falls short; 0 with an

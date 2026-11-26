@@ -175,6 +175,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Define now preserves literal `<blockquote>` mentions and the requirements that follow them. Closed HTML quotations still exclude their contents from document validation and the Define v1 handoff.
+
 - PR Review verifies the verdict in a separate read-only job after a successful review (#361). A successful review action without a detectable verdict for its run now fails the workflow, so it does not spend a review round.
 
 - PR and implementation approval, verification budget, clarification continuation and PRD context now require a whole accepted label. Answers are compared after trimming, collapsing whitespace and lowercasing. A negative phrase containing an approval word can no longer approve. Clarification no longer accepts the `yes` alias and now reads `selected[0]` first (previously freeform first). Across these five decisions a blank selection falls back to freeform. Two nonblank fields must agree after normalization, and more than one nonblank selection is not recognized.
