@@ -105,10 +105,7 @@ export const handleJiraGeneration: StepHandler = ({ state, result }) => {
     return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === INVOCATION_ID)?.raw_text);
   }
   // Result of our spawn.
-  if (
-    result?.kind === "subagent_batch_result" &&
-    result.batch_id === JIRA_BATCH_ID
-  ) {
+  if (result?.kind === "subagent_batch_result" && result.batch_id === JIRA_BATCH_ID) {
     const response = result.responses.find(
       (r) => r.invocation_id === INVOCATION_ID,
     );

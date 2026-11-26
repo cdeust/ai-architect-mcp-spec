@@ -223,6 +223,10 @@ describe("the passed Define snapshot", () => {
     // The gate's question, report and outcome give the same reason as the read.
     expect(failed.asked.action).toMatchObject({ description: expect.stringContaining("jira_tickets_missing: no response") });
     expect(failed.done.action).toMatchObject({ outcome: { status: "needs_attention", reasons: expect.arrayContaining(["jira_tickets_missing: no response"]) } });
+    // Before the run finished, a run without a pending question is not pending, whatever its document says.
+    const exporting = { ...ready(), current_step: "file_export" as const };
+    exporting.sections = exporting.sections.filter(section => section.section_type !== "acceptance_criteria");
+    expect(readDefineHandoff(exporting, null)).toMatchObject({ error: { code: "define_not_pending" } });
     // A clean finished run without a snapshot has no reason to give.
     const { done } = finishPrdOnly(ready(passed()));
     expect(readDefineHandoff({ ...done.state, passed_define: undefined }, done.action)).toMatchObject({ error: { code: "define_not_pending" } });

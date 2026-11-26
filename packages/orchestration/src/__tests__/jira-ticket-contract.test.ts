@@ -203,17 +203,36 @@ describe("Jira generation contract", () => {
     } });
     expect(markdown.state.jira_result).toBeUndefined();
     expect(markdown.state.current_step).toBe("file_export");
-    expect(markdown.state.sections.at(-1)).toMatchObject({ section_type: "jira_tickets", status: "passed", content: "# Saved tickets" });
+    expect(markdown.state.sections.at(-1)).toEqual({
+      section_type: "jira_tickets", status: "passed", attempt: 1, violation_count: 0,
+      last_violations: [], attempt_log: [], content: "# Saved tickets",
+    });
+    // Only the engineer's reply is the ticket document.
+    const foreignFirst = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation",
+      responses: [{ invocation_id: "other", raw_text: "# Not tickets" }, { invocation_id: "jira_generation_engineer", raw_text: "# Saved tickets" }],
+    } });
+    expect(foreignFirst.state.sections.at(-1)).toMatchObject({ content: "# Saved tickets" });
     expect(markdown.action).toEqual({ kind: "emit_message", message: "JIRA tickets generated. Writing files." });
     for (const responses of [[], [{ invocation_id: "jira_generation_engineer", raw_text: "  " }]]) {
       const empty = handleJiraGeneration({ state, result: { kind: "subagent_batch_result", batch_id: "jira_generation", responses } });
       expect(empty.state.jira_result).toBeUndefined();
       expect(empty.state.sections.some(section => section.section_type === "jira_tickets")).toBe(false);
       expect(empty.state.errors.at(-1)).toBe("[jira_generation] failed: no response");
+      expect(empty.state.error_kinds.at(-1)).toBe("upstream_failure");
       expect(empty.state.current_step).toBe("file_export");
       expect(empty.action).toEqual({ kind: "emit_message", level: "warn", message: "JIRA generation failed; proceeding to file export anyway." });
     }
     expect(handleJiraGeneration({ state }).action).toMatchObject({ batch_id: "jira_generation_tickets" });
+  });
+
+  it("ignores a result of another batch and asks the engineer", () => {
+    const other = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "section_generate_requirements",
+      responses: [{ invocation_id: "jira_generation_engineer", raw_text: JSON.stringify({ tickets: [first] }) }],
+    } });
+    expect(other.state.jira_result).toBeUndefined();
+    expect(other.action).toMatchObject({ kind: "spawn_subagents", batch_id: "jira_generation_tickets" });
   });
 
   it("records an empty engineer error as no response", () => {
