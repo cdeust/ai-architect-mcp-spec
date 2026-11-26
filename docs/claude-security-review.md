@@ -77,10 +77,13 @@ already uses.
 - **Bots.** `allowed_bots` lists `claude[bot]` and `chatgpt-codex-connector[bot]`,
   so their pushes are reviewed. With bots allowed, the action authenticates git
   through a helper rather than a token in the remote URL (`git-config.ts`).
-- **Tools.** Read, LS and Task are allowed. Bash, Grep and Glob are denied outright:
-  the Claude Code docs apply `Read` deny rules to Grep and Glob only for the folder a
-  search starts from, so a search from `/` could reach a denied file. The model reads
-  the diff and the base by path.
+- **Tools.** Read and Task (sub-agents) are allowed. Bash, Grep, Glob, LSP and the
+  MCP resource tools are denied outright: the Claude Code docs apply `Read` deny
+  rules to Grep and Glob only for the folder a search starts from, so a search from
+  `/` could reach a denied file, and tools that need no permission would run under
+  `dontAsk` without an allow rule. The managed settings also set
+  `blockReadsOutsideWorkingDirectories`, so reads stay in the workspace whatever the
+  deny list misses. The model reads the diff and the base by path.
 - **Prompt.** It adapts the audit prompt and the false-positive filtering of
   [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review)
   at `0c6a49f1fa56a1d472575da86a94dbc1edb78eda` (MIT). The adapted text is

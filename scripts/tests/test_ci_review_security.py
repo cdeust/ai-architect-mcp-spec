@@ -50,7 +50,7 @@ ENGINE_ARGS = [
     "--strict-mcp-config",
     "--setting-sources", "user",
     "--permission-mode", "dontAsk",
-    "--allowedTools", "Read,LS,Task",
+    "--allowedTools", "Read,Task",
     "--json-schema", json.dumps(publication.SCHEMA, separators=(",", ":")),
     "--model", "claude-opus-5-5",
 ]
@@ -73,7 +73,7 @@ PUBLISH_ENV = {
 }
 # The full managed deny list: every rule is a guard of the threat model.
 DENY = {
-    "Bash", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
+    "Bash", "Grep", "Glob", "LSP", "ListMcpResourcesTool", "ReadMcpResourceTool", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
     "mcp__github_ci", "mcp__github_file_ops",
     "Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)", "Read(//etc/**)", "Read(//tmp/**)",
     "Read(//var/**)", "Read(//opt/**)", "Read(//home/runner/runners/**)",
@@ -283,7 +283,7 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "237784668f31d4e4d8d0ac3f361d6218954cd2320f863ab6da78c81bb7ea8a2b"
+REVIEWED_WORKFLOW_SHA256 = "80da37166be91a7fb3a0fe2ed48c1086893c797b6e4e87786f65d4dd14e7f096"
 
 
 def _keyed(value):
@@ -355,7 +355,9 @@ class SecurityReviewContractTests(unittest.TestCase):
                                          "permissions"})
         self.assertIs(settings["disableAllHooks"], True)
         self.assertIs(settings["allowManagedHooksOnly"], True)
-        self.assertEqual(set(settings["permissions"]), {"disableBypassPermissionsMode", "deny"})
+        self.assertEqual(set(settings["permissions"]),
+                         {"disableBypassPermissionsMode", "deny", "blockReadsOutsideWorkingDirectories"})
+        self.assertIs(settings["permissions"]["blockReadsOutsideWorkingDirectories"], True)
         self.assertEqual(settings["permissions"]["disableBypassPermissionsMode"], "disable")
         self.assertEqual(set(settings["permissions"]["deny"]), DENY)
         self.assertEqual(len(settings["permissions"]["deny"]), len(DENY))
@@ -654,7 +656,7 @@ class JqFilterTests(unittest.TestCase):
             {"id": 1, "status": "completed", "head_sha": SHA, "created_at": "t",
              "pull_requests": [{"number": 7}], "extra": 1}]}
         self.assertEqual(json.loads(self.jq(jq, payload)),
-                         {"id": 1, "status": "completed", "head_sha": SHA,
+                         {"id": 1, "head_sha": SHA,
                           "created_at": "t", "prs": [7], "total": 1})
 
     def test_the_patch_filter_yields_one_record_per_file(self):
@@ -690,7 +692,7 @@ class PromptTests(unittest.TestCase):
         text = security.prompt(self.ENV)
         self.assertIn("You publish nothing", text)
         self.assertIn("untrusted data", text)
-        self.assertIn("No shell, search or glob tool is available", text)
+        self.assertIn("No shell, listing, search or glob tool is available", text)
 
     def test_a_later_round_reviews_only_what_changed(self):
         text = security.prompt({**self.ENV, "ROUND": "2", "REVIEWED_SHA": SHA})
@@ -1230,9 +1232,9 @@ MUTATIONS = {
 }
 
 EXTRA = {
-    "bash-allowed": ("engine-tools", lambda w, r: replace_arg(w, "Read,LS", "Bash,Read,LS")),
+    "bash-allowed": ("engine-tools", lambda w, r: replace_arg(w, "Read,Task", "Bash,Read,Task")),
     "comment-tool": ("engine-tools", lambda w, r: replace_arg(
-        w, "LS,Task", "LS,Task,mcp__github_comment__update_claude_comment")),
+        w, "Read,Task", "Read,Task,mcp__github_comment__update_claude_comment")),
     "second-mode": ("engine-tools", lambda w, r: replace_arg(
         w, "--model", "--permission-mode acceptEdits\n--model")),
     "no-strict-mcp": ("engine-tools", lambda w, r: replace_arg(w, "--strict-mcp-config\n", "")),

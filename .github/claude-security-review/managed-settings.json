@@ -7,6 +7,9 @@
       "Bash",
       "Grep",
       "Glob",
+      "LSP",
+      "ListMcpResourcesTool",
+      "ReadMcpResourceTool",
       "Edit",
       "Write",
       "MultiEdit",
@@ -35,6 +38,7 @@
       "Read(~/.npmrc)",
       "Read(~/.gitconfig)",
       "Read(**/.git/**)"
-    ]
+    ],
+    "blockReadsOutsideWorkingDirectories": true
   }
 }
