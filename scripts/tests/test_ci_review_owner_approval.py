@@ -34,12 +34,14 @@ def resolver():
 
 
 def record(at, action="labeled", sha=HEAD, by=OWNER, label="owner-approved", pr=7, rerun_by=None,
-           path=".github/workflows/owner-approval.yml", event="pull_request_target", run_id=None):
+           path=".github/workflows/owner-approval.yml", event="pull_request_target", run_id=None,
+           status="completed", conclusion="success"):
     """A run of owner-approval.yml as the REST API lists it."""
     title = f"Owner approval {action} PR {pr} label {label} at {sha} by {by['login']}"
     return {"id": run_id or int(at[11:13] + at[14:16] + at[17:19]), "display_title": title, "path": path,
             "event": event, "created_at": at, "actor": by, "triggering_actor": rerun_by or by,
-            "head_sha": "c" * 40}  # a pull_request_target run carries the base commit
+            "head_sha": "c" * 40,  # a pull_request_target run carries the base commit
+            "status": status, "conclusion": conclusion}
 
 
 def unlabeled(at, label="owner-approved"):
@@ -137,6 +139,33 @@ class OwnerApprovalTableTests(unittest.TestCase):
              "the owner has not approved this head"),
             ("a neighbouring label's removal does not count", pull(), [record(T2)],
              [unlabeled(T3, label="owner-approved-x")], "merged"),
+            ("label on the PR, no record at all (pull_request_target blocked)", pull(), [], [],
+             "an Actions event policy may block pull_request_target"),
+            ("the approval record was blocked: created in failure", pull(),
+             [record(T2, status="completed", conclusion="failure")], [],
+             "the approval record did not run"),
+            ("the approval record failed at startup", pull(),
+             [record(T2, status="completed", conclusion="startup_failure")], [],
+             "the approval record did not run"),
+            ("the approval record still queued", pull(), [record(T2, status="queued", conclusion=None)], [],
+             "the approval record has not finished"),
+            ("the approval record in progress", pull(), [record(T2, status="in_progress", conclusion=None)], [],
+             "the approval record has not finished"),
+            ("the approval record cancelled", pull(), [record(T2, conclusion="cancelled")], [],
+             "the approval record did not run"),
+            ("the approval record skipped", pull(), [record(T2, conclusion="skipped")], [],
+             "the approval record did not run"),
+            ("a blocked run whose title is the PR title imitating a record", pull(),
+             [dict(record(T2, conclusion="failure"), event="pull_request_target")], [],
+             "the approval record did not run"),
+            ("an older successful record does not stand in for a blocked newer one", pull(),
+             [record(T1), record(T2, status="completed", conclusion="failure")], [],
+             "the approval record did not run"),
+            ("a blocked push record still voids the approval", pull(),
+             [record(T1), record(T2, "synchronize", OTHER, label="-", status="completed", conclusion="failure")], [],
+             "a push came after the approval"),
+            ("the record workflow did not run on a push: the label stayed, the head moved", pull(),
+             [record(T1, sha=OTHER)], [], "the approval names another head"),
         ]
         for name, pr, records, events, expected in rows:
             api = FakeApi(records, events)
@@ -235,12 +264,36 @@ class ApprovalWorkflowsTests(unittest.TestCase):
         self.assertTrue(ns["RECORD_TITLE"].fullmatch(rendered), rendered)
         self.assertEqual(ns["RECORD_PATH"], ".github/workflows/owner-approval.yml")
 
+    def test_the_record_workflow_keeps_the_form_its_policy_exception_allows(self):
+        # The Actions event policy that allows pull_request_target is scoped to this
+        # file; it is defensible only while the file runs nothing of the PR.
+        text = (WORKFLOWS / "owner-approval.yml").read_text()
+        workflow = yaml.safe_load(text)
+        for forbidden in ("uses:", "actions/checkout", "secrets.", "artifact", "run-id", "head.ref", "${{ github.event.pull_request.title"):
+            self.assertNotIn(forbidden, text)
+        self.assertEqual(workflow["permissions"], {})
+        self.assertEqual(set(workflow["jobs"]), {"clear", "record"})
+        self.assertEqual(workflow["jobs"]["clear"]["permissions"], {"pull-requests": "write"})
+        self.assertNotIn("permissions", workflow["jobs"]["record"])
+        self.assertEqual(workflow["jobs"]["clear"]["steps"][0]["env"]["PR"], "${{ github.event.pull_request.number }}")
+        self.assertEqual(workflow["jobs"]["record"]["steps"], [
+            {"name": "The title of this run is the record", "run": "echo \"Read by the resolver from the run title\""}])
+
     def test_the_record_clears_a_stale_label_on_every_push(self):
         clear = yaml.safe_load((WORKFLOWS / "owner-approval.yml").read_text())["jobs"]["clear"]
         self.assertEqual(clear["if"], "github.event.action == 'synchronize' "
                                       "&& contains(github.event.pull_request.labels.*.name, 'owner-approved')")
         self.assertEqual(clear["permissions"], {"pull-requests": "write"})
         self.assertEqual(clear["steps"][0]["run"], 'gh pr edit "$PR" --remove-label owner-approved')
+
+    def test_the_wake_waits_for_the_very_title_the_record_writes(self):
+        record_title = yaml.safe_load((WORKFLOWS / "owner-approval.yml").read_text())["run-name"]
+        wake = yaml.safe_load((WORKFLOWS / "owner-approval-wake.yml").read_text())["jobs"]["wake"]
+        waited = wake["steps"][0]["env"]["TITLE"]
+        self.assertEqual(record_title.replace("${{ github.event.action }}", "labeled")
+                         .replace("${{ github.event.label.name || '-' }}", "owner-approved"), waited)
+        self.assertEqual(wake["permissions"], {"actions": "read"})
+        self.assertIn("exit 0", wake["steps"][0]["run"])
 
     def test_the_wake_decides_nothing(self):
         # It runs from the pull request: whatever it becomes, the resolver reads
@@ -258,7 +311,7 @@ class BotsAreOptionalTests(unittest.TestCase):
     def test_the_resolver_reads_no_bot_verdict(self):
         source = (WORKFLOWS / "pipeline-post-merge.yml").read_text().split("  close-issues:", 1)[0]
         for needle in ("claude[bot]", "chatgpt-codex-connector", "claude-review.yml", "Verdict:",
-                       "review-subscription"):
+                       "review-subscription.yml"):
             self.assertNotIn(needle, source)
 
     def test_a_failed_or_absent_review_job_does_not_fail_the_merge_gate(self):

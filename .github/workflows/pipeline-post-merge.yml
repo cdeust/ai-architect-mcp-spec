@@ -554,6 +554,10 @@ jobs:
           # pull request can change it. A pull_request_target run's head_sha is the
           # base branch's commit, so the head commit is read from the title.
           RECORD_PATH = ".github/workflows/owner-approval.yml"
+          # From 2026-12-02 GitHub blocks pull_request_target in public repositories
+          # unless an Actions event policy allows it (docs/review-subscriptions.md).
+          NO_RECORD = "merge held: the owner has not approved this head: the label is on the pull request but no approval record exists; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml"
+          NOT_RUN = "merge held: the approval record did not run; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml"
           RECORD_TITLE = re.compile(
               r"Owner approval (labeled|synchronize) PR ([1-9][0-9]*) label (\S+) at ([0-9a-f]{40}) by (\S+)"
           )
@@ -594,8 +598,20 @@ jobs:
               records = _records(pr, repository, api)
               approvals = [record for record in records
                            if record[2][1] == "labeled" and record[2][3] == APPROVAL_LABEL]
-              require(approvals, "merge held: the owner has not approved this head")
+              require(
+                  approvals,
+                  NO_RECORD,
+              )
               at, _, title, run = approvals[-1]
+              # Only a run that executed main's workflow is a record. GitHub creates a
+              # run it blocks as a failed run, and its title may not be the one main
+              # defines; the conclusion of a run from main is not the PR's to set.
+              require(run.get("status") == "completed",
+                      "merge held: the approval record has not finished")
+              require(
+                  run.get("conclusion") == "success",
+                  NOT_RUN,
+              )
               by_owner = all(
                   (person or {}).get("login") == owner["login"] and (person or {}).get("type") == "User"
                   for person in (run.get("actor"), run.get("triggering_actor"))

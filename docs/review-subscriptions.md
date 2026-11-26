@@ -56,7 +56,7 @@ The protected resolver (`pipeline-post-merge.yml`, run from `main` by
 | --- | --- |
 | The required Pipeline jobs of the head succeeded | the Pipeline run, `_validate_jobs` |
 | The label `owner-approved` is on the pull request | the pull request |
-| The newest `labeled` record of that label for this pull request has the owner's user account as actor, triggering actor and title actor | the runs of `owner-approval.yml`, event `pull_request_target`, since the pull request was opened |
+| The newest `labeled` record of that label for this pull request completed with success and has the owner's user account as actor, triggering actor and title actor | the runs of `owner-approval.yml`, event `pull_request_target`, since the pull request was opened |
 | That record names the current head commit | its title |
 | No `synchronize` record and no `unlabeled` event of the label came after it | the records, the issue events |
 | No `hold` or `do-not-merge` label, no "do not merge" title | the pull request |
@@ -85,6 +85,50 @@ merge by hand.
 
 A pull request that changes this rule is judged by the resolver of `main`. The
 owner merges it by hand, on a green gate and an independent review.
+
+## The pull_request_target dependency
+
+GitHub blocks `pull_request_target` by default in public repositories from
+2 December 2026, unless an applicable Actions event policy allows it; a blocked
+attempt creates a failed run and the workflow does not execute. This repository
+is public, and `Owner approval` is its only workflow on that event.
+[Changelog](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2) ·
+[Control workflow execution](https://docs.github.com/actions/how-tos/administer/control-workflow-execution) ·
+[Policies API](https://docs.github.com/en/rest/actions/policies) ·
+[Securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
+
+The exception is defensible because the file runs nothing of the pull request:
+no checkout, no download, no artifact, no third-party action; the pull request
+reaches it only through event values in its title and the number passed to
+`gh pr edit --remove-label`; `permissions: {}` at the workflow level and
+`pull-requests: write` on the `clear` job alone.
+`test_the_record_workflow_keeps_the_form_its_policy_exception_allows` holds that
+form: any addition to the file must keep it.
+
+The policy, scoped to this file and this event, status Active. The coordinator
+creates it under the owner's account when this change merges; no agent of a pull
+request creates or changes it. The body follows the schema of the Policies API
+(the page gives no example for an event policy):
+
+```
+gh api -X POST repos/cdeust/ai-architect-mcp-spec/actions/policies --input - <<'EOF'
+{"name": "Allow pull_request_target for owner-approval.yml",
+ "enforcement": "active",
+ "conditions": {"workflow_path": {"include": [".github/workflows/owner-approval.yml"], "exclude": []}},
+ "rules": [{"type": "restrict_action_events", "parameters": {"allowed_events": ["pull_request_target"]}}]}
+EOF
+```
+
+To read it back: `gh api repos/cdeust/ai-architect-mcp-spec/actions/policies`. On
+2026-11-26 that call answered `{"total_count":0,"policies":[]}`.
+
+Without the policy, the label is set but no record runs: the resolver holds with
+"the label is on the pull request but no approval record exists" or "the
+approval record did not run", both naming the policy as the probable cause. A
+record counts only once its run completed with success, so a blocked run, a
+startup failure or a cancelled run never approves, whatever its title. On a
+push, the label then stays on the pull request, but the approval still names
+the earlier head and is refused.
 
 ## Known divergence from the CI generator
 

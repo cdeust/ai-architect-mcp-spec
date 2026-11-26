@@ -14,7 +14,22 @@ jobs:
     name: Wake the resolver
     if: github.event.label.name == 'owner-approved'
     runs-on: ubuntu-latest
-    timeout-minutes: 5 # source: operational cap; no step does work.
+    timeout-minutes: 12 # source: operational cap; the wait below stops at 10 minutes.
+    permissions:
+      actions: read
     steps:
-      - name: Wake the resolver
-        run: echo "The resolver reads the approval record itself"
+      # The resolver counts a record only once it succeeded: wake it after the
+      # record of this label has finished, or after 10 minutes in any case.
+      - name: Wait for the approval record to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: Owner approval labeled PR ${{ github.event.pull_request.number }} label owner-approved at ${{ github.event.pull_request.head.sha }} by ${{ github.actor }}
+        run: |
+          for _ in $(seq 40); do
+            done=$(gh api "repos/$GH_REPO/actions/workflows/owner-approval.yml/runs?event=pull_request_target&per_page=50" \
+              --jq '[.workflow_runs[] | select(.display_title == env.TITLE and .status == "completed")] | length' 2>/dev/null || echo 0)
+            if [ "${done:-0}" != 0 ]; then echo "Approval record finished"; exit 0; fi
+            sleep 15
+          done
+          echo "No finished approval record after 10 minutes; the resolver will hold and say why."
