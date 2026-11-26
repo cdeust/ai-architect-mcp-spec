@@ -30,11 +30,6 @@ ASSIGNABLE = {"archive", "endpoint", "run_id", "actual", "assets", "version", "p
 LOOP_LISTS = {"file": re.compile(r"[\w.{},-]+"), "attempt": re.compile(r"\$\(seq 1 \"\$MAX_ATTEMPTS\"\)")}
 PARAMETER = re.compile(r"[A-Za-z_]\w*(?:\[@\]|#v|%%\+\*|:-<none>)?")
 ARITHMETIC = re.compile(r"\(\(\s*[A-Za-z_]\w* \* [A-Za-z_]\w*\s*\)\)")
-REFUSED_BUILTINS = {"eval", "source", ".", "exec", "trap", "alias", "function", "coproc", "case",
-                    "select", "while", "until", "export", "declare", "typeset", "local", "readonly",
-                    "read", "mapfile", "readarray", "unset", "shopt", "enable", "builtin", "command",
-                    "cd", "pushd", "popd", "env", "xargs", "tee", "time", "ulimit", "umask"}
-
 
 class Word:
     """One shell word: its text with quotes removed and expansions kept as written."""
@@ -277,7 +272,7 @@ def check_simple(words, redirects):
     if not words:
         check_redirects(None, redirects)
         return None
-    if not words[0].plain() or words[0].text in REFUSED_BUILTINS:
+    if not words[0].plain():
         raise PolicyError(f"Unexpected command word in privileged script: {words[0].text}")
     command, args = words[0].text, [w.text for w in words[1:]]
     if command == "for":

@@ -74,6 +74,11 @@ HOSTILE_SCRIPTS = (
     "jq -r -rf ./release-notes.md server.json", "jq --rawfile a f . server.json", "grep -qi -f pat x",
     "echo hi &", "cat <<EOF\nx\nEOF", "diff <(cat a) b", "echo `id`", "echo x >| f", "echo x &> f",
     "eval echo", ". ./release-notes.md", "( bash x )", "echo $((1+$(id)))", "echo x 3> \"$GITHUB_ENV\"",
+    # A "#" inside a word is not a comment; a here-document's body is data.
+    "echo ok#; bash ./release-notes.md", "cat <<echo\necho\necho\n",
+    'for file in "$GITHUB_ENV"; do unzip -p "$archive" "$file" > "./$file"; done',
+    # Fail closed on what the scripts never need: escapes, a quoted command word.
+    "echo a\\ b", 'echo "a\\$b"', '"echo" ok',
 )
 PRIVILEGED = ("release", "publish_registry")
 # The only variables the jobs with write or OIDC grants may receive (workflow,
@@ -496,7 +501,8 @@ class RegistryChecks(unittest.TestCase):
 # inside a string, a line continuation. Each runs a second command (sleep) that
 # a reader dropping the wrong text would miss.
 TRICKY = ('echo "ok\n# "; sleep 0; echo "\ndone"\n', "echo 'ok\n# '; sleep 0; echo '\ndone'\n",
-          "echo ok \\\n  more; sleep 0\n", "echo a # sleep is a comment here\nsleep 0\n")
+          "echo ok \\\n  more; sleep 0\n", "echo a # sleep is a comment here\nsleep 0\n",
+          "echo ok#; sleep 0\n")
 TRACE_ENV = {"ARTIFACT_ID": "23", "ARCHIVE_SHA256": "a" * 64, "GITHUB_RUN_ID": "42", "REPOSITORY": "o/r",
              "GH_REPO": "o/r", "TAG": "v1.2.3", "COMMIT": "a" * 40, "DIGEST": "a" * 64, "EVENT_NAME": "push",
              "MCP_PUBLISHER_VERSION": "v1.8.1", "MCP_PUBLISHER_SHA256": "a" * 64, "GH_TOKEN": "fixture"}
