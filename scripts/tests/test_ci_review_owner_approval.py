@@ -287,13 +287,104 @@ class ApprovalWorkflowsTests(unittest.TestCase):
         self.assertEqual(clear["steps"][0]["run"], 'gh pr edit "$PR" --remove-label owner-approved')
 
     def test_the_wake_waits_for_the_very_title_the_record_writes(self):
+        wake_script = module_at(ROOT / "scripts/ci_owner_approval_wake.py")
         record_title = yaml.safe_load((WORKFLOWS / "owner-approval.yml").read_text())["run-name"]
+        rendered = (record_title.replace("${{ github.event.action }}", "labeled")
+                    .replace("${{ github.event.pull_request.number }}", "7")
+                    .replace("${{ github.event.label.name || '-' }}", "owner-approved")
+                    .replace("${{ github.event.pull_request.head.sha }}", HEAD)
+                    .replace("${{ github.actor }}", "cdeust"))
+        self.assertEqual(wake_script.title(7, HEAD, "cdeust"), rendered)
         wake = yaml.safe_load((WORKFLOWS / "owner-approval-wake.yml").read_text())["jobs"]["wake"]
-        waited = wake["steps"][0]["env"]["TITLE"]
-        self.assertEqual(record_title.replace("${{ github.event.action }}", "labeled")
-                         .replace("${{ github.event.label.name || '-' }}", "owner-approved"), waited)
         self.assertEqual(wake["permissions"], {"actions": "read"})
-        self.assertIn("exit 0", wake["steps"][0]["run"])
+        self.assertEqual(wake["steps"][-1]["run"], "python3 -I scripts/ci_owner_approval_wake.py")
+        self.assertGreater(wake["timeout-minutes"] * 60, wake_script.DEADLINE_SECONDS)
+
+
+def module_at(path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    return loaded
+
+
+class WakeNeverEndsInSilenceTests(unittest.TestCase):
+    """scripts/ci_owner_approval_wake.py: it waits for the record, and fails with a reason."""
+
+    def setUp(self):
+        self.wake = module_at(ROOT / "scripts/ci_owner_approval_wake.py")
+        self.title = self.wake.title(7, HEAD, "cdeust")
+
+    def run_wait(self, observations, step=15):
+        state = {"now": 1_764_000_000.0, "reads": 0, "sleeps": 0}
+        observed = iter(observations)
+
+        def read(path):
+            self.assertIn("/actions/workflows/owner-approval.yml/runs?event=pull_request_target&created=%3E%3D", path)
+            state["reads"] += 1
+            return next(observed)
+
+        def sleep(seconds):
+            state["sleeps"] += 1
+            state["now"] += seconds
+
+        result = self.wake.wait("o/r", 7, HEAD, "cdeust", read, lambda: state["now"], sleep)
+        return result, state
+
+    def page(self, *runs):
+        return [{"workflow_runs": list(runs)}]
+
+    def run_(self, status="completed", conclusion="success", title=None, created="2026-11-26T05:00:00Z", id=1):
+        return {"display_title": title or self.title, "status": status, "conclusion": conclusion,
+                "created_at": created, "id": id}
+
+    def test_it_waits_until_the_record_finishes_then_wakes(self):
+        (ok, message), state = self.run_wait([self.page(self.run_(status="queued", conclusion=None)),
+                                              self.page(self.run_(status="in_progress", conclusion=None)),
+                                              self.page(self.run_())])
+        self.assertTrue(ok)
+        self.assertEqual((state["reads"], state["sleeps"]), (3, 2))
+        self.assertIn("resolver is woken", message)
+
+    def test_a_record_that_did_not_run_fails_and_names_the_gesture(self):
+        for conclusion in ("failure", "startup_failure", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                (ok, message), _ = self.run_wait([self.page(self.run_(conclusion=conclusion))])
+                self.assertFalse(ok)
+                self.assertIn("Actions event policy", message)
+                self.assertIn(self.wake.AGAIN, message)
+
+    def test_no_record_in_ten_minutes_fails_and_names_the_gesture(self):
+        (ok, message), state = self.run_wait([self.page()] * 100)
+        self.assertFalse(ok)
+        self.assertIn("after 10 minutes", message)
+        self.assertIn(self.wake.AGAIN, message)
+        self.assertEqual(state["sleeps"], self.wake.DEADLINE_SECONDS // self.wake.POLL_SECONDS)
+
+    def test_only_the_record_of_this_label_this_head_and_this_actor_counts(self):
+        others = [self.run_(title=self.wake.title(8, HEAD, "cdeust")),
+                  self.run_(title=self.wake.title(7, "b" * 40, "cdeust")),
+                  self.run_(title=self.wake.title(7, HEAD, "someone"))]
+        (ok, message), _ = self.run_wait([self.page(*others)] * 100)
+        self.assertFalse(ok)
+        self.assertIn("after 10 minutes", message)
+
+    def test_the_newest_finished_record_decides_across_all_pages(self):
+        old = self.run_(conclusion="failure", created="2026-11-26T05:00:00Z", id=1)
+        new = self.run_(conclusion="success", created="2026-11-26T05:05:00Z", id=2)
+        (ok, _), _ = self.run_wait([[{"workflow_runs": [old]}, {"workflow_runs": [new]}]])
+        self.assertTrue(ok)
+        (ok, _), _ = self.run_wait([[{"workflow_runs": [new]}, {"workflow_runs": [dict(old, created_at="2026-11-26T05:09:00Z")]}]])
+        self.assertFalse(ok)
+
+    def test_the_gesture_starts_again_the_resolver_accepts_a_new_label(self):
+        # Removing and setting the label again records a newer approval of this
+        # head, which the resolver accepts after the removal.
+        api = FakeApi([record(T1), record(T3)], [unlabeled(T2)])
+        ns = resolver()
+        ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
+        self.assertEqual(len(api.puts), 1)
 
     def test_the_wake_decides_nothing(self):
         # It runs from the pull request: whatever it becomes, the resolver reads
@@ -445,8 +536,13 @@ class AgentsDoNotApproveTests(unittest.TestCase):
                    "GH_TOKEN=x gh issue edit 7 --add-label owner-approved",
                    "gh api repos/cdeust/x/issues/7/labels -f 'labels[]=owner-approved'",
                    "gh api -X POST repos/cdeust/x/issues/7/labels --input body.json",
-                   "gh api --method PUT repos/cdeust/x/issues/7/labels",
                    "gh label create owner-approved",
+                   "timeout 30 gh pr edit 7 --add-label owner-approved",
+                   "gh pr --repo o/r edit 7 --add-label owner-approved",
+                   "\\gh pr edit 7 --add-label owner-approv\\ed",
+                   "$(which gh) pr edit 7 --add-label owner-approved",
+                   "gh api repos/o/r/issues/7/ -X PATCH -f labels[]=owner-approved",
+                   "gh pr edit 7 --remove-label owner-approved",
                    "echo ok && gh pr edit 7 --add-label owner-approved",
                    "gh -R o/r pr edit 7 --add-label owner-approved",
                    "gh pr create --label owner-approved",
@@ -454,12 +550,14 @@ class AgentsDoNotApproveTests(unittest.TestCase):
                    "gh api graphql -f query='mutation{addLabelsToLabelable(input:{}){clientMutationId}}'",
                    "env -i gh pr edit 7 --add-label owner-approved",
                    "/usr/local/bin/gh pr edit 7 --add-label owner-approved",
-                   "gh pr edit 7 --add-label $L",
                    "gh alias set ok 'pr edit --add-label owner-approved'",
                    "gh -R o/r pr merge 7"]
+        # A label built at run time, or a body-less write, names nothing the guard
+        # can read: the contract declares them out of reach (docs/review-subscriptions.md).
         allowed = ["gh pr edit 7 --add-label claude-rereview", "gh pr view 7 --json labels",
-                   "gh pr edit 7 --remove-label owner-approved", "gh api repos/cdeust/x/issues/7/labels",
-                   "gh label list", "gh -R o/r pr view 7", "gh api repos/o/r/issues/7"]
+                   "gh api repos/cdeust/x/issues/7/labels", "gh pr list --label owner-approved",
+                   "gh label list", "gh -R o/r pr view 7", "gh api repos/o/r/issues/7",
+                   "gh pr edit 7 --add-label $L", "gh api --method PUT repos/cdeust/x/issues/7/labels"]
         decided = self.decisions(refused + allowed)
         for command in refused:
             with self.subTest(command=command):

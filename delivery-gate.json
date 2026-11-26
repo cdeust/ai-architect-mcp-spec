@@ -109,7 +109,7 @@
     ],
     "protectedLabel": {
       "name": "owner-approved",
-      "why": "no agent sets the owner's approval: the owner labels a pull request owner-approved (docs/agent-guidance.md, CI contract, rule 1). The guard refuses every gh command that may set it, and any it cannot read: a quoted or variable label, a GraphQL call, an alias, a REST write to an issue or a pull request."
+      "why": "no agent sets the owner's approval: the owner labels a pull request owner-approved (docs/agent-guidance.md, CI contract, rule 1). The guard refuses, closed by default, any call that reaches GitHub (gh anywhere, an HTTP client, a GitHub URL, a GitHub MCP tool) and names the label, a label id or a GraphQL label mutation, or sends a file body to an issue, pull request or label path, unless every command is a read it recognises whole (gh pr/issue view, list, checks, diff, status; gh label list; gh run view, list, watch; and their filters). It guards against mistakes and naive injection, not against an agent: agents act under the owner's account."
     }
   }
 }

@@ -75,7 +75,19 @@ A held merge ends the resolver run green with a notice. The next completion of
 the Pipeline or of `Owner approval wake` wakes the resolver again.
 `Owner approval wake` runs from the pull request on `labeled` and only wakes the
 resolver: a pull request that changes it can delay a merge, never cause one,
-because the resolver reads the records from `main` itself. On `synchronize`,
+because the resolver reads the records from `main` itself. It waits for the
+record of this label, this head and this actor
+(`scripts/ci_owner_approval_wake.py`, every page of runs) and never ends in
+silence. When the record finished with success, it ends green and wakes the
+resolver. When the record did not run, its check **Wake the resolver** fails on
+the pull request, with a summary that names the Actions event policy as the
+probable cause. When the record has not finished after 10 minutes, the check
+fails with "No finished approval record after 10 minutes". Each summary ends
+with the gesture that starts again: remove the `owner-approved` label and set it
+again. That gesture creates a newer record of the current head, which the
+resolver accepts after the removal. The resolver's own holds (another head, a push, a
+removal, the Pipeline not green yet) end its run on `main` green with a notice
+that names them. On `synchronize`,
 `Owner approval` removes the label so the pull request shows the truth; the
 resolver does not rely on that removal. A rerun of an approval record keeps its
 title, so it never approves another head; a rerun by another account changes the
@@ -148,7 +160,7 @@ Tests: `scripts/tests/test_ci_review_owner_approval.py`.
 
 | Threat | Defence | Test |
 | --- | --- | --- |
-| An agent sets the label itself | An agent pushes with the owner's token, so GitHub's events cannot tell it from the owner. The defences are the contract (rule 1), the session guard, and the event log, which names who set the label and when. The guard (`guard.protectedLabel` in `delivery-gate.json`, `writesLabel` in `scripts/gate/gate-lib.mjs`) reads the arguments of gh, past assignments, wrappers (`env -i`, `sudo`, `command`), a binary path and gh's own options (`-R`): it refuses `pr`/`issue` `edit`/`create` adding a label it cannot read or that names it, `label create`/`edit`/`clone`, every `alias set`/`import`, every `gh api graphql`, any REST write to an issue, a pull request or its labels, and GitHub MCP tools whose input names it. It is a barrier of use, not a proof of identity: it cannot stop `bash -c` or another interpreter, a tool outside this guard (curl is refused by another rule, not every HTTP client), an agent that runs without this guard, or the owner's token used anywhere else. | `gate.test.mjs` "refuses every gh form that may set the owner's approval label", `test_the_session_guard_refuses_setting_the_approval_label` |
+| An agent sets the label itself | An agent pushes with the owner's token, so GitHub's events cannot tell it from the owner. The defences are the contract (rule 1), the session guard, and the event log, which names who set the label and when. The session guard (`guard.protectedLabel` in `delivery-gate.json`, `approvalWrite` in `scripts/gate/gate-lib.mjs`) is a coarse rule, closed by default, that does not depend on the form of a command. It reads the whole text of the call as the shell reads its words (no quotes, no backslashes, one case). If the call reaches GitHub (the word gh anywhere, after any launcher or in a substitution; curl, wget, http, hub, xh, or a github.com URL; any tool whose name contains `mcp__` and `github`) and names the label, a label node id (`LA_…`), a GraphQL label mutation, or sends a body from a file or standard input (`--input`, `@`) to an issue, pull request, label or GraphQL path, it is refused, unless every command of the call is a read recognised whole: `gh pr`/`gh issue` `view`, `list`, `checks`, `diff`, `status`; `gh label list`; `gh run view`, `list`, `watch`; and the filters a read pipes into. This covers launchers (`timeout`, `stdbuf`, `watch`, `find -exec`), shell escapes and quotes (`owner-approv\ed`, `\gh`, `'gh'`), options between group and action (`gh pr --repo o/r edit`), `$(which gh)`, any GitHub MCP prefix and a trailing slash on a REST path. **It is a barrier against mistakes and naive injection, not a security boundary**: agents push and call GitHub under the owner's account. What it cannot prevent: a label built at run time (a variable, base64, a string assembled by a program), a body-less write, another interpreter (`bash -c`, `python -c`, `node -e`), an HTTP client it does not name, an alias defined earlier and used later, an agent that runs without this guard, and the owner's token used outside this session. | `gate.test.mjs` "refuses, closed by default, any call that reaches GitHub and names the approval label", "lets reads recognised whole … through", `test_the_session_guard_refuses_setting_the_approval_label` |
 | A push slipped in after the approval, a head reused from another PR, a return to an earlier head, a rerun of an old run, a push with `GITHUB_TOKEN` that starts no workflow | The approval is bound to the head commit in the record. Only the newest record counts, and a later `synchronize` record or `unlabeled` event voids it. | `test_the_approval_table`, `test_a_rerun_of_an_old_head_needs_a_new_approval` |
 | The pull request changes the approval workflows | `Owner approval` runs from `main` (`pull_request_target`); only its records count, and the records of the PR's own workflows are refused. The wake decides nothing. | `test_the_record_runs_from_main_and_its_title_matches_the_resolver`, `test_the_wake_decides_nothing`, rows "a record from the PR's own workflow" and "another workflow file" |
 | A label set with `GITHUB_TOKEN` or by an app | `GITHUB_TOKEN` events start no run, so there is no record. An app is the actor of its record and is refused. | rows "label but no record", "set by an app" |

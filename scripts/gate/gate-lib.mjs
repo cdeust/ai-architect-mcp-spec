@@ -518,12 +518,10 @@ export function guardDecision(call, guard) {
     };
   }
   const label = guard.protectedLabel;
-  if (label !== undefined && typeof call?.tool_name === "string" && call.tool_name.startsWith("mcp__github__")
-      && JSON.stringify(call.tool_input ?? null).toLowerCase().includes(label.name.toLowerCase())) {
-    return { kind: "refuse", reason: label.why };
-  }
   const command = call?.tool_input?.command;
-  if (typeof command !== "string") return { kind: "allow" };
+  if (typeof command !== "string") {
+    return label !== undefined && approvalWrite(call, label.name) ? { kind: "refuse", reason: label.why } : { kind: "allow" };
+  }
   // Each command of the text on its own, whatever its case.
   const commands = commandsOf(command);
   const words = guardWords(guard);
@@ -533,96 +531,60 @@ export function guardDecision(call, guard) {
   };
   const rule = guard.refuse.find(({ pattern }) => matches(pattern));
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
-  if (label !== undefined && commands.some((one) => writesLabel(one, label.name))) {
+  if (label !== undefined && approvalWrite(call, label.name)) {
     return { kind: "refuse", reason: label.why };
   }
   if (guard.push.some(matches)) return { kind: "push" };
   return { kind: "allow" };
 }
 
-/** Programs that run the command that follows them, with the options they take a value for. */
-const WRAPPERS = {
-  env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string"],
-  command: [],
-  exec: ["-a"],
-  sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U"],
-  time: ["-f", "-o"],
-  nohup: [],
-  nice: ["-n"],
-  xargs: ["-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"],
-  eval: [],
-};
-/** The options of gh that come before its command and take a value. */
-const GH_GLOBAL = ["-R", "--repo", "--hostname"];
+/** The text of a call as the shell reads its words: no quotes, no escapes, one case. */
+const plain = (text) => text.replace(/["'`\\]/g, "").toLowerCase();
+
+/** What can write to GitHub from a shell, wherever it stands in the call. */
+const VEHICLE = /(?:^|[^a-z0-9_.-])(?:gh|curl|wget|https?|hub|xh)(?:$|[^a-z0-9_-])|github\.com/;
+
+/** A label write that names no label: a node id, a GraphQL label mutation. */
+const NAMELESS = /\bla_[a-z0-9_-]{6}|labelstolabelable|labelsfromlabelable|labelids/;
+
+/** A body read from a file or standard input, and a path that may set a label with it. */
+const BODY = /--input|@/;
+const LABEL_PATH = /issues|pulls|labels|graphql/;
 
 /**
- * precondition:  `command` is one command as commandsOf gives it: words
- *                separated by one space, a quoted string read as `""`.
- * postcondition: the arguments of the gh program the command runs, past the
- *                assignments and the wrappers in front of it (`env -i`, a
- *                path such as `/usr/local/bin/gh`, `sudo -u x`), and past
- *                gh's own options (`-R o/r`); null when it runs no gh.
+ * The reads that stay allowed, recognised whole: gh's reads of pull
+ * requests, issues, labels and runs, and the filters a read pipes into.
  */
-function ghArguments(command) {
-  const words = command.split(" ");
-  // Stryker disable next-line StringLiteral: equivalent: past the last word, any text without "-", "=", "/" or a wrapper name reads the same: no assignment, no option, no gh.
-  const at = (i) => words[i] ?? "";
-  let i = 0;
-  for (;;) {
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(at(i))) i += 1;
-    const name = at(i).split("/").pop();
-    if (!Object.hasOwn(WRAPPERS, name)) break;
-    i += 1;
-    while (at(i).startsWith("-")) i += WRAPPERS[name].includes(at(i)) ? 2 : 1;
-  }
-  if (!/^gh(?:\.exe)?$/.test(at(i).split("/").pop())) return null;
-  i += 1;
-  while (at(i).startsWith("-")) i += GH_GLOBAL.includes(at(i)) ? 2 : 1;
-  return words.slice(i);
-}
-
-/** A word the guard cannot read: a quoted string, a variable, a substitution. */
-const unreadable = (word) => /""|\$|`/.test(word);
-
-/** Where a write through `gh api` can set a label: an issue, a pull request, their labels, GraphQL. */
-const LABEL_TARGET = /(?:^|\/)(?:(?:issues|pulls)\/[^/?]+(?:\/labels(?:\/[^?]*)?)?|graphql)(?:\?.*)?$/;
+const READ = new RegExp(
+  "^(?:gh(?:\\s+(?:-r|--repo)(?:\\s+|=)\\S+)*\\s+(?:(?:pr|issue)\\s+(?:view|list|checks|diff|status)|label\\s+list|run\\s+(?:view|list|watch))" +
+  "|(?:cd|grep|jq|head|tail|wc|sort|uniq|cut|echo|printf|true))(?:\\s|$)",
+);
 
 /**
- * precondition:  `command` is one command as commandsOf gives it; `label` is
+ * precondition:  `call` is the JSON a PreToolUse hook receives; `label` is
  *                the name of the protected label.
- * postcondition: true when the command may set `label` through gh:
- *                `pr`/`issue` `edit`/`create` with a label option whose value
- *                names it or cannot be read; `label create`/`edit`/`clone`
- *                naming it or with a word it cannot read; any `alias set` or
- *                `alias import` (an alias can expand to all of these); a
- *                `gh api` write (a method other than GET, or a field without
- *                a method) that names an issue, a pull request, their labels
- *                or GraphQL, or a word it cannot read outside a field. Reads,
- *                removals and comments stay allowed.
+ * postcondition: true when the call may set `label`, closed by default and
+ *                read from the whole text of the call, not from the form of
+ *                a command: the call reaches GitHub (a GitHub MCP tool, or
+ *                a shell text with gh, an HTTP client or a GitHub URL
+ *                anywhere in it), and it names the label, a label node id or
+ *                a GraphQL label mutation, or sends a body from a file to an
+ *                issue, pull request, label or GraphQL path; unless every
+ *                command of a shell text is a read recognised whole. It is
+ *                a barrier against mistakes and naive injection, not a
+ *                security boundary: agents act under the owner's account.
  */
-export function writesLabel(command, label) {
-  const args = ghArguments(command);
-  if (args === null) return false;
-  const [group, action, ...options] = args;
-  const names = (word) => unreadable(word) || word.toLowerCase().includes(label.toLowerCase());
-  if ((group === "pr" || group === "issue") && (action === "edit" || action === "create")) {
-    return options.some((word, i) =>
-      ["--add-label", "--label", "-l"].includes(word) ? names(options[i + 1] ?? '""')
-        : /^(?:--add-label=|--label=|-l)/.test(word) && names(word));
-  }
-  if (group === "label") return ["create", "edit", "clone"].includes(action) && options.some(names);
-  if (group === "alias") return action === "set" || action === "import";
-  if (group !== "api") return false;
-  // `api` itself is neither a method, a field, an unreadable word nor a target.
-  const methods = args.flatMap((word, i) =>
-    // Stryker disable next-line StringLiteral: equivalent: a missing method value is any text but GET, a write, whatever the text.
-    word === "-X" || word === "--method" ? [args[i + 1] ?? ""]
-      // The test anchors the prefix at 0, so the replace finds it there first.
-      : /^(?:-X|--method=)/.test(word) ? [word.replace(/-X|--method=/, "")] : []);
-  const fields = args.some((word) => /^(?:-[fF]|--field|--raw-field|--input)/.test(word));
-  const writes = methods.length > 0 ? methods.some((method) => method.toUpperCase() !== "GET") : fields;
-  // A word it cannot read outside a `key=value` field could be the endpoint.
-  return writes && args.some((word) => (unreadable(word) && !word.includes("=")) || LABEL_TARGET.test(word));
+export function approvalWrite(call, label) {
+  const tool = String(call?.tool_name).toLowerCase();
+  const command = call?.tool_input?.command;
+  const github = tool.includes("mcp__") && tool.includes("github");
+  if (typeof command !== "string" && !github) return false;
+  const text = plain(typeof command === "string" ? command : JSON.stringify(call.tool_input ?? null));
+  if (!github && !VEHICLE.test(text)) return false;
+  const names = text.includes(label.toLowerCase()) || NAMELESS.test(text)
+    || (BODY.test(text) && LABEL_PATH.test(text));
+  if (!names) return false;
+  return typeof command !== "string" || !commandsOf(command).every((one) => READ.test(plain(one)));
 }
 
 /**

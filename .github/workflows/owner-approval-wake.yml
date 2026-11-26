@@ -1,8 +1,11 @@
 name: Owner approval wake
 # Wakes the resolver (pipeline-after-merge.yml) when the owner's approval label
-# is set. It runs from the pull request and decides nothing: the resolver reads
-# the approval record of `Owner approval` (run from main) and the label's
-# events itself. A pull request that changes this file can only delay a merge.
+# is set, once the approval record has finished. It runs from the pull request
+# and decides nothing: the resolver reads the record of `Owner approval` (run
+# from main) and the label's events itself. A pull request that changes this
+# file can only delay a merge. It never ends in silence: when the record did
+# not run or has not finished in 10 minutes, the check fails on the pull
+# request with a summary that says why and how to start again.
 on:
   pull_request:
     types: [labeled]
@@ -14,22 +17,18 @@ jobs:
     name: Wake the resolver
     if: github.event.label.name == 'owner-approved'
     runs-on: ubuntu-latest
-    timeout-minutes: 12 # source: operational cap; the wait below stops at 10 minutes.
+    timeout-minutes: 12 # source: the wait of scripts/ci_owner_approval_wake.py stops at 10 minutes.
     permissions:
       actions: read
     steps:
-      # The resolver counts a record only once it succeeded: wake it after the
-      # record of this label has finished, or after 10 minutes in any case.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Wait for the approval record to finish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TITLE: Owner approval labeled PR ${{ github.event.pull_request.number }} label owner-approved at ${{ github.event.pull_request.head.sha }} by ${{ github.actor }}
-        run: |
-          for _ in $(seq 40); do
-            done=$(gh api "repos/$GH_REPO/actions/workflows/owner-approval.yml/runs?event=pull_request_target&per_page=50" \
-              --jq '[.workflow_runs[] | select(.display_title == env.TITLE and .status == "completed")] | length' 2>/dev/null || echo 0)
-            if [ "${done:-0}" != 0 ]; then echo "Approval record finished"; exit 0; fi
-            sleep 15
-          done
-          echo "No finished approval record after 10 minutes; the resolver will hold and say why."
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ACTOR: ${{ github.actor }}
+        run: python3 -I scripts/ci_owner_approval_wake.py

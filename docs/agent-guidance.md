@@ -39,13 +39,20 @@ the prompt was written before the contract, and the repository's own standards a
    owner's newest approval record names the current head, and no push and no removal of
    the label came after it. Any other head, including one approved earlier and returned
    to, needs a new approval. No agent sets the label, as no agent merges by hand: the
-   owner sets it. The session guard refuses the commands that set it.
+   owner sets it. The session guard refuses the calls that may set it; it is a barrier
+   against mistakes and naive injection, not a security boundary, since agents act under
+   the owner's account (what it cannot stop is in
+   [review and merge](review-subscriptions.md#threat-model)).
    The record depends on `pull_request_target`, which GitHub blocks by default in public
    repositories from 2 December 2026 unless an Actions event policy allows it. The
    policy this repository needs, created by the coordinator under the owner's account and
    never by an agent of a pull request, is in
    [review and merge](review-subscriptions.md#the-pull_request_target-dependency).
-   Without it no approval is recorded and the resolver holds every merge, saying why. The one
+   Without it no approval is recorded and the resolver holds every merge, saying why.
+   Setting the label never ends in silence: when the record did not run or has not
+   finished in 10 minutes, the check `Wake the resolver` fails on the pull request and
+   says why; the owner's gesture that starts again is to remove the label and set it
+   again. A head that carries a merge of `main` is a new head and needs a new approval. The one
    merge without the owner's approval is a low-risk Dependabot update (ADR-1126). The
    owner can always merge by hand. The review bots (Claude, Codex, any security review)
    are optional: they give advice, and their absence, failure or exhausted quota blocks
