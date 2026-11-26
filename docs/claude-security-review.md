@@ -79,7 +79,7 @@ already uses.
   through a helper rather than a token in the remote URL (`git-config.ts`).
 - **Tools.** `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents,
   so tools that need no permission (a cloud scheduled task through RemoteTrigger, a
-  message, a notification) are not offered at all; `--allowedTools` only pre-approves.
+  message, a notification) are not offered at all; here `--allowedTools` adds no tool beyond `--tools`; it pre-approves Read and Agent.
   The managed settings also deny, as defence in depth should the flag be lost, the
   shells (Bash, PowerShell), Grep, Glob, LSP, the MCP resource tools, and the tools
   that need no permission, act outside the session or run work: RemoteTrigger,
@@ -184,9 +184,10 @@ handled here" for a rename).
 | Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding whose shape, types, path, category or ranges break it, cuts prose to its bound, and refuses an output whose shape breaks it; the attempt still counts. If the engine enforces the bounds, the worst-case JSON stays under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. If it does not, an oversized output makes `publish` fail at start, which is closed: no comment, and the attempt counts. The comment stays under 60,000 characters, under GitHub's 65,536: whole findings are dropped, the drop is stated, and the run link is kept. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
 
 Each contract is a named check over the parsed workflow. The mutation tests
-remove each workflow guard in turn and require the matching check to fail; the
-managed settings are pinned by exact equality
-(`SecurityReviewMutationTests`).
+remove each workflow guard in turn and require the matching check to fail
+(`SecurityReviewMutationTests`). The managed settings are pinned by
+`test_managed_settings_are_exactly_the_documented_guards`: exact keys and values,
+and the deny list as a set with no duplicates.
 
 ## Not proven before the first real run
 

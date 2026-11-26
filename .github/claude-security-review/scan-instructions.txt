@@ -72,7 +72,7 @@ SEVERITY:
 - LOW: defense in depth. Do not report LOW findings.
 
 METHOD:
-1. Use a sub-agent (the Agent tool, called Task in settings) to identify vulnerabilities with everything above in its prompt.
+1. Use a sub-agent (the Agent tool) to identify vulnerabilities with everything above in its prompt.
 2. For each vulnerability it reports, launch a parallel sub-task with the FALSE POSITIVE
    FILTERING instructions below in its prompt; it assigns a confidence from 1 to 10.
 3. Keep only findings with confidence 8 or more.
