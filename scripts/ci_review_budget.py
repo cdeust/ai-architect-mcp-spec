@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 Record = dict[str, Any]
@@ -49,6 +50,11 @@ BUDGET_STEP = "Count the reviews this PR already received"
 SHA = re.compile(r"[0-9a-f]{40}")
 # source: GitHub REST per_page maximum.
 PER_PAGE = 100
+# GitHub caps searches using event, branch or created at 1,000, even when more exist.
+# https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
+SEARCH_LIMIT = 1000
+SECOND = timedelta(seconds=1)
+UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 # source: operational bound on one `gh api` call, far above its usual second.
 GH_TIMEOUT_SECONDS = 60
 
@@ -80,23 +86,87 @@ def page_records(gh, args, key):
     return records
 
 
-def workflow_runs(gh, repo, *filters):
+def utc_second(stamp):
+    try:
+        return datetime.strptime(stamp, UTC_FORMAT).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise BudgetError("invalid workflow creation time") from exc
+
+
+def run_page(gh, args, number, expected_total=None):
+    page = json.loads(gh([*args, "-f", f"page={number}"]))
+    total, rows = page["total_count"], page["workflow_runs"]
+    if (type(total) is not int or total < 0 or (expected_total is not None and expected_total != total)
+            or not isinstance(rows, list) or len(rows) != min(PER_PAGE, total - (number - 1) * PER_PAGE)
+            or any(type(row["id"]) is not int or row["id"] < 1 for row in rows)
+            or len({row["id"] for row in rows}) != len(rows)):
+        raise BudgetError("incomplete or ambiguous workflow run page")
+    return total, rows
+
+
+def remaining_pages(gh, args, total, first):
+    rows = first.copy()
+    for number in range(2, (total + PER_PAGE - 1) // PER_PAGE + 1):
+        rows.extend(run_page(gh, args, number, total)[1])
+    if len({row["id"] for row in rows}) != total:
+        raise BudgetError("duplicate workflow run across pages")
+    return rows
+
+
+def workflow_runs(gh, repo, event, created, until, branch=None):
     args = [f"repos/{repo}/actions/workflows/claude-review.yml/runs", "--method", "GET",
             "-f", f"per_page={PER_PAGE}"]
-    for field in filters:
-        args.extend(("-f", field))
-    return page_records(gh, args, "workflow_runs")
+    filtered = [*args, "-f", f"event={event}"]
+    if branch is not None:
+        filtered.extend(("-f", f"branch={branch}"))
+    unfiltered = None
+
+    def matches(row, start, end):
+        return (row["event"] == event and (branch is None or row["head_branch"] == branch)
+                and start <= utc_second(row["created_at"]) <= end)
+
+    def window(start, end):
+        nonlocal unfiltered
+        bounds = f"created={start.strftime(UTC_FORMAT)}..{end.strftime(UTC_FORMAT)}"
+        search = [*filtered, "-f", bounds]
+        total, first = run_page(gh, search, 1)
+        observed = first if total >= SEARCH_LIMIT else remaining_pages(gh, search, total, first)
+        if not all(matches(row, start, end) for row in observed):
+            raise BudgetError("workflow run outside its search")
+        if total < SEARCH_LIMIT:
+            return observed
+        if start == end:
+            # REST timestamps resolve to seconds. Only the unfiltered workflow listing has no search cap.
+            # Read it once per search, bounded by its first total_count and the documented page size.
+            if unfiltered is None:
+                unfiltered = remaining_pages(gh, args, *run_page(gh, args, 1))
+            rows = [row for row in unfiltered if matches(row, start, end)]
+        else:
+            middle = start + ((end - start) // SECOND // 2) * SECOND
+            rows = window(start, middle) + window(middle + SECOND, end)
+        ids = {row["id"] for row in rows}
+        # At the cap, GitHub can report only 1,000. Above it the server exposed the full count.
+        if (len(ids) != len(rows) or len(ids) < total or (total > SEARCH_LIMIT and len(ids) != total)
+                or not all(row["id"] in ids for row in first)):
+            raise BudgetError("workflow history changed or is incomplete across date windows")
+        return rows
+
+    # Older callers without the PR creation date can still recover their entire branch history.
+    start = utc_second(created) if created is not None else datetime.fromtimestamp(0, timezone.utc)
+    if start > until:
+        raise BudgetError("PR creation time after budget snapshot")
+    return window(start, until)
 
 
-def candidate_runs(gh: Gh, repo: str, pr: int, head_ref: str):
-    return [row for row in workflow_runs(gh, repo, "event=pull_request", f"branch={head_ref}")
+def candidate_runs(gh, repo, pr, head_ref, created, until):
+    return [row for row in workflow_runs(gh, repo, "pull_request", created, until, head_ref)
             if [pull["number"] for pull in row["pull_requests"]] == [pr]]
 
 
-def protected_candidates(gh, repo, pr, created):
+def protected_candidates(gh, repo, pr, created, until):
     # pull_request_target runs on main; the protected title carries the actual PR head.
     selected = []
-    for row in workflow_runs(gh, repo, "event=pull_request_target", f"created=>={created}"):
+    for row in workflow_runs(gh, repo, "pull_request_target", created, until):
         matched = re.fullmatch(rf"Review PR {pr} at ([a-f0-9]{{40}})", row["display_title"])
         if matched:
             selected.append({**row, "head_sha": matched[1]})
@@ -167,9 +237,10 @@ def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
 
 
 def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels, created=None, run_attempt=1):
-    runs = candidate_runs(gh, repo, pr, head_ref)
+    until = datetime.now(timezone.utc).replace(microsecond=0)
+    runs = candidate_runs(gh, repo, pr, head_ref, created, until)
     if created:
-        runs.extend(protected_candidates(gh, repo, pr, created))
+        runs.extend(protected_candidates(gh, repo, pr, created, until))
     seen, reviews = set(), []
     for run in runs:
         identity, attempt = run["id"], run["run_attempt"]

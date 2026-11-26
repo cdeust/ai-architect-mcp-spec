@@ -74,6 +74,10 @@ jobs:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          additional_permissions: |
+            contents: read
+            pull_requests: read
+            issues: write
           allow_fork_prs: false
           prompt: |
             Read the trusted review instructions in .claude/commands/review-pr.md.

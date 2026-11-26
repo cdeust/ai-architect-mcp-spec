@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 import unittest.mock
@@ -33,7 +34,8 @@ def run(run_id, day, sha=SHA, conclusion="success", prs=(7,), attempt=1):
         "run_attempt": attempt,
         "conclusion": conclusion,
         "head_sha": sha,
-        "created_at": f"2026-11-0{day}T10:00:00Z",
+        "created_at": f"2020-11-0{day}T10:00:00Z",
+        "event": "pull_request", "head_branch": "feat",
         "pull_requests": [{"number": n} for n in prs],
     }
 
@@ -47,15 +49,39 @@ def job(run_id, attempt, name="Claude review", *, action="success", counted=True
             "run_attempt": attempt, "name": name, "conclusion": "success", "status": "completed", "steps": steps}
 
 
+def workflow_api(history, calls, *, capped_total=False, alter=None):
+    """REST returns at most 1,000 filtered runs, with a count either exact or capped."""
+    def gh(args):
+        fields = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f")
+        if args[1:3] != ["--method", "GET"] or int(fields["per_page"]) != 100:
+            raise AssertionError(args)
+        page = int(fields["page"])
+        calls.append(fields)
+        selected = sorted(history, key=lambda row: (row["created_at"], row["id"]), reverse=True)
+        if "event" in fields:
+            start, end = fields["created"].split("..")
+            selected = [row for row in selected if row["event"] == fields["event"]
+                        and ("branch" not in fields or row["head_branch"] == fields["branch"])
+                        and start <= row["created_at"] <= end]
+        total = len(selected)
+        if "event" in fields:
+            selected = selected[:1000]
+            if capped_total:
+                total = len(selected)
+        result = {"workflow_runs": selected[(page - 1) * 100:page * 100], "total_count": total}
+        if alter:
+            alter(fields, result)
+        return json.dumps(result)
+    return gh
+
+
 def fake_gh(runs, jobs, past=None):
     """The REST projections for the candidate list and raw slurped job pages."""
     def gh(args):
         if "--slurp" in args and "--jq" in args:
             raise AssertionError("gh rejects --slurp together with --jq")
         if args[0].endswith("/runs") and "claude-review.yml" in args[0]:
-            if args[-2:] != ["--paginate", "--slurp"]:
-                raise AssertionError(args)
-            return json.dumps([{"workflow_runs": runs, "total_count": len(runs)}])
+            return workflow_api(runs, [])(args)
         path = args[0].split("?")[0].split("/")
         if "attempts" in path:
             run_id, attempt = int(path[-3]), int(path[-1])
@@ -138,6 +164,105 @@ class CountTests(unittest.TestCase):
 
         with self.assertRaises(subprocess.CalledProcessError):
             budget.budget(boom, "o/r", 7, 99, "feat", [])
+
+
+class RunSearchTests(unittest.TestCase):
+    start = "2020-11-01T10:00:00Z"
+    until = budget.utc_second(start) + timedelta(seconds=3)
+
+    def history(self, size, *, same_second=False):
+        rows = []
+        for i in range(size):
+            row = run(i + 1, 1)
+            offset = 0 if same_second else i % 4
+            row["created_at"] = (budget.utc_second(self.start) + timedelta(seconds=offset)).strftime(budget.UTC_FORMAT)
+            rows.append(row)
+        return rows
+
+    def read(self, rows, calls, *, until=None, **options):
+        return budget.workflow_runs(workflow_api(rows, calls, **options), "o/r", "pull_request", self.start,
+                                    until or self.until, "feat")
+
+    def test_short_search_costs_one_request_and_partial_last_page_is_complete(self):
+        for size, calls_expected in ((0, 1), (5, 1), (100, 1), (101, 2), (999, 10)):
+            with self.subTest(size=size):
+                rows, calls = self.history(size), []
+                self.assertCountEqual(self.read(rows, calls), rows)
+                self.assertEqual(len(calls), calls_expected)
+
+    def test_disjoint_windows_recover_exact_or_capped_totals_and_both_boundary_seconds(self):
+        for size in (1000, 1001):
+            for capped in (False, True):
+                with self.subTest(size=size, capped=capped):
+                    rows, calls = self.history(size), []
+                    self.assertCountEqual(self.read(rows, calls, capped_total=capped), rows)
+                    self.assertTrue(all("event" in call for call in calls))
+                    self.assertEqual([c["page"] for c in calls if c["created"] == calls[0]["created"]], ["1"])
+
+    def test_one_unfiltered_read_recovers_two_saturated_seconds_and_filters_other_runs(self):
+        rows = self.history(1001, same_second=True)
+        second = (budget.utc_second(self.start) + timedelta(seconds=1)).strftime(budget.UTC_FORMAT)
+        later = [{**row, "id": row["id"] + 1001, "created_at": second} for row in rows]
+        outside = [{**rows[0], "id": 2003, "event": "push"}, {**rows[0], "id": 2004, "head_branch": "other"},
+                   {**rows[0], "id": 2005, "created_at": "2020-10-31T10:00:00Z"}]
+        calls = []
+        result = self.read(rows + later + outside, calls, until=budget.utc_second(second), capped_total=True)
+        self.assertCountEqual(result, rows + later)
+        self.assertEqual([int(c["page"]) for c in calls if "event" not in c], list(range(1, 22)))
+
+    def test_rejects_changed_totals_partial_pages_duplicate_ids_and_out_of_window_records(self):
+        def change(fields, page):
+            if fields["page"] == "2":
+                page["total_count"] += 1
+
+        def missing(fields, page):
+            page["workflow_runs"].pop()
+
+        def duplicate(fields, page):
+            if fields["page"] == "2":
+                page["workflow_runs"][0] = {**page["workflow_runs"][0], "id": 4}
+
+        def wrong_time(fields, page):
+            page["workflow_runs"][0] = {**page["workflow_runs"][0], "created_at": "2020-11-01T10:00:04Z"}
+
+        for alter in (change, missing, duplicate, wrong_time):
+            with self.subTest(alter=alter.__name__), self.assertRaises(budget.BudgetError):
+                self.read(self.history(101), [], alter=alter)
+
+    def test_split_rejects_a_vanished_parent_record_and_a_short_union(self):
+        rows = self.history(1001)
+        def omit_parent(fields, page):
+            if fields["created"].endswith("03Z") and fields["created"].startswith(self.start):
+                page["workflow_runs"][0] = {**page["workflow_runs"][0], "id": 1002}
+
+        def inflate_parent(fields, page):
+            if fields["created"].endswith("03Z") and fields["created"].startswith(self.start):
+                page["total_count"] += 1
+
+        def wrong_parent(fields, page):
+            if fields["created"].endswith("03Z") and fields["created"].startswith(self.start):
+                page["workflow_runs"][0] = {**page["workflow_runs"][0], "event": "push"}
+
+        for alter in (omit_parent, inflate_parent, wrong_parent):
+            with self.subTest(alter=alter.__name__), self.assertRaises(budget.BudgetError):
+                self.read(rows, [], alter=alter)
+
+    def test_long_lived_pr_combines_legacy_protected_and_current_run_attempts(self):
+        legacy = run(10, 1, sha="b" * 40)
+        rows = [{**row, "id": row["id"] + 100, "event": "pull_request_target",
+                 "display_title": f"Review PR 8 at {SHA}"} for row in self.history(1001)]
+        previous = {**rows[0], "display_title": f"Review PR 7 at {SHA}"}
+        current = {**rows[-1], "display_title": f"Review PR 7 at {SHA}", "run_attempt": 2, "conclusion": None}
+        history = [legacy, previous, *rows[1:-1], current]
+        jobs = {10: ["success"], previous["id"]: [job(previous["id"], 1)],
+                current["id"]: [job(current["id"], 1), job(current["id"], 2)]}
+        response = fake_gh(history, jobs, {(current["id"], 1): "success"})
+        def gh(args):
+            if args[0].endswith("/runs"):
+                return workflow_api(history, [], capped_total=True)(args)
+            return response(args)
+        outcome = budget.budget(gh, "o/r", 7, current["id"], "feat", [], self.start, run_attempt=2)
+        self.assertEqual((outcome["round"], outcome["skip"]), (4, "true"))
 
 
 class AttemptHistoryTests(unittest.TestCase):
@@ -287,13 +412,13 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertFalse(checkout["persist-credentials"])
 
     def test_target_budget_uses_the_actual_pr_head_from_the_protected_run(self):
-        rows = [{"id": n, "created_at": "2026-11-26", "conclusion": "success", "display_title": title}
+        rows = [{**run(n, 1), "display_title": title, "event": "pull_request_target"}
                 for n, title in enumerate((f"Review PR 7 at {SHA}", f"Review PR 8 at {SHA}", "unexpected"), 1)]
-        def gh(args):
-            self.assertIn("event=pull_request_target", args)
-            self.assertIn("--paginate", args)
-            return json.dumps([{"workflow_runs": rows, "total_count": len(rows)}])
-        self.assertEqual([r["head_sha"] for r in budget.protected_candidates(gh, "o/r", 7, "today")], [SHA])
+        stamp = rows[0]["created_at"]
+        calls = []
+        selected = budget.protected_candidates(workflow_api(rows, calls), "o/r", 7, stamp, budget.utc_second(stamp))
+        self.assertEqual([r["head_sha"] for r in selected], [SHA])
+        self.assertEqual([fields["event"] for fields in calls], ["pull_request_target"])
 
     def test_cap_is_three(self):
         self.assertEqual(budget.CAP, 3)

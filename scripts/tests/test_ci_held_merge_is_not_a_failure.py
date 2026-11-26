@@ -58,6 +58,7 @@ def run_main(outcome):
 
 WAITS = (
     "merge held: Pipeline has not succeeded on this head",
+    "merge held: source branch has no unique historical PR",
     "merge held: review names an older head",
     "merge held: native Codex approval is missing",
     "merge held: native Claude approval is missing or conflicting",

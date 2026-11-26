@@ -66,6 +66,7 @@ class Api:
         self.edit_pages = None
         self.claude_edits = {}
         self.deletions = [[]]
+        self.other_timeline_items = 28  # Observed on PR #406 with zero deleted comments.
         self.base_changes = []
         self.merged, self.statuses = [], []
         self.pipelines = [{**done("Pipeline"), "id": 61, "head_sha": HEAD, "pull_requests": [PR]}]
@@ -87,7 +88,8 @@ class Api:
                 index = int(body["variables"].get("after", 0))
                 more = index + 1 < len(self.deletions)
                 return {"data": {"repository": {"pullRequest": {"headRefOid": HEAD, "baseRefName": "main",
-                        "timelineItems": {"totalCount": sum(map(len, self.deletions)),
+                        "timelineItems": {"totalCount": self.other_timeline_items + sum(map(len, self.deletions)),
+                        "filteredCount": sum(map(len, self.deletions)),
                         "nodes": [{"id": f"DE_{index}_{n}", **event} for n, event in enumerate(self.deletions[index])],
                         "pageInfo": {
                             "hasNextPage": more, "endCursor": str(index + 1) if more else None}}}}}}
@@ -351,6 +353,20 @@ class BothReviews(unittest.TestCase):
                               [[{**revisions[0][0], "id": "same"}, {**adverse, "id": "same"}, original]]):
                     self.api.claude_edits[earlier_row["id"]] = pages
                     self.check_both_entrypoints(False)
+
+    def test_complete_filtered_deletions_with_unrelated_timeline_items_admit_both_consumers(self):
+        self.check_both_entrypoints(True)
+
+    def test_truncated_filtered_deletions_hold_both_consumers(self):
+        class Incomplete(Api):
+            def request(self, method, path, body=None):
+                result = super().request(method, path, body)
+                if path == "/graphql" and "COMMENT_DELETED_EVENT" in body["query"]:
+                    result["data"]["repository"]["pullRequest"]["timelineItems"]["filteredCount"] += 1
+                return result
+
+        self.api = Incomplete()
+        self.check_both_entrypoints(False)
 
     def test_whole_claude_comment_deletion_requires_a_later_review(self):
         other = {"__typename": "User", "login": "maintainer"}

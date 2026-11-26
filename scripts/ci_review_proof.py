@@ -196,7 +196,7 @@ DELETIONS = """query($owner:String!, $repo:String!, $pr:Int!, $after:String) {
   repository(owner:$owner, name:$repo) { pullRequest(number:$pr) {
     headRefOid baseRefName
     timelineItems(first:100, after:$after, itemTypes:[COMMENT_DELETED_EVENT]) {
-      totalCount
+      filteredCount
       nodes { ... on CommentDeletedEvent { id createdAt deletedCommentAuthor { __typename login ... on Bot { id } } } }
       pageInfo { hasNextPage endCursor }
     }
@@ -217,7 +217,7 @@ def last_provider_deletions(api, repository, number, head):
         if pr["headRefOid"] != head or pr["baseRefName"] != "main":
             raise ValueError("PR changed while reading comment deletions")
         timeline = pr["timelineItems"]
-        size = timeline["totalCount"]
+        size = timeline["filteredCount"]
         if type(size) is not int or size < 0 or (total is not None and total != size):
             raise ValueError("inconsistent comment-deletion count")
         total = size

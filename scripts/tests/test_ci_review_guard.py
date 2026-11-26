@@ -62,6 +62,12 @@ class InstalledManifestsTests(unittest.TestCase):
         unit = json.loads((ROOT / "ci.json").read_text())["unit"]
         self.assertIn("npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high", unit)
 
+    def test_model_installation_token_can_only_write_the_review_comment(self):
+        workflow = yaml.safe_load((WORKFLOWS / "claude-review.yml").read_text())
+        action = next(step for step in workflow["jobs"]["review"]["steps"] if step.get("name") == "PR Review")
+        self.assertEqual(yaml.safe_load(action["with"]["additional_permissions"]),
+                         {"contents": "read", "pull_requests": "read", "issues": "write"})
+
 
 if __name__ == "__main__":
     unittest.main()
