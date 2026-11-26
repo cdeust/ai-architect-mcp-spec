@@ -52375,6 +52375,12 @@ var MAX_RESPONSE_CHARS = 1e5;
 var CLARIFICATION_TURN_CHARS = 1e3;
 var MAX_CLARIFICATION_TURNS = Math.floor(MAX_RESPONSE_CHARS / 2 / CLARIFICATION_TURN_CHARS);
 var ERROR_MESSAGE_CHARS = 500;
+function clipChars(text2, max3) {
+  if (text2.length <= max3)
+    return text2;
+  const last = text2.charCodeAt(max3 - 1);
+  return text2.slice(0, last >= 55296 && last <= 56319 ? max3 - 1 : max3);
+}
 var MAX_PIPELINE_ERRORS = Math.floor(MAX_RESPONSE_CHARS / 4 / ERROR_MESSAGE_CHARS);
 
 // packages/strategy/dist/claim-analyzer.js
@@ -53432,7 +53438,8 @@ var ReliabilityObservationRecordSchema = external_exports.object({
 
 // packages/orchestration/dist/types/state/handoff-state.js
 var HandoffStateFields = {
-  jira_result: JiraResultSchema.optional(),
+  // The detail of a failure fits one error entry, however the checkpoint was written.
+  jira_result: JiraResultSchema.refine((result) => result.status !== "failed" || result.detail.length <= ERROR_MESSAGE_CHARS, { message: `jira_result.detail exceeds ${ERROR_MESSAGE_CHARS} chars`, path: ["detail"] }).optional(),
   passed_define: external_exports.strictObject({ handoff: DefineHandoffV1Schema, intent: external_exports.string() }).optional()
 };
 function passedDefineInRun(s) {
@@ -54127,7 +54134,7 @@ function touch(state) {
 }
 var TRUNCATED = " \u2026[truncated]";
 function appendError(state, message, kind) {
-  const bounded = message.length > ERROR_MESSAGE_CHARS ? `${message.slice(0, ERROR_MESSAGE_CHARS - TRUNCATED.length)}${TRUNCATED}` : message;
+  const bounded = message.length > ERROR_MESSAGE_CHARS ? `${clipChars(message, ERROR_MESSAGE_CHARS - TRUNCATED.length)}${TRUNCATED}` : message;
   const nextErrors = [...state.errors, bounded];
   const nextKinds = [...state.error_kinds, kind];
   const overflow = nextErrors.length - MAX_PIPELINE_ERRORS;
@@ -54338,6 +54345,12 @@ var PR_GATE_QUESTION_ID = "pr_gate";
 var PR_CREATION_INV_ID = "pr_creation_engineer";
 var VERIFY_BUDGET_QUESTION_ID = "self_check_verify_budget";
 var PREFLIGHT_SUBAGENT_PROBE_ID = "preflight_subagent_probe";
+
+// packages/orchestration/dist/jira-refusal.js
+function jiraTicketsRefusal(state) {
+  const jira = state.jira_result;
+  return jira?.status === "failed" ? `jira_tickets_${jira.cause}: ${jira.detail}` : void 0;
+}
 
 // packages/orchestration/dist/define-decisions.js
 var DECISION_SOURCE_ID = /\b(?:user-request|clarification:\d+:\d+)\b/g;
@@ -54748,6 +54761,7 @@ function defineFindings(state) {
   return [
     ...validateDefineReadiness(sections),
     ...findDefineDecisionConflicts(state, sections).map((message) => ({ message })),
+    ...[jiraTicketsRefusal(state)].flatMap((message) => message ? [{ message }] : []),
     ...semanticReviewFindings(state)
   ];
 }
@@ -55394,11 +55408,12 @@ ${input2.git_history_summary.slice(0, 2e3)}
 var RULES = [
   '1. Output ONLY JSON in this form, with no other keys, preamble or fences: {"tickets":[{"id":"TICKET-001","title":"Task title","description":"Work to do","acceptance_ids":["AC-001"],"story_points":3,"depends_on":[],"source":"FR-001","phase":1,"epic":"Delivery"}]}',
   "2. AC IDs MUST match the AC-XXX IDs in the source. NEVER create new AC numbering.",
-  "3. Use distinct TICKET-NNN IDs, at least one distinct acceptance ID per ticket, and positive Fibonacci story points (1, 2, 3, 5, 8, ...). Cite the source in each ticket.",
+  "3. Use distinct IDs from TICKET-001 to TICKET-999, at least one distinct acceptance ID per ticket, and positive Fibonacci story points (1, 2, 3, 5, 8, ...). Cite the source in each ticket.",
   "4. SP totals and the summary are computed from tickets. Omit them from the JSON.",
   "5. List only existing prerequisites, once each. No self-dependency or other cycle.",
   "6. Distribute SP unevenly \u2014 real complexity is uneven.",
-  "7. Use positive integer phase numbers and name each epic. Phases reflect delivery order."
+  "7. Use positive integer phase numbers and name each epic. Phases reflect delivery order.",
+  "8. Keep each title, epic and source on one line. A description may use line breaks; no field may hold tabs, carriage returns or other control characters."
 ];
 function buildJiraPrompt(input2) {
   const sourceBlock = input2.source_sections.filter((s) => s.content).map((s) => `## Source: ${s.section_type}
@@ -56410,7 +56425,8 @@ function renderJiraTickets(tickets) {
 }
 
 // packages/orchestration/dist/handlers/jira-generation.js
-var BATCH_ID = "jira_generation";
+var JIRA_BATCH_ID = "jira_generation_tickets";
+var MARKDOWN_BATCH_ID = "jira_generation";
 var JIRA_SOURCE_TYPES = [
   "requirements",
   "user_stories",
@@ -56424,7 +56440,7 @@ function gatherSourceSections(state) {
 }
 var JIRA_FAILED_PREFIX = "[jira_generation] failed";
 function refuse2(state, cause, detail, message) {
-  const bounded = detail.slice(0, ERROR_MESSAGE_CHARS);
+  const bounded = clipChars(detail, ERROR_MESSAGE_CHARS);
   const withError = appendError(
     state,
     `${JIRA_FAILED_PREFIX}: ${cause}: ${bounded}`,
@@ -56438,14 +56454,38 @@ function refuse2(state, cause, detail, message) {
     action: { kind: "emit_message", level: "warn", message }
   };
 }
+function keepMarkdownReply(state, markdown) {
+  if (!markdown?.trim()) {
+    return {
+      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: no response`, "upstream_failure"), current_step: "file_export" },
+      action: { kind: "emit_message", level: "warn", message: "JIRA generation failed; proceeding to file export anyway." }
+    };
+  }
+  const section = {
+    section_type: "jira_tickets",
+    status: "passed",
+    attempt: 1,
+    violation_count: 0,
+    last_violations: [],
+    attempt_log: [],
+    content: markdown.trim()
+  };
+  return {
+    state: { ...state, sections: [...state.sections, section], current_step: "file_export" },
+    action: { kind: "emit_message", message: "JIRA tickets generated. Writing files." }
+  };
+}
 function acceptanceIds(state) {
   return new Set(projectDefineDocument(documentSections(state.sections)).acceptance.map(({ id }) => id));
 }
 var handleJiraGeneration = ({ state, result }) => {
-  if (result?.kind === "subagent_batch_result" && result.batch_id === BATCH_ID) {
+  if (result?.kind === "subagent_batch_result" && result.batch_id === MARKDOWN_BATCH_ID) {
+    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === JIRA_GENERATION_INV_ID)?.raw_text);
+  }
+  if (result?.kind === "subagent_batch_result" && result.batch_id === JIRA_BATCH_ID) {
     const response = result.responses.find((r) => r.invocation_id === JIRA_GENERATION_INV_ID);
     if (!response || response.error || !response.raw_text) {
-      return refuse2(state, "missing", response?.error ?? "no response", "JIRA generation failed; proceeding to file export anyway.");
+      return refuse2(state, "missing", response?.error || "no response", "JIRA generation failed; proceeding to file export anyway.");
     }
     const draft = parseJiraDraft(response.raw_text, acceptanceIds(state));
     if ("error" in draft) {
@@ -56479,7 +56519,7 @@ var handleJiraGeneration = ({ state, result }) => {
     action: {
       kind: "spawn_subagents",
       purpose: "draft",
-      batch_id: BATCH_ID,
+      batch_id: JIRA_BATCH_ID,
       invocations: [
         {
           invocation_id: JIRA_GENERATION_INV_ID,
@@ -58149,6 +58189,9 @@ function readDefineHandoff(state, action) {
   const automatic = state.semantic_review_requested && state.post_specs?.automatic_define === 1 && state.current_step === "complete" && state.post_specs.decision === "prd_only" && action?.kind === "done";
   const legacy = state.current_step === "implementation_gate" && action?.kind === "ask_user" && action.question_id === IMPLEMENTATION_GATE_QUESTION_ID && (!state.post_specs || state.post_specs.decision === "pending");
   if (!automatic && !legacy) {
+    const reason = state.current_step === "complete" ? projectDefineState(state) : void 0;
+    if (reason && "error" in reason)
+      return reason;
     return refusal("define_not_pending", "Define requires a pending implementation decision or a Define kept when the run finished.");
   }
   const projection = projectVerifiedDefine(state);
@@ -58200,8 +58243,9 @@ function projectDefineState(state) {
   if (dispute) {
     return refusal("define_document_invalid", `sourced_publication_policy: ${dispute}`);
   }
-  if (jira?.status === "failed")
-    return refusal("define_not_ready", `jira_tickets_${jira.cause}: ${jira.detail}`);
+  const ticketRefusal = jiraTicketsRefusal(state);
+  if (ticketRefusal)
+    return refusal("define_not_ready", ticketRefusal);
   const semanticFinding = semanticReviewFindings(state)[0];
   if (semanticFinding)
     return refusal("define_not_ready", semanticFinding.message);
@@ -106060,7 +106104,7 @@ function shedTicketsAndDefine(work, fits, applied) {
     const stub = {
       omitted: true,
       chars: reclaimed,
-      hint: `tickets are in the exported 07-jira-tickets.md; estimates and links via get_pipeline_state(run_id, format:"define_handoff_v1")`
+      hint: `tickets are in the exported 07-jira-tickets.md; once the gate is reached, estimates and links via get_pipeline_state(run_id, format:"define_handoff_v1")`
     };
     work.jira_result = { status: jira.status, tickets: stub };
     applied.push({ field: "jira_result.tickets", kind: "omitted", reclaimed_chars: reclaimed });
@@ -106070,7 +106114,7 @@ function shedTicketsAndDefine(work, fits, applied) {
     work.passed_define = {
       omitted: true,
       chars: reclaimed,
-      hint: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1")`
+      hint: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1") while the checkpoint still projects it`
     };
     applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
   }
