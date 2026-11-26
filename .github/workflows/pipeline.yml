@@ -910,7 +910,6 @@ jobs:
           import json
           import os
           import re
-          import signal
           import subprocess
           import sys
           from pathlib import Path
@@ -922,17 +921,12 @@ jobs:
               # (dash keeps the shell, and with it ssh, alive after git is killed).
               process = subprocess.Popen(["git", *args], text=True, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, start_new_session=True)
-              # The step's release() kills this session if the publisher itself is killed.
+              # If the publisher is stopped or killed while git runs, the step's
+              # release() kills this whole session from the recorded group ID.
               transport = Path(os.environ["AGENT_DIR"]) / "transport"
               transport.write_text(str(process.pid))
               try:
                   stdout, stderr = process.communicate()
-              except BaseException:
-                  try:
-                      os.killpg(process.pid, signal.SIGKILL)
-                  except ProcessLookupError:
-                      pass
-                  raise
               finally:
                   transport.unlink(missing_ok=True)
               if check and process.returncode:
@@ -1033,8 +1027,6 @@ jobs:
 
 
           if __name__ == "__main__":
-              # SystemExit unwinds through git(), which kills the transport's session.
-              signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
               sys.exit(main())
           PY
           publisher=$!

@@ -20,6 +20,7 @@ test, so the same proof can be run against another repository's revision.
 from pathlib import Path
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -59,6 +60,7 @@ log="$FIXTURE_LOG/ssh.$$"
 {
   echo "pid=$$"
   echo "arguments=$*"
+  printf '%s\n' "$@" > "$log.argv"
   echo "parent=$PPID"
   # Git runs GIT_SSH_COMMAND through /bin/sh -c. dash (Linux) keeps that shell as
   # our parent, bash (macOS sh) replaces itself: record which one Git is.
@@ -286,11 +288,15 @@ class Fixture:
                 os.kill(int(pid), signal.SIGKILL)
             except (ProcessLookupError, ValueError):
                 pass
-        for record in self.transports():
-            directory = (self.repo / record["socket"]).parent
+        sockets = [record["socket"] for record in self.transports()]
+        if (self.log / "agent-starts").exists():
+            sockets += [line.split(None, 1)[1] for line in (self.log / "agent-starts").read_text().splitlines()
+                        if line.startswith("-a ")]
+        for socket in sockets:
+            directory = (self.repo / socket).parent
             owned = directory.name.startswith("release-agent.") or any(
                 directory != base and base in directory.parents for base in (self.root, self.socket_base))
-            if record["socket"] and owned and directory not in (self.repo, self.runner_temp):
+            if socket and owned and directory not in (self.repo, self.runner_temp):
                 shutil.rmtree(directory, ignore_errors=True)
         for pid, _, _, args, _ in processes():
             if (str(self.root) in args or str(self.socket_base) in args) and int(pid) != os.getpid():
@@ -369,6 +375,13 @@ class ReleaseCredentialLifetime(unittest.TestCase):
         self.assertEqual(config.get("stricthostkeychecking"), "true")
         self.assertEqual(config.get("globalknownhostsfile"), "/dev/null")
         self.assertEqual(config.get("userknownhostsfile"), str(fixture.runner_temp / "release-known-hosts"))
+        # ssh -G prints "a b/x" for one quoted file and for two unquoted ones: read the
+        # option as OpenSSH does (whitespace separates files, double quotes group them).
+        argv = Path(fixture.log, f"ssh.{record['pid']}.argv").read_text().splitlines()
+        known = [arg.split("=", 1)[1] for arg in argv if arg.startswith("UserKnownHostsFile=")]
+        self.assertEqual([shlex.split(value) for value in known],
+                         [[str(fixture.runner_temp / "release-known-hosts")]],
+                         "the known-hosts path, which holds a space, is one file")
         self.assertNotIn("proxycommand", config, "the host's ssh configuration reached the transport")
 
     def each_workflow(self, check):
