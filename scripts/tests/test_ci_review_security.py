@@ -634,24 +634,36 @@ class BudgetTests(unittest.TestCase):
 
     def test_a_definition_without_a_counted_name_spends_no_round(self):
         text = WORKFLOW.read_text()
-        self.assertEqual(set(security.COUNTED_NAMES),
-                         {("job", security.JOB), ("step", security.ACTION_STEP),
-                          ("job", security.PUBLISH_JOB), ("step", security.PUBLISH_STEP)})
-        renames = {
-            "engine job only": ("    name: Claude security review\n",),
-            "engine step only": ("      - name: Claude security review\n",),
-            "publish job": (f"    name: {security.PUBLISH_JOB}\n",),
-            "publish step": (f"      - name: {security.PUBLISH_STEP}\n",),
-            "quoted": ("    name: Claude security review\n",),
+        self.assertEqual(set(security.COUNTED_PAIRS),
+                         {(security.JOB, security.ACTION_STEP),
+                          (security.PUBLISH_JOB, security.PUBLISH_STEP)})
+        engine_job = "    name: Claude security review\n"
+        engine_step = "      - name: Claude security review\n"
+        publish_job = f"    name: {security.PUBLISH_JOB}\n"
+        publish_step = f"      - name: {security.PUBLISH_STEP}\n"
+        for line in (engine_job, engine_step, publish_job, publish_step):
+            self.assertEqual(text.count(line), 1, line)
+        edits = {
+            "engine job only": (engine_job, engine_job.rstrip("\n") + " (v2)\n"),
+            "engine step only": (engine_step, engine_step.rstrip("\n") + " (v2)\n"),
+            "publish job": (publish_job, publish_job.rstrip("\n") + " (v2)\n"),
+            "publish step": (publish_step, publish_step.rstrip("\n") + " (v2)\n"),
+            "folded continuation": (engine_job, engine_job + "      (v2)\n"),
+            "step moved to another job": (engine_job, "    name: Claude security engine\n"),
+            "not YAML": (engine_job, engine_job + "  : [\n"),
         }
-        for label, (line,) in renames.items():
-            with self.subTest(rename=label):
-                self.assertEqual(text.count(line), 1, line)
-                new = (line.replace("name: ", 'name: "').rstrip("\n") + '"\n'
-                       if label == "quoted" else line.rstrip("\n") + " (renamed)\n")
-                renamed = text.replace(line, new)
+        for label, (old, new) in edits.items():
+            with self.subTest(edit=label):
+                renamed = text.replace(old, new, 1)
                 result = self.budget([], {}, workflow=renamed.encode())
                 self.assertEqual((result["skip"], result["renamed"]), ("true", "true"))
+        for label, (old, new) in {
+            "quoted": (engine_step, '      - name: "Claude security review"\n'),
+            "commented": (publish_job, publish_job.rstrip("\n") + "  # the comment\n"),
+        }.items():
+            with self.subTest(edit=label):
+                result = self.budget([], {}, workflow=text.replace(old, new, 1).encode())
+                self.assertEqual((result["skip"], result["renamed"]), ("false", "false"))
         # Any other change to the definition is not a reason to skip: no comparison with main.
         result = self.budget([], {}, workflow=(text + "\n# changed\n").encode())
         self.assertEqual((result["skip"], result["renamed"], result["stale"]),
@@ -667,6 +679,13 @@ class BudgetTests(unittest.TestCase):
 
         result = security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD, MERGE)
         self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
+
+    def test_a_listing_at_the_api_limit_is_refused_whatever_total_count_says(self):
+        rows = [run(i, 1, "1" * 40) for i in range(1, security.RUNS_LISTING_LIMIT + 1)]
+        with self.assertRaises(security.BudgetError):
+            self.budget(rows, {}, total=security.RUNS_LISTING_LIMIT)
+        self.assertEqual(security.RUNS_LISTING_LIMIT, 1000)
+        self.assertEqual(self.budget(rows[:-1], {})["round"], 1)
 
     def test_repeated_rows_do_not_hide_a_run_from_the_refusal(self):
         rows = [run(i, 1, str(i % 10) * 40) for i in range(1, 6)] + [run(5, 1, "5" * 40)]

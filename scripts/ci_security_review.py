@@ -63,6 +63,10 @@ PUBLISH_JOB = "Publish the security review"
 PUBLISH_STEP = "Publish the validated findings"
 # source: owner decision 2026-11-04 (ADR-1119), three automatic reviews per PR.
 CAP = 3
+# source: docs.github.com, "List workflow runs for a workflow": with the `branch` or
+# `event` filter the endpoint returns at most 1,000 results. At that many, whether
+# total_count is capped too is not known, so the count is refused either way.
+RUNS_LISTING_LIMIT = 1000
 INSTRUCTIONS = ROOT / ".github/claude-security-review"
 SCAN = INSTRUCTIONS / "scan-instructions.txt"
 FALSE_POSITIVES = INSTRUCTIONS / "false-positive-filtering.txt"
@@ -116,7 +120,8 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
     # The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
     # which hold the attempts, would fall off. Refuse rather than undercount.
     unique = {row.get("id") for row in rows}
-    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)):
+    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)
+                 or len(unique) >= RUNS_LISTING_LIMIT):
         raise BudgetError("the API lists fewer runs of this branch than it counts")
     found, read = [], set()
     for row in rows:
@@ -174,20 +179,28 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
-# Each name the budget counts by, with where it must stand: a job's `name:` sits at
-# the jobs' indent, a step's `- name:` at the steps' indent. JOB and ACTION_STEP are
-# the same string, so a match must say which of the two it is.
-COUNTED_NAMES = (("job", JOB), ("step", ACTION_STEP), ("job", PUBLISH_JOB),
-                 ("step", PUBLISH_STEP))
-NAME_LINE = {"job": r"^ {4}name: {name}\s*$", "step": r"^ {6}- name: {name}\s*$"}
+# The (job name, step name) pairs the budget counts attempts by (attempts()).
+COUNTED_PAIRS = ((JOB, ACTION_STEP), (PUBLISH_JOB, PUBLISH_STEP))
 
 
 def names_present(definition: str) -> bool:
-    """Whether the workflow that runs still carries every name the budget counts by,
-    each as a job or a step name of this file's layout. A quoted or commented name, or
-    another layout, fails closed: that PR is not reviewed, and the summary says so."""
-    return all(re.search(NAME_LINE[kind].replace("{name}", re.escape(name)), definition,
-                         re.MULTILINE) for kind, name in COUNTED_NAMES)
+    """Whether the workflow that runs has, for each counted pair, a job of that name
+    holding a step of that name: what attempts() matches in the jobs API. Parsed as
+    YAML, so quotes, comments and folded lines read as GitHub reads them. A definition
+    that does not parse, or lacks a pair, fails closed: that PR is not reviewed."""
+    import yaml  # PyYAML, as the ci-contract tests need (CONTRIBUTING.md)
+
+    try:
+        workflow = yaml.safe_load(definition)
+    except yaml.YAMLError:
+        return False
+    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    if not isinstance(jobs, dict):
+        return False
+    pairs = {(job.get("name"), step.get("name"))
+             for job in jobs.values() if isinstance(job, dict)
+             for step in (job.get("steps") or []) if isinstance(step, dict)}
+    return all(pair in pairs for pair in COUNTED_PAIRS)
 
 
 def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> Record:
