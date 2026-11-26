@@ -85,8 +85,8 @@
         "why": "a forced push is never used in this repository (docs/agent-guidance.md, CI contract, rule 3)."
       },
       {
-        "pattern": "${start}gh\\s+pr\\s+merge\\b",
-        "why": "no agent merges by hand in this repository: the review verdict decides the merge (docs/agent-guidance.md, CI contract, rule 1)."
+        "pattern": "${start}(?:\\S*/)?gh(?:\\s+(?:-R|--repo|--hostname)(?:\\s+|=)\\S+)*\\s+pr\\s+merge\\b",
+        "why": "no agent merges by hand in this repository: the protected resolver verifies the Pipeline and both code reviews (docs/agent-guidance.md, CI contract, rule 1)."
       },
       {
         "pattern": "${start}gh\\s+api\\b(?=.*(?:/git/(?:refs|commits|trees|blobs)|/contents/|/pulls(?=\\s|$)|/merges?\\b))(?=.*\\s(?:-X\\s*|--method[\\s=]+)(?:POST|PUT|PATCH|DELETE)\\b)",

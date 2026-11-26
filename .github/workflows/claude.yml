@@ -1,4 +1,5 @@
 name: Claude Code
+run-name: "Owner mention on ${{ github.event.issue.pull_request && 'PR' || 'issue' }} #${{ github.event.issue.number }}"
 
 on:
   # zizmor: ignore[dangerous-triggers] -- owner gate, read-only model job and isolated publication from the default branch.

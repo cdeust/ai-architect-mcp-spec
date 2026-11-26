@@ -1,44 +1,35 @@
-# PR review subscriptions
+# Review evidence
 
-The PR workflow first enforces the review-round budget. Its budget job records
-one default-branch workflow run ID for that attempt. GitHub can send multiple
-`workflow_run` events as jobs start. Only the recorded workflow reads quota,
-and both admission and merge verify its identity. If its measurement fails,
-the round remains blocked. Rerunning all jobs creates a new source attempt
-with its own nomination. The default-branch workflow selects from measured
-eligible subscriptions using the remaining percentage in the tightest applicable
-window. Codex wins a tie. Claude runs through the official Claude Code action.
-Codex runs through the OpenAI GitHub App. OpenAI controls the model used by
-that app. [OpenAI GitHub integration](https://learn.chatgpt.com/docs/third-party/github)
+The protected resolver requires a successful Pipeline on the current PR head and two approvals. A hold label or a “do not merge” title remains the owner’s veto. This contract also applies to Dependabot. An unavailable provider, a missing verdict or an exhausted review budget holds the merge.
 
-| Claude | OpenAI GitHub review meter | CI decision |
-| --- | --- | --- |
-| Eligible | Positive | Select the larger remaining percentage |
-| Eligible | Exhausted or unreported | Select Claude |
-| Excluded | Positive | Reuse a review on this head or request one with `@codex review` |
-| Excluded | Unreported | Read a native review already triggered by the repository |
-| Excluded | Exhausted | Hold the review |
+| Evidence | What GitHub must show |
+| --- | --- |
+| Claude | The most recently completed protected `PR Review` attempt for this PR and commit recorded a structured approval. An older run can finish last when rerun. The verifier reads the attempts before and after collecting the comments. A pending, unknown, duplicated or ambiguously ordered attempt holds the review. The Claude App must publish its approval during the successful review action. The comment names the same SHA and attempt and ends in `Verdict: approve`. An edit cannot issue a fresh approval. Each authenticated block remains effective until a distinct protected review starts after the block and approves. |
+| Codex | The native connector’s versioned summary names this SHA, the review completed and it has no unresolved findings. The GraphQL query follows all pages, checks the current head and authenticates both author and last editor. Any current native summary on that head with unresolved findings holds both the status and the merge, including a summary created before a retarget. The connector must resolve its findings. A queued review or ambiguous competing summaries also keep the gate closed. |
+| Published result | The protected `Review updated` workflow writes the `Claude and Codex reviews` status on the actual PR commit. A missing approval produces a failure. On review edits, deletion, creation, the start of a Claude attempt or the completion of the Pipeline or Claude review, it reads both verdicts again. The protected resolver independently reads those sources and then rereads the PR head, base, draft state, title and labels before submitting the expected head SHA to GitHub. This status reports the two code reviews. The human veto and the Pipeline are separate merge conditions. GitHub’s merge API accepts the expected head SHA but has no label or title precondition. A veto applied between that final read and GitHub processing the merge cannot be guaranteed by the resolver. |
 
-A failed quota read holds the round. Read-only reuse waits for a completed,
-authenticated code review on the current head. The repository's native automatic
-review trigger determines which PR events start reviews outside CI. An absent
-receipt leaves admission unverified. A request, reaction and security-review
-summary do not establish code approval. Reusing a completed native receipt on
-the same head counts once against the review budget.
+## Binding a run and its reviews to the PR
 
-### OpenAI meter
+The resolver identifies the Pipeline using GitHub's run ID, event, source repository ID, branch and creation time. It checks the history of open and closed PRs for that source branch. A second PR already created on that branch makes the origin ambiguous and holds delivery. A later PR cannot claim an earlier run, even when both use the same commit. GitHub’s current list of associated PRs can change after a push. In Architect OS #152 the previous run retained its original head while that list already showed its successor. [Historical run](https://github.com/cdeust/architect-os/actions/runs/45850045641) · [Following run](https://github.com/cdeust/architect-os/actions/runs/45857093429).
 
-The trusted workflow accepts an optional `CODEX_REVIEW_USAGE_TOKEN` and
-`CODEX_REVIEW_ACCOUNT_ID` in the main-only `review-subscriptions` GitHub
-Environment. The bearer must authorize the usage endpoint for the ChatGPT
-account linked to the review installation. The workflow checks the response
-account and reads `code_review_rate_limit` from a fixed HTTPS GET. It allows
-a new request on a measured individual subscription with available headroom
-and no credit balance or unlimited credits reported. Configure the Environment's
-deployment branches before adding its credential. PR code only sees the
-provider decision. [OpenAI usage client](https://github.com/openai/codex/blob/cf3ff1530d821ec2d26452da4971d8e3e7d18d25/codex-rs/backend-client/src/client/rate_limit_resets.rs)
+The verifier reads the edit history of Claude verdicts. Restoring a previous comment to `approve` leaves its intervening block in force until another protected review begins and approves. A deleted bot comment requires a new review by its author. When GitHub cannot identify the deleted author, both bots must renew their reviews. Deletion history is complete when the number of distinct deletion events matches GitHub’s `filteredCount`. On #406 the timeline contained 28 events and zero deletions. The verifier reads the current evidence again after consulting the history.
 
-On 2026-11-22 the signed-in account's response contained
-`"code_review_rate_limit": null`, while the GitHub app completed the code review
-of commit `42ed284`. A null meter has no numeric value. The general Codex
-allowance measures a different activity. [Native receipt](https://github.com/cdeust/ai-architect-mcp-spec/pull/391#issuecomment-7078116054) · [OpenAI pricing](https://learn.chatgpt.com/docs/pricing)
+Claude’s budget counts successful review attempts. The review job checks it before starting the model, including on a retry of a failed job. A comment or title edit unrelated to a review uses a separate concurrency group so it cannot displace a pending review. The Actions token reads repository contents and workflow metadata. The pinned action publishes through its installation credential.
+
+## Why the quota reader was removed
+
+The protected selector on #414 could not see usage limits after OAuth sign-in. On #411 and #407 its terminal probe failed. In each case the percentage was absent and the requested review was never verified. Both review systems now operate independently of that display. [#414 producer](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45770024795/job/139740168408) · [#411 producer](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45772732224/job/139748975741) · [#407 producer](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45756254346/job/139695453422).
+
+The current native connector format and its two independent completion clocks are visible in the summaries for [#406](https://github.com/cdeust/ai-architect-mcp-spec/pull/406#issuecomment-7176852478), [#413](https://github.com/cdeust/ai-architect-mcp-spec/pull/413#issuecomment-7183060066) and [#414](https://github.com/cdeust/ai-architect-mcp-spec/pull/414#issuecomment-7184625609).
+
+## Protected inputs and publication
+
+`pull_request_target` takes the workflow and its configuration from the protected base. The workflow admits open same-repository, ready PRs targeting main. The installed Anthropic action uses the documented explicit-prompt agent mode at the architect-os pin. Agent mode preserves the protected checkout. Tracking mode’s branch setup would check out the candidate. Git fetches the two immutable SHAs into a separate bare repository and generates their complete merge-base diff. The review reads that diff and the protected reviewer definitions. The pinned action refreshes `.claude/` from the protected branch during setup. If main advances, those definitions can be newer than the workflow commit. The managed policy limits publication to the GitHub MCP’s `add_issue_comment` tool on the event PR, with its exact commit and attempt footer. Claude has no shell. [Agent mode](https://github.com/anthropics/claude-code-action/blob/4411a9e9b0283becf4b924f7bce360fd7756c78c/src/modes/agent/index.ts) · [Tracking mode](https://github.com/anthropics/claude-code-action/blob/4411a9e9b0283becf4b924f7bce360fd7756c78c/src/modes/tag/index.ts) · [Documented review modes](https://github.com/anthropics/claude-code-action/blob/4411a9e9b0283becf4b924f7bce360fd7756c78c/docs/solutions.md).
+
+GitHub's REST records for a protected review include the PR head in both the run and job and the protected base in the PR association. The workflow execution's `github.sha` is the trusted checkout. [Public run with its association](https://api.github.com/repos/cli/cli/actions/runs/45835202584) · [Run jobs](https://api.github.com/repos/cli/cli/actions/runs/45835202584/jobs) · [GitHub event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
+
+## Operator dependencies and acceptance
+
+The Claude App installation and `CLAUDE_CODE_OAUTH_TOKEN` must be available to the trusted review. After a base change, the original protected Claude run, the Pipeline and the native Codex code review must all postdate the change. Rerunning an earlier workflow reuses its original inputs. Codex can edit a combined code and security summary in place. Its edit time cannot establish the age of the code review. A change of target back to main requests a new protected Claude review. Reopening the PR or pushing a correction starts a new Pipeline. For the same head, the verifier checks the native Code Review row against the versioned full SHA and reads GitHub’s edit history for that comment. The connector must have recorded a running code review after the retarget and its subsequent completion. The separate Security Review clock cannot date the code review. This works with a summary updated in place. A missing transition, unverified editor or ambiguous date holds the review. The connector identifies the reviewed head and its activity times. GitHub supplies the target-change time. Historical Codex-only reviews consume zero Claude rounds. Dependabot remains held until a separate protected admission can run Claude for it. The pinned action’s default actor policy admits human-triggered updates. A bot-triggered update to a human-authored PR also waits for an admitted review. For this public repository, the owner must admit the protected event under GitHub’s announced December 2, 2026 default. [GitHub’s event policy](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2/) · [Pinned actor check](https://github.com/anthropics/claude-code-action/blob/4411a9e9b0283becf4b924f7bce360fd7756c78c/src/github/validation/actor.ts). Codex needs automatic reviews enabled for this repository and available capacity in the connected environment. An integration comment or request proves neither a completed review nor its verdict. A manual fresh `@codex review` request remains the owner’s action under repository rule 6. Advisory security scans do not supply either code review.
+
+The first hosted run after owner integration must demonstrate the two native receipts on one head, a successful status from the protected workflow, and an edited or withdrawn verdict reopening the gate before a merge. Review statuses can also be written by identities with commit-status write access. The resolver always checks both native receipts and the protected Claude run directly. The owner decides whether to require the published status in live rules. An atomic human veto needs a GitHub-enforced review or approval rule at the merge boundary. Making that rule mandatory is a separate owner decision.

@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -25,13 +25,13 @@ def request(url, token, method="GET", data=None):
 def installation_token():
     # Same audience, endpoint and installation permissions as the previously pinned
     # anthropics/claude-code-action f431ada, src/github/token.ts. App-authored
-    # pushes trigger the normal PR checks. Keep this credential in this process.
+    # candidate refs and issue comments need separate writes. Keep this credential here.
     url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
     url += ("&" if "?" in url else "?") + urlencode({"audience": "claude-code-github-action"})
     oidc = request(url, os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"])["value"]
     result = request("https://api.anthropic.com/api/github/github-app-token-exchange", oidc,
                      "POST", {"permissions": {"contents": "write", "issues": "write",
-                                              "pull_requests": "write"}})
+                                              "pull_requests": "read"}})
     token = result.get("token") or result["app_token"]
     print(f"::add-mask::{token}", flush=True)
     try:
@@ -63,9 +63,9 @@ def target(event, repository, sha, run, get):
                 or (pr["base"].get("repo") or {}).get("full_name") != repository
                 or pr["head"]["ref"] in (base, pr["base"]["repo"]["default_branch"])):
             raise ValueError("Publication requires an open, same-repository non-default branch")
-        branch, sha = pr["head"]["ref"], pr["head"]["sha"]
+        branch, sha, base = pr["head"]["ref"], pr["head"]["sha"], pr["base"]["ref"]
     else:
-        branch = f"claude/issue-{number}-{int(run)}"
+        branch = proposal_branch(number, int(run))
     if branch == base or branch.startswith("refs/"):
         raise ValueError("Publication requires a non-default branch")
     if not re.fullmatch("[0-9a-f]{40}", sha):
@@ -112,6 +112,115 @@ def owner_thread(event, api):
         page += 1
 
 
+# GitHub GraphQL Bot identity also used by ci_review_proof.py (architect-os#147, comment 7183310145).
+CLAUDE = {"__typename": "Bot", "login": "claude", "id": "BOT_kgDODIGtWg"}
+COMMENT = """query($id:ID!) { node(id:$id) { ... on IssueComment {
+  id body lastEditedAt author { __typename login ... on Bot { id } }
+  editor { __typename login ... on Bot { id } }
+} } }"""
+CANDIDATE = "<!-- owner-mention-candidate-v1 "
+SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def proposal_branch(number, run):
+    return f"claude/issue-{number}-{run}"
+
+
+def last_marker(body, run):
+    # The model may quote any marker in the answer. Only the publisher adds the final line.
+    last = (body or "").splitlines()[-1:]
+    return last[0] if last and (last[0] == f"<!-- owner-mention-run {run} -->"
+                               or last[0].startswith(f"{CANDIDATE}{run} ")) else None
+
+
+def receipts(api, number, run):
+    found, page = [], 1
+    while True:
+        rows = api(f"issues/{number}/comments?per_page=100&page={page}")
+        for row in rows:
+            marker = last_marker(row.get("body"), run)
+            if not marker or (row.get("user") or {}).get("node_id") != CLAUDE["id"]:
+                continue
+            graph = api("graphql", "POST", {"query": COMMENT, "variables": {"id": row["node_id"]}})
+            if graph.get("errors"):
+                raise ValueError("Unable to authenticate publication comment")
+            node = graph["data"]["node"]
+            if (node and node["id"] == row["node_id"] and node["author"] == CLAUDE
+                    and node["editor"] is None and node["lastEditedAt"] is None
+                    and node["body"] == row["body"]):
+                found.append(marker)
+        if len(rows) < 100:
+            return set(found)
+        page += 1
+
+
+def branch_tip(api, branch):
+    ref = api("git/ref/heads/" + quote(branch, safe="/"))
+    if ref["ref"] != "refs/heads/" + branch or ref["object"]["type"] != "commit":
+        raise ValueError("Branch identity or object type differs")
+    return ref["object"]["sha"]
+
+
+def inspect_candidate(repository, number, run, api):
+    """Return the current, authenticated proposal to the independent delivery routine, read-only."""
+    markers = receipts(api, number, run)
+    if len(markers) != 1:
+        raise ValueError("No unambiguous authenticated candidate")
+    marker, = markers
+    prefix = f"{CANDIDATE}{run} "
+    if not marker.startswith(prefix) or not marker.endswith(" -->"):
+        raise ValueError("This request has no candidate")
+    receipt = json.loads(marker[len(prefix):-4])
+    commit, parent = receipt["commit"], receipt["parent"]
+    if not all(isinstance(value, str) and SHA.fullmatch(value) for value in (parent, commit)):
+        raise ValueError("Invalid candidate revision")
+    branch = proposal_branch(number, run)
+    owner = repository.split("/")[0]
+    repo = api("")
+    issue = api(f"issues/{number}")
+    event = {"repository": repo, "issue": issue, "sender": {"login": owner}}
+    published = api(f"actions/runs/{run}")
+    role = "PR" if issue.get("pull_request") else "issue"
+    if (published["id"] != run or published["actor"]["login"] != owner
+            or published["actor"]["id"] != repo["owner"]["id"]
+            or published["display_title"] != f"Owner mention on {role} #{number}"
+            or (role == "PR" and published["event"] != "issue_comment")
+            or published["repository"]["full_name"] != repository
+            or published["head_repository"]["full_name"] != repository
+            or published["path"] != ".github/workflows/claude.yml"
+            or published["event"] not in ("issues", "issue_comment")
+            or published["head_branch"] != repo["default_branch"]
+            or published["status"] != "completed" or published["conclusion"] != "success"):
+        raise ValueError("Owner mention workflow is unverified or incomplete")
+    target_now = target(event, repository, published["head_sha"], run, api)
+    expected = {"repository": repository, "number": number, "base": target_now.base,
+                "target": target_now.branch, "pr": target_now.pull_request, "parent": parent, "commit": commit}
+    if receipt != expected or issue["number"] != number:
+        raise ValueError("The owner request or destination changed")
+    obj = api(f"git/commits/{commit}")
+    if (branch_tip(api, branch) != commit or obj["sha"] != commit
+            or [p["sha"] for p in obj["parents"]] != [parent]):
+        raise ValueError("Candidate ref, commit or parent differs")
+    if target_now.pull_request:
+        if target_now.branch == branch or target_now.revision not in (parent, commit):
+            raise ValueError("The pull request head changed")
+        applied_pr = number if target_now.revision == commit else None
+    else:
+        query = urlencode({"state": "all", "head": f"{owner}:{branch}"})
+        pulls = api("pulls?" + query)
+        if pulls and (len(pulls) != 1 or pulls[0]["head"]["repo"]["full_name"] != repository
+                      or pulls[0]["head"]["ref"] != branch or pulls[0]["head"]["sha"] != commit
+                      or pulls[0]["base"]["repo"]["full_name"] != repository
+                      or pulls[0]["base"]["ref"] != target_now.base):
+            raise ValueError("Pull request for the candidate changed")
+        applied_pr = pulls[0]["number"] if pulls else None
+        if target_now.revision != parent or (applied_pr is None and branch_tip(api, target_now.base) != parent):
+            raise ValueError("The proposal base changed")
+    if applied_pr is not None:
+        return {**receipt, "branch": branch, "status": "already published", "published_pr": applied_pr}
+    return {**receipt, "branch": branch, "status": "awaiting verification"}
+
+
 def publish(event, repository, token, candidate, api, scratch):
     revision = os.environ["BASE_SHA"]
     if candidate.branch != os.environ["EXPECTED_BRANCH"] or not re.fullmatch("[0-9a-f]{40}", revision):
@@ -121,8 +230,13 @@ def publish(event, repository, token, candidate, api, scratch):
     proposal = scratch / "proposal"
     patch = (proposal / "change.patch").read_bytes()
     answer = (proposal / "answer.md").read_text().strip()
-    number = int(event["issue"]["number"])
+    number, run = int(event["issue"]["number"]), int(os.environ["GITHUB_RUN_ID"])
+    marker = f"<!-- owner-mention-run {run} -->"
+    existing = receipts(api, number, run) if patch or answer else set()
     if patch:
+        branch = proposal_branch(number, run)
+        if candidate.pull_request and branch == candidate.branch:
+            raise ValueError("Candidate ref equals the pull request head")
         # Only a bare object store is used on the write-capable runner. The index
         # receives patch bytes. No file or hook from the candidate runs here.
         with tempfile.TemporaryDirectory(dir=scratch) as store:
@@ -141,42 +255,56 @@ def publish(event, repository, token, candidate, api, scratch):
             subprocess.run([*git, "fetch", "--no-tags", "--depth=1", repo_url,
                             revision], check=True, env=env)
             commit = apply_patch(store, revision, patch, env)
-            if candidate.revision not in {revision, commit}:
+            if candidate.revision != revision:
                 raise ValueError("The target advanced during preparation")
-            subprocess.run([*git, "push", repo_url, f"{commit}:refs/heads/{candidate.branch}"],
-                           env=env, check=True)
-        if not candidate.pull_request:
-            query = urlencode({"state": "all", "head": f"{repository.split('/')[0]}:{candidate.branch}",
-                               "base": candidate.base})
-            existing = api("pulls?" + query)
-            pr = existing[0] if existing else api("pulls", "POST", {"head": candidate.branch, "base": candidate.base,
-                     "title": event["issue"]["title"], "body": f"Requested in #{number}.",
-                     "draft": True})
-            answer += f"\n\nDraft pull request: {pr['html_url']}"
+            receipt = {"repository": repository, "number": number, "base": candidate.base,
+                       "target": candidate.branch, "pr": candidate.pull_request, "parent": revision, "commit": commit}
+            marker = f"{CANDIDATE}{run} {json.dumps(receipt, sort_keys=True)} -->"
+            if existing and existing != {marker}:
+                raise ValueError("This request already published another result")
+            # Existing PR heads are promoted only by their independent delivery session.
+            ref = f"refs/heads/{branch}"
+            remote = subprocess.run([*git, "ls-remote", "--refs", repo_url, ref],
+                                    check=True, env=env, capture_output=True, text=True).stdout.strip()
+            if (remote or existing) and remote != f"{commit}\t{ref}":
+                raise ValueError("Candidate ref already names another commit")
+            if not remote:
+                subprocess.run([*git, "push", repo_url, f"{commit}:{ref}"], env=env, check=True)
+        answer += (f"\n\nProposed commit [`{commit}`](https://github.com/{repository}/commit/{commit}) "
+                   f"on `{branch}` from [run {run}](https://github.com/{repository}/actions/runs/{run}). "
+                   "The delivery routine will check this head, record the test counts and obtain "
+                   "an independent review before publishing it.")
     elif candidate.revision != revision:
         raise ValueError("The target advanced during preparation")
     if answer:
-        marker = f"<!-- owner-mention-run {int(os.environ['GITHUB_RUN_ID'])} -->"
-        path = f"issues/{number}/comments"
-        page = 1
-        while True:
-            comments = api(f"{path}?per_page=100&page={page}")
-            if any((comment.get("user") or {}).get("login") == "claude[bot]" and
-                   (comment.get("body") or "").endswith(marker) for comment in comments):
-                return
-            if len(comments) < 100:
-                break
-            page += 1
-        api(path, "POST", {"body": answer + "\n\n" + marker})
+        if existing == {marker}:
+            return
+        if existing:
+            raise ValueError("This request already published another result")
+        api(f"issues/{number}/comments", "POST", {"body": answer.strip() + "\n\n" + marker})
+
 
 
 def main(mode):
+    if mode == "inspect":
+        repository, issue, run = sys.argv[2:]
+        def read(path, method="GET", body=None):
+            endpoint = "graphql" if path == "graphql" else f"repos/{repository}" + ("/" + path if path else "")
+            args = ["gh", "api", endpoint]
+            if body is not None:
+                args += ["--method", method, "--input", "-"]
+            raw = subprocess.run(args, input=None if body is None else json.dumps(body), text=True,
+                                 check=True, capture_output=True).stdout
+            return json.loads(raw)
+        print(json.dumps(inspect_candidate(repository, int(issue), int(run), read), sort_keys=True))
+        return
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     repository = os.environ["GITHUB_REPOSITORY"]
 
     def run(token):
         def api(path, method="GET", body=None):
-            return request(f"https://api.github.com/repos/{repository}/{path}", token, method, body)
+            endpoint = "graphql" if path == "graphql" else f"repos/{repository}/{path}"
+            return request(f"https://api.github.com/{endpoint}", token, method, body)
         candidate = target(event, repository, os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_ID"], api)
         if mode == "publish":
             publish(event, repository, token, candidate, api, Path(os.environ["RUNNER_TEMP"]))

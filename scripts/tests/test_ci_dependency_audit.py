@@ -14,8 +14,11 @@ MANAGERS = """
 npm() {
   echo "npm $*"
   if test "$1" = audit; then
-    test "$*" = 'audit --prefix scripts/ci-mention --omit=dev --audit-level=high' || return 2
-    return "$NPM_AUDIT_STATUS"
+    case "$*" in
+      'audit --prefix scripts/ci-mention --omit=dev --audit-level=high') return "$NPM_AUDIT_STATUS" ;;
+      'audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high') return "$CLI_AUDIT_STATUS" ;;
+      *) return 2 ;;
+    esac
   fi
 }
 pnpm() {
@@ -29,7 +32,7 @@ pnpm() {
 
 
 class ProductionAuditGate(unittest.TestCase):
-    def run_unit(self, audit_status, npm_audit_status=0):
+    def run_unit(self, audit_status, npm_audit_status=0, cli_audit_status=0):
         unit = json.loads((ROOT / "ci.json").read_text())["unit"]
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory, "coverage", "cobertura-coverage.xml")
@@ -39,7 +42,7 @@ class ProductionAuditGate(unittest.TestCase):
                 ["bash", "-eo", "pipefail", "-c", MANAGERS + unit],
                 cwd=directory,
                 env={**os.environ, "AUDIT_STATUS": str(audit_status),
-                     "NPM_AUDIT_STATUS": str(npm_audit_status)},
+                     "NPM_AUDIT_STATUS": str(npm_audit_status), "CLI_AUDIT_STATUS": str(cli_audit_status)},
                 capture_output=True,
                 text=True,
             )
@@ -53,6 +56,9 @@ class ProductionAuditGate(unittest.TestCase):
         mention = "npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high"
         self.assertIn(mention, steps)
         self.assertLess(steps.index(mention), steps.index("install --frozen-lockfile"))
+        cli = "npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high"
+        self.assertIn(cli, steps)
+        self.assertLess(steps.index(cli), steps.index("install --frozen-lockfile"))
 
     def test_failed_audit_stops_the_pipeline_before_build(self):
         result = self.run_unit(1)
@@ -70,6 +76,18 @@ class MentionAuditGate(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         steps = result.stdout.splitlines()
         self.assertIn("npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high", steps)
+        self.assertNotIn("install --frozen-lockfile", steps)
+        self.assertNotIn("build", steps)
+
+
+class OwnerMentionCliAuditGate(unittest.TestCase):
+    """The pinned Claude CLI of the owner-mention tools has its own lockfile and audit."""
+
+    def test_failed_cli_audit_stops_the_pipeline_before_build(self):
+        result = ProductionAuditGate.run_unit(self, 0, cli_audit_status=1)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        steps = result.stdout.splitlines()
+        self.assertIn("npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high", steps)
         self.assertNotIn("install --frozen-lockfile", steps)
         self.assertNotIn("build", steps)
 

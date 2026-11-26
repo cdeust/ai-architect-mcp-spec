@@ -33,7 +33,8 @@ def run_main(outcome):
             raise ns["PostMergeError"](outcome)
         return outcome
 
-    ns["resolve"] = resolve
+    ns.update(resolve=resolve, _source_run=lambda *_: {"head_sha": "a" * 40},
+              _observe_after_decision=lambda *_: None)
     with tempfile.TemporaryDirectory() as tmp:
         event, output = Path(tmp) / "event.json", Path(tmp) / "output"
         event.write_text(json.dumps({}))
@@ -57,20 +58,13 @@ def run_main(outcome):
 
 WAITS = (
     "merge held: Pipeline has not succeeded on this head",
-    "merge held: no Claude review ran on this head",
-    "merge held: Claude has not posted a verdict on this head",
-    "merge held: Claude review verdict is block",
-    "merge held: native Codex review verdict is block",
-    "merge held: native Codex verdict is pending",
-    "merge held: historical native Codex verdict evidence is missing",
-    "merge held: historical Claude verdict evidence is missing",
-    "merge held: latest review admission is unverified",
-    "merge held: no admitted Claude review ran on this head",
-    "merge held: no admitted native Codex review ran on this head",
-    "merge held: no candidate review run on this PR head",
-    "merge held: no verdict from an admitted Claude attempt",
+    "merge held: source branch has no unique historical PR",
+    "merge held: review names an older head",
+    "merge held: native Codex approval is missing",
+    "merge held: native Claude approval is missing or conflicting",
     "PR head advanced after testing",
 )
+
 
 
 class HeldMergeTests(unittest.TestCase):
@@ -84,10 +78,12 @@ class HeldMergeTests(unittest.TestCase):
 
     def test_every_waiting_reason_of_the_resolver_is_covered(self):
         source = ENGINE.read_text()
+        literal = set(__import__("re").findall(r'"(merge held: [^"{}]+)"', source))
+        self.assertTrue(literal.issubset(WAITS))
+        verifier = (ENGINE.parents[2] / "scripts/ci_review_proof.py").read_text()
         for reason in WAITS:
-            self.assertIn(f'"{reason}"', source)
-        held = set(__import__("re").findall(r'"(merge held: [^"]+)"', source))
-        self.assertEqual(held, {r for r in WAITS if r.startswith("merge held:")})
+            if reason.startswith("merge held: native"):
+                self.assertIn(reason.removeprefix("merge held: "), verifier)
 
     def test_any_other_refusal_still_fails(self):
         for reason in (

@@ -679,6 +679,9 @@ describe("guardDecision", () => {
       ["gh api repos/o/r/pulls -f title=x -f head=y -f base=main", 6],
       ["gh api repos/o/r/merges --field base=main --field head=x", 6],
       ['curl -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/o/r/git/refs', 7],
+      ["gh -R o/r pr merge 3", 4],
+      ["gh --repo=o/r pr merge 3", 4],
+      ["/usr/local/bin/gh pr merge 3", 4],
     ];
     for (const [command, rule] of cases) {
       expect(decide(command), command).toEqual({ kind: "refuse", reason: why(rule) });

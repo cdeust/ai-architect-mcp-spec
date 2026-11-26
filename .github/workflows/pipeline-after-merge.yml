@@ -8,9 +8,8 @@ name: Pipeline after merge
 # resolver, which merges once both are there (ADR-1127).
 on:
   workflow_run:
-    workflows: [Pipeline, PR Review]
+    workflows: [Pipeline, PR Review, Review updated]
     types: [completed]
-    branches-ignore: [main]
 
 permissions:
   contents: read
@@ -18,7 +17,8 @@ permissions:
 jobs:
   pipeline:
     if: >-
-      github.event.workflow_run.event == 'pull_request'
+      contains(fromJSON('["pull_request","pull_request_target","issue_comment","workflow_run"]'), github.event.workflow_run.event)
+      && (github.event.workflow_run.name != 'Review updated' || startsWith(github.event.workflow_run.display_title, 'Review updated PR '))
       && github.event.workflow_run.conclusion == 'success'
     # Only the completion engine is callable. It has no PR review job or OAuth
     # secret. Its jobs narrow these permissions; no caller concurrency.

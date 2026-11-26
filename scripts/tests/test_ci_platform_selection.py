@@ -231,13 +231,12 @@ class ResolverTests(unittest.TestCase):
         """resolve() with its GitHub reads replaced; merged records a merge."""
         merged = []
         self.ns.update(
-            _source_run=lambda *_: {"head_sha": "a" * 40, "reduced_matrix": reduced},
             _pull_request=lambda *_: (7, self.pr),
             _documentation_only=lambda *_: documentation,
             _merge_open_pr=lambda *_: merged.append(True) or "b" * 40,
             _confirm_pr_merge=lambda *_: None,
         )
-        return self.ns["resolve"]({}, REPO, None), merged
+        return self.ns["resolve"]({"head_sha": "a" * 40, "reduced_matrix": reduced}, REPO, None), merged
 
     def test_a_reduced_matrix_merges_only_a_documentation_only_pull_request(self):
         result, merged = self.resolve(reduced=True, documentation=True)

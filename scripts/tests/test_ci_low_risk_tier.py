@@ -1,5 +1,4 @@
-"""A Dependabot minor or patch update of the dependency files merges without a
-review; every other change keeps the reviewed path (ADR-1126)."""
+"""All dependency updates require the same authenticated reviews as other changes."""
 
 import base64
 import json
@@ -75,79 +74,14 @@ class FakeApi:
 
 
 class LowRiskTierTests(unittest.TestCase):
-    def low(self, commits=None, files=("pnpm-lock.yaml",), pr=None):
-        api = FakeApi([commit()] if commits is None else commits, files)
-        return resolver()["_is_low_risk"](pr or pull(), REPO, api)
-
-    def test_a_dependabot_patch_of_the_lock_is_low_risk(self):
-        self.assertTrue(self.low())
-
-    def test_a_grouped_minor_and_patch_update_is_low_risk(self):
-        self.assertTrue(self.low([commit((MINOR, PATCH, PATCH))]))
-        self.assertTrue(self.low(files=("pnpm-lock.yaml", "package.json")))
-
-    def test_a_major_update_is_not(self):
-        self.assertFalse(self.low([commit((MAJOR,))]))
-        self.assertFalse(self.low([commit((PATCH, MAJOR))]))
-
-    def test_an_update_type_it_does_not_know_is_not(self):
-        self.assertFalse(self.low([commit(("version-update:semver-minorx",))]))
-        self.assertFalse(self.low([commit(())]))
-        self.assertFalse(self.low([]))
-
-    def test_a_workflow_or_any_other_file_is_not(self):
-        self.assertFalse(self.low(files=(".github/workflows/scorecard.yml",)))
-        self.assertFalse(self.low(files=("pnpm-lock.yaml", "src/main.x")))
-        self.assertFalse(self.low(files=()))
-
-    def test_a_manifest_counts_wherever_the_package_lives(self):
-        self.assertTrue(self.low(files=("pnpm-lock.yaml", "packages/x/package.json")))
-        self.assertFalse(self.low(files=(".github/actions/x/package.json",)))
-
-    def test_another_author_or_an_unsigned_commit_is_not(self):
-        self.assertFalse(self.low(pr=pull(login="cdeust", kind="User")))
-        self.assertFalse(self.low(pr=pull(kind="User")))
-        self.assertFalse(self.low([commit(author="cdeust")]))
-        self.assertFalse(self.low([commit(verified=False)]))
-
-    def test_a_bot_attributed_commit_signed_by_a_person_is_not(self):
-        # Dependabot's e-mail as author, a contributor's own verified key.
-        self.assertFalse(self.low([commit(committer="cdeust")]))
-        self.assertFalse(self.low([commit(committer=None)]))
-
-    def test_a_second_commit_on_the_branch_is_not(self):
-        self.assertFalse(self.low([commit(), commit()]))
-
-    def test_a_dependency_without_its_update_type_is_not(self):
-        untyped = commit()
-        untyped["commit"]["message"] += "- dependency-name: y\n"
-        self.assertFalse(self.low([untyped]))
-
-    def test_a_file_renamed_to_a_dependency_file_is_not(self):
-        renamed = {
-            "filename": "pnpm-lock.yaml",
-            "previous_filename": ".github/workflows/pipeline.yml",
-        }
-        self.assertFalse(self.low(files=(renamed,)))
-
-    def test_a_low_risk_pr_merges_without_a_review(self):
-        api = FakeApi([commit()], ("pnpm-lock.yaml",))
-        merge = resolver()["_merge_open_pr"]
-        self.assertEqual(merge(pull(), "/merge", HEAD, api, REPO), "c" * 40)
-        self.assertEqual(
-            api.puts, [("PUT", "/merge", {"sha": HEAD, "merge_method": "squash"})]
-        )
-
-    def test_any_other_pr_still_needs_the_review(self):
+    def test_dependency_updates_also_require_both_reviews(self):
         ns = resolver()
-        for api in (
-            FakeApi([commit((MAJOR,))], ("pnpm-lock.yaml",)),
-            FakeApi([commit()], (".github/workflows/pipeline.yml",)),
-        ):
-            with self.assertRaises(ns["PostMergeError"]) as caught:
-                ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
-            self.assertIn("no candidate review run on this PR head", str(caught.exception))
-            self.assertEqual(api.puts, [])
+        for files in (("pnpm-lock.yaml",), (".github/workflows/pipeline.yml",)):
+            with self.subTest(files=files):
+                api = FakeApi([commit()], files)
+                with self.assertRaisesRegex(ns["PostMergeError"], "protected Claude review"):
+                    ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
+                self.assertEqual(api.puts, [])
 
     def test_a_hold_label_still_holds_a_low_risk_pr(self):
         ns = resolver()
