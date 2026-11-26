@@ -1,0 +1,34 @@
+name: Claude Security Review Request
+
+# The secret-free trigger of claude-security-review.yml. GitHub runs a pull request's
+# own copy of this file, so it holds nothing worth taking: no permission, no secret,
+# no checkout, no action. claude-security-review.yml runs from main on its completion
+# (workflow_run) and trusts none of it: it checks where this run came from and reads
+# the pull request again from the API (docs/claude-security-review.md, "Trigger").
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+# A newer push cancels the request of the head it replaces; the review runs only on a
+# request that succeeded, so a superseded head spends nothing.
+concurrency:
+  group: claude-security-review-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    name: Request the Claude security review
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && !github.event.pull_request.draft
+      && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2 # source: operational cap; the job only prints the head.
+    steps:
+      - name: Name the head to review
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: echo "Claude security review requested for $HEAD_SHA"

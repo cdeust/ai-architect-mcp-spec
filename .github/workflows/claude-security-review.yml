@@ -1,0 +1,227 @@
+name: Claude Security Review
+run-name: Claude security review ${{ github.event.workflow_run.head_branch }} ${{ github.event.workflow_run.head_sha }}
+
+# Advisory security review of trusted pull requests, on the owner's Claude
+# subscription. Design, threat model and tests: docs/claude-security-review.md.
+# workflow_run: GitHub runs this file as it is on main, never a pull request's copy, so
+# no pull request can change what runs with the secret. The secret comes from the
+# environment review-subscriptions, which admits main only. The pull request reaches
+# this file through the completed request run (claude-security-review-request.yml),
+# whose origin is checked here, and through the API, never through a checkout.
+# The name must stay out of every other workflow_run list: this review never wakes
+# the merge resolver.
+on:
+  # zizmor: ignore[dangerous-triggers] -- runs from main, checks the request run's origin, reads the pull request only through the API.
+  workflow_run:
+    workflows: [Claude Security Review Request]
+    types: [completed]
+
+permissions: {}
+
+# One admission at a time per head branch: the budget counts engine attempts, so two
+# overlapping runs would be admitted as the same round. A run in progress is never
+# cancelled.
+concurrency:
+  group: claude-security-review-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  security-review:
+    name: Claude security review
+    # The request run: a pull_request run of the request file that succeeded, from a
+    # head branch of this repository (an author with write access), started by someone
+    # other than Dependabot. The pull request itself is read again from the API below.
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.path == '.github/workflows/claude-security-review-request.yml'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && github.event.workflow_run.actor.login != 'dependabot[bot]'
+      && github.event.workflow_run.triggering_actor.login != 'dependabot[bot]'
+    environment: review-subscriptions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # source: operational cap, the real bound on one review's cost.
+    permissions:
+      contents: read
+      pull-requests: read # the pull request, and the engine's actor check
+      actions: read # the budget reads this workflow's earlier runs
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      pr: ${{ steps.pr.outputs.pr }}
+      round: ${{ steps.budget.outputs.round }}
+      cap: ${{ steps.budget.outputs.cap }}
+      findings: ${{ steps.engine.outputs.structured_output }}
+    steps:
+      # Every file this job executes or hands to the model is main's, at the commit
+      # GitHub runs this workflow from. In agent mode the engine never checks the pull
+      # request head out, and the model publishes nothing: the publish job posts what
+      # it returns.
+      - name: Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Find the pull request of this head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: python3 -I scripts/ci_security_review.py resolve
+      # The budget finds this run's pull request by this step's name.
+      - name: Security review of pull request ${{ steps.pr.outputs.pr }}
+        if: steps.pr.outputs.found == 'true'
+        run: echo "Security review admission"
+      - name: Check the subscription token
+        id: ready
+        if: steps.pr.outputs.found == 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_TOKEN" = true ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Claude security review skipped: the CLAUDE_CODE_OAUTH_TOKEN secret is not configured." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Count the security reviews this PR already received
+        id: budget
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          SINCE: ${{ steps.pr.outputs.created_at }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 -I scripts/ci_security_review.py budget
+      - name: Prepare the diff and the prompt
+        id: prompt
+        if: steps.ready.outputs.ready == 'true' && steps.budget.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REVIEWED_SHA: ${{ steps.budget.outputs.reviewed_sha }}
+          ROUND: ${{ steps.budget.outputs.round }}
+          CAP: ${{ steps.budget.outputs.cap }}
+        run: python3 -I scripts/ci_security_review.py prompt
+      - name: Decide whether the review runs
+        id: decide
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          SKIP: ${{ steps.budget.outputs.skip }}
+          HEAD_REVIEWED: ${{ steps.budget.outputs.head_reviewed }}
+          EMPTY: ${{ steps.prompt.outputs.empty }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REVIEWED" = true ]; then
+            reason="this head was already reviewed"
+          elif [ "$SKIP" != false ]; then
+            reason="the review budget of this pull request is used"
+          elif [ "$EMPTY" != false ]; then
+            reason="the pull request's diff is empty"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "Claude security review skipped: $reason." | tee -a "$GITHUB_STEP_SUMMARY"
+      # Highest-precedence Claude Code settings, read-only and root-owned: no
+      # shell, no edit, no network tool, no hook, no auto or bypass mode, no read of
+      # process, runner, credential or .git files, whatever the workspace or the prompt
+      # contains. The same file and step for every Claude workflow of this repository.
+      - name: Install read-only managed settings
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          sudo install -D -m 0444 -o root -g root \
+            .github/claude/managed-settings.json \
+            /etc/claude-code/managed-settings.json
+          sudo chmod 0555 /etc/claude-code
+      # The CLI the engine runs, from main's lockfile (npm ci checks every package's
+      # integrity), in place of the action's unpinned install script.
+      - name: Install the pinned Claude CLI
+        id: cli
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          npm ci --prefix .github/claude/cli --no-audit --no-fund
+          cli="$PWD/.github/claude/cli/node_modules/.bin/claude"
+          "$cli" --version | grep -Fx '2.1.328 (Claude Code)'
+          echo "path=$cli" >> "$GITHUB_OUTPUT"
+      # Engine prerequisite, as in claude-review.yml: the CLI's subprocess sandbox.
+      - name: Install subprocess isolation
+        if: steps.decide.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap socat
+          # source: upstream action.yml subprocess isolation dependency setup.
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --version
+      # The engine. Every step above is a guard, which stays when the engine changes,
+      # or one of its prerequisites (the pinned CLI and its subprocess sandbox;
+      # docs/claude-security-review.md, "Engine"). Agent mode: no tracking comment, no
+      # comment tool, no checkout of the PR head.
+      - name: Claude security review
+        id: engine
+        if: steps.decide.outputs.run == 'true'
+        uses: anthropics/claude-code-action@f431adaf77e0fecf918431e75a2b5b45b85af002 # v1.0.283
+        env:
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          path_to_claude_code_executable: ${{ steps.cli.outputs.path }}
+          # Pushes by these Apps are reviewed too; with bots allowed the action
+          # authenticates git through a helper, so .git/config holds no token.
+          allowed_bots: "claude[bot],chatgpt-codex-connector[bot]"
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          claude_args: |
+            --strict-mcp-config
+            --setting-sources user
+            --tools "Read"
+            --permission-mode dontAsk
+            --allowedTools "Read"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings","summary"],"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000,"pattern":"\\S"},"findings":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["file","line","severity","category","description","exploit_scenario","recommendation","confidence"],"properties":{"file":{"type":"string","minLength":1,"maxLength":200,"pattern":"^(?![A-Za-z]:)(?!~)(?!/)(?!.*//)(?!.*/$)(?!(?:.*/)?\\.{1,2}(?:/|$))(?!(?:.*/)?\\s)(?!.*\\s(?:/|$))[^\\\\`\\n\\r\\t]+$"},"line":{"type":"integer","minimum":0,"maximum":10000000},"severity":{"type":"string","enum":["HIGH","MEDIUM"]},"category":{"type":"string","minLength":1,"maxLength":80,"pattern":"^[a-z][a-z0-9_]*$"},"description":{"type":"string","minLength":1,"maxLength":500,"pattern":"\\S"},"exploit_scenario":{"type":"string","minLength":1,"maxLength":500,"pattern":"\\S"},"recommendation":{"type":"string","minLength":1,"maxLength":500,"pattern":"\\S"},"confidence":{"type":"integer","minimum":1,"maximum":10}}}}}}'
+            --model "claude-opus-5-5"
+
+  publish:
+    name: Publish the security review
+    needs: security-review
+    if: needs.security-review.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5 # source: operational cap; one validation and one API call.
+    permissions:
+      contents: read
+      pull-requests: write # posts the one review comment
+    steps:
+      # A fresh job on main with no secret and no environment: it validates the
+      # model's JSON, refuses credential shapes, neutralises mentions, verdict lines
+      # and HTML, and posts one comment.
+      - name: Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Publish the validated findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ needs.security-review.outputs.pr }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          ROUND: ${{ needs.security-review.outputs.round }}
+          CAP: ${{ needs.security-review.outputs.cap }}
+          FINDINGS: ${{ needs.security-review.outputs.findings }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: python3 -I scripts/ci_security_review.py publish
