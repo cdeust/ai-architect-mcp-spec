@@ -831,6 +831,7 @@ describe("guardDecision", () => {
       "gh pr edit 3 --remove-label owner-approved",
       "gh pr edit 3 --title owner-approved",
       "gh pr create -lbug",
+      "gh pr edit 3 --title=a-lowner-approved",
       "gh pr view 3 --add-label owner-approved",
       "gh pr merge-label 3 --add-label owner-approved",
       "gh repo edit --add-label owner-approved",
@@ -884,6 +885,10 @@ describe("guardDecision", () => {
       "gh api -X PATCH repos/o/r/git/refs/x",
       "gh api -X",
       "gh api",
+      "gh browse -X POST repos/o/r/issues/3",
+      "gh api repos/o/r/issues/3 --jq .x-Xa",
+      "gh api -XGET repos/o/r/issues/3 -f a=b",
+      "gh api repos/o/r/issues/3 --jq .a-fb",
     ]) {
       expect(sets(command), command).toBe(false);
     }

@@ -565,6 +565,7 @@ const GH_GLOBAL = ["-R", "--repo", "--hostname"];
  */
 function ghArguments(command) {
   const words = command.split(" ");
+  // Stryker disable next-line StringLiteral: equivalent: past the last word, any text without "-", "=", "/" or a wrapper name reads the same: no assignment, no option, no gh.
   const at = (i) => words[i] ?? "";
   let i = 0;
   for (;;) {
@@ -612,14 +613,17 @@ export function writesLabel(command, label) {
   if (group === "label") return ["create", "edit", "clone"].includes(action) && options.some(names);
   if (group === "alias") return action === "set" || action === "import";
   if (group !== "api") return false;
-  const rest = args.slice(1);
-  const methods = rest.flatMap((word, i) =>
-    word === "-X" || word === "--method" ? [rest[i + 1] ?? ""]
-      : /^(?:-X|--method=)/.test(word) ? [word.replace(/^(?:-X|--method=)/, "")] : []);
-  const fields = rest.some((word) => /^(?:-[fF]|--field|--raw-field|--input)/.test(word));
+  // `api` itself is neither a method, a field, an unreadable word nor a target.
+  const methods = args.flatMap((word, i) =>
+    // Stryker disable next-line StringLiteral: equivalent: a missing method value is any text but GET, a write, whatever the text.
+    word === "-X" || word === "--method" ? [args[i + 1] ?? ""]
+      : /^(?:-X|--method=)/.test(word)
+        // Stryker disable next-line Regex: equivalent: the test above anchors the prefix, so the replace finds it first at 0.
+        ? [word.replace(/^(?:-X|--method=)/, "")] : []);
+  const fields = args.some((word) => /^(?:-[fF]|--field|--raw-field|--input)/.test(word));
   const writes = methods.length > 0 ? methods.some((method) => method.toUpperCase() !== "GET") : fields;
   // A word it cannot read outside a `key=value` field could be the endpoint.
-  return writes && rest.some((word) => (unreadable(word) && !word.includes("=")) || LABEL_TARGET.test(word));
+  return writes && args.some((word) => (unreadable(word) && !word.includes("=")) || LABEL_TARGET.test(word));
 }
 
 /**
