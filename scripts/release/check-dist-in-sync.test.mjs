@@ -253,8 +253,8 @@ test("the delivery gate builds through this check, so a worker sees a stale dist
   expect(config.checks.findIndex(check => check.name === "build")).toBe(0); // before the tests that run on what it built
 });
 
-test("rebuild form: ignores the dist a build creates for a package that commits none", () => {
-  const root = copyOfCommit(COMMITTED);
+test("rebuild form: honors the declared ignore rule for local distribution output", () => {
+  const root = copyOfCommit({ ...COMMITTED, ".gitignore": "/packages/other/dist/\n" });
   const run = rebuild(root, write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]) + write_("packages/other/dist/x.js", "built, never committed\n"));
   expect(run.status, run.stderr).toBe(0);
 });
@@ -295,4 +295,50 @@ test("a run that exits 0 always states how many files it compared, on every path
     expect(run.status, `${script} from ${cwd}: ${run.stderr}`).toBe(0);
     expect(run.stdout, `${script} from ${cwd}`).toMatch(/^Compared 3 generated file/);
   }
+});
+
+test.each([
+  ["packages/new/dist/a.js", 1],
+  ["packages/local-only/dist/a.js", 0],
+])("Git and an archive agree on a new distribution %s", (path, expected) => {
+  const ignore = "/packages/local-only/dist/\n";
+  const gitTree = committed();
+  write(gitTree, ".gitignore", ignore);
+  git(gitTree, "add", ".gitignore");
+  git(gitTree, "commit", "-qm", "Declare local-only output");
+  write(gitTree, path, "export const a = 1;\n");
+  const gitVerdict = check(gitTree);
+
+  const archive = copyOfCommit({ ...COMMITTED, ".gitignore": ignore });
+  const archiveVerdict = rebuild(archive, write_(path, "export const a = 1;\n"));
+
+  expect(gitVerdict.status, gitVerdict.stderr).toBe(expected);
+  expect(archiveVerdict.status, archiveVerdict.stderr).toBe(expected);
+  if (expected) {
+    expect(gitVerdict.stderr).toContain(path);
+    expect(archiveVerdict.stderr).toContain(path);
+  }
+});
+
+test.skipIf(process.platform === "win32")("rebuild form: reports an executable-bit change with identical bytes", () => {
+  const gitTree = committed();
+  chmodSync(join(gitTree, "packages/app/dist/a.js"), 0o755);
+  expect(check(gitTree).status).toBe(1);
+
+  const root = copyOfCommit(COMMITTED);
+  const run = rebuild(root, 'require("node:fs").chmodSync("packages/app/dist/a.js", 0o755);');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("M packages/app/dist/a.js");
+});
+
+test.skipIf(process.platform === "win32")("rebuild form: distinguishes a regular artifact from a symbolic link", () => {
+  const gitTree = committed();
+  rmSync(join(gitTree, "packages/app/dist/a.js"));
+  symlinkSync("../src/a.ts", join(gitTree, "packages/app/dist/a.js"));
+  expect(check(gitTree).status).toBe(1);
+
+  const root = copyOfCommit({ ...COMMITTED, "packages/app/src/a.ts": COMMITTED["packages/app/dist/a.js"] });
+  const run = rebuild(root, 'const fs = require("node:fs"); fs.unlinkSync("packages/app/dist/a.js"); fs.symlinkSync("../src/a.ts", "packages/app/dist/a.js");');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("M packages/app/dist/a.js");
 });

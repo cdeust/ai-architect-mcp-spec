@@ -27,13 +27,14 @@
 //   - finding no generated file at all is a failure, not a pass.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The bundle, the npm metadata `pnpm bundle` stamps beside it (scripts/stamp-bundle-version.mjs), and each package dist.
-export const GENERATED = ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json", ":(glob)packages/*/dist/**"];
+const BUNDLE_FILES = ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json"];
+export const GENERATED = [...BUNDLE_FILES, ":(glob)packages/*/dist/**"];
 // source: heuristic provisional; `git status` on a few paths answers in well under a second.
 const GIT_TIMEOUT_MS = 30_000;
 // source: heuristic provisional, to be replaced by the duration measured in the PR that introduced `--rebuild`.
@@ -88,35 +89,51 @@ function problems() {
 
 // ─── The form for a tree without git ────────────────────────────────────────
 
-/**
- * The generated files of the tree at ROOT, by path (with `/`), as a map to the digest of their bytes.
- * `distributions` limits the package `dist` directories looked at: a build also creates the `dist` of
- * packages whose output is not committed (git ignores it), and those are not a difference.
- */
-function fingerprints(distributions) {
-  const found = new Map();
-  const add = path => found.set(path, createHash("sha256").update(readFileSync(join(ROOT, path))).digest("hex"));
-  for (const path of ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json"]) if (existsSync(join(ROOT, path))) add(path);
+function statIfPresent(path) {
+  try {
+    return lstatSync(join(ROOT, path));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  }
+}
+
+/** Enumerate generated paths independently of which packages had committed output. */
+function generatedPaths() {
+  const found = [];
+  for (const path of BUNDLE_FILES) {
+    if (statIfPresent(path)) found.push(path);
+  }
   const walk = directory => {
     for (const entry of readdirSync(join(ROOT, directory), { withFileTypes: true })) {
       const path = `${directory}/${entry.name}`;
       if (entry.isDirectory()) walk(path);
-      else if (entry.isFile()) add(path);
+      else found.push(path);
     }
   };
-  if (existsSync(join(ROOT, "packages"))) {
+  if (statIfPresent("packages")?.isDirectory()) {
     for (const entry of readdirSync(join(ROOT, "packages"), { withFileTypes: true })) {
       const dist = `packages/${entry.name}/dist`;
-      if (entry.isDirectory() && existsSync(join(ROOT, dist)) && (distributions === undefined || distributions.has(dist))) walk(dist);
+      if (entry.isDirectory() && statIfPresent(dist)?.isDirectory()) walk(dist);
     }
   }
   return found;
 }
 
-/** The package `dist` directories that hold a file at ROOT now: the ones the commit carries. */
-function committedDistributions() {
-  return new Set([...fingerprints().keys()].map(path => /^(packages\/[^/]+\/dist)\//.exec(path)?.[1]).filter(Boolean));
+/** Compare the bytes and the Git-relevant file kind and executable bit, not timestamps or other permissions. */
+function fingerprint(path) {
+  const absolute = join(ROOT, path);
+  const stat = lstatSync(absolute);
+  if (!stat.isSymbolicLink() && !stat.isFile()) {
+    throw new Error(`Generated artifact is not a regular file or link: ${path}`);
+  }
+  const regularKind = (stat.mode & 0o100) === 0 ? "file" : "executable";
+  const kind = stat.isSymbolicLink() ? "link" : regularKind;
+  const bytes = kind === "link" ? readlinkSync(absolute, { encoding: "buffer" }) : readFileSync(absolute);
+  return `${kind}:${createHash("sha256").update(bytes).digest("hex")}`;
 }
+
+const fingerprints = paths => new Map(paths.map(path => [path, fingerprint(path)]));
 
 /**
  * Which of `paths` the `.gitignore` files of the tree at ROOT ignore. A build also writes files git
@@ -140,22 +157,20 @@ function ignored(paths) {
 
 /** Run the build, then say how many generated files were compared and which differ: `M`odified, `A`dded or `D`eleted. */
 function rebuildProblems(commands) {
-  const distributions = committedDistributions();
-  const before = fingerprints(distributions);
+  const before = fingerprints(generatedPaths());
   if (before.size === 0) return { compared: 0, found: ["no generated file to compare: the tree has no bundle and no dist"] };
   for (const [program, ...args] of commands) {
     const run = spawnSync(program, args, { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: BUILD_TIMEOUT_MS });
     if (run.error || run.status !== 0) return { compared: before.size, found: [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`] };
   }
-  const after = fingerprints(distributions);
+  const paths = generatedPaths();
+  const hidden = ignored(paths.filter(path => !before.has(path)));
+  const after = fingerprints(paths.filter(path => !hidden.has(path)));
   const lines = [];
-  const added = [...after.keys()].filter(path => !before.has(path));
-  const hidden = ignored(added);
   for (const path of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     if (!after.has(path)) lines.push(`D ${path}`);
-    else if (!before.has(path)) {
-      if (!hidden.has(path)) lines.push(`A ${path}`);
-    } else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
+    else if (!before.has(path)) lines.push(`A ${path}`);
+    else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
   }
   return { compared: before.size, found: lines };
 }
