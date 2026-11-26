@@ -75,9 +75,7 @@ def gh_api(args: list[str]) -> str:
 
 
 def _lines(text: str) -> list[Record]:
-    # Split on "\n" only: gh's encoder writes U+0085 (and str.splitlines splits on
-    # it, U+2028 and others) raw inside a value, never a raw "\n".
-    rows = [json.loads(line) for line in text.split("\n") if line.strip()]
+    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
     if any(not isinstance(row, dict) for row in rows):
         raise BudgetError("protocol")
     return rows

@@ -12,7 +12,7 @@ on:
 permissions: {}
 
 # One admission at a time per pull request, as for claude-review.yml: the
-# budget counts completed reviews, so two overlapping runs would be admitted as
+# budget counts engine attempts, so two overlapping runs would be admitted as
 # the same round. A run in progress is never cancelled.
 concurrency:
   group: claude-security-review-${{ github.event.pull_request.number }}
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   security-review:
     name: Claude security review
-    # Same trust rule as claude-review.yml: a head branch of this repository
+    # The trust rule of claude-review.yml, plus the author: a head branch of this repository
     # (an author with write access), not a draft, and Dependabot neither as
     # actor nor as author. Fork code never runs here, and no secret reaches it.
     if: >-
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 30 # source: operational cap, the real bound on one review's cost.
     permissions:
       contents: read
-      pull-requests: read # the diff, and the engine's actor check
+      pull-requests: read # the PR's head, and the engine's actor check
       actions: read # the budget reads this workflow's earlier runs
     outputs:
       run: ${{ steps.decide.outputs.run }}
@@ -58,6 +58,8 @@ jobs:
           set -euo pipefail
           missing=""
           for file in scripts/ci_security_review.py \
+            scripts/ci_security_review_publish.py \
+            scripts/ci_review_budget.py \
             .github/claude-security-review/scan-instructions.txt \
             .github/claude-security-review/false-positive-filtering.txt \
             .github/claude-security-review/managed-settings.json; do
@@ -86,6 +88,7 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
         run: python3 -I scripts/ci_security_review.py budget
       # An unreadable quota is a stated skip, not a red advisory job.
       - name: Measure Claude subscription quota
@@ -103,12 +106,18 @@ jobs:
         env:
           SKIP: ${{ steps.budget.outputs.skip }}
           HEAD_REVIEWED: ${{ steps.budget.outputs.head_reviewed }}
+          STALE: ${{ steps.budget.outputs.stale }}
+          DRIFTED: ${{ steps.budget.outputs.drifted }}
           QUOTA: ${{ steps.quota.outcome }}
           ELIGIBLE: ${{ steps.quota.outputs.eligible }}
           REMAINING: ${{ steps.quota.outputs.remaining }}
         run: |
           set -euo pipefail
-          if [ "$HEAD_REVIEWED" = true ]; then
+          if [ "$DRIFTED" = true ]; then
+            reason="this pull request changes the security review workflow; it is reviewed from main's definition after the merge"
+          elif [ "$STALE" = true ]; then
+            reason="this run's head is no longer the pull request's head"
+          elif [ "$HEAD_REVIEWED" = true ]; then
             reason="this head was already reviewed"
           elif [ "$SKIP" != false ]; then
             reason="the review budget of this pull request is used"
@@ -124,7 +133,7 @@ jobs:
           echo "Claude security review skipped: $reason." | tee -a "$GITHUB_STEP_SUMMARY"
       # Highest-precedence Claude Code settings, read-only and root-owned: no
       # shell, no edit, no network tool, no hook, no read of process, runner or
-      # credential files, whatever the checked-out pull request contains.
+      # credential files, whatever the workspace or the prompt contains.
       - name: Install read-only managed settings
         if: steps.decide.outputs.run == 'true'
         run: |
@@ -146,7 +155,8 @@ jobs:
           ROUND: ${{ steps.budget.outputs.round }}
           CAP: ${{ steps.budget.outputs.cap }}
         run: python3 -I scripts/ci_security_review.py prompt
-      # source: same step as claude-review.yml; runs only in a private repository.
+      # Engine prerequisite, as in claude-review.yml: in a private repository the action's
+      # fetch of the base branch (restoreConfigFromBase) needs the token. Not a guard.
       - name: Authorize pinned action fetch
         if: steps.decide.outputs.run == 'true' && github.event.repository.private
         env:
@@ -156,6 +166,7 @@ jobs:
           basic="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$basic"
           git config --local "http.$GITHUB_SERVER_URL/.extraheader" "AUTHORIZATION: basic $basic"
+      # Engine prerequisite, as in claude-review.yml: the CLI's subprocess sandbox.
       - name: Install subprocess isolation
         if: steps.decide.outputs.run == 'true'
         run: |
@@ -166,8 +177,9 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
           bwrap --version
-      # The engine. Everything above is the guard and stays when the engine
-      # changes (docs/claude-security-review.md, "Engine"). Agent mode: no
+      # The engine. Every step above is a guard, which stays when the engine changes,
+      # or one of its two prerequisites (the private-repository fetch and the CLI's
+      # subprocess sandbox; docs/claude-security-review.md, "Engine"). Agent mode: no
       # tracking comment, no comment tool, no checkout of the PR head.
       - name: Claude security review
         id: engine

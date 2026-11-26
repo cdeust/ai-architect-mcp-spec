@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Budget, prompt and publication of the advisory Claude security review.
+"""Budget and prompt of the advisory Claude security review; publication lives in
+scripts/ci_security_review_publish.py.
 
 Every subcommand runs from a trusted default-branch checkout of
 claude-security-review.yml. Design and threat model: docs/claude-security-review.md.
@@ -7,10 +8,13 @@ claude-security-review.yml. Design and threat model: docs/claude-security-review
 `budget`: counts the attempts of the review engine on this pull request: every job
 attempt, re-runs included, in which the action step ("Claude security review" in
 the job of that name) ran, whatever it concluded. It caps spend, not successes: at
-CAP attempts no further one runs (owner rule 2026-11-04, ADR-1119, applied to this
-second review), and a head already attempted is not attempted again. The commit a
+CAP attempts no further one runs (the cap of claude-review.yml, ADR-1119, owner rule
+2026-11-04, taken over for this second review by the task's decision of 2026-11-25),
+and a head already attempted is not attempted again. Nor does a run spend a round
+when its head is no longer the PR's head, or when the PR changes this workflow. The commit a
 later round starts from is the last one whose review was published. Writes
-`round`, `cap`, `skip`, `reviewed_sha` and `head_reviewed` to $GITHUB_OUTPUT. Any
+`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed`, `stale` and `drifted` to
+$GITHUB_OUTPUT. Any
 API or protocol error exits non-zero: no silent fallback to "review".
 
 `prompt`: writes the pull request diffs into the workspace (the action, in agent
@@ -18,18 +22,16 @@ mode, never checks the pull request head out there), joins the versioned scan an
 false-positive instructions into the prompt and writes it to $GITHUB_OUTPUT. A
 pull request whose changes cannot be read at all stops here, before the engine.
 
-`publish`: validates the model's JSON (structured_output, schema SCHEMA), keeps the
-findings at or above the confidence bar, neutralises mentions, references, links,
-verdict lines and HTML, and posts one comment. The model itself publishes nothing.
+`publish`: see scripts/ci_security_review_publish.py.
 
 Sources: https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
 https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run
 https://docs.github.com/en/rest/commits/commits#compare-two-commits
-https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -46,11 +48,11 @@ from ci_review_budget import (  # noqa: E402
     BudgetError,
     Gh,
     Record,
-    _lines,
     decide,
     gh_api,
     output_file,
 )
+from ci_security_review_publish import gh_post, publish  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = "claude-security-review.yml"
@@ -64,87 +66,23 @@ CAP = 3
 INSTRUCTIONS = ROOT / ".github/claude-security-review"
 SCAN = INSTRUCTIONS / "scan-instructions.txt"
 FALSE_POSITIVES = INSTRUCTIONS / "false-positive-filtering.txt"
-MARKER = "Claude security review (advisory)"
 # Untracked, in the main checkout the engine reads; agent mode leaves it in place.
 INPUT_DIR = ".claude-security-review"
 PR_DIFF = f"{INPUT_DIR}/pr.diff"
 SINCE_DIFF = f"{INPUT_DIR}/since-last-review.diff"
-# source: operational bound, far above a reviewable pull request; GitHub refuses the
-# diff media type over 20,000 lines anyway (docs.github.com, "Get a pull request").
+# source: operational bound, far above a reviewable pull request.
 MAX_DIFF_BYTES = 1_000_000
-# source: the upstream filter keeps confidence 8 or more out of 10
-# (claude-code-security-review .claude/commands/security-review.md, step 3).
-MIN_CONFIDENCE = 8
-# source: size bounds. The model's JSON reaches `publish` as one environment string,
-# which Linux caps at MAX_ARG_STRLEN, 128 KiB (execve(2)); at most
-# 8 x (3 x 500 + 200 + 80 + 10) + 1000 characters, 6 bytes each once JSON-escaped in
-# the worst case, is about 91 KiB. The comment stays under COMMENT_LIMIT, below
-# GitHub's 65,536 characters, by dropping whole findings (render).
-MAX_FINDINGS = 8
-MAX_TEXT = 500
-MAX_SUMMARY = 1000
-MAX_PATH = 200
-MAX_CATEGORY = 80
-# source: operational bound, far above any source file's line count.
-MAX_LINE = 10_000_000
-COMMENT_LIMIT = 60_000
-SEVERITIES = ("HIGH", "MEDIUM")
-# A relative path of non-empty segments: no leading "/", "~" or drive letter, no
-# "://", no "." or ".." segment, no empty segment, no whitespace at a segment's ends,
-# no backslash, backtick or line break ("//" also refuses "://"). Shown as ASCII with
-# escapes (display_path), so no look-alike or invisible character can pass for "/" or
-# "..". The engine's JSON Schema validator (JavaScript, if it enforces `pattern` at all)
-# reads this pattern more loosely around U+2028 and Unicode spaces; publish re-checks
-# every finding in Python, which is the gate.
-PATH_PATTERN = (
-    r"^(?![A-Za-z]:)(?!~)(?!/)(?!.*//)(?!.*/$)"
-    r"(?!(?:.*/)?\.{1,2}(?:/|$))(?!(?:.*/)?\s)(?!.*\s(?:/|$))[^\\`\n\r\t]+$"
-)
-CATEGORY_PATTERN = r"^[a-z][a-z0-9_]*$"
+def records(text: str) -> list[Record]:
+    """JSON lines from `gh api --jq`, split on "\n" only: gh's encoder writes U+0085
+    raw inside a value (str.splitlines would cut the record there), never a raw "\n"."""
+    rows = [json.loads(line) for line in text.split("\n") if line.strip()]
+    if any(not isinstance(row, dict) for row in rows):
+        raise BudgetError("protocol")
+    return rows
 
 
-def _string(limit: int, pattern: str | None = None) -> Record:
-    schema = {"type": "string", "minLength": 1, "maxLength": limit}
-    if pattern:
-        schema["pattern"] = pattern
-    return schema
-
-
-SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["findings", "summary"],
-    "properties": {
-        "summary": _string(MAX_SUMMARY),
-        "findings": {
-            "type": "array",
-            "maxItems": MAX_FINDINGS,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["file", "line", "severity", "category", "description",
-                             "exploit_scenario", "recommendation", "confidence"],
-                "properties": {
-                    "file": _string(MAX_PATH, PATH_PATTERN),
-                    "line": {"type": "integer", "minimum": 0, "maximum": MAX_LINE},
-                    "severity": {"type": "string", "enum": list(SEVERITIES)},
-                    "category": _string(MAX_CATEGORY, CATEGORY_PATTERN),
-                    "description": _string(MAX_TEXT),
-                    "exploit_scenario": _string(MAX_TEXT),
-                    "recommendation": _string(MAX_TEXT),
-                    "confidence": {"type": "integer", "minimum": 1, "maximum": 10},
-                },
-            },
-        },
-    },
-}
-# `@codex review` posted by github-actions[bot] is this repository's Codex request
-# channel (scripts/ci_review_codex.py); a "Verdict:" line is what the resolver reads.
-VERDICT = re.compile(r"^(\s*)Verdict:", re.MULTILINE | re.IGNORECASE)
-REFERENCE = re.compile(r"#(?=\d)")
-# Every line ending CommonMark or Python's str.splitlines knows, made one "\n".
-LINE_BREAKS = re.compile("\r\n|[\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
-ZERO_WIDTH = "​"
+def last_head(runs: list[Record]) -> str:
+    return max(runs, key=lambda run: run["created_at"])["head_sha"] if runs else ""
 
 
 def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
@@ -155,8 +93,8 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
     earlier attempts, so a re-run neither escapes the cap nor erases a spend.
     """
     jq = (
-        ".workflow_runs[] | {id, status, head_sha, created_at, "
-        "prs: [.pull_requests[].number]}"
+        ".total_count as $total | .workflow_runs[] | {id, status, head_sha, created_at, "
+        "prs: [.pull_requests[].number], total: $total}"
     )
     text = gh(
         [
@@ -174,8 +112,15 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
             f"per_page={PER_PAGE}",
         ]
     )
+    rows = records(text)
+    # The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
+    # which hold the attempts, would fall off. Refuse rather than undercount.
+    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(rows)):
+        raise BudgetError("the API lists fewer runs of this branch than it counts")
     found = []
-    for row in _lines(text):
+    for row in rows:
+        if len(found) >= CAP:
+            break  # the round is refused anyway; reading further only spends API calls
         if pr not in row.get("prs", []):
             continue
         current = row.get("id") == run_id
@@ -193,7 +138,7 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
 
 def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     jq = ".jobs[] | {attempt: .run_attempt, name, steps: [.steps[]? | {name, conclusion}]}"
-    jobs = _lines(gh([f"repos/{repo}/actions/runs/{run_id}/jobs", "--method", "GET",
+    jobs = records(gh([f"repos/{repo}/actions/runs/{run_id}/jobs", "--method", "GET",
                       "--paginate", "--jq", jq, "-f", "filter=all",
                       "-f", f"per_page={PER_PAGE}"]))
     if not all(type(job.get("attempt")) is int and isinstance(job.get("name"), str)
@@ -224,22 +169,52 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
+def workflow_on_main() -> bytes:
+    return (ROOT / ".github/workflows" / WORKFLOW).read_bytes()
+
+
+def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> Record:
+    """Why this event must not spend a round, before any count.
+
+    `stale`: the event's head is no longer the PR's head (a re-run of an old run).
+    `drifted`: the PR changes this workflow. The budget reads job and step names from
+    main's copy and the run follows the PR's, so a renamed step would go uncounted;
+    such a PR is reviewed after the merge, from main's definition.
+    """
+    current = gh([f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"]).strip()
+    if not SHA.fullmatch(current):
+        raise BudgetError("protocol")
+    content = gh([f"repos/{repo}/contents/.github/workflows/{WORKFLOW}", "--method", "GET",
+                  "-f", f"ref={merge_sha}", "--jq", ".content"])
+    try:
+        theirs = base64.b64decode("".join(content.split()), validate=True)
+    except ValueError as error:
+        raise BudgetError("protocol") from error
+    return {"stale": "true" if current != head_sha else "false",
+            "drifted": "true" if theirs != workflow_on_main() else "false"}
+
+
 def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: str,
-           head_sha: str) -> Record:
+           head_sha: str, merge_sha: str) -> Record:
     # No bypass label: the review is advisory, a fourth one buys nothing the
     # merge waits for.
+    for sha in (head_sha, merge_sha):
+        if not SHA.fullmatch(sha):
+            raise BudgetError("protocol")
+    gate = preconditions(gh, repo, pr, head_sha, merge_sha)
     runs = attempted_runs(gh, repo, pr, run_id, run_attempt, head_ref, head_sha)
     result = decide(runs, [], cap=CAP)
     # A later round reviews only what changed since a review that was published;
     # an attempt that published nothing narrows nothing.
-    result["reviewed_sha"] = decide([r for r in runs if r["published"]], [], cap=CAP)[
-        "reviewed_sha"
-    ]
+    result["reviewed_sha"] = last_head([r for r in runs if r["published"]])
+    if result["reviewed_sha"] and not SHA.fullmatch(result["reviewed_sha"]):
+        raise BudgetError("protocol")
     # A head already attempted (a reopen, ready_for_review, a re-run, or a push back
     # to an earlier head) has nothing new: it spends no round.
     seen = {run.get("head_sha") for run in runs}
     result["head_reviewed"] = "true" if head_sha in seen else "false"
-    if result["head_reviewed"] == "true":
+    result.update(gate)
+    if "true" in (result["head_reviewed"], gate["stale"], gate["drifted"]):
         result["skip"] = "true"
     return result
 
@@ -290,19 +265,19 @@ def _cut(text: str) -> str:
 
 
 PATCHES_NOTE = (
-    "[GitHub refused the full diff: these are the per-file patches of the compare API, "
+    "[The full diff could not be read: these are the per-file patches of the compare API, "
     "which lists at most 300 files. A file without a patch is not reviewed. Say so in the "
     "summary.]\n"
 )
 
 
 def _patches(gh: Gh, repo: str, base_sha: str, head_sha: str) -> str:
-    """Per-file patches of base...head, for a PR whose diff GitHub refuses (too large).
+    """Per-file patches of base...head, for a PR whose full diff cannot be read.
 
     Read as JSON records, so a file name (which may hold a newline) can neither fake
     a hunk nor pass the readability check: only a non-empty `patch` field counts.
     """
-    rows = _lines(gh([f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq",
+    rows = records(gh([f"repos/{repo}/compare/{base_sha}...{head_sha}", "--jq",
                       ".files[] | {filename, patch}"]))
     if not any(isinstance(row.get("patch"), str) and row["patch"].strip() for row in rows):
         raise BudgetError("no file of the pull request has a readable patch")
@@ -319,11 +294,18 @@ def _patches(gh: Gh, repo: str, base_sha: str, head_sha: str) -> str:
 FAILURES = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
 
 
+def _why(error: Exception) -> str:
+    """The reason gh gave, for the log: its exit status and first stderr line."""
+    stderr = getattr(error, "stderr", None) or ""
+    first = stderr.splitlines()[0] if isinstance(stderr, str) and stderr else ""
+    return f"{type(error).__name__} {getattr(error, 'returncode', '')} {first}".strip()
+
+
 def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
           root: Path) -> bool:
     """Write the PR diff, and the diff since the last published review, into INPUT_DIR.
 
-    A diff GitHub refuses is replaced by the PR's per-file patches; when those cannot
+    A full diff that cannot be read is replaced by the PR's per-file patches; when those cannot
     be read either, the round stops before the engine (BudgetError), so a clean
     comment never stands for a review of nothing. Returns whether the diff since the
     last review was written: without it, the round reviews the whole diff.
@@ -338,170 +320,23 @@ def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
         # The diff of the event's head over the PR's base, as the pull request shows it
         # (three dots: from their merge base), never the PR's state at a later push.
         text = gh([f"repos/{repo}/compare/{base_sha}...{head_sha}", *accept])
-    except FAILURES:
+    except FAILURES as error:
+        print(f"Full diff not read ({_why(error)}): using per-file patches.", file=sys.stderr)
         try:
             text = _patches(gh, repo, base_sha, head_sha)
         except FAILURES as error:
-            raise BudgetError(f"the pull request's changes cannot be read ({type(error).__name__})")
+            raise BudgetError(f"the pull request's changes cannot be read ({_why(error)})")
     (root / PR_DIFF).write_text(_cut(text), encoding="utf-8")
     if not reviewed_sha:
         return False
     try:
         since = gh([f"repos/{repo}/compare/{reviewed_sha}...{head_sha}", *accept])
-    except FAILURES:
+    except FAILURES as error:
+        print(f"Diff since the last review not read ({_why(error)}): reviewing the whole "
+              "diff.", file=sys.stderr)
         return False
     (root / SINCE_DIFF).write_text(_cut(since), encoding="utf-8")
     return True
-
-
-def canonical(text: str) -> str:
-    """Prose as the comment will show it: NFKC, one line ending, no control, format,
-    combining, surrogate, private-use or unassigned character. Paths never go through
-    this: they are shown escaped."""
-    text = unicodedata.normalize("NFKC", text)
-    text = LINE_BREAKS.sub("\n", text)
-    return "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch)
-                   not in {"Cc", "Cf", "Mn", "Me", "Cs", "Co", "Cn"})
-
-
-# Characters a path may hold that the comment must not act on (a mention, a reference,
-# an entity, HTML, a link): shown as JSON escapes too. A raw backslash is refused in
-# paths, so "\u0040" can only be this escape.
-PATH_ESCAPES = {ch: f"\\u{ord(ch):04x}" for ch in "@#&<>[]"}
-
-
-def display_path(path: str) -> str:
-    """The path as the comment shows it: ASCII, every character outside printable ASCII
-    and every character of PATH_ESCAPES as a JSON escape, so what is shown is what the
-    model named, look-alikes included, and nothing in it acts."""
-    return "".join(PATH_ESCAPES.get(ch, ch) for ch in json.dumps(path)[1:-1])
-
-
-def neutral(text: str) -> str:
-    """Text for a code span: no backtick (it would close the span), no mention, no
-    `#<digit>` reference and no verdict line, even for a scanner reading the raw body."""
-    text = canonical(text).replace("`", "'")
-    text = text.replace("@", "@" + ZERO_WIDTH)
-    text = REFERENCE.sub("#" + ZERO_WIDTH, text)
-    return VERDICT.sub(lambda m: f"{m.group(1)}Verdict{ZERO_WIDTH}:", text)
-
-
-def prose(text: str, limit: int) -> str:
-    """Model prose as one inline code span on one line. Markdown renders nothing inside
-    a code span: no link, autolink, `GH-123` or URL reference, image, HTML or emphasis;
-    and a line break cannot start a heading or a forged finding."""
-    # Bounded after neutralising: NFKC can expand one character into eighteen (U+FDFA).
-    flat = " ".join(neutral(text.strip()[:limit]).split())[:limit].rstrip()
-    # The cut can separate a trailing "@" or "#" from the zero-width space after it.
-    flat = flat.rstrip("@#")
-    return f"`{flat}`" if flat else "`(empty)`"
-
-
-def _valid(item) -> bool:
-    if not isinstance(item, dict) or set(item) != set(
-        SCHEMA["properties"]["findings"]["items"]["required"]
-    ):
-        return False
-    path = item["file"]
-    line, confidence, category = item["line"], item["confidence"], item["category"]
-    return (
-        isinstance(path, str)
-        and 0 < len(path) <= MAX_PATH
-        and re.fullmatch(PATH_PATTERN, path) is not None
-        and path.isprintable()
-        and type(line) is int
-        and 0 <= line <= MAX_LINE
-        and type(confidence) is int
-        and 1 <= confidence <= 10
-        and item["severity"] in SEVERITIES
-        and isinstance(category, str)
-        and len(category) <= MAX_CATEGORY
-        and re.fullmatch(CATEGORY_PATTERN, category) is not None
-        and all(isinstance(item[key], str) and item[key].strip()
-                for key in ("description", "exploit_scenario", "recommendation"))
-    )
-
-
-def findings(raw: str) -> tuple[list[Record], int, str]:
-    """The kept findings, the count of invalid ones dropped, and the summary."""
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError) as error:
-        raise BudgetError("the engine returned no structured output") from error
-    if (
-        not isinstance(data, dict)
-        or set(data) != {"findings", "summary"}
-        or not isinstance(data["findings"], list)
-        or not isinstance(data["summary"], str)
-    ):
-        raise BudgetError("schema")
-    kept, dropped = [], 0
-    for item in data["findings"][:MAX_FINDINGS]:
-        if not _valid(item):
-            dropped += 1
-            continue
-        if item["confidence"] < MIN_CONFIDENCE:
-            continue
-        kept.append(
-            {
-                "file": display_path(item["file"]),
-                "line": item["line"],
-                "severity": item["severity"],
-                "category": item["category"],
-                "confidence": item["confidence"],
-                **{key: prose(item[key], MAX_TEXT)
-                   for key in ("description", "exploit_scenario", "recommendation")},
-            }
-        )
-    dropped += max(0, len(data["findings"]) - MAX_FINDINGS)
-    return kept, dropped, prose(data["summary"], MAX_SUMMARY)
-
-
-def render(kept: list[Record], dropped: int, summary: str, env) -> str:
-    head = [f"## {MARKER}", "",
-            f"Security review {env['ROUND']} of at most {env['CAP']}, head `{env['HEAD_SHA']}`. "
-            "Advisory: it neither approves nor blocks.", "", f"Summary: {summary}", ""]
-    if dropped:
-        head += [f"{dropped} finding(s) did not match the output schema and are not shown.", ""]
-    blocks = [] if kept else [["No high-confidence security finding."]]
-    for number, item in enumerate(kept, 1):
-        blocks.append([
-            f"### Vuln {number}: `{item['category']}` in `{item['file'].replace('`', '')}:{item['line']}`",
-            f"* Severity: {item['severity'].title()}",
-            f"* Confidence: {item['confidence']}/10",
-            f"* Description: {item['description']}",
-            f"* Exploit scenario: {item['exploit_scenario']}",
-            f"* Recommendation: {item['recommendation']}",
-            "",
-        ])
-    tail = ["", f"[View job run]({env['RUN_URL']})"]
-    # Whole findings only: a cut inside a line could leave a code span open and let
-    # the text before the cut render.
-    room = COMMENT_LIMIT - len("\n".join(tail)) - 200
-    lines, shown = list(head), 0
-    for block in blocks:
-        if len("\n".join(lines + block)) > room:
-            break
-        lines += block
-        shown += 1
-    if shown < len(blocks):
-        lines += [f"{len(blocks) - shown} finding(s) not shown: the comment would exceed "
-                  "GitHub's size limit.", ""]
-    return "\n".join(lines) + "\n" + "\n".join(tail)
-
-
-def publish(gh_input, env) -> str:
-    kept, dropped, summary = findings(env.get("FINDINGS", ""))
-    body = render(kept, dropped, summary, env)
-    gh_input([f"repos/{env['GH_REPO']}/issues/{int(env['PR'])}/comments", "--method", "POST",
-              "--input", "-"], json.dumps({"body": body}))
-    return body
-
-
-def gh_post(args: list[str], payload: str) -> str:
-    done = subprocess.run(["gh", "api", *args], input=payload, capture_output=True,
-                          text=True, check=True, timeout=60)
-    return done.stdout
 
 
 def write_output(env, key: str, value: str) -> None:
@@ -516,7 +351,8 @@ def main(argv: list[str]) -> int:
     env = os.environ
     if argv == ["budget"]:
         result = budget(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
-                        int(env["RUN_ATTEMPT"]), env["HEAD_REF"], env["HEAD_SHA"])
+                        int(env["RUN_ATTEMPT"]), env["HEAD_REF"], env["HEAD_SHA"],
+                        env["MERGE_SHA"])
         with open(output_file(env), "a", encoding="utf-8") as out:
             for key, value in result.items():
                 out.write(f"{key}={value}\n")
