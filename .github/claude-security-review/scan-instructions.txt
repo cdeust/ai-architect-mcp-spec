@@ -61,14 +61,10 @@ in use, and the project's threat model.
 Phase 2, comparison: compare the new code against those patterns; flag new attack surface.
 Phase 3, assessment: trace data from untrusted inputs to sensitive operations, across files.
 
-OUTPUT FORMAT, for each finding (markdown):
-
-### Vuln N: <category>: `<file>:<line>`
-* Severity: High | Medium
-* Confidence: <score from 1 to 10 after false-positive filtering>
-* Description: <what the code does wrong>
-* Exploit scenario: <who sends what, and what they obtain>
-* Recommendation: <the fix>
+FINDING FIELDS (returned as structured output, see OUTPUT below; plain text, no markdown):
+file and line, severity (HIGH or MEDIUM), category (lowercase snake_case), description
+(what the code does wrong), exploit_scenario (who sends what, and what they obtain),
+recommendation (the fix), confidence (1 to 10 after false-positive filtering).
 
 SEVERITY:
 - HIGH: directly exploitable, leading to code execution, data breach or authentication bypass.

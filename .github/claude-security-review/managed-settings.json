@@ -5,6 +5,8 @@
     "disableBypassPermissionsMode": "disable",
     "deny": [
       "Bash",
+      "Grep",
+      "Glob",
       "Edit",
       "Write",
       "MultiEdit",
