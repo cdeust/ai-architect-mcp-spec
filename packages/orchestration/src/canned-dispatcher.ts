@@ -37,20 +37,11 @@ import {
   JIRA_GENERATION_INV_ID,
   GIT_HISTORY_INV_ID,
   IMPLEMENTATION_GATE_QUESTION_ID,
-  IMPLEMENTATION_INV_ID,
-  TESTING_INV_ID,
-  REVIEW_INV_PREFIX,
-  PR_GATE_QUESTION_ID,
-  PR_CREATION_INV_ID,
 } from "./handlers/protocol-ids.js";
 import {
   defaultFakeSectionDraft,
   fakeClarificationQuestion,
-  fakeImplementationReport,
   fakeJudgeVerdict,
-  fakePrCreationReport,
-  fakeReviewReport,
-  fakeTestingReport,
 } from "./canned-responses.js";
 import { claimIdsInJudgePrompt } from "@prd-gen/verification";
 
@@ -82,27 +73,6 @@ export interface CannedDispatcherOptions {
    * A non-pass verdict keeps "PRD only" unless override_policy is true.
    */
   readonly implementation_gate_answer?: "PRD only" | "Implement";
-  /**
-   * Per-attempt verdict producer for the `review` step (PR 4b). Default:
-   * always "pass" — the zero-regression default matching implementation's
-   * nominal report contract. Tests exercising the FAIL→retry→PASS or
-   * FAIL×N→advisory loop pass a custom function, e.g.
-   * `(attempt) => (attempt < 3 ? "fail" : "pass")`.
-   */
-  readonly review_verdict_for_attempt?: (attempt: number) => "pass" | "fail";
-  /**
-   * Answer for the `pr_gate` ask_user (PR 5, design-phases-3-5.md §3).
-   * Default "No" — the zero-risk terminal default (never pushes/opens a PR
-   * unless a test explicitly opts in). Set to "Push + open PR" to drive the
-   * `pr_creation` spawn in a full smoke run.
-   */
-  readonly pr_gate_answer?: "Push + open PR" | "No";
-  /**
-   * Whether the canned `pr_creation` engineer response includes a parsable
-   * `PR_URL:` footer. Default true (nominal path). Set to false to exercise
-   * pr-creation.ts's "footer absent → degrade" path in a full smoke run.
-   */
-  readonly pr_creation_footer_present?: boolean;
 }
 
 /**
@@ -141,9 +111,6 @@ export function makeCannedDispatcher(
   const graph_path = opts.graph_path ?? "/tmp/canned/graph";
   const fake_section_draft = opts.fake_section_draft ?? defaultFakeSectionDraft;
   const implementation_gate_answer = opts.implementation_gate_answer ?? "PRD only";
-  const review_verdict_for_attempt = opts.review_verdict_for_attempt ?? (() => "pass" as const);
-  const pr_gate_answer = opts.pr_gate_answer ?? "No";
-  const pr_creation_footer_present = opts.pr_creation_footer_present ?? true;
 
   function pickFakeAgentResponse(invocation_id: string, prompt: string): string {
     if (invocation_id.startsWith(SELF_CHECK_JUDGE_INV_PREFIX)) {
@@ -163,19 +130,6 @@ export function makeCannedDispatcher(
     }
     if (invocation_id === GIT_HISTORY_INV_ID) {
       return "History is silent within the searched space (canned git-historian response).";
-    }
-    if (invocation_id === IMPLEMENTATION_INV_ID) {
-      return fakeImplementationReport();
-    }
-    if (invocation_id === TESTING_INV_ID) {
-      return fakeTestingReport();
-    }
-    if (invocation_id.startsWith(REVIEW_INV_PREFIX)) {
-      const attempt = Number(invocation_id.slice(REVIEW_INV_PREFIX.length));
-      return fakeReviewReport(review_verdict_for_attempt(attempt));
-    }
-    if (invocation_id === PR_CREATION_INV_ID) {
-      return fakePrCreationReport(pr_creation_footer_present);
     }
     return "Canned synthetic response.";
   }
@@ -199,16 +153,6 @@ export function makeCannedDispatcher(
         kind: "user_answer",
         question_id: action.question_id,
         selected: [implementation_gate_answer === GATE_OPTION_IMPLEMENT && approved ? approved.label : GATE_OPTION_PRD_ONLY],
-      };
-    }
-    if (action.question_id === PR_GATE_QUESTION_ID) {
-      // Explicit, not relying on options[0]: "No" is the zero-risk default
-      // (design-phases-3-5.md §3, PR 5) — never pushes/opens a PR unless a
-      // test explicitly opts in via pr_gate_answer.
-      return {
-        kind: "user_answer",
-        question_id: action.question_id,
-        selected: [pr_gate_answer],
       };
     }
     if (action.options && action.options.length > 0) {

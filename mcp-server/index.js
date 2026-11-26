@@ -52352,7 +52352,7 @@ var PipelineStepSchema = external_exports.enum([
    * `pr_creation` (PR 5, design-phases-3-5.md §3): one `spawn_subagents`
    * (purpose "pr", subagent_type "engineer", isolation "none" — SAME
    * branch/worktree as `implementation`) instructing the engineer to push
-   * the branch and run `gh pr create`, returning the PR URL via a
+   * the branch and open a pull request, returning the PR URL via a
    * machine-readable `PR_URL:` footer. Push/`gh` failure or a missing
    * footer DEGRADES (`appendError("upstream_failure")`,
    * `post_specs.pr.pushed = false`) — `finalize` is still reached, never a
@@ -53515,7 +53515,7 @@ var SpawnSubagentsActionSchema = external_exports.object({
    * the `testing` step's test-engineer spawn — "review" already existed
    * (unused until PR 4b's `review` step wires it) so no addition was needed
    * there. "pr" added additively (design-phases-3-5.md §3, PR 5) for the
-   * `pr_creation` step's engineer spawn (branch push + `gh pr create`) — no
+   * `pr_creation` step's engineer spawn (branch push + pull request) — no
    * existing purpose value was removed or repurposed. "probe" added
    * additively (#123) for the `preflight` step's one-invocation check that
    * the host can start a zetetic-team-subagents subagent — no existing
@@ -54338,11 +54338,8 @@ var POST_IMPL_INDEX_CODEBASE_CORRELATION_ID = "post_impl_verification_index_code
 var POST_IMPL_DETECT_CHANGES_CORRELATION_ID = "post_impl_verification_detect_changes";
 var POST_IMPL_VERIFY_SEMANTIC_DIFF_CORRELATION_ID = "post_impl_verification_verify_semantic_diff";
 var POST_IMPL_CHECK_SECURITY_GATES_CORRELATION_ID = "post_impl_verification_check_security_gates";
-var IMPLEMENTATION_INV_ID = "implementation_engineer";
-var TESTING_INV_ID = "testing_test_engineer";
 var REVIEW_INV_PREFIX = "review_code_reviewer_";
 var PR_GATE_QUESTION_ID = "pr_gate";
-var PR_CREATION_INV_ID = "pr_creation_engineer";
 var VERIFY_BUDGET_QUESTION_ID = "self_check_verify_budget";
 var PREFLIGHT_SUBAGENT_PROBE_ID = "preflight_subagent_probe";
 
@@ -58524,7 +58521,7 @@ function buildPostSpecsSummary(state) {
     }
   }
   if (ps.pr) {
-    lines.push(ps.pr.pushed ? `PR: opened at ${ps.pr.url ?? "(unknown url)"}.` : "PR: not opened (declined at the gate, or push/gh pr create failed).");
+    lines.push(ps.pr.pushed ? `PR: opened at ${ps.pr.url ?? "(unknown url)"}.` : "PR: not opened (declined at the gate, or publication failed).");
   }
   return lines.join("\n");
 }
@@ -58871,51 +58868,6 @@ function defaultFakeSectionDraft(section_type) {
       return [heading2, "", "Canned synthetic content."].join("\n");
   }
 }
-function fakeImplementationReport() {
-  return [
-    "Implemented the requested change on a fresh worktree, per protocol.",
-    "",
-    "BRANCH: feat/canned-implementation",
-    "WORKTREE: /tmp/canned/implementation-worktree",
-    "SHA: 0000000000000000000000000000000000cafe",
-    "FILES:",
-    "- src/example.ts"
-  ].join("\n");
-}
-function fakeTestingReport() {
-  return [
-    "Added unit tests for the change and ran the project's test suite on",
-    "the implementation worktree. All tests pass; no regressions found."
-  ].join(" ");
-}
-function fakeReviewReport(verdict) {
-  if (verdict === "pass") {
-    return [
-      "The implementation matches the spec, verification gates passed, and",
-      "the test report shows a clean run.",
-      "",
-      "VERDICT: PASS"
-    ].join("\n");
-  }
-  return [
-    "The implementation has a gap relative to the spec that must be fixed",
-    "before this can ship.",
-    "",
-    "VERDICT: FAIL",
-    "FINDINGS:",
-    "- Canned synthetic finding: address the gap and resubmit."
-  ].join("\n");
-}
-function fakePrCreationReport(footerPresent) {
-  const lines = [
-    "Pushed the branch and opened a pull request, per protocol.",
-    "No merge, no --admin, no force-push."
-  ];
-  if (footerPresent) {
-    lines.push("", "PR_URL: https://github.com/example/canned/pull/1");
-  }
-  return lines.join("\n");
-}
 function fakeJudgeVerdict(claimIds) {
   return JSON.stringify(claimIds.map((claim_id) => ({
     claim_id,
@@ -58956,9 +58908,6 @@ function makeCannedDispatcher(opts = {}) {
   const graph_path = opts.graph_path ?? "/tmp/canned/graph";
   const fake_section_draft = opts.fake_section_draft ?? defaultFakeSectionDraft;
   const implementation_gate_answer = opts.implementation_gate_answer ?? "PRD only";
-  const review_verdict_for_attempt = opts.review_verdict_for_attempt ?? (() => "pass");
-  const pr_gate_answer = opts.pr_gate_answer ?? "No";
-  const pr_creation_footer_present = opts.pr_creation_footer_present ?? true;
   function pickFakeAgentResponse(invocation_id, prompt) {
     if (invocation_id.startsWith(SELF_CHECK_JUDGE_INV_PREFIX)) {
       return fakeJudgeVerdict(claimIdsInJudgePrompt(prompt));
@@ -58976,19 +58925,6 @@ function makeCannedDispatcher(opts = {}) {
     if (invocation_id === GIT_HISTORY_INV_ID) {
       return "History is silent within the searched space (canned git-historian response).";
     }
-    if (invocation_id === IMPLEMENTATION_INV_ID) {
-      return fakeImplementationReport();
-    }
-    if (invocation_id === TESTING_INV_ID) {
-      return fakeTestingReport();
-    }
-    if (invocation_id.startsWith(REVIEW_INV_PREFIX)) {
-      const attempt = Number(invocation_id.slice(REVIEW_INV_PREFIX.length));
-      return fakeReviewReport(review_verdict_for_attempt(attempt));
-    }
-    if (invocation_id === PR_CREATION_INV_ID) {
-      return fakePrCreationReport(pr_creation_footer_present);
-    }
     return "Canned synthetic response.";
   }
   function craftUserAnswer(action) {
@@ -59005,13 +58941,6 @@ function makeCannedDispatcher(opts = {}) {
         kind: "user_answer",
         question_id: action.question_id,
         selected: [implementation_gate_answer === GATE_OPTION_IMPLEMENT && approved ? approved.label : GATE_OPTION_PRD_ONLY]
-      };
-    }
-    if (action.question_id === PR_GATE_QUESTION_ID) {
-      return {
-        kind: "user_answer",
-        question_id: action.question_id,
-        selected: [pr_gate_answer]
       };
     }
     if (action.options && action.options.length > 0) {
