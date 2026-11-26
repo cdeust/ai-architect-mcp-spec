@@ -19,6 +19,7 @@ const REQUIRED = [
   ["pnpm", "install", "--frozen-lockfile"],
   ["pnpm", "build"],
   ["pnpm", "bundle"],
+  ["node", "scripts/check-dist-in-sync.mjs"],
   ["pnpm", "run", "test:portable"],
   ["pnpm", "run", "test:portable:runtime"],
   ["bash", "scripts/release/smoke-mcpb.sh"],
@@ -39,7 +40,7 @@ const call = [path.basename(process.argv[1]), ...process.argv.slice(2)];
 fs.appendFileSync(process.env.CI_E2E_CALLS, JSON.stringify(call) + '\\n');
 if (JSON.stringify(call) === process.env.CI_E2E_FAIL) process.exit(42);
 `;
-  for (const executable of ["npm", "pnpm", "bash"]) {
+  for (const executable of ["npm", "pnpm", "bash", "node"]) {
     const path = join(root, executable);
     writeFileSync(path, stub);
     chmodSync(path, 0o755);
