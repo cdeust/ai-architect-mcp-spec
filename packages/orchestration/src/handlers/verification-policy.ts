@@ -12,6 +12,7 @@
  */
 
 import type { JudgeVerdict } from "@prd-gen/core";
+import { jiraTicketsRefusal } from "../jira-refusal.js";
 import { validateDefineReadiness, validateDocument } from "@prd-gen/validation";
 import { findDefineDecisionConflicts } from "../define-decisions.js";
 import { documentSections } from "../section-plan.js";
@@ -206,6 +207,7 @@ export function defineFindings(state: PipelineState) {
   return [
     ...validateDefineReadiness(sections),
     ...findDefineDecisionConflicts(state, sections).map(message => ({ message })),
+    ...[jiraTicketsRefusal(state)].flatMap(message => message ? [{ message }] : []),
     ...semanticReviewFindings(state),
   ];
 }

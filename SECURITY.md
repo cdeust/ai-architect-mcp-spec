@@ -61,8 +61,10 @@ As of issue #29, every release (`.github/workflows/release.yml`) ships:
 
 - **Dependency audit** — On pull requests and pushes to `main`, the Pipeline
   unit job runs `pnpm audit --prod --audit-level high` against the workspace
-  lockfile before the frozen install and build. A high or critical
-  production advisory or a failed audit command stops the job.
+  lockfile and `npm audit --prefix scripts/ci-mention --omit=dev
+  --audit-level=high` against the owner-mention tools' lockfile, both before
+  the frozen install and build. A high or critical production advisory or a
+  failed audit command stops the job.
   [Unit command](ci.json) · [Pipeline](.github/workflows/pipeline.yml)
 
 - **Code scanning** — CodeQL scans JavaScript and TypeScript on pull requests

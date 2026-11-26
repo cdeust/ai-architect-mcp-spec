@@ -77,10 +77,12 @@ class MentionJobs(unittest.TestCase):
             resolve(event, repo, sha, "12", api)
         pr["base"]["repo"]["default_branch"] = "main"
         for state, head_repo, branch in [("closed", repo, "feature"), ("open", "fork/spec", "feature"),
-                                        ("open", repo, "main")]:
+                                        ("open", repo, "main"), ("open", repo, "refs/heads/main"),
+                                        ("open", None, "feature")]:
             with self.subTest(state=state, head_repo=head_repo, branch=branch):
                 pr.update(state=state)
-                pr["head"].update(repo={"full_name": head_repo}, ref=branch)
+                # head_repo None: a deleted fork, whose head.repo GitHub returns as null.
+                pr["head"].update(repo=None if head_repo is None else {"full_name": head_repo}, ref=branch)
                 with self.assertRaises(ValueError):
                     resolve(event, repo, sha, "12", api)
 
@@ -109,6 +111,25 @@ class MentionJobs(unittest.TestCase):
         self.assertEqual(kept[-1], {"created_at": "2026-11-25T09:00:00Z", "body": "the correction"})
         self.assertEqual(kept[0]["body"], "note 51")
         self.assertNotIn("not the owner", [c["body"] for c in kept])
+
+    def test_owner_thread_refuses_what_was_not_there_when_the_owner_asked(self):
+        import runpy
+        thread = runpy.run_path(str(ROOT / "scripts/ci-mention/request.py"))["owner_thread"]
+        rows = [
+            {"id": 98, "user": {"login": "owner"}, "created_at": "2026-11-25T09:00:00Z", "body": "kept"},
+            {"id": 99, "user": {"login": "owner"}, "created_at": "2026-11-25T09:30:00Z",
+             "updated_at": "2026-11-25T10:30:00Z", "body": "edited after the request"},
+            {"id": 100, "user": {"login": "owner"}, "created_at": "2026-11-25T10:00:00Z", "body": "@claude do it"},
+            {"id": 101, "user": {"login": "owner"}, "created_at": "2026-11-25T10:00:00Z",
+             "body": "same second, after the request"},
+            {"id": 97, "user": None, "created_at": "2026-11-25T08:00:00Z", "body": "a deleted account"},
+            {"id": 96, "user": {"login": "owner"}, "created_at": "2026-11-25T07:00:00Z", "body": None},
+        ]
+        base = {"repository": {"owner": {"login": "owner"}}, "issue": {"number": 7}}
+        trigger = {**base, "comment": {"id": 100, "created_at": "2026-11-25T10:00:00Z"}}
+        self.assertEqual([c["body"] for c in thread(trigger, lambda path: rows)], ["kept", ""])
+        # An issues event (opened, assigned) has no triggering comment: nothing is passed.
+        self.assertEqual(thread(base, lambda path: self.fail("no read on an issues event")), [])
 
     def test_publisher_applies_only_to_bare_index(self):
         import os
@@ -241,6 +262,12 @@ class MentionPublication(unittest.TestCase):
         comments = [body["body"] for method, path, body in self.writes() if path == "issues/7/comments"]
         self.assertEqual(comments, ["Done.\n\nDraft pull request: https://github.com/owner/spec/pull/9"
                                     "\n\n<!-- owner-mention-run 42 -->"])
+
+    def test_a_deleted_account_among_the_answers_does_not_stop_publication(self):
+        self.comments = [{"user": None, "body": None},
+                         {"user": {"login": "claude[bot]"}, "body": "earlier\n\n<!-- owner-mention-run 42 -->"}]
+        self.publish(self.candidate())
+        self.assertNotIn("issues/7/comments", [path for method, path, body in self.writes()])
 
     def test_existing_draft_is_reused_and_an_existing_answer_is_not_repeated(self):
         self.existing_pulls = [{"html_url": "https://github.com/owner/spec/pull/5"}]

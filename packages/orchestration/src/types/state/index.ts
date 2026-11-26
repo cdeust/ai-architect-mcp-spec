@@ -14,6 +14,8 @@
  *   post-specs-state.ts    — PostSpecsStateSchema (Phases 3-5 post-specs loop)
  *   verify-budget.ts        — VerifyBudgetConfigSchema (self-check judge-panel budget)
  *   verification-policy.ts  — VerificationPolicySchema (implementation_gate acceptance policy)
+ *   run-records.ts          — QualityScoreRecordSchema, ReliabilityObservationRecordSchema
+ *   handoff-state.ts        — the jira_result and passed_define fields the architect-os handoff reads
  *   core-state.ts           — ClarificationTurnSchema, PipelineStateSchema, PipelineState
  *   helpers.ts              — touch / appendError / newPipelineState
  * This barrel re-exports the full public surface so existing call sites keep
@@ -27,5 +29,7 @@ export * from "./verification-plan.js";
 export * from "./post-specs-state.js";
 export * from "./verify-budget.js";
 export * from "./verification-policy.js";
+export * from "./run-records.js";
+export * from "./handoff-state.js";
 export * from "./core-state.js";
 export * from "./helpers.js";

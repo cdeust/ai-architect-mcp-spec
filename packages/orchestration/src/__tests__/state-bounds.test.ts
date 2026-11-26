@@ -17,6 +17,9 @@ import {
   MAX_PIPELINE_ERRORS,
   type PipelineState,
 } from "../index.js";
+import { clipChars, ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
+import { QualityScoreRecordSchema, ReliabilityObservationRecordSchema } from "../types/state/run-records.js";
+import { TRUNCATED } from "../types/state/helpers.js";
 
 function freshState(): PipelineState {
   return newPipelineState({
@@ -72,6 +75,66 @@ describe("PipelineState — bounded-I/O caps", () => {
       error_kinds: kinds,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("appendError — entry size", () => {
+  it("cuts an entry longer than ERROR_MESSAGE_CHARS with a visible mark and keeps one at the limit", () => {
+    const long = appendError(freshState(), "x".repeat(ERROR_MESSAGE_CHARS + 1), "structural").errors.at(-1)!;
+    expect(long).toHaveLength(ERROR_MESSAGE_CHARS);
+    expect(TRUNCATED).toBe(" …[truncated]");
+    expect(long.endsWith(" …[truncated]")).toBe(true);
+    expect(long.startsWith("x".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length))).toBe(true);
+    const astral = appendError(freshState(), "z".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length - 1) + "😀".repeat(10), "structural").errors.at(-1)!;
+    expect(astral).toBe("z".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length - 1) + TRUNCATED);
+    expect(clipChars("ab😀", 3)).toBe("ab");
+    expect(clipChars("ab😀", 4)).toBe("ab😀");
+    expect(clipChars("abc", 2)).toBe("ab");
+    expect(clipChars("ab", 2)).toBe("ab");
+    // At the limit nothing is cut, even a lone high surrogate.
+    expect(clipChars("a\uD83D", 2)).toBe("a\uD83D");
+    // Each end of the high-surrogate range moves the cut; a low surrogate or a BMP character does not.
+    expect(clipChars("a\uD800b", 2)).toBe("a");
+    expect(clipChars("a\uDBFFb", 2)).toBe("a");
+    expect(clipChars("a\uD7FFb", 2)).toBe("a\uD7FF");
+    expect(clipChars("a\uDC00b", 2)).toBe("a\uDC00");
+    const exact = "y".repeat(ERROR_MESSAGE_CHARS);
+    expect(appendError(freshState(), exact, "structural").errors.at(-1)).toBe(exact);
+  });
+});
+
+describe("run records", () => {
+  it("keep a quality score within [0, 1] and every field", () => {
+    const score = { prd_context: "feature", rules_checked: 4, rules_passed: 3, critical_violations: 0, total_score: 0.5 };
+    expect(QualityScoreRecordSchema.parse(score)).toEqual(score);
+    for (const total_score of [0, 1]) expect(QualityScoreRecordSchema.safeParse({ ...score, total_score }).success).toBe(true);
+    for (const total_score of [-0.1, 1.1]) expect(QualityScoreRecordSchema.safeParse({ ...score, total_score }).success).toBe(false);
+  });
+
+  it("keep every field of a reliability observation", () => {
+    const observation = {
+      claim_id: "FR-001", judge: { kind: "genius", name: "dijkstra" }, claim_type: "correctness",
+      ground_truth_is_fail: false, judge_was_correct: true,
+    };
+    const parsed = ReliabilityObservationRecordSchema.safeParse(observation);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.data).toEqual(observation);
+  });
+
+  it("name the lockstep invariant of errors[]", () => {
+    expect(PipelineStateSchema.safeParse({ ...freshState(), errors: ["x"], error_kinds: [] }).error?.issues).toMatchObject([
+      { path: ["error_kinds"], message: expect.stringContaining("errors[] and error_kinds[] must have the same length") },
+    ]);
+  });
+});
+
+describe("a loaded jira_result", () => {
+  it("refuses a failure detail longer than one error entry", () => {
+    const failed = (detail: string) => ({ ...freshState(), jira_result: { status: "failed", cause: "invalid", detail } });
+    expect(PipelineStateSchema.safeParse(failed("x".repeat(ERROR_MESSAGE_CHARS))).success).toBe(true);
+    expect(PipelineStateSchema.safeParse(failed("x".repeat(ERROR_MESSAGE_CHARS + 1))).error?.issues).toMatchObject([
+      { path: ["jira_result", "detail"], message: "jira_result.detail exceeds 500 chars" },
+    ]);
   });
 });
 

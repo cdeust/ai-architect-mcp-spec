@@ -58,14 +58,15 @@ def target(event, repository, sha, run, get):
     base = event["repository"]["default_branch"]
     if issue.get("pull_request"):
         pr = get(f"pulls/{number}")
-        if (pr["state"] != "open" or pr["head"]["repo"]["full_name"] != repository
-                or pr["base"]["repo"]["full_name"] != repository
+        # A deleted fork leaves head.repo null: refuse, do not crash.
+        if (pr["state"] != "open" or (pr["head"].get("repo") or {}).get("full_name") != repository
+                or (pr["base"].get("repo") or {}).get("full_name") != repository
                 or pr["head"]["ref"] in (base, pr["base"]["repo"]["default_branch"])):
             raise ValueError("Publication requires an open, same-repository non-default branch")
         branch, sha = pr["head"]["ref"], pr["head"]["sha"]
     else:
         branch = f"claude/issue-{number}-{int(run)}"
-    if branch == base:
+    if branch == base or branch.startswith("refs/"):
         raise ValueError("Publication requires a non-default branch")
     if not re.fullmatch("[0-9a-f]{40}", sha):
         raise ValueError("Invalid target revision")
@@ -85,20 +86,27 @@ def apply_patch(store, revision, patch, git_env):
 
 
 # The previous action passed the owner's comments to the model
-# (include_comments_by_actor: repository owner). Only earlier comments by the
-# owner are kept, newest last, so a request can refer to the discussion above it.
+# (include_comments_by_actor: repository owner). Only the owner's comments posted
+# before the request, and not edited since, are kept, newest last, so a request can
+# refer to the discussion above it. GitHub comment IDs grow with creation, so "before"
+# is decided by ID, not by a timestamp that two comments can share. An `issues`
+# event (opened, assigned) has no triggering comment: its request is the issue
+# itself, and no comment is passed.
 THREAD_COMMENTS = 50
 
 
 def owner_thread(event, api):
+    trigger = event.get("comment")
+    if not trigger:
+        return []
     owner = event["repository"]["owner"]["login"]
-    trigger = event.get("comment") or {}
     comments, page = [], 1
     while True:
         rows = api(f"issues/{int(event['issue']['number'])}/comments?per_page=100&page={page}")
-        comments += [{"created_at": row["created_at"], "body": row["body"]} for row in rows
-                     if row["user"]["login"] == owner and row["id"] != trigger.get("id")
-                     and (not trigger or row["created_at"] <= trigger["created_at"])]
+        comments += [{"created_at": row["created_at"], "body": row.get("body") or ""} for row in rows
+                     if (row.get("user") or {}).get("login") == owner      # a deleted account is null
+                     and int(row["id"]) < int(trigger["id"])
+                     and (row.get("updated_at") or row["created_at"]) <= trigger["created_at"]]
         if len(rows) < 100:
             return comments[-THREAD_COMMENTS:]
         page += 1
@@ -153,8 +161,8 @@ def publish(event, repository, token, candidate, api, scratch):
         page = 1
         while True:
             comments = api(f"{path}?per_page=100&page={page}")
-            if any(comment["user"]["login"] == "claude[bot]" and
-                   comment["body"].endswith(marker) for comment in comments):
+            if any((comment.get("user") or {}).get("login") == "claude[bot]" and
+                   (comment.get("body") or "").endswith(marker) for comment in comments):
                 return
             if len(comments) < 100:
                 break

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -120,7 +121,7 @@ it("starts automatic semantic review using the configured host model", async () 
     await server?.close();
     rmSync(home, { recursive: true, force: true });
   }
-});
+}, 120_000);
 
 it.each(SEMANTIC_ISSUE_CASES)("validates host scope review evidence for %s (%s, raw %s) on MCP stdio", async (scenario, failure, raw) => {
   const home = mkdtempSync(join(tmpdir(), "prd-gen-semantic-review-"));
@@ -507,6 +508,83 @@ it("reads a validated Define v1 handoff at the gate and after restart", async ()
       await assertRefusedHandoff();
     }
 
+  } finally {
+    await server?.close();
+    rmSync(output, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("serves the ticketed Define of the gate after PRD only, across restarts", async () => {
+  const output = mkdtempSync(join(tmpdir(), "prd-gen-define-tickets-"));
+  const start = () => startDefineServer({ cwd: output, env: { HOME: output, USERPROFILE: output } });
+  const host = makeHost(output, "ready");
+  const files = new RunFiles(join(output, ".prd-gen", "runs"));
+  let server: StdioServer | undefined;
+  try {
+    server = await start();
+    const { run_id, action } = await driveToGate(server, host);
+    const args = { run_id, format: "define_handoff_v1" };
+    const planArgs = { run_id, format: "verified_plan_v1", plan_step: "delivery" };
+    const atGate = await server.call("get_pipeline_state", args);
+    expect(atGate.isError).toBeFalsy();
+    expect(JSON.parse(atGate.text).handoff.tickets).toEqual([
+      { id: "TICKET-001", story_points: 1, depends_on: [], acceptance_ids: ["AC-001"] },
+      { id: "TICKET-002", story_points: 2, depends_on: ["TICKET-001"], acceptance_ids: ["AC-002"] },
+      { id: "TICKET-003", story_points: 3, depends_on: ["TICKET-002"], acceptance_ids: ["AC-003"] },
+    ]);
+    const planAtGate = await server.call("get_pipeline_state", planArgs);
+    // The reply text is the Define the plan binds: architect-os writes it plus LF.
+    expect(JSON.parse(planAtGate.text).verified_plan.define_sha256)
+      .toBe(createHash("sha256").update(atGate.text + "\n").digest("hex"));
+    expect(readFileSync(join(output, "07-jira-tickets.md"), "utf8")).toContain("#### TICKET-003 — Deliver AC-003");
+
+    let envelope = await call<Envelope>(server, "submit_action_result", {
+      run_id, result: { kind: "user_answer", question_id: action.question_id, selected: ["PRD only"] },
+    });
+    let last: ActionResult | undefined;
+    for (let count = 0; envelope.current_step !== "complete" && count < 10; count++) {
+      const result = host.respond(NextActionSchema.parse(envelope.action));
+      if (!result) break;
+      last = result;
+      envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
+    }
+    expect(envelope).toMatchObject({ current_step: "complete", action: { kind: "done" } });
+    // A host that lost the final response retries it: the run keeps its terminal action and its Define.
+    const retried = await call<Envelope>(server, "submit_action_result", { run_id, result: last });
+    expect(retried.action).toEqual(envelope.action);
+    expect((await server.call("get_pipeline_state", args)).text).toBe(atGate.text);
+    await server.close();
+    server = await start();
+    expect((await server.call("get_pipeline_state", args)).text).toBe(atGate.text);
+    expect((await server.call("get_pipeline_state", planArgs)).text).toBe(planAtGate.text);
+
+    const { state } = await call<{ state: PipelineState }>(server, "get_pipeline_state", { run_id, format: "full" });
+    const done = NextActionSchema.parse(envelope.action);
+    const reread = async (checkpoint: PipelineState) => {
+      await server!.close();
+      files.write(checkpoint, done);
+      server = await start();
+      return Promise.all([args, planArgs].map(request => server!.call("get_pipeline_state", request)));
+    };
+    const [handoff, plan] = await reread({ ...state, passed_define: undefined });
+    for (const refused of [handoff!, plan!]) {
+      expect(refused.isError).toBe(true);
+      expect(JSON.parse(refused.text)).toMatchObject({ error: { code: "define_not_pending" } });
+    }
+    if (state.jira_result?.status !== "passed") throw new Error("Expected generated tickets");
+    const [first, second] = state.jira_result.tickets;
+    const estimate = { ...state, jira_result: { status: "passed" as const, tickets: [{ ...first!, story_points: 5 }, ...state.jira_result.tickets.slice(1)] } };
+    for (const response of await reread(estimate)) {
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code: "define_not_ready", message: expect.stringContaining("no longer projects") } });
+    }
+    // A checkpoint whose "passed" tickets form a cycle is not a valid checkpoint: it does not load.
+    const cycle = { ...state, jira_result: { status: "passed" as const, tickets: [{ ...first!, depends_on: [second!.id] }, ...state.jira_result.tickets.slice(1)] } };
+    await server.close();
+    files.write(cycle, done);
+    server = await start();
+    const refusedCycle = await server.call("get_pipeline_state", args);
+    expect(refusedCycle.isError).toBe(true);
+    expect(JSON.parse(refusedCycle.text)).not.toHaveProperty("handoff");
   } finally {
     await server?.close();
     rmSync(output, { recursive: true, force: true });

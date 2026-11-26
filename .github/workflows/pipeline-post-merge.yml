@@ -8,6 +8,11 @@ name: Pipeline post-merge tests
 
 on:
   workflow_call:
+    outputs:
+      tested_sha:
+        value: ${{ jobs.resolve.outputs.tested_sha }}
+      run_tests:
+        value: ${{ jobs.resolve.outputs.run_tests }}
     secrets:
       RELEASE_TAG_SSH_KEY:
         required: false
@@ -39,6 +44,7 @@ jobs:
       contents: write
       pull-requests: write
       actions: read
+      attestations: read
     outputs:
       tested_sha: ${{ steps.resolve.outputs.tested_sha }}
       run_tests: ${{ steps.resolve.outputs.run_tests }}
@@ -67,7 +73,9 @@ jobs:
           import os
           from pathlib import Path
           import re
+          import subprocess
           import sys
+          import tempfile
           from urllib.error import HTTPError, URLError
           from urllib.request import Request, urlopen
 
@@ -77,10 +85,13 @@ jobs:
 
 
           class GitHub:
-              def __init__(self, token: str):
+              def __init__(self, token: str, timeout=None):
                   if not token:
                       raise PostMergeError("GH_TOKEN is required")
                   self.token = token
+                  # None (no bound) for the merge decision, as before; a bound for
+                  # the SEC-009 observation, which must not delay the run.
+                  self.timeout = timeout
 
               def request(self, method: str, path: str, body=None):
                   request = Request(
@@ -94,7 +105,7 @@ jobs:
                       },
                   )
                   try:
-                      with urlopen(request) as response:
+                      with urlopen(request, timeout=self.timeout) as response:
                           return json.load(response)
                   except HTTPError as exc:
                       # Never print headers or the untrusted response body.
@@ -907,6 +918,111 @@ jobs:
               )
 
 
+          # SEC-009, phase B: observation only. The receipt is verified and reported on
+          # every resolution; nothing here can hold, delay or allow a merge. Phase C
+          # makes a missing or invalid receipt hold the merge (fail closed).
+          RECEIPT_WORKFLOW = ".github/workflows/tested-receipt.yml"
+          RECEIPT_CALLER = "tested-receipt-pilot.yml"
+          RECEIPT_PREDICATE = "https://github.com/cdeust/ai-architect-mcp-spec/tested-receipt/v1"
+          RECEIPT_ISSUER = "https://token.actions.githubusercontent.com"
+          # source: the job names of tested-receipt.yml, on the default branch.
+          RECEIPT_JOBS = ("unit", "regression", "e2e")
+          # Each GitHub read and the attestation check of the observation are bounded.
+          RECEIPT_TIMEOUT_S = 20
+
+
+          def receipt_subject(repository, sha, run_id, attempt):
+              """The exact bytes the protected signer writes when every receipt job passed."""
+              subject = {
+                  "repository": repository,
+                  "tested_sha": sha,
+                  "run_id": run_id,
+                  "run_attempt": attempt,
+                  "jobs": {name: "success" for name in RECEIPT_JOBS},
+              }
+              return json.dumps(subject, sort_keys=True, separators=(",", ":"))
+
+
+          def verify_receipt(repository, sha, run_id, attempt, verify):
+              """(True, detail) when a receipt signed by the protected producer on main
+              binds this commit, this run and this attempt to passing receipt jobs.
+
+              ``verify(path, identity)`` runs `gh attestation verify` and returns its
+              parsed JSON, or raises PostMergeError. The certificate identity names the
+              reusable workflow itself (its job_workflow_ref) at refs/heads/main, so an
+              attestation signed by any workflow a pull request can edit is refused.
+              """
+              identity = f"https://github.com/{repository}/{RECEIPT_WORKFLOW}@refs/heads/main"
+              invocation = f"https://github.com/{repository}/actions/runs/{run_id}/attempts/{attempt}"
+              subject = receipt_subject(repository, sha, run_id, attempt)
+              with tempfile.TemporaryDirectory() as temp:
+                  path = Path(temp) / "tested-receipt.json"
+                  path.write_text(subject, encoding="utf-8")
+                  results = verify(str(path), identity)
+              require(isinstance(results, list) and results, "no verified receipt")
+              for result in results:
+                  statement = (result.get("verificationResult") or {}).get("statement") or {}
+                  certificate = ((result.get("verificationResult") or {}).get("signature") or {}).get(
+                      "certificate") or {}
+                  if (
+                      statement.get("predicateType") == RECEIPT_PREDICATE
+                      and statement.get("predicate") == json.loads(subject)
+                      and certificate.get("subjectAlternativeName") == identity
+                      and certificate.get("runInvocationURI") == invocation
+                  ):
+                      return True, f"receipt of run {run_id} attempt {attempt} verified"
+              raise PostMergeError("receipt does not bind this run, attempt and subject")
+
+
+          def gh_attestation_verify(path, identity):
+              out = subprocess.run(
+                  ["gh", "attestation", "verify", path, "--repo", os.environ["GITHUB_REPOSITORY"],
+                   "--cert-identity", identity, "--cert-oidc-issuer", RECEIPT_ISSUER,
+                   "--predicate-type", RECEIPT_PREDICATE, "--deny-self-hosted-runners",
+                   "--format", "json"],
+                  capture_output=True, text=True, timeout=RECEIPT_TIMEOUT_S,
+              )
+              if out.returncode != 0:
+                  raise PostMergeError("gh attestation verify refused the receipt")
+              try:
+                  return json.loads(out.stdout)
+              except ValueError as exc:
+                  raise PostMergeError("gh attestation verify returned unreadable JSON") from exc
+
+
+          def observe_receipt(repository, sha, api, verify=None):
+              """One line for the job summary. Never raises: phase B only observes."""
+              verify = verify or gh_attestation_verify
+              try:
+                  runs = [
+                      run
+                      for run in api.records(
+                          f"/repos/{repository}/actions/workflows/{RECEIPT_CALLER}/runs?head_sha={sha}",
+                          "workflow_runs",
+                      )
+                      if run.get("head_sha") == sha
+                      and run.get("path") == f".github/workflows/{RECEIPT_CALLER}"
+                      and run.get("status") == "completed"
+                      and type(run.get("id")) is int
+                      and type(run.get("run_attempt")) is int
+                  ]
+                  if not runs:
+                      return f"SEC-009 receipt for {sha}: absent (no completed receipt run); not enforced"
+                  run = max(runs, key=lambda r: (r["id"], r["run_attempt"]))
+                  _, detail = verify_receipt(repository, sha, run["id"], run["run_attempt"], verify)
+                  return f"SEC-009 receipt for {sha}: valid, {detail}; not enforced"
+              except Exception as exc:  # observation must never change the resolution
+                  return f"SEC-009 receipt for {sha}: invalid ({exc}); not enforced"
+
+
+          def _report(line):
+              print(line)
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  with open(summary, "a", encoding="utf-8") as out:
+                      out.write(line + "\n")
+
+
           def resolve(event, repository: str, api: GitHub):
               run = _source_run(event, repository, api)
               number, pr = _pull_request(run, repository, api)
@@ -953,7 +1069,25 @@ jobs:
           WAITING = ("merge held:", "PR head advanced after testing")
 
 
+          def _observe_after_decision():
+              """SEC-009 phase B: report the receipt once the merge is decided. Never
+              raises, never changes the exit status, every network call bounded."""
+              try:
+                  event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+                  sha = full_sha((event.get("workflow_run") or {}).get("head_sha"))
+                  api = GitHub(os.environ.get("GH_TOKEN", ""), timeout=RECEIPT_TIMEOUT_S)
+                  _report(observe_receipt(os.environ["GITHUB_REPOSITORY"], sha, api))
+              except Exception as exc:  # noqa: BLE001 - observation only
+                  print(f"SEC-009 receipt not observed ({type(exc).__name__}); not enforced")
+
+
           def main():
+              status = _decide()
+              _observe_after_decision()
+              return status
+
+
+          def _decide():
               try:
                   require(
                       os.environ.get("GITHUB_EVENT_NAME") == "workflow_run",
@@ -1767,24 +1901,39 @@ jobs:
           # exec makes this shell the agent's command. The runner's SIGINT and SIGTERM
           # (sent to this PID alone: actions/runner ProcessInvoker) reach the traps
           # below, and after a SIGKILL the agent stops by itself once its command is gone.
-          # The socket gets a private directory under TMPDIR or /tmp: RUNNER_TEMP can
-          # be too deep for sun_path (104 bytes on macOS, 108 on Linux).
-          agent_dir=$(mktemp -d "${TMPDIR:-/tmp}/release-agent.XXXXXX")
+          # The socket gets a private directory under TMPDIR, or /tmp when TMPDIR is
+          # unset or too deep for sun_path (104 bytes on macOS, 108 on Linux, NUL
+          # included): RUNNER_TEMP can be that deep. 27 bytes: /release-agent.XXXXXX/agent.
+          base=${TMPDIR:-/tmp}
+          [ "$(( ${#base} + 27 ))" -le 100 ] || base=/tmp
+          agent_dir=$(mktemp -d "$base/release-agent.XXXXXX")
           export AGENT_DIR="$agent_dir"
           exec ssh-agent -a "$agent_dir/agent" bash -euo pipefail <<'PUBLISH'
           publisher=
+          # stop PID TENTHS: SIGTERM, wait at most TENTHS/10 s, then SIGKILL (status 1).
+          stop() {
+            kill -TERM "$1" 2>/dev/null || return 0
+            for _ in $(seq "$2"); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
+            kill -KILL "$1" 2>/dev/null || :
+            return 1
+          }
           release() {
             status=$?
             trap '' INT TERM
-            kill -TERM "$publisher" 2>/dev/null || :
-            wait "$publisher" 2>/dev/null || :
-            kill -TERM "$SSH_AGENT_PID" 2>/dev/null || :
-            # 2 s of grace keeps a stuck agent's SIGKILL well inside the runner's 7.5 s.
-            for _ in $(seq 20); do kill -0 "$SSH_AGENT_PID" 2>/dev/null || break; sleep 0.1; done
-            if kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
-              kill -KILL "$SSH_AGENT_PID"
+            # The key goes first: nothing the publisher does can delay the agent's end,
+            # which stays within the runner's 2.5 s SIGTERM window.
+            if ! stop "$SSH_AGENT_PID" 10; then
               echo "::error::the signing agent did not stop on SIGTERM"
               status=1
+            fi
+            if ! stop "$publisher" 10; then
+              echo "::error::the publisher did not stop on SIGTERM"
+              status=1
+            fi
+            # A publisher killed while git ran leaves git's session (git, sh, ssh) behind.
+            if [ -f "$AGENT_DIR/transport" ]; then
+              kill -KILL -- "-$(cat "$AGENT_DIR/transport")" 2>/dev/null || :
+              rm -f -- "$AGENT_DIR/transport"
             fi
             rm -f -- "$SSH_AUTH_SOCK"
             rmdir -- "$AGENT_DIR"
@@ -1809,7 +1958,6 @@ jobs:
           import json
           import os
           import re
-          import signal
           import subprocess
           import sys
           from pathlib import Path
@@ -1821,12 +1969,14 @@ jobs:
               # (dash keeps the shell, and with it ssh, alive after git is killed).
               process = subprocess.Popen(["git", *args], text=True, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, start_new_session=True)
+              # If the publisher is stopped or killed while git runs, the step's
+              # release() kills this whole session from the recorded group ID.
+              transport = Path(os.environ["AGENT_DIR"]) / "transport"
+              transport.write_text(str(process.pid))
               try:
                   stdout, stderr = process.communicate()
-              except BaseException:
-                  os.killpg(process.pid, signal.SIGKILL)
-                  process.wait()
-                  raise
+              finally:
+                  transport.unlink(missing_ok=True)
               if check and process.returncode:
                   raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
               return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
@@ -1925,8 +2075,6 @@ jobs:
 
 
           if __name__ == "__main__":
-              # SystemExit unwinds through git(), which kills the transport's session.
-              signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
               sys.exit(main())
           PY
           publisher=$!
