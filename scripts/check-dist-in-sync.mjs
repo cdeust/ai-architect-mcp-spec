@@ -64,12 +64,18 @@ function git(...args) {
   return run.stdout;
 }
 
+/** Whether two spellings reach one directory: links resolved, Windows short names (RUNNER~1) expanded, case ignored there. */
+function sameDirectory(first, second) {
+  const real = path => realpathSync.native(path);
+  return process.platform === "win32" ? real(first).toLowerCase() === real(second).toLowerCase() : real(first) === real(second);
+}
+
 const entries = output => output.split("\0").filter(Boolean);
 
 /** How many generated files were compared, and the problems found (none when they match the commit). */
 function problems() {
   const top = git("rev-parse", "--show-toplevel").trim();
-  if (realpathSync(top) !== realpathSync(ROOT)) return { compared: 0, found: [`${ROOT} is not the root of its git repository (${top})`] };
+  if (!sameDirectory(top, ROOT)) return { compared: 0, found: [`${ROOT} is not the root of its git repository (${top})`] };
 
   // `ls-files -v` tags a file `H` when git looks at it; `h` is assume-unchanged, `S` and `s` skip-worktree.
   const tracked = entries(git("ls-files", "-v", "-z", "--", ...GENERATED));
