@@ -4,6 +4,7 @@ Connector identity and summary schema:
 https://github.com/cdeust/ai-architect-mcp-spec/pull/391#issuecomment-7078116054
 """
 
+from datetime import datetime
 import json
 import re
 
@@ -13,6 +14,7 @@ STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 def timestamp(value):
     if not isinstance(value, str) or not STAMP.fullmatch(value):
         raise ValueError("unverified review timestamp")
+    datetime.fromisoformat(value.replace("Z", "+00:00"))
     return value
 
 
@@ -28,7 +30,7 @@ QUERY = """query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
       }
       comments(first:100, after:$endCursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { body createdAt lastEditedAt author { __typename login ... on Bot { id } }
+        nodes { id body createdAt lastEditedAt author { __typename login ... on Bot { id } }
                 editor { __typename login ... on Bot { id } } }
       }
     }
@@ -47,7 +49,70 @@ def native_comments(page, sha, *, allow_draft_read=False):
     return pull["comments"]
 
 
-def state(pages, sha, *, allow_draft_read=False, created_after=None):
+# Three live examples: Spec #406, #413 and #414. The connector timestamps code
+# and security separately. GitHub keeps the native running row in the edit history.
+CODE_ROW = re.compile(
+    r'\| 📝 \*\*Code Review\*\* \| (?P<label>✅ \*\*Completed\*\*|🔄 \*\*Running\*\* since) '
+    r'<relative-time datetime="(?P<instant>(?P<seconds>[0-9T:-]+)(?:\.[0-9]{1,6})?Z)">'
+    r'(?P=instant)</relative-time> \| `(?P<short_sha>[0-9a-f]{7})` \| [^|]+ \|'
+)
+
+
+def code_time(body, sha, status):
+    rows = [line for line in body.splitlines() if line.startswith("| 📝 **Code Review**")]
+    match = CODE_ROW.fullmatch(rows[0]) if len(rows) == 1 else None
+    label = {"running": "🔄 **Running** since", "completed": "✅ **Completed**"}[status]
+    if not match or match["label"] != label or match["short_sha"] != sha[:7]:
+        raise ValueError("ambiguous native code review date or identity")
+    # GitHub dates changes of target and comment edits to the second.
+    return timestamp(match["seconds"] + "Z"), match["instant"]
+
+
+def code_state(body):
+    if not body.startswith(SUMMARY + "\n"):
+        raise ValueError("missing native Codex summary")
+    line = body.split("\n", 2)[1]
+    if not line.startswith(PREFIX) or not line.endswith(" -->"):
+        raise ValueError("native Codex review schema changed")
+    return json.loads(line[len(PREFIX):-4])["code_review"]
+
+
+def fresh_code_review(row, sha, changed, history):
+    completed, completion_id = code_time(row["body"], sha, "completed")
+    published = timestamp(row["lastEditedAt"] or row["createdAt"])
+    if completed > published or published < timestamp(row["createdAt"]):
+        raise ValueError("inconsistent native code review timestamps")
+    if completed <= changed:
+        return False
+    # Walk newest first through security edits of this very completion. The
+    # preceding code state must be a native start for the same head after retarget.
+    # Completion alone could have finished a review begun against the old base.
+    next_edit, start_id = published, None
+    for edit in history(row):
+        at = timestamp(edit["editedAt"])
+        if edit["editor"] != BOT or edit["deletedAt"] is not None or at > next_edit:
+            raise ValueError("unverified native code review history")
+        next_edit = at
+        if at <= changed and start_id is None:
+            return False
+        body = edit["diff"]
+        review = code_state(body)
+        if not review or review["commit_sha"] != sha:
+            break
+        if review["status"] == "running":
+            started, this_start = code_time(body, sha, "running")
+            if not changed < started <= at < completed or (start_id is not None and this_start != start_id):
+                return False
+            start_id = this_start
+        elif start_id is not None:
+            break
+        elif (review["status"] != "completed" or code_time(body, sha, "completed")[1] != completion_id
+              or at < completed):
+            return False
+    return start_id is not None
+
+
+def state(pages, sha, *, allow_draft_read=False, created_after=None, history=None):
     """Return the authenticated exact-head verdict and whether CI requested it."""
     states = []
     requested = False
@@ -69,18 +134,9 @@ def state(pages, sha, *, allow_draft_read=False, created_after=None):
             expected_editor = None if row["lastEditedAt"] is None else BOT
             if row["editor"] != expected_editor:
                 raise ValueError("Unverified editor of native Codex summary")
-            line = body.split("\n", 2)[1]
-            if not line.startswith(PREFIX) or not line.endswith(" -->"):
-                raise ValueError("Native Codex review schema changed")
-            review = json.loads(line[len(PREFIX):-4])["code_review"]
+            review = code_state(body)
             if review is None or review["commit_sha"] != sha:
                 continue
-            # A single connector comment can track *both* code and security. An edit
-            # after retargeting might only update security; it cannot date the code review.
-            if created_after is not None:
-                created = row["createdAt"]
-                if timestamp(created) <= created_after:
-                    continue
             status = review["status"]
             if status == "completed":
                 flags = review.get("has_any_findings"), review.get("has_unresolved_findings")
@@ -89,9 +145,15 @@ def state(pages, sha, *, allow_draft_read=False, created_after=None):
                 status = "block" if flags[1] else "approve"
             elif status not in {"running", "queued"}:
                 raise ValueError("Codex did not complete a code review")
+            # Unresolved, queued and running code reviews always count. Freshness
+            # only determines whether a favourable verdict may authorise a merge.
+            if status == "approve" and created_after and not fresh_code_review(row, sha, created_after, history):
+                continue
             states.append(status)
     if more:
         raise ValueError("Incomplete native review pagination")
+    if "block" in states:
+        return "block", requested
     if len(states) > 1:
         raise ValueError("Ambiguous Codex review summaries")
     return (states[0] if states else None), requested

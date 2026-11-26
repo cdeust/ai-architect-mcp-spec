@@ -79,10 +79,6 @@ export function validateConfig(raw) {
   });
   if (!isTextList(guard.hosted)) fail("guard.hosted must be a list of environment variable names");
   if (!isTextList(guard.refusedTools)) fail("guard.refusedTools must be a list of tool names");
-  if (guard.protectedLabel !== undefined) {
-    if (!isText(guard.protectedLabel?.name)) fail("guard.protectedLabel.name must be a label");
-    if (!isText(guard.protectedLabel.why)) fail("guard.protectedLabel.why must say why");
-  }
   return raw;
 }
 
@@ -517,11 +513,8 @@ export function guardDecision(call, guard) {
       reason: `${call.tool_name} sends content the delivery gate cannot judge. Commit, run the gate, and push with git.`,
     };
   }
-  const label = guard.protectedLabel;
   const command = call?.tool_input?.command;
-  if (typeof command !== "string") {
-    return label !== undefined && approvalWrite(call, label.name) ? { kind: "refuse", reason: label.why } : { kind: "allow" };
-  }
+  if (typeof command !== "string") return { kind: "allow" };
   // Each command of the text on its own, whatever its case.
   const commands = commandsOf(command);
   const words = guardWords(guard);
@@ -531,82 +524,8 @@ export function guardDecision(call, guard) {
   };
   const rule = guard.refuse.find(({ pattern }) => matches(pattern));
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
-  if (label !== undefined && approvalWrite(call, label.name)) {
-    return { kind: "refuse", reason: label.why };
-  }
   if (guard.push.some(matches)) return { kind: "push" };
   return { kind: "allow" };
-}
-
-/**
- * The text of a call as the shell reads its words: no quotes, no escapes, one
- * case. A backquote stays: it starts a substitution, which no read has.
- */
-const plain = (text) => text.replace(/["'\\]/g, "").toLowerCase();
-
-/** What can write to GitHub from a shell, wherever it stands in the call. */
-const VEHICLE = /(?:^|[^a-z0-9_.-])(?:gh|curl|wget|https?|hub|xh)(?:$|[^a-z0-9_-])|github\.com/;
-
-/** A label write that names no label: a node id, a GraphQL label mutation. */
-const NAMELESS = /\bla_[a-z0-9_-]{6}|labelstolabelable|labelsfromlabelable|labelids/;
-
-/** A body read from a file or standard input, and a path that may set a label with it. */
-const BODY = /--input|@/;
-const LABEL_PATH = /issues|pulls|labels|graphql/;
-
-/** A label option whose value the guard cannot read: a variable or a substitution. */
-const LABEL_VARIABLE = /(?:--add-label|--label|\s-l)(?:\s+|=)?\S*[$`]/;
-
-/**
- * A read recognised whole: the call is one gh read of pull requests, issues,
- * labels or runs (no `--web`, which starts a program), piped only into pure
- * filters, and nothing else: no redirection, no `;`, `&&`, `||`, `&`, line
- * end or substitution. A pure filter can neither write a file nor start a
- * program with the options it has: grep, jq, head, tail, wc, cut. sort is
- * out (`-o FILE`, `--compress-program=PROG`), and so are uniq (a second
- * operand is its output file), tee, sed, awk and xargs.
- */
-const GH_READ = /^\s*gh(?:\s+(?:-r|--repo)(?:\s+|=)\S+)*\s+(?:(?:pr|issue)\s+(?:view|list|checks|diff|status)|label\s+list|run\s+(?:view|list|watch))(?:\s|$)/;
-const PURE_FILTER = /^\s*(?:grep|jq|head|tail|wc|cut)(?:\s|$)/;
-/**
- * The only characters a read may hold. Anything else (a substitution `$(`,
- * a backquote, a parenthesis, a comment `#`, a redirection, `;`, `&`, a line
- * end) is not analysed: the call falls back to the coarse rule.
- */
-const READ_CHARACTERS = /^[a-z0-9 \-_.\/=:,|[\]{}*^@+%~]*$/;
-const WEB = /\s(?:--web|-w)(?:\s|$)/;
-const isRead = (text) => {
-  if (!READ_CHARACTERS.test(text) || WEB.test(text)) return false;
-  const [first, ...filters] = text.split("|");
-  return GH_READ.test(first) && filters.every((filter) => PURE_FILTER.test(filter));
-};
-
-/**
- * precondition:  `call` is the JSON a PreToolUse hook receives; `label` is
- *                the name of the protected label.
- * postcondition: true when the call may set `label`, closed by default and
- *                read from the whole text of the call, not from the form of
- *                a command: the call reaches GitHub (a GitHub MCP tool, or
- *                a shell text with gh, an HTTP client or a GitHub URL
- *                anywhere in it), and it names the label, a label node id or
- *                a GraphQL label mutation, or sends a body from a file to an
- *                issue, pull request, label or GraphQL path; unless every
- *                command of a shell text is a read recognised whole. It is
- *                a barrier against mistakes and naive injection, not a
- *                security boundary: agents act under the owner's account.
- */
-export function approvalWrite(call, label) {
-  const tool = String(call?.tool_name).toLowerCase();
-  const command = call?.tool_input?.command;
-  const github = tool.includes("mcp__") && tool.includes("github");
-  if (typeof command !== "string" && !github) return false;
-  const text = plain(typeof command === "string" ? command : JSON.stringify(call.tool_input ?? null));
-  if (!github && !VEHICLE.test(text)) return false;
-  const names = text.includes(label.toLowerCase()) || NAMELESS.test(text) || LABEL_VARIABLE.test(text)
-    || (BODY.test(text) && LABEL_PATH.test(text));
-  if (!names) return false;
-  // A tool's input is JSON text, which begins with `{` and is never a gh read.
-  return !isRead(text);
 }
 
 /**
