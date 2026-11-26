@@ -231,6 +231,11 @@ describe("Jira generation contract", () => {
     expect(partial.state.sections.some(section => section.section_type === "jira_tickets")).toBe(false);
     expect(partial.state.errors.at(-1)).toBe("[jira_generation] failed: timeout");
     expect(partial.state.jira_result).toBeUndefined();
+    const errorOnly = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation",
+      responses: [{ invocation_id: "jira_generation_engineer", error: "timeout" }],
+    } });
+    expect(errorOnly.state.errors.at(-1)).toBe("[jira_generation] failed: timeout");
     expect(handleJiraGeneration({ state }).action).toMatchObject({ batch_id: "jira_generation_tickets" });
   });
 
