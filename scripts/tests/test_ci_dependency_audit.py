@@ -18,6 +18,11 @@ npm() {
     return "$NPM_AUDIT_STATUS"
   fi
 }
+python3() {
+  echo "python3 $*"
+  test "$*" = '-I scripts/ci_python_pins.py scripts/tests/requirements.txt' || return 2
+  return "$PYTHON_AUDIT_STATUS"
+}
 pnpm() {
   echo "$*"
   if test "$1" = audit; then
@@ -29,7 +34,7 @@ pnpm() {
 
 
 class ProductionAuditGate(unittest.TestCase):
-    def run_unit(self, audit_status, npm_audit_status=0):
+    def run_unit(self, audit_status, npm_audit_status=0, python_audit_status=0):
         unit = json.loads((ROOT / "ci.json").read_text())["unit"]
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory, "coverage", "cobertura-coverage.xml")
@@ -39,7 +44,8 @@ class ProductionAuditGate(unittest.TestCase):
                 ["bash", "-eo", "pipefail", "-c", MANAGERS + unit],
                 cwd=directory,
                 env={**os.environ, "AUDIT_STATUS": str(audit_status),
-                     "NPM_AUDIT_STATUS": str(npm_audit_status)},
+                     "NPM_AUDIT_STATUS": str(npm_audit_status),
+                     "PYTHON_AUDIT_STATUS": str(python_audit_status)},
                 capture_output=True,
                 text=True,
             )
@@ -53,6 +59,9 @@ class ProductionAuditGate(unittest.TestCase):
         mention = "npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high"
         self.assertIn(mention, steps)
         self.assertLess(steps.index(mention), steps.index("install --frozen-lockfile"))
+        python = "python3 -I scripts/ci_python_pins.py scripts/tests/requirements.txt"
+        self.assertIn(python, steps)
+        self.assertLess(steps.index(python), steps.index("install --frozen-lockfile"))
 
     def test_failed_audit_stops_the_pipeline_before_build(self):
         result = self.run_unit(1)
@@ -70,6 +79,18 @@ class MentionAuditGate(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         steps = result.stdout.splitlines()
         self.assertIn("npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high", steps)
+        self.assertNotIn("install --frozen-lockfile", steps)
+        self.assertNotIn("build", steps)
+
+
+class PythonAuditGate(unittest.TestCase):
+    """The Python test dependencies have their own pins and their own audit."""
+
+    def test_failed_python_audit_stops_the_pipeline_before_build(self):
+        result = ProductionAuditGate.run_unit(self, 0, python_audit_status=1)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        steps = result.stdout.splitlines()
+        self.assertIn("python3 -I scripts/ci_python_pins.py scripts/tests/requirements.txt", steps)
         self.assertNotIn("install --frozen-lockfile", steps)
         self.assertNotIn("build", steps)
 
