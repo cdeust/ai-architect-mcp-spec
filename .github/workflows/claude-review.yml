@@ -1,11 +1,12 @@
 name: PR Review
-run-name: Review PR ${{ github.event.pull_request.number }} at ${{ github.event.pull_request.head.sha }}
+run-name: >-
+  ${{ (github.event.action != 'edited' || github.event.changes.base) && format('Review PR {0} at {1}', github.event.pull_request.number, github.event.pull_request.head.sha) || 'Unrelated edit' }}
 
 # The workflow, review command and managed settings all come from the protected base.
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 permissions: {}
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -16,6 +17,7 @@ jobs:
     name: Claude review budget
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.action != 'edited' || github.event.changes.base)
       && !github.event.pull_request.draft
       && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest

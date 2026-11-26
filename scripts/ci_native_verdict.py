@@ -5,6 +5,16 @@ https://github.com/cdeust/ai-architect-mcp-spec/pull/391#issuecomment-7078116054
 """
 
 import json
+import re
+
+STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+
+def timestamp(value):
+    if not isinstance(value, str) or not STAMP.fullmatch(value):
+        raise ValueError("unverified review timestamp")
+    return value
+
 
 BOT = {"login": "chatgpt-codex-connector", "__typename": "Bot", "id": "BOT_kgDOC98s_g"}
 SUMMARY = "<!-- codex-pull-request-review-summary -->"
@@ -18,7 +28,7 @@ QUERY = """query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
       }
       comments(first:100, after:$endCursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { body lastEditedAt author { __typename login ... on Bot { id } }
+        nodes { body createdAt lastEditedAt author { __typename login ... on Bot { id } }
                 editor { __typename login ... on Bot { id } } }
       }
     }
@@ -37,7 +47,7 @@ def native_comments(page, sha, *, allow_draft_read=False):
     return pull["comments"]
 
 
-def state(pages, sha, *, allow_draft_read=False):
+def state(pages, sha, *, allow_draft_read=False, created_after=None):
     """Return the authenticated exact-head verdict and whether CI requested it."""
     states = []
     requested = False
@@ -65,6 +75,12 @@ def state(pages, sha, *, allow_draft_read=False):
             review = json.loads(line[len(PREFIX):-4])["code_review"]
             if review is None or review["commit_sha"] != sha:
                 continue
+            # A single connector comment can track *both* code and security. An edit
+            # after retargeting might only update security; it cannot date the code review.
+            if created_after is not None:
+                created = row["createdAt"]
+                if timestamp(created) <= created_after:
+                    continue
             status = review["status"]
             if status == "completed":
                 flags = review.get("has_any_findings"), review.get("has_unresolved_findings")

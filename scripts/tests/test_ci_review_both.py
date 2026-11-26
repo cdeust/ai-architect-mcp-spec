@@ -20,7 +20,8 @@ NATIVE = "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1
 
 
 def row(author, body):
-    return {"body": body, "author": author, "lastEditedAt": None, "editor": None}
+    return {"body": body, "author": author, "createdAt": "2026-11-26T00:10:00Z",
+            "lastEditedAt": None, "editor": None}
 
 
 def native(sha=HEAD, status="completed", unresolved=False):
@@ -45,6 +46,8 @@ class Api:
                     "path": ".github/workflows/claude-review.yml", "head_branch": "feature",
                     "head_repository": {"full_name": REPO}, "repository": {"full_name": REPO},
                     "display_title": f"Review PR 7 at {HEAD}", "pull_requests": [deepcopy(PR)]}
+        self.run.update(created_at="2026-11-26T00:00:00Z", updated_at="2026-11-26T00:12:00Z")
+        self.other_runs = []
         self.job = {**done("Claude review"), "run_id": 15, "run_attempt": 1, "head_sha": HEAD,
                     "steps": [done("PR Review"), done("Record Claude approval")]}
         self.rows = [[row(CLAUDE, FOOTER)], [native()]]
@@ -55,8 +58,9 @@ class Api:
     def records(self, path, key):
         prefix = f"/repos/{REPO}/actions/"
         if path == prefix + f"workflows/claude-review.yml/runs?event=pull_request_target&head_sha={HEAD}":
-            return [self.run]
-        if path == prefix + "runs/15/attempts/1/jobs":
+            return [self.run, *self.other_runs]
+        if path in [prefix + f"runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
+                    for run in [self.run, *self.other_runs]]:
             return [self.job]
         if path == prefix + f"workflows/pipeline.yml/runs?head_sha={HEAD}&event=pull_request&status=success":
             return self.pipelines
@@ -113,12 +117,12 @@ class BothReviews(unittest.TestCase):
                  [row(CLAUDE, FOOTER.replace("attempts/1", "attempts/2"))],
                  [row(CLAUDE, FOOTER.replace("approve", "block"))],
                  [row(CLAUDE, FOOTER), row(CLAUDE, FOOTER.replace("approve", "block"))],
-                 [{**row(CLAUDE, FOOTER), "lastEditedAt": "2026-11-26", "editor": CODEX}]]
+                 [{**row(CLAUDE, FOOTER), "lastEditedAt": "2026-11-26T01:00:00Z", "editor": CODEX}]]
         for rows in cases:
             with self.subTest(rows=rows):
                 self.api.rows[0] = rows
                 self.held()
-        self.api.rows[0] = [{**row(CLAUDE, FOOTER), "lastEditedAt": "2026-11-26", "editor": CLAUDE}]
+        self.api.rows[0] = [{**row(CLAUDE, FOOTER), "lastEditedAt": "2026-11-26T01:00:00Z", "editor": CLAUDE}]
         self.assertEqual(self.merge(), OLD_HEAD)
 
     def test_codex_failure_findings_queue_and_edits_hold_even_with_claude_approval(self):
@@ -138,8 +142,69 @@ class BothReviews(unittest.TestCase):
         self.held()
         self.api.run["created_at"] = "2026-11-26T00:00:00Z"
         self.held()
-        merged = self.ns["_merge_open_pr"](self.api.pr, "/merge", HEAD, self.api, REPO, "2026-11-26T00:00:00Z")
-        self.assertEqual(merged, OLD_HEAD)
+        merge = self.ns["_merge_open_pr"]
+        before, after = "2026-11-24T00:00:00Z", "2026-11-26T00:00:00Z"
+        # The connector can edit the security review inside an old combined summary.
+        self.api.rows[1] = [{**native(), "createdAt": before, "lastEditedAt": after, "editor": CODEX}]
+        with self.assertRaisesRegex(self.ns["PostMergeError"], "Codex approval"):
+            merge(self.api.pr, "/merge", HEAD, self.api, REPO, after)
+        self.assertEqual(self.api.merged, [])
+        self.api.rows[1].append(native())
+        self.assertEqual(merge(self.api.pr, "/merge", HEAD, self.api, REPO, after), OLD_HEAD)
+
+    def test_latest_attempt_can_be_a_rerun_of_a_lower_run_id(self):
+        old = {**self.api.run, "id": 12, "run_attempt": 2, "updated_at": "2026-11-26T01:02:00Z"}
+        self.api.other_runs = [old]
+        self.api.job.update(run_id=12, run_attempt=2)
+        body = FOOTER.replace("/15/attempts/1", "/12/attempts/2")
+        self.api.rows[0].append({**row(CLAUDE, body.replace("approve", "block")),
+                                 "createdAt": "2026-11-26T01:01:00Z"})
+        publish = runpy.run_path(str(ROOT / "scripts/ci_review_status.py"))["publish"]
+        self.assertFalse(publish(self.api, REPO, 7, LINK))
+        self.assertEqual(self.api.statuses[-1]["state"], "failure")
+        self.held()
+        self.api.rows[0][-1]["body"] = body
+        self.assertEqual(self.merge(), OLD_HEAD)
+
+    def test_running_or_simultaneously_completed_attempts_hold(self):
+        for changes in ({"status": "in_progress"}, {}):
+            with self.subTest(changes=changes):
+                self.api.other_runs = [{**self.api.run, "id": 12, **changes}]
+                self.held()
+
+    def test_later_claude_retraction_on_another_run_revokes_approval(self):
+        self.api.other_runs = [{**self.api.run, "id": 12, "updated_at": "2026-11-26T00:05:00Z"}]
+        body = FOOTER.replace("/15/attempts/", "/12/attempts/").replace("approve", "block")
+        self.api.rows[0].append({**row(CLAUDE, body), "createdAt": "2026-11-26T00:03:00Z"})
+        self.assertEqual(self.merge(), OLD_HEAD)
+        self.api.merged.clear()
+        self.api.rows[0][-1].update(lastEditedAt="2026-11-26T00:15:00Z", editor=CLAUDE)
+        self.held()
+
+    def test_late_retraction_of_a_previous_attempt_of_the_same_run_holds(self):
+        self.api.run["run_attempt"] = self.api.job["run_attempt"] = 2
+        self.api.rows[0][0]["body"] = FOOTER.replace("/attempts/1", "/attempts/2")
+        self.api.rows[0].append({**row(CLAUDE, FOOTER.replace("approve", "block")),
+                                 "lastEditedAt": "2026-11-26T01:00:00Z", "editor": CLAUDE})
+        self.held()
+
+    def test_human_veto_or_changed_pr_during_reviews_prevents_the_merge(self):
+        for change in ({"labels": [{"name": "Hold"}]}, {"labels": [{"name": "do-not-merge"}]},
+                       {"title": "Do not merge today"}, {"draft": True}, {"state": "closed"},
+                       {"head": {**PR["head"], "sha": OLD_HEAD}}, {"labels": None}):
+            with self.subTest(change=change):
+                self.api = Api()
+                initial = deepcopy(self.api.pr)
+                read = self.api.request
+                def request(method, path, body=None):
+                    result = read(method, path, body)
+                    if path == "/graphql":
+                        self.api.pr.update(change)
+                    return result
+                self.api.request = request
+                with self.assertRaises(self.ns["PostMergeError"]):
+                    self.ns["_merge_open_pr"](initial, "/merge", HEAD, self.api, REPO)
+                self.assertEqual(self.api.merged, [])
 
     def test_issue_comment_wakes_only_the_current_pr_pipeline(self):
         wake = {**self.api.run, "name": "Review updated", "event": "issue_comment", "head_branch": "main",

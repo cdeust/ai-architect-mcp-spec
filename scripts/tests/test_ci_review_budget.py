@@ -96,12 +96,14 @@ class CountTests(unittest.TestCase):
         out = self.count(runs, jobs)
         self.assertEqual((out["round"], out["reviewed_sha"]), (2, SHA))
 
-    def test_native_block_counts_and_rereading_one_receipt_does_not_spend_a_round(self):
-        head = "b" * 40
-        runs = [run(1, 1, head, conclusion="failure"), run(2, 2, head), run(3, 3, SHA)]
-        jobs = {1: ["native-receipt"], 2: ["native-receipt"], 3: ["native-receipt"]}
-        result = self.count(runs, jobs)
-        self.assertEqual((result["round"], result["reviewed_sha"]), (3, SHA))
+    def test_three_legacy_codex_only_heads_leave_the_first_claude_round_available(self):
+        heads = [char * 40 for char in "abc"]
+        previous = [run(i, i, sha) for i, sha in enumerate(heads, 1)]
+        jobs = {row["id"]: [] for row in previous}
+        self.assertEqual(self.count(previous, jobs),
+                         {"round": 1, "cap": 3, "skip": "false", "reviewed_sha": ""})
+        result = self.count([*previous, run(4, 4, "d" * 40)], {**jobs, 4: ["success"]})
+        self.assertEqual((result["round"], result["reviewed_sha"]), (2, "d" * 40))
 
     def test_skipped_runs_do_not_move_the_reviewed_commit(self):
         reviewed, skipped = "b" * 40, "c" * 40
@@ -142,7 +144,7 @@ class JqFilterTests(unittest.TestCase):
     def test_job_filter_selects_the_action_step_only(self):
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.review_source(record, "o/r", {"id": 1})
+        budget.ran_claude_review(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         steps = [
             {"name": "Checkout repository", "conclusion": "success"},
@@ -150,7 +152,7 @@ class JqFilterTests(unittest.TestCase):
         ]
         gate = {"name": budget.BUDGET_JOB, "steps": []}
         review = {"name": "Claude review", "steps": steps}
-        got = json.loads(self.jq(expr, {"jobs": [gate, review]}))
+        got = json.loads(self.jq(expr, [{"jobs": [gate]}, {"jobs": [review]}]))
         self.assertEqual(got, ["skipped"])
 
     def test_a_review_of_the_workflow_before_the_contract_does_not_count(self):
@@ -159,34 +161,27 @@ class JqFilterTests(unittest.TestCase):
         # the whole budget and the pull request could never be merged.
         calls = []
         record = lambda a: calls.append(a) or "[]"  # noqa: E731
-        budget.review_source(record, "o/r", {"id": 1})
+        budget.ran_claude_review(record, "o/r", {"id": 1})
         expr = calls[0][calls[0].index("--jq") + 1]
         done = [{"name": budget.ACTION_STEP, "conclusion": "success"}]
         old = {"jobs": [{"name": "Claude review", "steps": done}]}
-        self.assertEqual(json.loads(self.jq(expr, old)), [])
+        self.assertEqual(self.jq(expr, [old]).strip(), "")
         new = {"jobs": [{"name": budget.BUDGET_JOB, "steps": []}, *old["jobs"]]}
-        self.assertEqual(json.loads(self.jq(expr, new)), ["success"])
+        self.assertEqual(json.loads(self.jq(expr, [new])), ["success"])
 
-    def test_native_round_requires_a_successful_independent_read_even_for_a_block(self):
-        # Runs from before 2026-11-25 carried a native Codex review and its
-        # independent read; their rounds still count against the budget.
-        job = {"name": budget.NATIVE_PROOF_JOB}
-        proof, enforce = {"name": budget.NATIVE_PROOF_STEP}, {"name": "Enforce the code review"}
-        for read_status, expected in (("success", "codex"), ("failure", None)):
-            with self.subTest(read_status=read_status):
-                jobs = [
-                    {"name": budget.BUDGET_JOB, "steps": []},
-                    {"name": "Codex GitHub review", "steps": [
-                        {"name": budget.ACTION_STEP, "conclusion": "success"},
-                    ]},
-                    {"name": job["name"], "steps": [
-                        {"name": proof["name"], "conclusion": read_status},
-                        {"name": enforce["name"], "conclusion": "failure" if read_status == "success" else "skipped"},
-                    ]},
-                ]
-                actual = budget.review_source(lambda args: self.jq(args[-1], {"jobs": jobs}),
-                                              "o/r", run(1, 1, conclusion="failure"))
-                self.assertEqual(actual, expected)
+    def test_real_query_never_charges_a_codex_only_run(self):
+        jobs = [{"name": budget.BUDGET_JOB, "steps": []},
+                {"name": "Codex GitHub review", "steps": [
+                    {"name": budget.ACTION_STEP, "conclusion": "success"}]},
+                {"name": "Verify native Codex review verdict", "steps": [
+                    {"name": "Read the OpenAI verdict from GitHub again", "conclusion": "success"}]}]
+        def gh(args):
+            self.assertIn("--paginate", args)
+            self.assertIn("--slurp", args)
+            return self.jq(args[-1], [{"jobs": jobs[:1]}, {"jobs": jobs[1:]}])
+        self.assertFalse(budget.ran_claude_review(gh, "o/r", run(1, 1)))
+        jobs.append({"name": "Claude review", "steps": [{"name": budget.ACTION_STEP, "conclusion": "success"}]})
+        self.assertTrue(budget.ran_claude_review(gh, "o/r", run(1, 1)))
 
     def test_the_budget_job_name_is_the_workflow_s(self):
         workflow = yaml.safe_load(REVIEW.read_text())
@@ -283,6 +278,10 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_secret_bearing_workflow_checks_out_only_the_protected_commit(self):
         events = self.workflow[True]
         self.assertEqual(events["pull_request_target"]["branches"], ["main"])
+        self.assertIn("edited", events["pull_request_target"]["types"])
+        base_edit = "github.event.action != 'edited' || github.event.changes.base"
+        self.assertIn(base_edit, self.workflow["run-name"])
+        self.assertIn(base_edit, self.jobs["budget"]["if"])
         for job in self.jobs.values():
             checkout = job["steps"][0]["with"]
             self.assertEqual(checkout["ref"], "${{ github.sha }}")

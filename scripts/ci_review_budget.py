@@ -7,8 +7,7 @@ text. A Claude review counts when its run is a success of the same PR, ran under
 review contract (it has the "Claude review budget" job) and the action step
 ("PR Review") itself succeeded, so runs that skipped the action because the cap
 was reached do not count as reviews, nor do reviews of the workflow that
-preceded the contract (ADR-1129). A verified Codex receipt counts once per head,
-including a completed review whose findings block the subsequent verdict check.
+preceded the contract (ADR-1129). Historical runs that only verified Codex used no Claude round.
 
 Writes `round`, `cap`, `skip` and `reviewed_sha` to $GITHUB_OUTPUT. At the cap
 no fourth review runs without the budget extension; the merge still needs both verdicts. The label `claude-rereview` raises the cap by one
@@ -43,8 +42,6 @@ EXHAUSTED = (
 )
 # The step of claude-review.yml that runs the action; the test pins this name.
 ACTION_STEP = "PR Review"
-NATIVE_PROOF_JOB = "Verify native Codex review verdict"
-NATIVE_PROOF_STEP = "Read the OpenAI verdict from GitHub again"
 # The job of claude-review.yml that runs this script; the test pins this name.
 # A run without it predates the review contract (the cap, then the verdict line
 # the merge waits for) and does not count: a pull request reviewed only under
@@ -122,23 +119,19 @@ def protected_candidates(gh, repo, pr, run_id, created):
     return selected
 
 
-def review_source(gh: Gh, repo: str, run: Record) -> str | None:
+def ran_claude_review(gh: Gh, repo: str, run: Record) -> bool:
     jq = (
-        f'[select(any(.jobs[]; .name == "{BUDGET_JOB}")) | .jobs[] as $job | $job.steps[]? '
-        f'| if $job.name == "{NATIVE_PROOF_JOB}" and .name == "{NATIVE_PROOF_STEP}" '
-        'and .conclusion == "success" then "native-receipt" '
-        f'elif $job.name == "Claude review" and .name == "{ACTION_STEP}" '
-        'then .conclusion else empty end]'
+        f'[.[].jobs[]] | select(any(.[]; .name == "{BUDGET_JOB}")) '
+        f'| [.[] | select(.name == "Claude review") | .steps[]? '
+        f'| select(.name == "{ACTION_STEP}") | .conclusion]'
     )
-    text = gh([f"repos/{repo}/actions/runs/{run['id']}/jobs", "--jq", jq])
-    conclusions = json.loads(text)
+    text = gh([f"repos/{repo}/actions/runs/{run['id']}/jobs", "--paginate", "--slurp", "--jq", jq])
+    # jq empty output means a run before the budget contract.
+    conclusions = json.loads(text) if text.strip() else []
     if not isinstance(conclusions, list):
         raise BudgetError("protocol")
-    if "native-receipt" in conclusions:
-        return "codex"
-    if run.get("conclusion") == "success" and "success" in conclusions:
-        return "claude"
-    return None
+    return run.get("conclusion") == "success" and "success" in conclusions
+
 
 def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
     ordered = sorted(reviews, key=lambda run: run["created_at"])
@@ -160,15 +153,7 @@ def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels, creat
     runs = candidate_runs(gh, repo, pr, run_id, head_ref)
     if created:
         runs.extend(protected_candidates(gh, repo, pr, run_id, created))
-    reviews, native_heads = [], set()
-    for run in sorted(runs, key=lambda row: row["created_at"]):
-        source = review_source(gh, repo, run)
-        if source == "codex":
-            if run["head_sha"] in native_heads:
-                continue
-            native_heads.add(run["head_sha"])
-        if source:
-            reviews.append(run)
+    reviews = [run for run in runs if ran_claude_review(gh, repo, run)]
     return decide(reviews, labels)
 
 

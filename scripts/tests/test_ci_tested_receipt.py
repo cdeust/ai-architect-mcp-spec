@@ -7,8 +7,10 @@ subject bytes the protected signer wrote.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from test_ci_review_both import HEAD, OLD_HEAD, REPO, resolver
 
@@ -155,9 +157,7 @@ class ObservationNeverDecides(unittest.TestCase):
     """Phase B: the receipt is reported after the decision and never used to make it."""
 
     def setUp(self):
-        import os
         import tempfile
-        from unittest.mock import patch
         self.ns = resolver()
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -176,13 +176,12 @@ class ObservationNeverDecides(unittest.TestCase):
             raise AssertionError("resolve() consulted the receipt")
         merged = []
         self.ns.update(
-            _source_run=lambda *_: {"head_sha": HEAD, "reduced_matrix": False},
             _pull_request=lambda *_: (7, {"merged": False}),
             _merge_open_pr=lambda *_: merged.append(True) or "b" * 40,
             _confirm_pr_merge=lambda *_: None,
             observe_receipt=forbidden,
         )
-        result = self.ns["resolve"]({}, REPO, None)
+        result = self.ns["resolve"]({"head_sha": HEAD, "reduced_matrix": False}, REPO, None)
         self.assertEqual((result["run_tests"], merged), ("true", [True]))
 
     def test_main_returns_the_decision_whatever_the_observation_does(self):
@@ -214,13 +213,30 @@ class ObservationNeverDecides(unittest.TestCase):
             for decision in (0, 1):
                 with self.subTest(case=name, decision=decision):
                     ns = resolver()
-                    ns.update(_decide=lambda decision=decision: decision, **overrides)
+                    ns.update(_decide=lambda decision=decision: (decision, HEAD), **overrides)
                     self.assertEqual(ns["main"](), decision)
         self.assertEqual(len(reached), 2, "the bounded verifier was reached")
 
+    def test_comment_wake_observes_the_resolved_pipeline_head_even_when_merge_is_held(self):
+        event = Path(os.environ["GITHUB_EVENT_PATH"])
+        event.write_text(json.dumps({"workflow_run": {"head_sha": "b" * 40, "event": "issue_comment"}}))
+        def find_run(wake, *_):
+            self.assertEqual(wake["workflow_run"]["head_sha"], "b" * 40)
+            return {"head_sha": HEAD}
+        def hold(*_):
+            raise self.ns["PostMergeError"]("merge held: review pending")
+        observed = []
+        self.ns.update(_source_run=find_run, resolve=hold, _observe_after_decision=observed.append)
+        with patch.dict(os.environ, GITHUB_EVENT_NAME="workflow_run"):
+            self.assertEqual(self.ns["main"](), 0)
+            self.assertEqual(observed, [HEAD])
+            self.ns["_source_run"] = hold
+            self.assertEqual(self.ns["main"](), 0)
+            self.assertEqual(observed, [HEAD])
+
     def test_a_valid_receipt_is_published_after_the_decision(self):
         order = []
-        self.ns.update(_decide=lambda: order.append("decide") or 0,
+        self.ns.update(_decide=lambda: order.append("decide") or (0, HEAD),
                        observe_receipt=lambda *_: order.append("observe") or "SEC-009 receipt: valid; not enforced")
         self.assertEqual(self.ns["main"](), 0)
         self.assertEqual(order, ["decide", "observe"])
@@ -234,7 +250,7 @@ class ObservationNeverDecides(unittest.TestCase):
             def __init__(self, token, timeout=None):
                 built.append(timeout)
                 super().__init__(token, timeout)
-        self.ns.update(GitHub=Recording, _decide=lambda: 0, observe_receipt=lambda *_: "line")
+        self.ns.update(GitHub=Recording, _decide=lambda: (0, HEAD), observe_receipt=lambda *_: "line")
         self.ns["main"]()
         self.assertEqual(built, [self.ns["RECEIPT_TIMEOUT_S"]])
         self.assertIsNone(original("t").timeout)

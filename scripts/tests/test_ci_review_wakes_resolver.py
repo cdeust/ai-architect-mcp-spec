@@ -23,7 +23,7 @@ def resolver():
 class ReviewWakesResolverTests(unittest.TestCase):
     def test_a_pr_merged_before_the_review_ended_is_not_tested_twice(self):
         text = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
-        body = text.split("def resolve(event", 1)[1].split("def main", 1)[0]
+        body = text.split("def resolve(run", 1)[1].split("def main", 1)[0]
         held = body.split('run.get("woken_by_review")', 1)[1].split("return {", 2)[1]
         self.assertIn('"run_tests": "false"', held)
         self.assertLess(
@@ -36,6 +36,10 @@ class ReviewWakesResolverTests(unittest.TestCase):
         self.assertIn("workflows: [Pipeline, PR Review, Review updated]", caller)
         approval_name = (WORKFLOWS / "review-updated.yml").read_text().splitlines()[0]
         self.assertEqual(approval_name, "name: Review updated")
+        publisher = __import__("yaml").safe_load((WORKFLOWS / "review-updated.yml").read_text())
+        self.assertIn("in_progress", publisher[True]["workflow_run"]["types"])
+        self.assertIn("github.event.action == 'completed' || github.event.workflow_run.name == 'PR Review'",
+                      publisher["jobs"]["verify"]["if"])
 
 
 if __name__ == "__main__":

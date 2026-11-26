@@ -33,7 +33,8 @@ def run_main(outcome):
             raise ns["PostMergeError"](outcome)
         return outcome
 
-    ns["resolve"] = resolve
+    ns.update(resolve=resolve, _source_run=lambda *_: {"head_sha": "a" * 40},
+              _observe_after_decision=lambda *_: None)
     with tempfile.TemporaryDirectory() as tmp:
         event, output = Path(tmp) / "event.json", Path(tmp) / "output"
         event.write_text(json.dumps({}))

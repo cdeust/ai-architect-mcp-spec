@@ -446,23 +446,35 @@ jobs:
               )
 
 
-          def _merge_open_pr(pr, merge_path, head, api, repository, tested_at=None):
+          def _require_open_without_veto(pr):
               require(
                   pr.get("state") == "open" and pr.get("draft") is False,
                   "PR is closed or draft",
               )
-              require("do not merge" not in pr.get("title", "").lower(), "PR title holds merge")
+              title, labels = pr.get("title"), pr.get("labels")
+              require(isinstance(title, str) and isinstance(labels, list)
+                      and all(isinstance(label, dict) and isinstance(label.get("name"), str) for label in labels),
+                      "PR veto metadata missing")
+              require("do not merge" not in title.lower(), "PR title holds merge")
               require(
                   not any(
                       label.get("name", "").lower() in ("hold", "do-not-merge")
-                      for label in pr.get("labels", [])
+                      for label in labels
                   ),
                   "PR label holds merge",
               )
+
+
+          def _merge_open_pr(pr, merge_path, head, api, repository, tested_at=None):
+              _require_open_without_veto(pr)
               try:
                   proof["require_reviews"](api, repository, pr, head, tested_at or "")
               except (KeyError, TypeError, ValueError) as error:
                   raise PostMergeError(f"merge held: {error}") from error
+              latest = api.request("GET", f"/repos/{repository}/pulls/{pr['number']}")
+              require(latest.get("number") == pr["number"], "PR number differs")
+              _pr_identity(latest, repository, head)
+              _require_open_without_veto(latest)
               result = api.request(
                   "PUT",
                   merge_path,
@@ -590,8 +602,7 @@ jobs:
                       out.write(line + "\n")
 
 
-          def resolve(event, repository: str, api: GitHub):
-              run = _source_run(event, repository, api)
+          def resolve(run, repository: str, api: GitHub):
               number, pr = _pull_request(run, repository, api)
               if run.get("reduced_matrix"):
                   require(
@@ -637,12 +648,10 @@ jobs:
           WAITING = ("merge held:", "PR head advanced after testing")
 
 
-          def _observe_after_decision():
+          def _observe_after_decision(sha):
               """SEC-009 phase B: report the receipt once the merge is decided. Never
               raises, never changes the exit status, every network call bounded."""
               try:
-                  event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-                  sha = full_sha((event.get("workflow_run") or {}).get("head_sha"))
                   api = GitHub(os.environ.get("GH_TOKEN", ""), timeout=RECEIPT_TIMEOUT_S)
                   _report(observe_receipt(os.environ["GITHUB_REPOSITORY"], sha, api))
               except Exception as exc:  # noqa: BLE001 - observation only
@@ -650,12 +659,14 @@ jobs:
 
 
           def main():
-              status = _decide()
-              _observe_after_decision()
+              status, tested_head = _decide()
+              if tested_head is not None:
+                  _observe_after_decision(tested_head)
               return status
 
 
           def _decide():
+              tested_head = None
               try:
                   require(
                       os.environ.get("GITHUB_EVENT_NAME") == "workflow_run",
@@ -664,25 +675,25 @@ jobs:
                   event = json.loads(
                       Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8")
                   )
-                  result = resolve(
-                      event,
-                      os.environ["GITHUB_REPOSITORY"],
-                      GitHub(os.environ.get("GH_TOKEN", "")),
-                  )
+                  repository = os.environ["GITHUB_REPOSITORY"]
+                  api = GitHub(os.environ.get("GH_TOKEN", ""))
+                  run = _source_run(event, repository, api)
+                  tested_head = run["head_sha"]
+                  result = resolve(run, repository, api)
                   with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                       for key, value in result.items():
                           output.write(f"{key}={value}\n")
                   print(
                       f"PR #{result['pr_number']}: {result['reason']}; SHA {result['tested_sha']}"
                   )
-                  return 0
+                  return 0, tested_head
               except PostMergeError as exc:
                   if str(exc).startswith(WAITING):
                       # No output is written: no downstream job runs, the run is green.
                       print(f"::notice title=Merge not made::{exc}")
-                      return 0
+                      return 0, tested_head
                   print(f"post-merge: {exc}", file=sys.stderr)
-                  return 1
+                  return 1, tested_head
               except (
                   OSError,
                   ValueError,
@@ -691,7 +702,7 @@ jobs:
                   AttributeError,
               ) as exc:
                   print(f"post-merge: {exc}", file=sys.stderr)
-                  return 1
+                  return 1, tested_head
 
 
           if __name__ == "__main__":
