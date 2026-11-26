@@ -1,6 +1,6 @@
 # Dependency update tool (issue #36, Scorecard DependencyUpdateToolID).
 #
-# Two ecosystems, because the repo pins in two places and both go stale:
+# Three ecosystems, because the repo pins in three places and all go stale:
 #   - npm            the pnpm workspace (root + packages/*), where the
 #                    security floors in pnpm-workspace.yaml#overrides live
 #                    (floors are raised by hand to an advisory's patched
@@ -9,6 +9,9 @@
 #                    SHA (Scorecard PinnedDependenciesID), and a SHA pin never
 #                    ages out on its own — without this, pinning trades a
 #                    supply-chain risk for an unpatched-action risk
+#   - pip            scripts/tests/requirements.txt, the hashed pins of the
+#                    third-party packages the Python tests import (Dependabot
+#                    rewrites the --hash lines with the version)
 #
 # Grouped so a routine bump is one reviewable PR rather than a dozen; security
 # updates are deliberately NOT grouped, so an advisory fix arrives on its own
@@ -56,3 +59,11 @@ updates:
           - "*"
     commit-message:
       prefix: "chore(actions)"
+
+  - package-ecosystem: "pip"
+    directory: "/scripts/tests"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps-dev)"

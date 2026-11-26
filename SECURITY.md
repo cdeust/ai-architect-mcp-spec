@@ -64,7 +64,16 @@ As of issue #29, every release (`.github/workflows/release.yml`) ships:
   lockfile and `npm audit --prefix scripts/ci-mention --omit=dev
   --audit-level=high` against the owner-mention tools' lockfile, both before
   the frozen install and build. A high or critical production advisory or a
-  failed audit command stops the job.
+  failed audit command stops the job. The same job then audits the Python test
+  dependencies (`scripts/tests/requirements.txt`, exact versions with the hash
+  of every wheel) on [OSV](https://osv.dev) with `scripts/ci_python_pins.py`:
+  any advisory of any severity, or an answer it cannot read, stops the job.
+  The regression job installs that file alone, wheels only, into a fresh
+  virtual environment, and a test refuses any third-party import under
+  `scripts/` that the file does not pin. These packages are CI tooling, not part
+  of the bundle, so the release SBOM does not list them; GitHub's dependency
+  graph reads the file, Dependabot (`pip`) proposes its updates and reports its
+  advisories.
   [Unit command](ci.json) · [Pipeline](.github/workflows/pipeline.yml)
 
 - **Code scanning** — CodeQL scans JavaScript and TypeScript on pull requests
