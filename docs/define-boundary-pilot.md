@@ -24,11 +24,11 @@ A host can opt into planning data by calling `get_pipeline_state` with its `run_
 
 End the criterion's text with its explicit references in parentheses, for example `Check the receipt (FR-001, NFR-002).` A mention inside the criterion, example code, comments or a link destination does not supply traceability.
 
-Read the handoff while the implementation question is pending, or after the run finished: every exit of the gate keeps the Define that passed (`passed_define`), and a finished run serves it while the checkpoint still projects the same document and intent and its terminal action agrees with the retained verification, until the finished run is dropped. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff; for a finished run, that readiness was judged when the gate advanced.
+Read the handoff while the implementation question is pending, or after the run finished: every exit of the gate keeps the Define that passed (`passed_define`), and a finished run serves it while the checkpoint still projects the same document and intent and its terminal action agrees with the retained verification, until the finished run is dropped. The kept Define is served from the moment the gate advances, including while the run records its summary before `done`. An automatic completion saved before snapshots existed is still projected from its state and its `done` action. A finished run that kept no Define is refused with the document's or the ticket result's reason when there is one. The producer requires passed PRD sections, a passed self-check, individual verification evidence for the evaluated claims, and a current document and verification policy that permit the handoff; for a finished run, that readiness was judged when the gate advanced.
 
 | Code | Cause |
 | --- | --- |
-| `define_not_pending` | No pending implementation question and no Define kept when the run finished. |
+| `define_not_pending` | No pending implementation question and no Define kept when the run finished (outside the automatic-completion exception above), and no document or ticket reason to give. |
 | `define_not_ready` | Missing or failed evidence or policy; a terminal action that disagrees with the retained verification; a checkpoint that no longer projects the kept Define; `jira_tickets_invalid`, `jira_tickets_missing` or `jira_tickets_skipped` when the run's ticket result failed; a scope-review finding. |
 | `define_document_invalid` | The schema (including `TICKET_*` codes), a blocking document rule, or `sourced_publication_policy`. |
 
