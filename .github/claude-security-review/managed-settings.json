@@ -5,6 +5,7 @@
     "disableBypassPermissionsMode": "disable",
     "deny": [
       "Bash",
+      "PowerShell",
       "Grep",
       "Glob",
       "LSP",
@@ -19,6 +20,8 @@
       "Skill",
       "EnterWorktree",
       "SendFeedback",
+      "SendUserFile",
+      "ShareOnboardingGuide",
       "Artifact",
       "Projects",
       "Workflow",

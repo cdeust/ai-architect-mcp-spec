@@ -74,9 +74,10 @@ PUBLISH_ENV = {
 }
 # The full managed deny list: every rule is a guard of the threat model.
 DENY = {
-    "Bash", "Grep", "Glob", "LSP", "ListMcpResourcesTool", "ReadMcpResourceTool", "RemoteTrigger",
+    "Bash", "PowerShell", "Grep", "Glob", "LSP", "ListMcpResourcesTool", "ReadMcpResourceTool", "RemoteTrigger",
     "SendMessage", "PushNotification", "CronCreate", "CronDelete", "ScheduleWakeup", "Skill",
-    "EnterWorktree", "SendFeedback", "Artifact", "Projects", "Workflow", "Monitor", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
+    "EnterWorktree", "SendFeedback", "SendUserFile", "ShareOnboardingGuide", "Artifact",
+    "Projects", "Workflow", "Monitor", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
     "mcp__github_ci", "mcp__github_file_ops",
     "Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)", "Read(//etc/**)", "Read(//tmp/**)",
     "Read(//var/**)", "Read(//opt/**)", "Read(//home/runner/runners/**)",

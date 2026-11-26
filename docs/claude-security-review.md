@@ -80,16 +80,19 @@ already uses.
 - **Tools.** `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents,
   so tools that need no permission (a cloud routine through RemoteTrigger, a
   message, a notification) are not offered at all; `--allowedTools` only pre-approves.
-  The managed settings also deny, as defence in depth should the flag be lost, Bash,
-  Grep, Glob, LSP, the MCP resource tools and the no-permission or outbound tools
-  RemoteTrigger, SendMessage, PushNotification, CronCreate, CronDelete,
-  ScheduleWakeup, Skill, EnterWorktree, SendFeedback, Artifact, Projects, Workflow
-  and Monitor (other local-only tools are not listed): the Claude Code docs apply `Read` deny
-  rules to Grep and Glob only for the folder a search starts from, so a search from
-  `/` could reach a denied file, and tools that need no permission would run under
-  `dontAsk` without an allow rule. The managed settings also set
-  `blockReadsOutsideWorkingDirectories`, so reads stay in the workspace whatever the
-  deny list misses. The model reads the diff and the base by path.
+  The managed settings also deny, as defence in depth should the flag be lost, the
+  shells (Bash, PowerShell), Grep, Glob, LSP, the MCP resource tools, and the tools
+  that need no permission, act outside the session or run work: RemoteTrigger,
+  SendMessage, PushNotification, CronCreate, CronDelete, ScheduleWakeup, Skill,
+  EnterWorktree, SendFeedback, SendUserFile, ShareOnboardingGuide, Artifact,
+  Projects, Workflow and Monitor. Other tools that need no permission are not listed;
+  they are local, or need Remote Control or a cloud session. The Claude Code docs
+  apply `Read` deny rules to Grep and Glob only for the folder a search starts from,
+  so a search from `/` could reach a denied file, and tools that need no permission
+  would run under `dontAsk` without an allow rule. The managed settings also set
+  `blockReadsOutsideWorkingDirectories`, which asks Claude Code to refuse reads
+  outside the workspace (apart from files it needs itself); its enforcement is listed
+  under "Not proven". The model reads the diff and the base by path.
 - **Prompt.** It adapts the audit prompt and the false-positive filtering of
   [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review)
   at `0c6a49f1fa56a1d472575da86a94dbc1edb78eda` (MIT). The adapted text is
@@ -167,7 +170,7 @@ handled here" for a rename).
 | --- | --- | --- |
 | Spoofing: fork or Dependabot code gets the subscription token | Only `pull_request` triggers it, never `pull_request_target`. The job `if` is the trust rule of `claude-review.yml` (a head in this repository, not a draft, the actor is not `dependabot[bot]`), plus: the author is not `dependabot[bot]`. | contracts `trigger`, `trusted-authors`; mutations `fork-allowed`, `dependabot-author` and a `pull_request_target` trigger |
 | Tampering: the PR's `.claude/`, `CLAUDE.md`, hooks or scripts run in the review | Both jobs check out `main` with `persist-credentials: false`, and every script and instruction file comes from it. In agent mode the PR head is never checked out, and the action restores its sensitive paths from the base anyway (`restore-config.ts`). Root-owned, read-only managed settings disable all hooks. No step runs after the engine in its job. The whole parsed workflow is pinned by a digest in the tests, so changing an extra step, an env mapping or a run script needs a deliberate edit of that digest in the same PR. It does not stop a trusted author: a `pull_request` run follows the PR's own workflow, as for `claude-review.yml`. | `test_the_workflow_is_exactly_the_reviewed_one`; contracts `checkout-main`, `managed-settings` (the exact install script), `order`, `engine-inputs`; mutations `head-checkout-added`, `publish-on-head`, `settings-writable`, `step-after-engine`, `track_progress`, and removing the install step |
-| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents. It has no shell either (managed deny on `Bash`). `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs and arguments are an exact set. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, `--permission-mode auto`, `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
+| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents. It has no shell either: `--tools` offers none, and the managed settings deny `Bash` and `PowerShell`. `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs and arguments are an exact set. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, `--permission-mode auto`, `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
 | Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`. It then turns every line ending into a newline and removes control, format, non-spacing and enclosing marks. It then puts a zero-width space after every `@` and every `#` before a digit, replaces backticks, and turns a `Verdict:` at the start of a line into `Verdict​:`, whatever its case. Each prose field then becomes one code span on one line, which renders no link, reference, mention or HTML. Paths are shown as ASCII escapes. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests`: hostile text with lookalikes, joiners and combining marks, and the resolver's own `_claude_verdicts` reading a published comment as if `claude[bot]` had written it. Also `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts`. |
 | Information disclosure: the token reaches a comment, a log or an artifact (the repository is public) | Managed settings deny reads of `/proc`, `/sys`, `/dev`, `/etc`, `/tmp`, `/var`, `/opt`, the runner install directories, `RUNNER_TEMP`, the action directory, `~/.claude`, `~/.claude.json`, `~/.config`, `~/.local`, `~/.ssh`, `~/.docker`, `~/.npmrc`, `~/.gitconfig` and every `.git/` directory. This is a deny list over the action's bare `Read` allow. Whether the CLI resolves links before it matches these rules has not been observed. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set. `publish` holds no secret, and no artifact is uploaded. | contracts `secrets`, `engine-scrub`; mutations `second-secret`, `all-secrets` (`toJSON(secrets)`), `indexed-secret`, `secret-in-publish`; the exact deny list; `test_the_input_folder_is_outside_git_which_the_engine_may_not_read` |
 | Tampering: an upstream action is changed | Every `uses:` is pinned to a full commit SHA with a version comment, and Dependabot (`github-actions`) updates both. The local quota action is main's copy. | contracts `unpinned`, `pin-comment`; mutation `@main` |
@@ -187,8 +190,8 @@ remove each guard in turn and require the matching check to fail
 - No review has run yet. On the pull request that adds the workflow, main does not
   have these files, so the job takes the "not installed on main yet" skip. The
   first real review will be on the first trusted PR after the merge.
-- The managed-settings keys and denied tool names were checked against the strings
-  of CLI 2.1.306; `blockReadsOutsideWorkingDirectories` needs 2.1.257 or later, and
+- The managed-settings keys and every denied tool name were checked against the
+  strings of CLI 2.1.306 (each name occurs as a quoted string there); `blockReadsOutsideWorkingDirectories` needs 2.1.257 or later, and
   `--tools` is a CLI flag the action passes through. The
   action installs 2.1.328, and no one has observed it enforce them, link
   resolution included.
