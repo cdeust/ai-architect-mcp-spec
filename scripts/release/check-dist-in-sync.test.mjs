@@ -342,3 +342,17 @@ test.skipIf(process.platform === "win32")("rebuild form: distinguishes a regular
   expect(run.status, run.stderr).toBe(1);
   expect(run.stderr).toContain("M packages/app/dist/a.js");
 });
+
+test.skipIf(process.platform === "win32")("rebuild form: compares a stable relative symbolic link as an artifact", () => {
+  const root = copyOfCommit(COMMITTED);
+  symlinkSync("a.js", join(root, "packages/app/dist/b.js"));
+  expect(rebuild(root, "").status).toBe(0);
+});
+
+test.skipIf(process.platform === "win32")("rebuild form: accounts for a changed link target as a changed artifact", () => {
+  const root = copyOfCommit({ ...COMMITTED, "packages/app/dist/b.js": COMMITTED["packages/app/dist/a.js"] });
+  symlinkSync("a.js", join(root, "packages/app/dist/c.js"));
+  const run = rebuild(root, 'const fs = require("node:fs"); fs.unlinkSync("packages/app/dist/c.js"); fs.symlinkSync("b.js", "packages/app/dist/c.js");');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("M packages/app/dist/c.js");
+});

@@ -27,7 +27,7 @@
 //   - finding no generated file at all is a failure, not a pass.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,17 +120,45 @@ function generatedPaths() {
   return found;
 }
 
-/** Compare the bytes and the Git-relevant file kind and executable bit, not timestamps or other permissions. */
+/** Compare identity and metadata of a single observation, refusing unstable artifacts. */
+function assertStable(path, before, after) {
+  if (before.dev !== after.dev || before.ino !== after.ino ||
+      before.mode !== after.mode || before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    throw new Error(`Generated artifact changed while being compared: ${path}`);
+  }
+}
+
+function regularArtifact(path, absolute, discovered) {
+  // Read and obtain metadata from the same descriptor. On platforms providing
+  // the flags, do not follow a terminal link or block on a non-regular file.
+  const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  const fd = openSync(absolute, flags);
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile()) throw new Error(`Generated artifact is not a regular file: ${path}`);
+    assertStable(path, discovered, before);
+    const bytes = readFileSync(fd);
+    assertStable(path, before, fstatSync(fd, { bigint: true }));
+    assertStable(path, before, lstatSync(absolute, { bigint: true }));
+    return { kind: (before.mode & 0o100n) === 0n ? "file" : "executable", bytes };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Compare Git-relevant file kind, executable bit and contents from one stable observation. */
 function fingerprint(path) {
   const absolute = join(ROOT, path);
-  const stat = lstatSync(absolute);
+  const stat = lstatSync(absolute, { bigint: true });
   if (!stat.isSymbolicLink() && !stat.isFile()) {
     throw new Error(`Generated artifact is not a regular file or link: ${path}`);
   }
-  const regularKind = (stat.mode & 0o100) === 0 ? "file" : "executable";
-  const kind = stat.isSymbolicLink() ? "link" : regularKind;
-  const bytes = kind === "link" ? readlinkSync(absolute, { encoding: "buffer" }) : readFileSync(absolute);
-  return `${kind}:${createHash("sha256").update(bytes).digest("hex")}`;
+  const artifact = stat.isSymbolicLink()
+    ? { kind: "link", bytes: readlinkSync(absolute, { encoding: "buffer" }) }
+    : regularArtifact(path, absolute, stat);
+  assertStable(path, stat, lstatSync(absolute, { bigint: true }));
+  return `${artifact.kind}:${createHash("sha256").update(artifact.bytes).digest("hex")}`;
 }
 
 const fingerprints = paths => new Map(paths.map(path => [path, fingerprint(path)]));
