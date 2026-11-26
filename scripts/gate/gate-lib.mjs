@@ -617,9 +617,8 @@ export function writesLabel(command, label) {
   const methods = args.flatMap((word, i) =>
     // Stryker disable next-line StringLiteral: equivalent: a missing method value is any text but GET, a write, whatever the text.
     word === "-X" || word === "--method" ? [args[i + 1] ?? ""]
-      : /^(?:-X|--method=)/.test(word)
-        // Stryker disable next-line Regex: equivalent: the test above anchors the prefix, so the replace finds it first at 0.
-        ? [word.replace(/^(?:-X|--method=)/, "")] : []);
+      // The test anchors the prefix at 0, so the replace finds it there first.
+      : /^(?:-X|--method=)/.test(word) ? [word.replace(/-X|--method=/, "")] : []);
   const fields = args.some((word) => /^(?:-[fF]|--field|--raw-field|--input)/.test(word));
   const writes = methods.length > 0 ? methods.some((method) => method.toUpperCase() !== "GET") : fields;
   // A word it cannot read outside a `key=value` field could be the endpoint.
