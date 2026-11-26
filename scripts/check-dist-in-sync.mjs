@@ -105,7 +105,7 @@ function packageDirectories() {
 }
 
 /** Enumerate generated paths independently of which packages had committed output. */
-function generatedPaths() {
+function generatedPaths(directories = packageDirectories()) {
   const found = [];
   for (const path of BUNDLE_FILES) {
     if (statIfPresent(path)) found.push(path);
@@ -117,9 +117,12 @@ function generatedPaths() {
       else found.push(path);
     }
   };
-  for (const directory of packageDirectories()) {
+  for (const directory of directories) {
     const dist = `${directory}/dist`;
-    if (statIfPresent(dist)?.isDirectory()) walk(dist);
+    const stat = statIfPresent(dist);
+    if (!stat) continue;
+    if (!stat.isDirectory()) throw new Error(`Generated distribution root is not a directory: ${dist}`);
+    walk(dist);
   }
   return found;
 }
@@ -189,7 +192,8 @@ function ignored(paths) {
 
 /** Run the build, then say how many generated files were compared and which differ: `M`odified, `A`dded or `D`eleted. */
 function rebuildProblems(commands) {
-  const before = fingerprints(generatedPaths());
+  const directories = packageDirectories();
+  const before = fingerprints(generatedPaths(directories));
   if (before.size === 0) return { compared: 0, found: ["no generated file to compare: the tree has no bundle and no dist"] };
   // The npm manifest and lock are stamp-bundle-version inputs. Only the bundle and
   // compiled distributions are fully generated. Drop tsc's incremental state with
@@ -197,7 +201,7 @@ function rebuildProblems(commands) {
   // in a directory whose package manifest was removed.
   if (statIfPresent("mcp-server")?.isSymbolicLink()) throw new Error("Cannot clean a linked bundle directory: mcp-server");
   rmSync(join(ROOT, "mcp-server/index.js"), { force: true });
-  for (const directory of packageDirectories()) {
+  for (const directory of directories) {
     rmSync(join(ROOT, directory, "dist"), { recursive: true, force: true });
     rmSync(join(ROOT, directory, "tsconfig.tsbuildinfo"), { force: true });
   }

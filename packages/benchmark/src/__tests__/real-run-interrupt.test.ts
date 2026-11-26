@@ -1,3 +1,4 @@
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, rmSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -135,7 +136,7 @@ posixTest("drains a failed parallel batch before removing any process handler", 
     const child = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
     const { batch, start } = await parallelStandIn(file, out, ['exec "$NODE" "$BATCH_CHILD"']);
     let writes = 0;
-    const host = harness({ PATH: out, OUT: out, START: String(start), NODE: process.execPath, BATCH_CHILD: child }, {
+    const host = harness({ PATH: out, OUT: out, START: String(start), NODE: process.execPath, BATCH_CHILD: child, DRIVER_PID: String(process.pid) }, {
       append(path, data, options) {
         if (writes++ === start) {
           expect(JSON.parse(String(data)).error).toBeNull();
@@ -164,11 +165,61 @@ posixTest("drains a failed parallel batch before removing any process handler", 
     expect(rows.slice(start).map(row => row.error)).toEqual(Array(batch.length - 1).fill("Claude CLI exited with SIGKILL: Claude CLI returned invalid or incomplete JSON"));
     for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   } finally {
-    for (const pid of pids) {
-      try { process.kill(-pid, "SIGKILL"); }
+    // Also release any fixture that has not announced its PID yet.
+    await writeFile(join(out, "stop"), "");
+    await run;
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+posixTest("the detached journal fixture releases its pipes when its driver is interrupted", async () => {
+  const out = await tempDirectory("bench-driver-exit-");
+  const fixture = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
+  const script = `
+    const child = require("node:child_process").spawn(process.execPath, [process.argv[1]], {
+      env: { ...process.env, DRIVER_PID: String(process.pid) }, detached: true, stdio: ["ignore", "inherit", "inherit"],
+    });
+    process.stdout.write(String(child.pid));
+  `;
+  const driver = spawn(process.execPath, ["-e", script, fixture], { env: { OUT: out }, stdio: ["ignore", "pipe", "pipe"] });
+  let pid = "";
+  let stderr = "";
+  let closed = false;
+  driver.stdout.setEncoding("utf8").on("data", text => { pid += text; });
+  driver.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
+  driver.once("close", () => { closed = true; });
+  try {
+    await expect.poll(async () => (await readFile(join(out, "ready"), "utf8").catch(() => "")).trim(),
+      { timeout: 4000 }).toMatch(/^\d+$/);
+    const ready = (await readFile(join(out, "ready"), "utf8")).trim();
+    await expect.poll(() => pid).toBe(ready);
+    driver.kill("SIGTERM");
+    // The detached child inherits these pipes; the driver exiting alone cannot close them.
+    await expect.poll(() => closed, { timeout: 4000 }).toBe(true);
+    expect(driver.signalCode).toBe("SIGTERM");
+    expect(stderr).toContain("Journal fixture driver finished");
+  } finally {
+    driver.kill("SIGTERM");
+    if (!closed && /^\d+$/.test(pid)) {
+      try { process.kill(Number(pid), "SIGKILL"); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
     }
-    await run;
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+posixTest("a journal fixture starting after teardown exits while its driver is still alive", async () => {
+  const out = await tempDirectory("bench-driver-stop-");
+  try {
+    await writeFile(join(out, "stop"), "");
+    const fixture = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
+    const child = spawnSync(process.execPath, [fixture], {
+      env: { OUT: out, DRIVER_PID: String(process.pid) }, encoding: "utf8", timeout: 4000,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(child.stderr).toContain("Journal fixture driver finished");
+  } finally {
     await rm(out, { recursive: true, force: true });
   }
 });

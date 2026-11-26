@@ -2,7 +2,7 @@
 // build of the source. Each case is a repository where a "build" has just been
 // run on top of a commit, which is the state CI sees after `pnpm build && pnpm bundle`.
 import { afterEach, expect, test } from "vitest";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -389,4 +389,21 @@ test.skipIf(process.platform === "win32")("rebuild form: refuses a linked bundle
   expect(run.status, run.stderr).toBe(1);
   expect(run.stderr).toContain("Cannot clean a linked bundle directory: mcp-server");
   expect(readFileSync(join(bundle, "mcp-server/index.js"), "utf8")).toBe("bundle contents");
+});
+
+test.each(["file", ...(process.platform === "win32" ? [] : ["link"])])("rebuild form: preserves a %s at the dist root before cleaning anything", kind => {
+  const root = copyOfCommit(COMMITTED);
+  const dist = "packages/retired/dist";
+  if (kind === "file") write(root, dist, "old package entry");
+  else {
+    mkdirSync(join(root, "packages/retired"));
+    symlinkSync("../app/dist", join(root, dist), "dir");
+  }
+  const run = rebuild(root, 'throw new Error("build unexpectedly ran");');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("Generated distribution root is not a directory: " + dist);
+  expect(run.stderr).not.toContain("build unexpectedly ran");
+  expect(lstatSync(join(root, dist)).isSymbolicLink()).toBe(kind === "link");
+  if (kind === "file") expect(readFileSync(join(root, dist), "utf8")).toBe("old package entry");
+  for (const [path, bytes] of Object.entries(COMMITTED)) expect(readFileSync(join(root, path), "utf8")).toBe(bytes);
 });
