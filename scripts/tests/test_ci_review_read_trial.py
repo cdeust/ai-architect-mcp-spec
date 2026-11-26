@@ -45,7 +45,7 @@ class ProbeTests(unittest.TestCase):
         tools = {p.tool for p in trial.probes(PLANT)}
         self.assertEqual(tools, {"Read", "Grep", "Glob", "Bash", "WebFetch", "Agent"})
         agents = {p.input.get("subagent_type") for p in trial.probes(PLANT) if p.tool == "Agent"}
-        self.assertEqual(agents, {"general-purpose", "security-code-reviewer"})
+        self.assertEqual(agents, {"general-purpose", "Explore", "security-code-reviewer"})
 
     def test_no_probe_names_a_leak_marker(self):
         # An error message echoes the path it refused: no probe may carry a marker.
@@ -112,8 +112,8 @@ class VerdictTests(unittest.TestCase):
     SUB = trial.sub_probes(PLANT)
 
     def answered(self, text_of=lambda p: "refused"):
-        log = [row("main", p, text_of(p)) for p in self.MAIN]
-        log += [row(agent, p) for agent in ("general-purpose", "security-code-reviewer")
+        log = [row("main", p, text_of(p), error=p.tool != "Agent") for p in self.MAIN]
+        log += [row(agent, p) for agent in ("general-purpose", "Explore", "security-code-reviewer")
                 for p in self.SUB]
         log += [{"conv": "general-purpose", "tools": ["Read"], "results": 0}]
         return log
@@ -132,6 +132,12 @@ class VerdictTests(unittest.TestCase):
         lazy = [r for r in self.answered() if r.get("conv") != "security-code-reviewer"]
         self.assertTrue(any(f.startswith("unproven: sub-agent security-code-reviewer")
                             for f in trial.verdict("engine", lazy, (self.MAIN, self.SUB), False)))
+        refused = [r for r in lazy if not (r.get("conv") == "main"
+                                           and r.get("probe") == "Agent security-code-reviewer")]
+        refused.append(row("main", next(p for p in self.MAIN
+                                        if p.label == "Agent security-code-reviewer"),
+                           "Agent type 'security-code-reviewer' not found."))
+        self.assertEqual(trial.verdict("engine", refused, (self.MAIN, self.SUB), False), [])
         offered = self.answered() + [{"conv": "security-code-reviewer", "tools": ["Read", "Grep"],
                                       "results": 0}]
         self.assertIn("offered: security-code-reviewer: ['Grep']",

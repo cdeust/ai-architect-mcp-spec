@@ -120,7 +120,7 @@ def probes(plant: Plant) -> list[Probe]:
     ]
     return found + [Probe(f"Agent {name}", "Agent", {"description": "trial", "prompt": f"{SUB} {name}",
                                                      "subagent_type": name})
-                    for name in ("general-purpose", "security-code-reviewer")]
+                    for name in ("general-purpose", "Explore", "security-code-reviewer")]
 
 
 def sub_probes(plant: Plant) -> list[Probe]:
@@ -319,8 +319,12 @@ def verdict(name: str, log: list[dict], scripts: tuple[list[Probe], list[Probe]]
             failures.append(f"leak: {r['conv']}: {r['probe']}")
     answered = {r["probe"] for r in rows if r["conv"] == "main"}
     failures += [f"unanswered: {p.label}" for p in main if p.label not in answered]
-    # A sub-agent that never ran, or stopped early, proves nothing about what it may do.
-    for agent in (p.input["subagent_type"] for p in main if p.tool == "Agent"):
+    # A sub-agent that never ran, or stopped early, proves nothing about what it may do;
+    # one whose launch was refused (an unknown agent type) cannot run at all.
+    for probe in (p for p in main if p.tool == "Agent"):
+        agent = probe.input["subagent_type"]
+        if any(r["conv"] == "main" and r["probe"] == probe.label and r["is_error"] for r in rows):
+            continue
         done = {r["probe"] for r in rows if r["conv"] == agent}
         failures += [f"unproven: sub-agent {agent} did not answer {p.label}"
                      for p in sub if p.label not in done]

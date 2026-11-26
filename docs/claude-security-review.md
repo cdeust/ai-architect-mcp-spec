@@ -302,9 +302,10 @@ every pull request and every push to `main`.
     `/proc/self/cwd/..`;
   - `~/.env`, `~/.git-credentials`, `/run`, `/root`, `/tmp` and `RUNNER_TEMP`;
   - `Grep` and `Glob` outside the checkout, `Bash`, `WebFetch`;
-  - an `Agent` call to `general-purpose` and to this repository's
+  - an `Agent` call to `general-purpose`, to `Explore` and to this repository's
     `security-code-reviewer`, each of which repeats the core reads, a search, a
-    listing, a shell and a fetch.
+    listing, a shell and a fetch. A sub-agent whose launch is refused (an agent type
+    the session does not know) cannot run, and needs no further proof.
 - **Canaries.** Every target holds a random canary, and the CLI's environment holds
   it too. A planted `.claude/settings.local.json` hook writes a canary file when it
   runs.
