@@ -51,7 +51,7 @@ ENGINE_ARGS = [
     "--setting-sources", "user",
     "--tools", "Read,Agent",
     "--permission-mode", "dontAsk",
-    "--allowedTools", "Read,Task",
+    "--allowedTools", "Read,Agent",
     "--json-schema", json.dumps(publication.SCHEMA, separators=(",", ":")),
     "--model", "claude-opus-5-5",
 ]
@@ -287,7 +287,7 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "828aa3f68b54e1989bbf71b1c70a5d581f885e8bea9b62bbc131e7e7dbed3c27"
+REVIEWED_WORKFLOW_SHA256 = "45921d914f24bc747140cb2f49bac5df022d9bbcd0c82ecaebb6dce70cf35cf0"
 
 
 def _keyed(value):
@@ -1236,9 +1236,11 @@ MUTATIONS = {
 }
 
 EXTRA = {
-    "bash-allowed": ("engine-tools", lambda w, r: replace_arg(w, "Read,Task", "Bash,Read,Task")),
+    "bash-allowed": ("engine-tools", lambda w, r: replace_arg(
+        w, '--allowedTools "Read,Agent"', '--allowedTools "Bash,Read,Agent"')),
     "comment-tool": ("engine-tools", lambda w, r: replace_arg(
-        w, "Read,Task", "Read,Task,mcp__github_comment__update_claude_comment")),
+        w, '--allowedTools "Read,Agent"',
+        '--allowedTools "Read,Agent,mcp__github_comment__update_claude_comment"')),
     "second-mode": ("engine-tools", lambda w, r: replace_arg(
         w, "--model", "--permission-mode acceptEdits\n--model")),
     "all-tools": ("engine-tools", lambda w, r: replace_arg(w, '--tools "Read,Agent"\n', "")),

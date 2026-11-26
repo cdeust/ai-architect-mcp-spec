@@ -78,14 +78,16 @@ already uses.
   so their pushes are reviewed. With bots allowed, the action authenticates git
   through a helper rather than a token in the remote URL (`git-config.ts`).
 - **Tools.** `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents,
-  so tools that need no permission (a cloud routine through RemoteTrigger, a
+  so tools that need no permission (a cloud scheduled task through RemoteTrigger, a
   message, a notification) are not offered at all; `--allowedTools` only pre-approves.
   The managed settings also deny, as defence in depth should the flag be lost, the
   shells (Bash, PowerShell), Grep, Glob, LSP, the MCP resource tools, and the tools
   that need no permission, act outside the session or run work: RemoteTrigger,
   SendMessage, PushNotification, CronCreate, CronDelete, ScheduleWakeup, Skill,
   EnterWorktree, SendFeedback, SendUserFile, ShareOnboardingGuide, Artifact,
-  Projects, Workflow and Monitor. Other tools that need no permission are not listed;
+  Workflow and Monitor, plus the legacy names Projects and MultiEdit (they occur in
+  the CLI binary but not in the current tools reference; denying a name that is not
+  a tool only prints a startup warning). Other tools that need no permission are not listed;
   they are local, or need Remote Control or a cloud session. The Claude Code docs
   apply `Read` deny rules to Grep and Glob only for the folder a search starts from,
   so a search from `/` could reach a denied file, and tools that need no permission
@@ -170,7 +172,7 @@ handled here" for a rename).
 | --- | --- | --- |
 | Spoofing: fork or Dependabot code gets the subscription token | Only `pull_request` triggers it, never `pull_request_target`. The job `if` is the trust rule of `claude-review.yml` (a head in this repository, not a draft, the actor is not `dependabot[bot]`), plus: the author is not `dependabot[bot]`. | contracts `trigger`, `trusted-authors`; mutations `fork-allowed`, `dependabot-author` and a `pull_request_target` trigger |
 | Tampering: the PR's `.claude/`, `CLAUDE.md`, hooks or scripts run in the review | Both jobs check out `main` with `persist-credentials: false`, and every script and instruction file comes from it. In agent mode the PR head is never checked out, and the action restores its sensitive paths from the base anyway (`restore-config.ts`). Root-owned, read-only managed settings disable all hooks. No step runs after the engine in its job. The whole parsed workflow is pinned by a digest in the tests, so changing an extra step, an env mapping or a run script needs a deliberate edit of that digest in the same PR. It does not stop a trusted author: a `pull_request` run follows the PR's own workflow, as for `claude-review.yml`. | `test_the_workflow_is_exactly_the_reviewed_one`; contracts `checkout-main`, `managed-settings` (the exact install script), `order`, `engine-inputs`; mutations `head-checkout-added`, `publish-on-head`, `settings-writable`, `step-after-engine`, `track_progress`, and removing the install step |
-| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents. It has no shell either: `--tools` offers none, and the managed settings deny `Bash` and `PowerShell`. `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs and arguments are an exact set. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, `--permission-mode auto`, `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
+| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents. It has no shell either: `--tools` offers none, and the managed settings deny `Bash` and `PowerShell`. `--permission-mode dontAsk` is given once, and `--strict-mcp-config` is set. It has no edit, write or web tool, and the `github_ci` and `github_file_ops` servers are denied. The engine's inputs are an exact map and its arguments an exact ordered list. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, `engine-tools` (`--permission-mode auto`), `second-mode`, `no-strict-mcp`, `no-schema`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards` |
 | Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`. It then turns every line ending into a newline and removes control, format, non-spacing and enclosing marks. It then puts a zero-width space after every `@` and every `#` before a digit, replaces backticks, and turns a `Verdict:` at the start of a line into `Verdict​:`, whatever its case. Each prose field then becomes one code span on one line, which renders no link, reference, mention or HTML. Paths are shown as ASCII escapes. In this repository, `@codex review` posted by `github-actions[bot]` is the Codex request channel. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only. | `PublishTests`: hostile text with lookalikes, joiners and combining marks, and the resolver's own `_claude_verdicts` reading a published comment as if `claude[bot]` had written it. Also `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts`. |
 | Information disclosure: the token reaches a comment, a log or an artifact (the repository is public) | Managed settings deny reads of `/proc`, `/sys`, `/dev`, `/etc`, `/tmp`, `/var`, `/opt`, the runner install directories, `RUNNER_TEMP`, the action directory, `~/.claude`, `~/.claude.json`, `~/.config`, `~/.local`, `~/.ssh`, `~/.docker`, `~/.npmrc`, `~/.gitconfig` and every `.git/` directory. This is a deny list over the action's bare `Read` allow. Whether the CLI resolves links before it matches these rules has not been observed. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set. `publish` holds no secret, and no artifact is uploaded. | contracts `secrets`, `engine-scrub`; mutations `second-secret`, `all-secrets` (`toJSON(secrets)`), `indexed-secret`, `secret-in-publish`; the exact deny list; `test_the_input_folder_is_outside_git_which_the_engine_may_not_read` |
 | Tampering: an upstream action is changed | Every `uses:` is pinned to a full commit SHA with a version comment, and Dependabot (`github-actions`) updates both. The local quota action is main's copy. | contracts `unpinned`, `pin-comment`; mutation `@main` |
@@ -182,7 +184,8 @@ handled here" for a rename).
 | Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding whose shape, types, path, category or ranges break it, cuts prose to its bound, and refuses an output whose shape breaks it; the attempt still counts. If the engine enforces the bounds, the worst-case JSON stays under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. If it does not, an oversized output makes `publish` fail at start, which is closed: no comment, and the attempt counts. The comment stays under 60,000 characters, under GitHub's 65,536: whole findings are dropped, the drop is stated, and the run link is kept. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
 
 Each contract is a named check over the parsed workflow. The mutation tests
-remove each guard in turn and require the matching check to fail
+remove each workflow guard in turn and require the matching check to fail; the
+managed settings are pinned by exact equality
 (`SecurityReviewMutationTests`).
 
 ## Not proven before the first real run
@@ -211,7 +214,7 @@ remove each guard in turn and require the matching check to fail
 - Cost, beyond the per-PR cap: concurrency is per PR, so several PRs pushed at
   once run their engines at the same time, from quota readings taken before any
   of them started. A run is admitted with any headroom above 0%. A run has no turn
-  bound other than its 30-minute timeout, and Task sub-agents run within it. A
+  bound other than its 30-minute timeout, and sub-agents run within it. A
   shared concurrency group, a quota reserve or a turn bound each needs an owner
   decision on the value.
 - Renaming the engine step, the publish step or their jobs: attempts are matched by
