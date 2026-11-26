@@ -51,36 +51,6 @@ class Word:
         return bool(match) and (self.literal is None or match.end() <= self.literal)
 
 
-def _closing(source, start, opening, closing):
-    """Index after the bracket closing source[start-1], honouring nested quotes."""
-    depth, i = 1, start
-    while i < len(source):
-        char = source[i]
-        if char == "\\":
-            i += 2
-            continue
-        if char == "'":
-            i = source.index("'", i + 1) + 1
-            continue
-        if char == '"':
-            i = _closing_quote(source, i + 1) + 1
-            continue
-        depth += {opening: 1, closing: -1}.get(char, 0)
-        i += 1
-        if depth == 0:
-            return i
-    raise PolicyError("Unbalanced substitution in privileged script")
-
-
-def _closing_quote(source, start):
-    i = start
-    while i < len(source) and source[i] != '"':
-        i += 2 if source[i] == "\\" else 1
-    if i >= len(source):
-        raise PolicyError("Unterminated double quote in privileged script")
-    return i
-
-
 def _expansion(source, i, word):
     """Read the expansion at source[i] == '$'; return the index after it."""
     nxt = source[i + 1:i + 2]
@@ -88,7 +58,14 @@ def _expansion(source, i, word):
         end = ARITHMETIC.match(source, i + 1).end()
         word.text += source[i:end]
     elif nxt == "(":
-        end = _closing(source, i + 2, "(", ")")
+        # The substitution ends where lex, reading as Bash does (quotes,
+        # comments, nested substitutions), finds its closing parenthesis.
+        closed = []
+        for _ in lex(source, i + 2, closed):
+            pass
+        if not closed:
+            raise PolicyError("Unbalanced substitution in privileged script")
+        end = closed[0]
         word.subshells.append(source[i + 2:end - 1])
         word.text += source[i:end]
     elif nxt == "{":
@@ -133,9 +110,13 @@ def _double_quoted(source, i, word):
 OPERATORS = ("&&", "||", "<<<", ">>", ">&", ">", "|", ";", "\n", "(", ")")
 
 
-def lex(source):
-    """Yield Word objects and operator strings, as Bash would split the script."""
-    i, word = 0, None
+def lex(source, start=0, closed=None):
+    """Yield Word objects and operator strings, as Bash would split the script.
+
+    With a list as closed, read the body of a command substitution opened just
+    before start: stop at its closing parenthesis and append the index after it.
+    """
+    i, word = start, None
     while i < len(source):
         char = source[i]
         if char in " \t":
@@ -174,6 +155,11 @@ def lex(source):
             if word is not None:
                 yield word
                 word = None
+            if closed is not None and operator == ")":
+                # The first ")" closes it: inside, "(" can only open an array
+                # literal, which commands() then finds unclosed and refuses.
+                closed.append(i + 1)
+                return
             yield operator
             i += len(operator)
         else:
@@ -216,6 +202,8 @@ def commands(tokens):
         elif token == "(":
             if not (words and words[-1].assignment() and words[-1].text.endswith("=")):
                 raise PolicyError("Subshell or grouping in privileged script")
+            if ")" not in tokens[i:]:
+                raise PolicyError("Unclosed array literal in privileged script")
             end = tokens.index(")", i)
             words[-1].array = tokens[i + 1:end]
             i = end

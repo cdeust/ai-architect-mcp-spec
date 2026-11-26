@@ -55,6 +55,11 @@ HOSTILE_SCRIPTS = (
     "node --version", "sh release-notes.md", "bash release-notes.md", "python3 local.py",
     "curl --config release-notes.md", "./tool", "echo ok && other-tool",
     "if [ -f input ]; then other-tool; fi", "value=$(other-tool)", 'echo "$(other-tool)"',
+    # A comment or a nested quote inside a substitution hides where it ends.
+    "echo $(echo ok # )'\nbash ./release-notes.md\n) # '\n",
+    'echo "$(echo ok # )"\nbash ./release-notes.md\n)"\n',
+    'echo "$(echo ")"; bash ./release-notes.md)"\n',
+    "echo $(assets=(a b); bash ./release-notes.md)\n", "assets=(a b\n",
     # B1: text rewriting before splitting.
     "echo ok\\\\\nbash ./release-notes.md\n",
     'echo "ok\n# "; bash ./release-notes.md; echo "\ndone"',
@@ -502,7 +507,8 @@ class RegistryChecks(unittest.TestCase):
 # a reader dropping the wrong text would miss.
 TRICKY = ('echo "ok\n# "; sleep 0; echo "\ndone"\n', "echo 'ok\n# '; sleep 0; echo '\ndone'\n",
           "echo ok \\\n  more; sleep 0\n", "echo a # sleep is a comment here\nsleep 0\n",
-          "echo ok#; sleep 0\n")
+          "echo ok#; sleep 0\n", "echo $(echo ok # )'\nsleep 0\n) # '\n",
+          'echo "$(echo ok # )"\nsleep 0\n)"\n', 'echo "$(echo ")"; sleep 0)"\n')
 TRACE_ENV = {"ARTIFACT_ID": "23", "ARCHIVE_SHA256": "a" * 64, "GITHUB_RUN_ID": "42", "REPOSITORY": "o/r",
              "GH_REPO": "o/r", "TAG": "v1.2.3", "COMMIT": "a" * 40, "DIGEST": "a" * 64, "EVENT_NAME": "push",
              "MCP_PUBLISHER_VERSION": "v1.8.1", "MCP_PUBLISHER_SHA256": "a" * 64, "GH_TOKEN": "fixture"}
@@ -525,9 +531,11 @@ class PolicyAgreesWithBash(unittest.TestCase):
             (root / "mcp-publisher").chmod(0o755)
             output = root / "output"
             output.touch()
-            env = {**TRACE_ENV, "PATH": str(stubs), "RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output),
-                   "PS4": "+TRACE "}
-            prelude = "command_not_found_handle() { echo \"+TRACE $1\" >&2; return 0; }\n"
+            env = {**TRACE_ENV, "PATH": str(stubs), "RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}
+            # The script sets PS4: bash does not always import it from the environment
+            # (the Codex review's run on bash 5.2.21 got an empty trace).
+            prelude = ("PS4='+TRACE '\n"
+                       "command_not_found_handle() { echo \"+TRACE $1\" >&2; return 0; }\n")
             result = subprocess.run(["/bin/bash", "-x", "-c", prelude + script], cwd=root, env=env,
                                     capture_output=True, text=True, timeout=60)
             ran = set()
