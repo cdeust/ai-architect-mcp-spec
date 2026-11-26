@@ -56,7 +56,7 @@ const handleConcludeVerification = async ({ scope, section_type, verdicts, conse
     //   defaulted to empty string when omitted by the caller).
     // Invariant: parse errors never abort the pipeline — malformed claims are skipped.
     let claimsMap;
-    if (claims !== undefined && claims.length > 0) {
+    if (claims !== undefined) {
         const map = new Map();
         for (const raw of claims) {
             const parsed = ClaimSchema.safeParse({

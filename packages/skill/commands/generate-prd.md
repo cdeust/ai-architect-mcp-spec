@@ -125,10 +125,11 @@ state is large (big codebase grounding, many clarification turns, long section
 markdown), the response degrades gracefully in priority order — least-relevant
 detail first — until it fits. Degradation is observable: a `__bounded` block
 lists every field that was omitted or elided and how many chars it reclaimed,
-and any omitted blob carries a `hint` for re-fetching it. The diagnostic
+and any omitted blob carries a `hint` naming where to read it. The diagnostic
 skeleton (`errors[]`, statuses, scalars) is **never** shed, so the failure trail
 always survives. Shed order: `codebase_grounding`/`prd_validation` →
-oldest `clarifications` → `sections[].content`.
+oldest `clarifications` → `sections[].content` → `jira_result.tickets` →
+`passed_define`.
 
 To retrieve the full code-graph grounding that `format: "full"` sheds first,
 call:

@@ -1767,24 +1767,39 @@ jobs:
           # exec makes this shell the agent's command. The runner's SIGINT and SIGTERM
           # (sent to this PID alone: actions/runner ProcessInvoker) reach the traps
           # below, and after a SIGKILL the agent stops by itself once its command is gone.
-          # The socket gets a private directory under TMPDIR or /tmp: RUNNER_TEMP can
-          # be too deep for sun_path (104 bytes on macOS, 108 on Linux).
-          agent_dir=$(mktemp -d "${TMPDIR:-/tmp}/release-agent.XXXXXX")
+          # The socket gets a private directory under TMPDIR, or /tmp when TMPDIR is
+          # unset or too deep for sun_path (104 bytes on macOS, 108 on Linux, NUL
+          # included): RUNNER_TEMP can be that deep. 27 bytes: /release-agent.XXXXXX/agent.
+          base=${TMPDIR:-/tmp}
+          [ "$(( ${#base} + 27 ))" -le 100 ] || base=/tmp
+          agent_dir=$(mktemp -d "$base/release-agent.XXXXXX")
           export AGENT_DIR="$agent_dir"
           exec ssh-agent -a "$agent_dir/agent" bash -euo pipefail <<'PUBLISH'
           publisher=
+          # stop PID TENTHS: SIGTERM, wait at most TENTHS/10 s, then SIGKILL (status 1).
+          stop() {
+            kill -TERM "$1" 2>/dev/null || return 0
+            for _ in $(seq "$2"); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
+            kill -KILL "$1" 2>/dev/null || :
+            return 1
+          }
           release() {
             status=$?
             trap '' INT TERM
-            kill -TERM "$publisher" 2>/dev/null || :
-            wait "$publisher" 2>/dev/null || :
-            kill -TERM "$SSH_AGENT_PID" 2>/dev/null || :
-            # 2 s of grace keeps a stuck agent's SIGKILL well inside the runner's 7.5 s.
-            for _ in $(seq 20); do kill -0 "$SSH_AGENT_PID" 2>/dev/null || break; sleep 0.1; done
-            if kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
-              kill -KILL "$SSH_AGENT_PID"
+            # The key goes first: nothing the publisher does can delay the agent's end,
+            # which stays within the runner's 2.5 s SIGTERM window.
+            if ! stop "$SSH_AGENT_PID" 10; then
               echo "::error::the signing agent did not stop on SIGTERM"
               status=1
+            fi
+            if ! stop "$publisher" 10; then
+              echo "::error::the publisher did not stop on SIGTERM"
+              status=1
+            fi
+            # A publisher killed while git ran leaves git's session (git, sh, ssh) behind.
+            if [ -f "$AGENT_DIR/transport" ]; then
+              kill -KILL -- "-$(cat "$AGENT_DIR/transport")" 2>/dev/null || :
+              rm -f -- "$AGENT_DIR/transport"
             fi
             rm -f -- "$SSH_AUTH_SOCK"
             rmdir -- "$AGENT_DIR"
@@ -1809,7 +1824,6 @@ jobs:
           import json
           import os
           import re
-          import signal
           import subprocess
           import sys
           from pathlib import Path
@@ -1821,12 +1835,14 @@ jobs:
               # (dash keeps the shell, and with it ssh, alive after git is killed).
               process = subprocess.Popen(["git", *args], text=True, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, start_new_session=True)
+              # If the publisher is stopped or killed while git runs, the step's
+              # release() kills this whole session from the recorded group ID.
+              transport = Path(os.environ["AGENT_DIR"]) / "transport"
+              transport.write_text(str(process.pid))
               try:
                   stdout, stderr = process.communicate()
-              except BaseException:
-                  os.killpg(process.pid, signal.SIGKILL)
-                  process.wait()
-                  raise
+              finally:
+                  transport.unlink(missing_ok=True)
               if check and process.returncode:
                   raise subprocess.CalledProcessError(process.returncode, process.args, stdout, stderr)
               return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
@@ -1925,8 +1941,6 @@ jobs:
 
 
           if __name__ == "__main__":
-              # SystemExit unwinds through git(), which kills the transport's session.
-              signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
               sys.exit(main())
           PY
           publisher=$!

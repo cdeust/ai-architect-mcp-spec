@@ -46,7 +46,10 @@ const handleSubmitActionResult: ToolCallback<ReturnType<typeof submitActionResul
       if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) ||
           isRetiredImplementationAnswer(found.run.state, result)) return architectOsRequired();
       const { state, action } = found.run;
-      const out = state.semantic_review_requested && state.current_step === "complete" && action
+      // A finished run whose terminal action carries its verdict (automatic
+      // review, or a kept Define) answers a retried submission with that
+      // action: re-stepping would replace it with a bare "already complete".
+      const out = (state.semantic_review_requested || state.passed_define) && state.current_step === "complete" && action
         ? { state, action, messages: [] }
         : step({ state: recordLegacyDefineRefusal(state, action), result });
       // Drain the evidence queues BEFORE the state is kept: a state on

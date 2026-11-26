@@ -173,9 +173,10 @@ describe("end-to-end smoke run", () => {
       "requirements",
       "acceptance_criteria",
       "testing",
-      "jira_tickets",
     ]);
-    expect(standard.finalState.sections).toHaveLength(12);
+    expect(tiny.finalState.jira_result).toMatchObject({ status: "passed" });
+    expect(standard.finalState.sections).toHaveLength(11);
+    expect(standard.finalState.jira_result).toMatchObject({ status: "passed" });
 
     // What the host is asked to do: fewer subagent batches, fewer steps.
     const spawns = (result: SmokeRunResult) =>

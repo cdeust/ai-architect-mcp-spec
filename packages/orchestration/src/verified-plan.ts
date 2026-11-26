@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DefineHandoffV1 } from "@prd-gen/core";
 import { z } from "zod";
+import { defineEnvelopeText } from "./define-handoff.js";
 
 // Source: architect-os fcf9d2c6, packages/sandbox/src/step-record.ts (isStepName).
 const StepName = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
@@ -40,8 +41,8 @@ export function verifyPlanProposal(
 }
 
 /** Both consumers hash the same compact UTF-8 JSON file including its terminating LF. */
-function jsonFileSha256(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value) + "\n").digest("hex");
+function fileSha256(text: string): string {
+  return createHash("sha256").update(text + "\n").digest("hex");
 }
 
 /** Derive a one-step traceability plan. The caller supplies a validated Define projection. */
@@ -64,8 +65,8 @@ export function buildVerifiedPlan(define: DefineHandoffV1, intent: string, step:
   const binding = {
     version: 1 as const,
     run_id: define.run_id,
-    define_sha256: jsonFileSha256({ handoff: define }),
-    proposal_sha256: jsonFileSha256(proposal),
+    define_sha256: fileSha256(defineEnvelopeText(define)),
+    proposal_sha256: fileSha256(JSON.stringify(proposal)),
   };
-  return { verified_plan: { ...binding, plan_sha256: jsonFileSha256(binding), proposal } };
+  return { verified_plan: { ...binding, plan_sha256: fileSha256(JSON.stringify(binding)), proposal } };
 }
