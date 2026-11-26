@@ -17,8 +17,7 @@ const packageManager = manifest.packageManager ?? [...ci.unit.matchAll(installer
 const REQUIRED = [
   ["npm", "install", "-g", packageManager],
   ["pnpm", "install", "--frozen-lockfile"],
-  ["pnpm", "build"],
-  ["pnpm", "bundle"],
+  ["node", "scripts/check-dist-in-sync.mjs", "--rebuild"],
   ["node", "scripts/check-dist-in-sync.mjs"],
   ["pnpm", "run", "test:portable"],
   ["pnpm", "run", "test:portable:runtime"],

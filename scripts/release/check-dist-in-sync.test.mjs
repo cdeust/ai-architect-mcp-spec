@@ -72,7 +72,7 @@ test("fails when the source changed and the dist was not rebuilt before the comm
   const run = check(root);
   expect(run.status).toBe(1);
   expect(run.stderr).toContain(" M packages/app/dist/a.js");
-  expect(run.stderr).toContain("Run 'pnpm build && pnpm bundle' and commit");
+  expect(run.stderr).toContain("Run 'pnpm clean && pnpm build && pnpm bundle' and commit");
 });
 
 test("fails when only the shipped bundle is stale", () => {
@@ -207,7 +207,7 @@ function copyOfCommit(files) {
 
 /** Runs the rebuild form with `build.cjs` (a script of the copy) as the build. */
 function rebuild(root, buildSource) {
-  write(root, "build.cjs", buildSource);
+  write(root, "build.cjs", write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]) + write_("mcp-server/index.js", COMMITTED["mcp-server/index.js"]) + buildSource);
   const run = spawnSync(process.execPath, [join(root, "scripts/check-dist-in-sync.mjs"), "--rebuild", "--", process.execPath, "build.cjs"], { cwd: root, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
   expect(run.error).toBeUndefined();
   silentPass(run);
@@ -346,13 +346,47 @@ test.skipIf(process.platform === "win32")("rebuild form: distinguishes a regular
 test.skipIf(process.platform === "win32")("rebuild form: compares a stable relative symbolic link as an artifact", () => {
   const root = copyOfCommit(COMMITTED);
   symlinkSync("a.js", join(root, "packages/app/dist/b.js"));
-  expect(rebuild(root, "").status).toBe(0);
+  expect(rebuild(root, 'require("node:fs").symlinkSync("a.js", "packages/app/dist/b.js");').status).toBe(0);
 });
 
 test.skipIf(process.platform === "win32")("rebuild form: accounts for a changed link target as a changed artifact", () => {
   const root = copyOfCommit({ ...COMMITTED, "packages/app/dist/b.js": COMMITTED["packages/app/dist/a.js"] });
   symlinkSync("a.js", join(root, "packages/app/dist/c.js"));
-  const run = rebuild(root, 'const fs = require("node:fs"); fs.unlinkSync("packages/app/dist/c.js"); fs.symlinkSync("b.js", "packages/app/dist/c.js");');
+  const run = rebuild(root, write_("packages/app/dist/b.js", COMMITTED["packages/app/dist/a.js"]) + 'require("node:fs").symlinkSync("b.js", "packages/app/dist/c.js");');
   expect(run.status, run.stderr).toBe(1);
   expect(run.stderr).toContain("M packages/app/dist/c.js");
+});
+
+test("rebuild form: reports committed output that a clean build no longer emits", () => {
+  const root = copyOfCommit({
+    ...COMMITTED,
+    "packages/app/dist/retired.js": "old module\n",
+    "packages/retired/dist/index.js": "removed package\n",
+  });
+  write(root, "packages/app/tsconfig.tsbuildinfo", "previous compilation");
+  const run = rebuild(root, 'if (require("node:fs").existsSync("packages/app/tsconfig.tsbuildinfo")) throw Error("Incremental state survived clean");');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("D packages/app/dist/retired.js");
+  expect(run.stderr).toContain("D packages/retired/dist/index.js");
+});
+
+test.skipIf(process.platform === "win32")("rebuild form: names a non-regular artifact and stops before the build", () => {
+  const root = copyOfCommit(COMMITTED);
+  const path = "packages/app/dist/output.pipe";
+  const pipe = spawnSync("mkfifo", [join(root, path)], { encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
+  expect(pipe.status, pipe.stderr).toBe(0);
+  const run = rebuild(root, 'throw new Error("build unexpectedly ran");');
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain(`Generated artifact is not a regular file or link: ${path}`);
+  expect(run.stderr).not.toContain("build unexpectedly ran");
+});
+
+test.skipIf(process.platform === "win32")("rebuild form: refuses a linked bundle directory before cleaning its files", () => {
+  const bundle = copyOfCommit({ "mcp-server/index.js": "bundle contents" });
+  const root = copyOfCommit({ "packages/app/dist/a.js": "package output" });
+  symlinkSync(join(bundle, "mcp-server"), join(root, "mcp-server"), "dir");
+  const run = rebuild(root, "");
+  expect(run.status, run.stderr).toBe(1);
+  expect(run.stderr).toContain("Cannot clean a linked bundle directory: mcp-server");
+  expect(readFileSync(join(bundle, "mcp-server/index.js"), "utf8")).toBe("bundle contents");
 });

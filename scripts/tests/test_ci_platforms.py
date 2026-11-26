@@ -123,7 +123,7 @@ class PlatformCommandsTest(unittest.TestCase):
                 self.assertNotEqual(found, -1, f"{step} missing or out of order")
                 position = found + len(step)
         # Linux already runs each of them in its own job.
-        for step in ("pnpm build", "pnpm bundle", "bash scripts/release/smoke-mcpb.sh"):
+        for step in ("node scripts/check-dist-in-sync.mjs --rebuild", "bash scripts/release/smoke-mcpb.sh"):
             self.assertIn(step, self.ci["e2e"])
         self.assertIn("pnpm test:coverage", self.ci["unit"])
 

@@ -130,16 +130,17 @@ posixTest("drains a failed parallel batch before removing any process handler", 
     const pilot = JSON.parse(await readFile(join(cwd, "real-run/plans/pilot.json"), "utf8"));
     pilot.arms = [{ ...pilot.arms[0], name: "parallel", mode: "parallel" }];
     await writeFile(file, JSON.stringify(pilot));
-    const { batch, start } = await parallelStandIn(file, out, [
-      'echo $$ >> "$OUT/ready"',
-      'if /bin/mkdir "$OUT/claimed" 2>/dev/null; then',
-      '  while [ ! -f "$OUT/release" ]; do /bin/sleep 0.05; done',
-      '  exec /bin/cat "$OUT/reply-$START"', 'fi', 'exec /bin/sleep 30',
-    ]);
+    // Register the wait before announcing readiness. Each peer stays alive until
+    // the host kills it; only the elected child can release a complete reply.
+    const child = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
+    const { batch, start } = await parallelStandIn(file, out, ['exec "$NODE" "$BATCH_CHILD"']);
     let writes = 0;
-    const host = harness({ PATH: out, OUT: out, START: String(start) }, {
+    const host = harness({ PATH: out, OUT: out, START: String(start), NODE: process.execPath, BATCH_CHILD: child }, {
       append(path, data, options) {
-        if (writes++ === start) throw new Error("journal unavailable");
+        if (writes++ === start) {
+          expect(JSON.parse(String(data)).error).toBeNull();
+          throw new Error("journal unavailable");
+        }
         appendFileSync(path, data, options);
       },
     });

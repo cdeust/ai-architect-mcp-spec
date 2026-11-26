@@ -114,7 +114,7 @@ for the draft pull request, batch pushes and the move to ready for review.
 
 `pnpm gate` judges a commit before it is pushed. It runs the checks listed
 in `delivery-gate.json` (build, which also bundles and fails when the committed
-`dist` or `mcp-server/index.js` differ from what the source builds
+`dist` or `mcp-server/index.js` differ from a clean rebuild, including files no longer emitted by the compiler
 (`scripts/check-dist-in-sync.mjs --rebuild`), the unit suite with coverage,
 perf, the Python suites of `scripts/tests`), then mutation testing of the
 production files the commits touch (`stryker.config.json`). Every mutant

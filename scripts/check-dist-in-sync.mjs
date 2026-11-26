@@ -1,6 +1,6 @@
 // Fails when the generated files a user runs differ from what the source builds.
 //
-// Run it right after `pnpm build && pnpm bundle`. The committed `dist/` of each
+// The committed `dist/` of each
 // package and the shipped `mcp-server/index.js` are generated files that are
 // tracked in git; a pull request that changes a source file and does not commit
 // the rebuild leaves them stale, and users execute the stale ones. After a build
@@ -10,7 +10,7 @@
 //
 // Two forms, one verdict ("rebuilding changes nothing"):
 //   node scripts/check-dist-in-sync.mjs            after a build, compare the tree with the commit by git (CI);
-//   node scripts/check-dist-in-sync.mjs --rebuild  fingerprint the generated files, rebuild, compare (the delivery
+//   node scripts/check-dist-in-sync.mjs --rebuild  fingerprint the generated files, clean, rebuild, compare (the delivery
 //                                                  gate: it judges a copy of the committed tree that has no .git).
 // `--rebuild -- <command> [args]` replaces the default `pnpm build` then `pnpm bundle`.
 //
@@ -98,6 +98,12 @@ function statIfPresent(path) {
   }
 }
 
+function packageDirectories() {
+  if (!statIfPresent("packages")?.isDirectory()) return [];
+  return readdirSync(join(ROOT, "packages"), { withFileTypes: true })
+    .filter(entry => entry.isDirectory()).map(entry => `packages/${entry.name}`);
+}
+
 /** Enumerate generated paths independently of which packages had committed output. */
 function generatedPaths() {
   const found = [];
@@ -111,11 +117,9 @@ function generatedPaths() {
       else found.push(path);
     }
   };
-  if (statIfPresent("packages")?.isDirectory()) {
-    for (const entry of readdirSync(join(ROOT, "packages"), { withFileTypes: true })) {
-      const dist = `packages/${entry.name}/dist`;
-      if (entry.isDirectory() && statIfPresent(dist)?.isDirectory()) walk(dist);
-    }
+  for (const directory of packageDirectories()) {
+    const dist = `${directory}/dist`;
+    if (statIfPresent(dist)?.isDirectory()) walk(dist);
   }
   return found;
 }
@@ -187,6 +191,16 @@ function ignored(paths) {
 function rebuildProblems(commands) {
   const before = fingerprints(generatedPaths());
   if (before.size === 0) return { compared: 0, found: ["no generated file to compare: the tree has no bundle and no dist"] };
+  // The npm manifest and lock are stamp-bundle-version inputs. Only the bundle and
+  // compiled distributions are fully generated. Drop tsc's incremental state with
+  // its outputs (the same pair as each package's clean command), including dist
+  // in a directory whose package manifest was removed.
+  if (statIfPresent("mcp-server")?.isSymbolicLink()) throw new Error("Cannot clean a linked bundle directory: mcp-server");
+  rmSync(join(ROOT, "mcp-server/index.js"), { force: true });
+  for (const directory of packageDirectories()) {
+    rmSync(join(ROOT, directory, "dist"), { recursive: true, force: true });
+    rmSync(join(ROOT, directory, "tsconfig.tsbuildinfo"), { force: true });
+  }
   for (const [program, ...args] of commands) {
     const run = spawnSync(program, args, { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: BUILD_TIMEOUT_MS });
     if (run.error || run.status !== 0) return { compared: before.size, found: [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`] };
@@ -215,7 +229,7 @@ const { compared, found } = rebuild ? rebuildProblems(commands) : problems();
 if (found.length || compared === 0) {
   console.error(`The committed build output is out of date with the source (${found.length} problem(s), ${compared} generated file(s) compared):`);
   for (const line of found) console.error(`  ${line}`);
-  console.error("Run 'pnpm build && pnpm bundle' and commit the result.");
+  console.error("Run 'pnpm clean && pnpm build && pnpm bundle' and commit the result (remove obsolete package output too).");
   process.exit(1);
 }
 console.log(`Compared ${compared} generated file(s): the committed dist and bundle match the build of the source.`);
