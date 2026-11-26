@@ -38,6 +38,7 @@ import os
 import secrets
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -88,8 +89,48 @@ def last_head(runs: list[Record]) -> str:
     return max(runs, key=lambda run: run["created_at"])["head_sha"] if runs else ""
 
 
-def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
-                   head_ref: str, head_sha: str) -> list[Record]:
+@dataclass(frozen=True)
+class Event:
+    """The pull request event a budget is computed for."""
+
+    repo: str
+    pr: int
+    run_id: int
+    run_attempt: int
+    head_ref: str
+    head_sha: str
+
+
+@dataclass(frozen=True)
+class Revisions:
+    """The commits a round diffs: the PR's base and head, and the last published review."""
+
+    base: str
+    head: str
+    reviewed: str = ""
+
+
+def listed_runs(gh: Gh, event: Event) -> list[Record]:
+    """This workflow's pull_request runs on the event's head branch, newest first.
+
+    The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
+    which hold the attempts, would fall off. Refuse rather than undercount.
+    """
+    jq = (
+        ".total_count as $total | .workflow_runs[] | {id, head_sha, created_at, "
+        "prs: [.pull_requests[].number], total: $total}"
+    )
+    rows = records(gh([f"repos/{event.repo}/actions/workflows/{WORKFLOW}/runs", "--method",
+                       "GET", "--paginate", "--jq", jq, "-f", "event=pull_request",
+                       "-f", f"branch={event.head_ref}", "-f", f"per_page={PER_PAGE}"]))
+    unique = {row.get("id") for row in rows}
+    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)
+                 or len(unique) >= RUNS_LISTING_LIMIT):
+        raise BudgetError("the API lists fewer runs of this branch than it counts")
+    return rows
+
+
+def attempted_runs(gh: Gh, event: Event) -> list[Record]:
     """Earlier engine attempts on this PR, each with whether its review was published.
 
     Every run of this PR is read with all its attempts, finished or not (a re-run
@@ -97,49 +138,22 @@ def attempted_runs(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int,
     this run with its earlier attempts, so a re-run neither escapes the cap nor erases
     a spend. A step that has not finished has no conclusion and is not counted.
     """
-    jq = (
-        ".total_count as $total | .workflow_runs[] | {id, head_sha, created_at, "
-        "prs: [.pull_requests[].number], total: $total}"
-    )
-    text = gh(
-        [
-            f"repos/{repo}/actions/workflows/{WORKFLOW}/runs",
-            "--method",
-            "GET",
-            "--paginate",
-            "--jq",
-            jq,
-            "-f",
-            "event=pull_request",
-            "-f",
-            f"branch={head_ref}",
-            "-f",
-            f"per_page={PER_PAGE}",
-        ]
-    )
-    rows = records(text)
-    # The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
-    # which hold the attempts, would fall off. Refuse rather than undercount.
-    unique = {row.get("id") for row in rows}
-    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)
-                 or len(unique) >= RUNS_LISTING_LIMIT):
-        raise BudgetError("the API lists fewer runs of this branch than it counts")
     found, read = [], set()
-    for row in rows:
+    for row in listed_runs(gh, event):
         # Offset pagination can repeat a row when a run is created between pages.
         if row.get("id") in read:
             continue
         read.add(row.get("id"))
         if len(found) >= CAP:
             break  # the round is refused anyway; reading further only spends API calls
-        if pr not in row.get("prs", []):
+        if event.pr not in row.get("prs", []):
             continue
-        current = row.get("id") == run_id
-        for attempt in attempts(gh, repo, row["id"]):
-            if current and attempt["attempt"] >= run_attempt:
+        current = row.get("id") == event.run_id
+        for attempt in attempts(gh, event.repo, row["id"]):
+            if current and attempt["attempt"] >= event.run_attempt:
                 continue
             if attempt["engine"]:
-                found.append({**row, "head_sha": head_sha if current else row["head_sha"],
+                found.append({**row, "head_sha": event.head_sha if current else row["head_sha"],
                               "created_at": f"{row['created_at']}#{attempt['attempt']:04d}",
                               "published": attempt["published"]})
     return found
@@ -186,17 +200,17 @@ def stale(gh: Gh, repo: str, pr: int, head_sha: str) -> bool:
     return current != head_sha
 
 
-def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: str,
-           head_sha: str) -> Record:
+def budget(gh: Gh, event: Event) -> Record:
     # No bypass label: the review is advisory, a fourth one buys nothing the
     # merge waits for.
+    repo, pr, head_sha = event.repo, event.pr, event.head_sha
     if not SHA.fullmatch(head_sha):
         raise BudgetError("protocol")
     if stale(gh, repo, pr, head_sha):
         # A stated skip: nothing is counted, so no count can turn it red.
         return {"round": 0, "cap": CAP, "skip": "true", "reviewed_sha": "",
                 "head_reviewed": "false", "stale": "true"}
-    runs = attempted_runs(gh, repo, pr, run_id, run_attempt, head_ref, head_sha)
+    runs = attempted_runs(gh, event)
     result = decide(runs, [], cap=CAP)
     # A later round reviews only what changed since a review that was published;
     # an attempt that published nothing narrows nothing.
@@ -296,8 +310,7 @@ def _why(error: Exception) -> str:
     return f"{type(error).__name__} {getattr(error, 'returncode', '')} {first}".strip()
 
 
-def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
-          root: Path) -> bool:
+def diffs(gh: Gh, repo: str, revisions: Revisions, root: Path) -> bool:
     """Write the PR diff, and the diff since the last published review, into INPUT_DIR.
 
     A full diff that cannot be read is replaced by the PR's per-file patches; when those cannot
@@ -305,6 +318,7 @@ def diffs(gh: Gh, repo: str, base_sha: str, head_sha: str, reviewed_sha: str,
     comment never stands for a review of nothing. Returns whether the diff since the
     last review was written: without it, the round reviews the whole diff.
     """
+    base_sha, head_sha, reviewed_sha = revisions.base, revisions.head, revisions.reviewed
     accept = ["-H", "Accept: application/vnd.github.diff"]
     for sha in (base_sha, head_sha, *([reviewed_sha] if reviewed_sha else [])):
         if not SHA.fullmatch(sha):
@@ -345,8 +359,9 @@ def write_output(env, key: str, value: str) -> None:
 def main(argv: list[str]) -> int:
     env = os.environ
     if argv == ["budget"]:
-        result = budget(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
-                        int(env["RUN_ATTEMPT"]), env["HEAD_REF"], env["HEAD_SHA"])
+        result = budget(gh_api, Event(env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
+                                      int(env["RUN_ATTEMPT"]), env["HEAD_REF"],
+                                      env["HEAD_SHA"]))
         with open(output_file(env), "a", encoding="utf-8") as out:
             for key, value in result.items():
                 out.write(f"{key}={value}\n")
@@ -354,8 +369,8 @@ def main(argv: list[str]) -> int:
               + ("not run" if result["skip"] == "true" else "go"))
         return 0
     if argv == ["prompt"]:
-        since = diffs(gh_api, env["GH_REPO"], env["BASE_SHA"], env["HEAD_SHA"],
-                      env.get("REVIEWED_SHA", ""), Path(env["GITHUB_WORKSPACE"]))
+        revisions = Revisions(env["BASE_SHA"], env["HEAD_SHA"], env.get("REVIEWED_SHA", ""))
+        since = diffs(gh_api, env["GH_REPO"], revisions, Path(env["GITHUB_WORKSPACE"]))
         values = {**env, "REVIEWED_SHA": env.get("REVIEWED_SHA", "") if since else ""}
         write_output(env, "prompt", prompt(values))
         return 0

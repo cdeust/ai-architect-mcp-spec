@@ -472,7 +472,7 @@ HEAD = "f" * 40
 class BudgetTests(unittest.TestCase):
     def budget(self, runs, jobs, calls=None, head=HEAD, attempt=1, **gate):
         gh = fake_gh(runs, jobs, calls, current=gate.pop("current", head), **gate)
-        return security.budget(gh, "o/r", 7, 99, attempt, "feat", head)
+        return security.budget(gh, security.Event("o/r", 7, 99, attempt, "feat", head))
 
     def test_first_review_runs(self):
         self.assertEqual(self.budget([], {}), {"round": 1, "cap": 3, "skip": "false",
@@ -571,14 +571,14 @@ class BudgetTests(unittest.TestCase):
 
             with self.subTest(runs=runs_text, jobs=jobs_text), \
                     self.assertRaises(security.BudgetError):
-                security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD)
+                security.budget(gh, security.Event("o/r", 7, 99, 1, "feat", HEAD))
 
     def test_a_bad_head_or_pr_head_is_refused(self):
         for head, current in (("main", None), ("main", HEAD), (HEAD, "not-a-sha")):
             with self.subTest(head=head, current=current), \
                     self.assertRaises(security.BudgetError):
                 gh = fake_gh([], {}, current=current or head)
-                security.budget(gh, "o/r", 7, 99, 1, "feat", head)
+                security.budget(gh, security.Event("o/r", 7, 99, 1, "feat", head))
 
     def test_more_runs_than_listed_is_refused_not_undercounted(self):
         with self.assertRaises(security.BudgetError):
@@ -655,7 +655,7 @@ class JqFilterTests(unittest.TestCase):
               "steps": [{"name": security.ACTION_STEP, "conclusion": "failure"}]}])
 
     def test_the_run_filter_keeps_the_fields_the_budget_reads(self):
-        (jq,) = self.capture(lambda gh: security.attempted_runs(gh, "o/r", 7, 99, 1, "feat", SHA))
+        (jq,) = self.capture(lambda gh: security.attempted_runs(gh, security.Event("o/r", 7, 99, 1, "feat", SHA)))
         payload = {"total_count": 1, "workflow_runs": [
             {"id": 1, "status": "completed", "head_sha": SHA, "created_at": "t",
              "pull_requests": [{"number": 7}], "extra": 1}]}
@@ -674,7 +674,7 @@ class JqFilterTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp:
-            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
         payload = {"files": [{"filename": "a.ts", "patch": "@@ -1 +1 @@\n-x\n+y", "sha": "1"},
                              {"filename": "b.bin", "sha": "2"}]}
         self.assertEqual([json.loads(line) for line in self.jq(jq, payload).splitlines()],
@@ -722,8 +722,8 @@ class DiffTests(unittest.TestCase):
     def test_the_diffs_are_of_the_event_head_with_the_diff_media_type(self):
         calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            since = security.diffs(lambda a: calls.append(a) or "diff\n", "o/r", BASE,
-                                   "b" * 40, SHA, Path(tmp))
+            since = security.diffs(lambda a: calls.append(a) or "diff\n", "o/r",
+                                   security.Revisions(BASE, "b" * 40, SHA), Path(tmp))
             self.assertTrue(since)
             for rel in (security.PR_DIFF, security.SINCE_DIFF):
                 self.assertEqual((Path(tmp) / rel).read_text(), "diff\n")
@@ -747,7 +747,7 @@ class DiffTests(unittest.TestCase):
                 raise error
 
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:
-                self.assertFalse(security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp)))
+                self.assertFalse(security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp)))
                 text = (Path(tmp) / security.PR_DIFF).read_text()
                 self.assertTrue(text.startswith(security.PATCHES_NOTE))
                 self.assertIn("@@ -1 +1 @@", text)
@@ -763,7 +763,7 @@ class DiffTests(unittest.TestCase):
 
         # A file name holding "\n@@ " is not a hunk: only a non-empty patch counts.
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(security.BudgetError):
-            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
 
     def test_a_file_name_cannot_forge_diff_lines(self):
         def gh(args):
@@ -775,7 +775,7 @@ class DiffTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp:
-            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
             text = (Path(tmp) / security.PR_DIFF).read_text()
         self.assertNotIn("\n+forged", text)
         self.assertIn('diff --git "x\\n+forged\\n@@ y"', text)
@@ -789,7 +789,7 @@ class DiffTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp:
-            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
             text = (Path(tmp) / security.PR_DIFF).read_text()
         self.assertIn('diff --git "w"\n[no patch from the API', text)
 
@@ -798,7 +798,7 @@ class DiffTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(security.BudgetError):
-            security.diffs(refuse, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(refuse, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
 
     def test_a_missing_since_diff_makes_the_round_review_the_whole_diff(self):
         def gh(args):
@@ -807,7 +807,7 @@ class DiffTests(unittest.TestCase):
             return "diff"
 
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertFalse(security.diffs(gh, "o/r", BASE, "b" * 40, SHA, Path(tmp)))
+            self.assertFalse(security.diffs(gh, "o/r", security.Revisions(BASE, "b" * 40, SHA), Path(tmp)))
             self.assertFalse((Path(tmp) / security.SINCE_DIFF).exists())
 
     def test_the_prompt_step_keeps_the_previous_review_with_its_diff(self):
@@ -846,13 +846,13 @@ class DiffTests(unittest.TestCase):
     def test_a_diff_over_the_bound_is_cut_and_says_so(self):
         big = "x" * (security.MAX_DIFF_BYTES + 10)
         with tempfile.TemporaryDirectory() as tmp:
-            security.diffs(lambda a: big, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(lambda a: big, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
             text = (Path(tmp) / security.PR_DIFF).read_text()
         self.assertTrue(text.startswith("x" * security.MAX_DIFF_BYTES + "\n[Diff cut at"))
         self.assertIn(f"of {len(big)}", text)
         for size, cut in ((security.MAX_DIFF_BYTES, False), (security.MAX_DIFF_BYTES + 1, True)):
             with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp:
-                security.diffs(lambda a, size=size: "x" * size, "o/r", BASE, SHA, "", Path(tmp))
+                security.diffs(lambda a, size=size: "x" * size, "o/r", security.Revisions(BASE, SHA), Path(tmp))
                 self.assertEqual("Diff cut" in (Path(tmp) / security.PR_DIFF).read_text(), cut)
 
     def test_a_malformed_sha_is_refused(self):
@@ -862,7 +862,7 @@ class DiffTests(unittest.TestCase):
             with self.subTest(base=base, reviewed=reviewed, head=head), \
                     tempfile.TemporaryDirectory() as tmp, \
                     self.assertRaises(security.BudgetError):
-                security.diffs(lambda a: "", "o/r", base, head, reviewed, Path(tmp))
+                security.diffs(lambda a: "", "o/r", security.Revisions(base, head, reviewed), Path(tmp))
 
     def test_the_prompt_step_reads_the_event_base(self):
         env = step(load(), ORDER[6])["env"]
@@ -896,7 +896,7 @@ class LinesTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, "gh")
 
         with tempfile.TemporaryDirectory() as tmp:
-            security.diffs(gh, "o/r", BASE, SHA, "", Path(tmp))
+            security.diffs(gh, "o/r", security.Revisions(BASE, SHA, ""), Path(tmp))
             self.assertIn("@@ -1 +1 @@", (Path(tmp) / security.PR_DIFF).read_text())
 
 
