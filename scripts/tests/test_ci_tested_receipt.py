@@ -10,7 +10,9 @@ import json
 from pathlib import Path
 import unittest
 
-from test_ci_review_dictates_merge import HEAD, OLD_HEAD, REPO, resolver
+# test_ci_review_dictates_merge went with the bot verdict gate (#406); the same
+# resolver loader and fixtures live in the owner-approval tests.
+from test_ci_review_owner_approval import HEAD, OTHER as OLD_HEAD, REPO, resolver
 
 PRODUCER = f"https://github.com/{REPO}/.github/workflows/tested-receipt.yml@refs/heads/main"
 PREDICATE = "https://github.com/cdeust/ai-architect-mcp-spec/tested-receipt/v1"
@@ -304,7 +306,8 @@ class ReceiptWorkflows(unittest.TestCase):
 
     def test_the_pilot_cannot_wake_or_hold_the_merge_resolver(self):
         after = (self.ROOT / "pipeline-after-merge.yml").read_text()
-        self.assertIn("workflows: [Pipeline, PR Review]", after)
+        # The wake list since #406: the review bots are optional and wake nothing.
+        self.assertIn("workflows: [Pipeline, Owner approval wake]", after)
         self.assertNotIn("Tested receipt", after)
 
 
