@@ -1354,7 +1354,7 @@ jobs:
 
       - name: Exercise the owner mention tool catalog
         run: |
-          npm ci --prefix .github/actions/claude-subscription-quota --no-fund
+          npm ci --prefix .github/owner-mention-cli --no-fund
           npm ci --prefix scripts/ci-mention --ignore-scripts --no-fund
           python3 -B scripts/tests/native_ci_mention.py
 

@@ -73,6 +73,9 @@ the prompt was written before the contract, and the repository's own standards a
    merges. The only exception is a real conflict (`mergeable_state` is `dirty`): merge the
    main branch into the branch with a merge commit, resolve it, rerun the touched tests,
    check that the merge did not change the meaning of either side, and push normally.
+   A semantic conflict counts as a real conflict: the pull request removes or changes
+   what `main` has just started to use, even when the texts merge (#406 removed the
+   manifest #402 installs).
 5. **Several pull requests may be open; each is carried to its merge.** Owner decision of
    25 November 2026: "Une PR n'a rien à faire en draft. Si elle n'est pas prête elle n'a pas
    à être poussée. Si elle est prête elle doit être corrigée jusqu'à être mergée." A pull

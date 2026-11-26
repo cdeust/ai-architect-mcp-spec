@@ -32,7 +32,7 @@ def main():
     prompt = json.dumps({"title": issue["title"], "body": issue.get("body"), "owner_comments": thread,
                          "request": event.get("comment", {}).get("body", issue.get("body"))})
     broker = HERE / "node_modules/.bin/mcp-server-filesystem"
-    cli = CONTROL / ".github/actions/claude-subscription-quota/node_modules/.bin/claude"
+    cli = CONTROL / ".github/owner-mention-cli/node_modules/.bin/claude"
     with tempfile.TemporaryDirectory(dir=scratch) as root:
         config = {"mcpServers": {"candidate_files": {"command": str(broker),
                   "args": ["--confine-roots", str(workspace)]}}}

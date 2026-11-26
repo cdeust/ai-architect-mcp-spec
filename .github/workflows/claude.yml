@@ -52,7 +52,7 @@ jobs:
           package-manager-cache: false
       - name: Install the locked preparation tools
         run: |
-          npm ci --prefix control/.github/actions/claude-subscription-quota --no-fund
+          npm ci --prefix control/.github/owner-mention-cli --no-fund
           npm ci --prefix control/scripts/ci-mention --ignore-scripts --no-fund
           mv candidate/.git "$RUNNER_TEMP/mention-index"
           mkdir "$RUNNER_TEMP/proposal"
