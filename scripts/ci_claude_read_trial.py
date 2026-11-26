@@ -17,6 +17,7 @@ Exit status 1 when either arm fails. Linux only: it needs /proc and sudo.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -39,7 +40,7 @@ TOKEN = "CANARY-" + secrets.token_hex(8)
 PARENT = os.environ.get("TRIAL_PARENT_CANARY", "")
 MAIN = "TRIAL-MAIN read-boundary trial"
 REVIEW_INPUT = "Read workspace review instructions"
-REVIEW_TEXT = "Adapted from anthropics/claude-code-security-review at"
+REVIEW_TEXT = "You are a senior security engineer conducting a focused security review of this pull request."
 # Text a successful read returns and an error message never echoes: no probe names it.
 MARKERS = (TOKEN, "repositoryformatversion", "--setting-sources")
 # The pinned CLI supplies its structured response tool and a deferred-tool placeholder.
@@ -167,8 +168,36 @@ class Model:
 
     def __init__(self):
         self.main: list[Probe] = []
-        self.log: list[dict] = []
         self.lock = threading.Lock()
+        self.start_arm()
+
+    def start_arm(self) -> None:
+        with self.lock:
+            self.log: list[dict] = []
+            self.issued: dict[tuple[str, int], str] = {}
+            self.observed: dict[tuple[str, int], bytes] = {}
+
+    def record_results(self, conv: str, results: list[dict], script: list[Probe]) -> None:
+        for index, result in enumerate(results):
+            key = (conv, index)
+            probe = script[index] if index < len(script) else None
+            label = probe.label if probe else "StructuredOutput"
+            if key not in self.issued or result.get("tool_use_id") != self.issued[key]:
+                self.log.append({"conv": conv, "unmatched": label})
+                continue
+            # Requests replay the conversation. Keep a digest in memory so even two
+            # distinct results with the same marker booleans cannot mask a change.
+            digest = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).digest()
+            if key in self.observed:
+                if self.observed[key] != digest:
+                    self.log.append({"conv": conv, "conflicting": label})
+                continue
+            self.observed[key] = digest
+            if probe:
+                self.log.append(result_evidence(conv, probe, result))
+            else:
+                self.log.append({"conv": conv, "terminal": True, "is_error": bool(result.get("is_error")),
+                                 "leaked": leaked(_text(result.get("content")))})
 
     def answer(self, body: dict) -> tuple[list[dict], str]:
         conv, tools = conversation(body), [t.get("name") for t in body.get("tools") or []]
@@ -176,13 +205,14 @@ class Model:
         script = self.main if conv == "main" else []
         with self.lock:
             self.log.append({"conv": conv, "tools": tools, "results": len(results)})
-            if results and len(results) <= len(script):
-                last = results[-1]
-                index = len(results) - 1
-                if last.get("tool_use_id") == f"toolu_{conv}_{index}":
-                    self.log.append(result_evidence(conv, script[index], last))
-                else:
-                    self.log.append({"conv": conv, "unmatched": script[index].label})
+            self.record_results(conv, results, script)
+            blocks, stop = self.reply(conv, tools, results, script)
+            if stop == "tool_use":
+                self.issued[(conv, len(results))] = blocks[0]["id"]
+            return blocks, stop
+
+    @staticmethod
+    def reply(conv: str, tools: list[str], results: list[dict], script: list[Probe]) -> tuple[list[dict], str]:
         if len(results) < len(script):
             probe = script[len(results)]
             return [{"type": "tool_use", "id": f"toolu_{conv}_{len(results)}", "name": probe.tool,
@@ -308,6 +338,12 @@ def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> li
     """The failures of an arm, empty when it holds."""
     rows = [r for r in log if "probe" in r]
     failures = [f"unmatched result: {r['unmatched']}" for r in log if "unmatched" in r]
+    failures += [f"conflicting result: {r['conflicting']}" for r in log if "conflicting" in r]
+    terminal = [r for r in log if r.get("terminal")]
+    if any(r["is_error"] for r in terminal):
+        failures.append("StructuredOutput returned an error")
+    if name == "engine" and any(r["leaked"] for r in terminal):
+        failures.append("leak: main: StructuredOutput")
     if not any(r["conv"] == "main" and r["probe"] == REVIEW_INPUT
                and not r["is_error"] and r["expected"] for r in rows):
         failures.append("unproven: Read did not return the workspace review instructions")
@@ -363,7 +399,7 @@ def main() -> int:
         arms = [Arm("control", CONTROL_ARGS, {}, False),
                 Arm("engine", shlex.split(engine["with"]["claude_args"]), engine.get("env", {}), True)]
         for arm in arms:
-            model.log = []
+            model.start_arm()
             (home / "trial-hook-ran").unlink(missing_ok=True)
             if arm.managed:
                 subprocess.run(["bash", "-e", "-c", install_script(workflow)], cwd=ROOT, check=True)

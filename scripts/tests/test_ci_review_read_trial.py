@@ -24,9 +24,10 @@ PLANT = trial.Plant(Path("/home/runner"), Path("/home/runner/work/r/r"), 9)
 
 def body(first, results=0, tools=("Read",)):
     messages = [{"role": "user", "content": [{"type": "text", "text": first}]}]
-    for n in range(results):
-        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": f"toolu_main_{n}"}]},
-                     {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"toolu_main_{n}",
+    ids = [f"toolu_main_{n}" for n in range(results)] if isinstance(results, int) else results
+    for n, call_id in enumerate(ids):
+        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": call_id}]},
+                     {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call_id,
                                                    "content": f"result {n}", "is_error": n % 2 == 1}]}]
     return {"messages": messages, "tools": [{"name": name} for name in tools]}
 
@@ -76,11 +77,73 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(block["input"], main[1].input)
         (block,), _ = model.answer(body(trial.MAIN, 2, tools=("Read", "StructuredOutput")))
         self.assertEqual(block["name"], "StructuredOutput")
-        (block,), stop = model.answer(body(trial.MAIN, 3, tools=("Read", "StructuredOutput")))
+        (block,), stop = model.answer(body(trial.MAIN, ["toolu_main_0", "toolu_main_1", "toolu_out"], tools=("Read", "StructuredOutput")))
         self.assertEqual((block["type"], stop), ("text", "end_turn"))
         recorded = [r for r in model.log if "probe" in r]
         self.assertEqual([(r["probe"], r["is_error"]) for r in recorded],
                          [(main[0].label, False), (main[1].label, True)])
+
+    def terminal_exchange(self, offer_terminal=True):
+        tools = ("Read", "StructuredOutput")
+        model = trial.Model()
+        model.main = [trial.Probe("first note", "Read", {"file_path": "first.txt"})]
+        model.answer(body(trial.MAIN, tools=tools))
+        model.answer(body(trial.MAIN, 1, tools=tools if offer_terminal else ("Read",)))
+        end = body(trial.MAIN, ["toolu_main_0", "toolu_out"], tools=tools)
+        end["messages"][-1]["content"][0]["is_error"] = False
+        return model, end
+
+    def transcript_failures(self, model):
+        workspace = trial.Probe(trial.REVIEW_INPUT, "Read", {})
+        log = model.log + [row("main", workspace, trial.REVIEW_TEXT, error=False)]
+        return trial.verdict("engine", log, model.main, False)
+
+    def test_identical_terminal_history_is_accepted_once(self):
+        model, end = self.terminal_exchange()
+        model.answer(end)
+        model.answer(end)
+        self.assertEqual(self.transcript_failures(model), [])
+        self.assertEqual([r["probe"] for r in model.log if "probe" in r], ["first note"])
+        self.assertEqual(sum(r.get("terminal", False) for r in model.log), 1)
+
+    def test_wrong_or_unissued_terminal_and_extra_result_are_rejected(self):
+        for case in ("wrong id", "never issued", "extra result"):
+            with self.subTest(case=case):
+                model, end = self.terminal_exchange(offer_terminal=case != "never issued")
+                if case == "wrong id":
+                    end["messages"][-1]["content"][0]["tool_use_id"] = "different-id"
+                if case == "extra result":
+                    end["messages"].append(end["messages"][-1])
+                model.answer(end)
+                self.assertIn("unmatched result: StructuredOutput", self.transcript_failures(model))
+
+    def test_retransmission_cannot_change_an_earlier_or_terminal_result(self):
+        for index, label in ((2, "first note"), (-1, "StructuredOutput")):
+            with self.subTest(label=label):
+                model, end = self.terminal_exchange()
+                model.answer(end)
+                end["messages"][index]["content"][0]["content"] = "another benign result"
+                model.answer(end)
+                self.assertIn("conflicting result: " + label, self.transcript_failures(model))
+                self.assertNotIn("another benign result", json.dumps(model.log))
+
+    def test_terminal_content_and_error_are_graded(self):
+        model, end = self.terminal_exchange()
+        end["messages"][-1]["content"][0].update(is_error=True, content=trial.TOKEN)
+        model.answer(end)
+        failures = self.transcript_failures(model)
+        self.assertIn("StructuredOutput returned an error", failures)
+        self.assertIn("leak: main: StructuredOutput", failures)
+        self.assertNotIn(trial.TOKEN, json.dumps(model.log))
+
+    def test_one_arm_cannot_supply_calls_issued_only_in_another(self):
+        model, end = self.terminal_exchange()
+        model.answer(end)
+        model.start_arm()
+        model.answer(end)
+        failures = self.transcript_failures(model)
+        self.assertIn("unmatched result: first note", failures)
+        self.assertIn("unmatched result: StructuredOutput", failures)
 
     def test_side_requests_get_no_tool_call(self):
         model = trial.Model()
@@ -156,6 +219,7 @@ class VerdictTests(unittest.TestCase):
         result = message["messages"][-1]["content"][0]
         # One result with valid content beyond the old 2,000-character excerpt.
         result["content"] = ("0123456789" * 201) + trial.TOKEN
+        model.answer(body(trial.MAIN))
         model.answer(message)
         entry = model.log[-1]
         self.assertTrue(entry["leaked"])
@@ -178,7 +242,15 @@ class VerdictTests(unittest.TestCase):
                 result["is_error"] = True
                 self.assertIn("unproven: Read did not return the workspace review instructions",
                               trial.verdict(arm, log, self.MAIN, arm == "control"))
-        self.assertIn(trial.REVIEW_TEXT, (ROOT / ".github/claude-security-review/scan-instructions.txt").read_text())
+        directory = ROOT / ".github/claude-security-review"
+        self.assertIn(trial.REVIEW_TEXT, (directory / "scan-instructions.txt").read_text())
+        wrong_text = (directory / "false-positive-filtering.txt").read_text()
+        for arm, log in (("engine", self.answered()), ("control", self.control())):
+            with self.subTest(wrong_file_in=arm):
+                result = next(r for r in log if r.get("probe") == trial.REVIEW_INPUT)
+                result.update(row("main", self.MAIN[-1], wrong_text, error=False))
+                self.assertIn("unproven: Read did not return the workspace review instructions",
+                              trial.verdict(arm, log, self.MAIN, arm == "control"))
 
     def test_the_control_must_leak_the_reads_the_settings_close(self):
         must = {p.label for p in self.MAIN if p.leaks_in_control}

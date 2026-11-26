@@ -318,8 +318,10 @@ every pull request and every push to `main`.
     of Agent fails the trial even if no call used it.
 
 Both arms must read the versioned review instructions in the workspace and return
-their known text. The recorder checks each complete tool result against the markers
-and matches it to its call ID. The job summary contains the boolean observations for
+a line specific to the scan instructions. The recorder matches each result in the
+transcript to a call already issued in that arm, including a returned structured
+output. Identical history can be retransmitted. An extra or conflicting result
+fails the trial. Full results are graded in memory. The job summary contains the boolean observations for
 each probe and the tool inventories.
 
 ## Where the token may go
