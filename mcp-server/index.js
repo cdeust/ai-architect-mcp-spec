@@ -40413,7 +40413,7 @@ function unknownTicketCriterion(tickets, criteria) {
 }
 var HandoffTicketsSchema = external_exports.array(TicketSchema).min(1).superRefine(validateGraph);
 var prose = external_exports.string().trim().min(1).regex(/^[^\p{Cc}\p{Cf}\u2028\u2029]*$/u, "TICKET_TEXT_NOT_SINGLE_LINE");
-var paragraphs = external_exports.string().trim().min(1).regex(/^(?:[^\p{Cc}\p{Cf}\u2028\u2029]|\n)*$/u, "TICKET_TEXT_CONTROL_CHARACTER");
+var paragraphs = external_exports.string().trim().min(1).regex(/^[^\x00-\x09\x0b-\x1f\x7f-\x9f\p{Cf}\u2028\u2029]*$/u, "TICKET_TEXT_CONTROL_CHARACTER");
 var JiraTicketSchema = TicketSchema.extend({
   title: prose,
   description: paragraphs,
@@ -56454,10 +56454,12 @@ function refuse2(state, cause, detail, message) {
     action: { kind: "emit_message", level: "warn", message }
   };
 }
-function keepMarkdownReply(state, markdown) {
-  if (!markdown?.trim()) {
+function keepMarkdownReply(state, response) {
+  const markdown = response?.raw_text?.trim();
+  if (response?.error || !markdown) {
+    const reason = response?.error || "no response";
     return {
-      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: no response`, "upstream_failure"), current_step: "file_export" },
+      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: ${reason}`, "upstream_failure"), current_step: "file_export" },
       action: { kind: "emit_message", level: "warn", message: "JIRA generation failed; proceeding to file export anyway." }
     };
   }
@@ -56468,7 +56470,7 @@ function keepMarkdownReply(state, markdown) {
     violation_count: 0,
     last_violations: [],
     attempt_log: [],
-    content: markdown.trim()
+    content: markdown
   };
   return {
     state: { ...state, sections: [...state.sections, section], current_step: "file_export" },
@@ -56480,7 +56482,7 @@ function acceptanceIds(state) {
 }
 var handleJiraGeneration = ({ state, result }) => {
   if (result?.kind === "subagent_batch_result" && result.batch_id === MARKDOWN_BATCH_ID) {
-    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === JIRA_GENERATION_INV_ID)?.raw_text);
+    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === JIRA_GENERATION_INV_ID));
   }
   if (result?.kind === "subagent_batch_result" && result.batch_id === JIRA_BATCH_ID) {
     const response = result.responses.find((r) => r.invocation_id === JIRA_GENERATION_INV_ID);
@@ -105752,7 +105754,7 @@ var handleSubmitActionResult = async ({ run_id, result }) => {
     if (isLegacyExecutionCheckpoint(found.run.state, found.run.action) || isRetiredImplementationAnswer(found.run.state, result))
       return architectOsRequired();
     const { state, action } = found.run;
-    const out = state.semantic_review_requested && state.current_step === "complete" && action ? { state, action, messages: [] } : step({ state: recordLegacyDefineRefusal(state, action), result });
+    const out = (state.semantic_review_requested || state.passed_define) && state.current_step === "complete" && action ? { state, action, messages: [] } : step({ state: recordLegacyDefineRefusal(state, action), result });
     const drained = drainEvidenceQueues(out.state);
     runs.keep(drained, out.action);
     return {
