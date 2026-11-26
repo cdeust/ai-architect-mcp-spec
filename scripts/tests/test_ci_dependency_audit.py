@@ -11,7 +11,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 MANAGERS = """
-npm() { :; }
+npm() {
+  echo "npm $*"
+  if test "$1" = audit; then
+    test "$*" = 'audit --prefix scripts/ci-mention --omit=dev --audit-level=high' || return 2
+    return "$NPM_AUDIT_STATUS"
+  fi
+}
 pnpm() {
   echo "$*"
   if test "$1" = audit; then
@@ -23,7 +29,7 @@ pnpm() {
 
 
 class ProductionAuditGate(unittest.TestCase):
-    def run_unit(self, audit_status):
+    def run_unit(self, audit_status, npm_audit_status=0):
         unit = json.loads((ROOT / "ci.json").read_text())["unit"]
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory, "coverage", "cobertura-coverage.xml")
@@ -32,7 +38,8 @@ class ProductionAuditGate(unittest.TestCase):
             return subprocess.run(
                 ["bash", "-eo", "pipefail", "-c", MANAGERS + unit],
                 cwd=directory,
-                env={**os.environ, "AUDIT_STATUS": str(audit_status)},
+                env={**os.environ, "AUDIT_STATUS": str(audit_status),
+                     "NPM_AUDIT_STATUS": str(npm_audit_status)},
                 capture_output=True,
                 text=True,
             )
@@ -43,6 +50,9 @@ class ProductionAuditGate(unittest.TestCase):
         steps = result.stdout.splitlines()
         self.assertIn("audit --prod --audit-level high", steps)
         self.assertLess(steps.index("audit --prod --audit-level high"), steps.index("install --frozen-lockfile"))
+        mention = "npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high"
+        self.assertIn(mention, steps)
+        self.assertLess(steps.index(mention), steps.index("install --frozen-lockfile"))
 
     def test_failed_audit_stops_the_pipeline_before_build(self):
         result = self.run_unit(1)
@@ -50,6 +60,18 @@ class ProductionAuditGate(unittest.TestCase):
         self.assertIn("audit --prod --audit-level high", result.stdout.splitlines())
         self.assertNotIn("install --frozen-lockfile", result.stdout.splitlines())
         self.assertNotIn("build", result.stdout.splitlines())
+
+
+class MentionAuditGate(unittest.TestCase):
+    """The owner-mention tools have their own npm lockfile and their own audit."""
+
+    def test_failed_mention_audit_stops_the_pipeline_before_build(self):
+        result = ProductionAuditGate.run_unit(self, 0, npm_audit_status=1)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        steps = result.stdout.splitlines()
+        self.assertIn("npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high", steps)
+        self.assertNotIn("install --frozen-lockfile", steps)
+        self.assertNotIn("build", steps)
 
 
 def check_registry():
