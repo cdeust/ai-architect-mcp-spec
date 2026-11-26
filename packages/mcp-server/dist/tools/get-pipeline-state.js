@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_RESPONSE_CHARS, readDefineHandoff, buildVerifiedPlan, ReviewIdSchema, isLegacyExecutionCheckpoint, refreshImplementationGateQuestion, } from "@prd-gen/orchestration";
+import { MAX_RESPONSE_CHARS, defineEnvelopeText, readDefineHandoff, buildVerifiedPlan, ReviewIdSchema, isLegacyExecutionCheckpoint, refreshImplementationGateQuestion, } from "@prd-gen/orchestration";
 import { prepareImplementationReview } from "../implementation-review.js";
 import { boundFullStateResponse, boundGroundingResponse } from "../bound-full-state.js";
 import { pageActionResponse } from "../page-action-response.js";
@@ -20,13 +20,13 @@ const handleGetPipelineState = async ({ run_id, format, invocation_offset, plan_
     const state = found.run.state;
     if (format === "define_handoff_v1" || format === "verified_plan_v1" || format === "implementation_review_v1") {
         const define = readDefineHandoff(state, found.run.action);
-        const sourceText = JSON.stringify(define);
+        const sourceText = "error" in define ? JSON.stringify(define) : defineEnvelopeText(define.handoff);
         if (sourceText.length > MAX_RESPONSE_CHARS)
             return planningSizeError("define");
         if (format === "define_handoff_v1" || "error" in define) {
             return { content: [{ type: "text", text: sourceText }], isError: "error" in define };
         }
-        const plan = buildVerifiedPlan(define.handoff, state.feature_description, plan_step);
+        const plan = buildVerifiedPlan(define.handoff, define.intent, plan_step);
         const text = JSON.stringify(plan);
         if (text.length > MAX_RESPONSE_CHARS)
             return planningSizeError("plan");
@@ -49,7 +49,8 @@ const handleGetPipelineState = async ({ run_id, format, invocation_offset, plan_
         // Bound the full-state serialization to the 100,000-char MCP budget.
         // The per-field input caps (Phase 1c) overlap, so a worst-case state
         // overshoots the AGGREGATE budget; boundFullStateResponse degrades by
-        // priority (grounding → clarifications → section content), recording
+        // priority (grounding → clarifications → section content → tickets and
+        // the kept Define), recording
         // every shed in __bounded. source: bound-full-state.ts.
         payload = boundFullStateResponse(state);
     }
@@ -120,7 +121,9 @@ export function registerGetPipelineState(server) {
         "next_offset is the invocation_offset to read them from. It is " +
         "paged under the same budget: each page holds whole invocations from " +
         "invocation_offset (default 0), and __page.next_offset is the offset of the next " +
-        "page, null on the last one. format:'define_handoff_v1' returns validated planning data from completed automatic review or a pending legacy checkpoint. " +
+        "page, null on the last one. format:'define_handoff_v1' returns validated planning data, with the generated tickets' estimates, prerequisites and criteria " +
+        "(structurally checked, not judged) when the run generated them, from the pending specification question or, once the gate advanced, " +
+        "from the Define it kept while the checkpoint still projects it (until the finished run is dropped). " +
         "format:'verified_plan_v1' derives and verifies a one-Step plan from that checkpoint. " +
         "format:'implementation_review_v1' reads the operator-approved plan and its pinned Git comparison for review.", getPipelineStateInput(), { readOnlyHint: true }, handleGetPipelineState);
 }

@@ -55,6 +55,17 @@
  *   keep   1. scalar state + flags + counts   — tiny, the diagnostic skeleton.
  *   keep   2. errors[] / error_kinds[]         — THE documented purpose; already
  *                                                FIFO-capped at 50 (~25k worst).
+ *   keep      a failed jira_result               — small, and its cause is a
+ *                                                diagnosis.
+ *   shed-4    jira_result.tickets (passed),      — the run's structured planning
+ *             passed_define                        data. The tickets are rendered
+ *                                                in 07-jira-tickets.md and their
+ *                                                estimates and links are in
+ *                                                format:"define_handoff_v1",
+ *                                                which also re-reads the kept
+ *                                                Define. Generated prose has no
+ *                                                input cap, so it is shed, after
+ *                                                section content.
  *   shed-3 3. sections[] content               — work product; large only when
  *                                                many sections carry full
  *                                                markdown. Re-derivable from the
@@ -70,7 +81,8 @@
  *                                                AP. Shed FIRST.
  *
  * The shed order is the REVERSE of caller value: grounding (5) before
- * clarifications (4) before section content (3). errors and scalars are never
+ * clarifications (4) before section content (3) before the ticket and Define
+ * data (shed-4). errors and scalars are never
  * shed — sacrificing the diagnostic trail to fit a diagnostic response would
  * defeat the tool's purpose.
  *
@@ -164,7 +176,8 @@ function wireChars(payload: unknown): number {
  *     returned with all sheds recorded (observable), never a silent pass.
  *   - every field removed/truncated is recorded in __bounded.applied with the
  *     chars it reclaimed, and the full detail is reachable via the hint's
- *     narrower format (grounding) or the exported PRD files (section content).
+ *     narrower format (grounding, define_handoff_v1) or the exported files
+ *     (section content, 07-jira-tickets.md).
  *   - the irreducible diagnostic skeleton (scalars, flags, counts, errors[],
  *     error_kinds[]) is NEVER shed.
  *
@@ -295,6 +308,8 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
     }
   }
 
+  shedTicketsAndDefine(work, fits, applied);
+
   return {
     state: work,
     __bounded: {
@@ -304,6 +319,33 @@ export function boundFullStateResponse(state: PipelineState): BoundedFullState {
       applied,
     },
   };
+}
+
+/**
+ * Shed 4: generated tickets, then the kept Define. A failed jira_result is
+ * small and is a diagnosis: it is kept whole.
+ */
+function shedTicketsAndDefine(work: Record<string, unknown>, fits: () => boolean, applied: Degradation[]): void {
+  const jira = work.jira_result as PipelineState["jira_result"] | null | undefined;
+  if (!fits() && jira?.status === "passed") {
+    const reclaimed = serializedChars(jira.tickets);
+    const stub: OmittedStub = {
+      omitted: true,
+      chars: reclaimed,
+      hint: `tickets are in the exported 07-jira-tickets.md; once the gate is reached, estimates and links via get_pipeline_state(run_id, format:"define_handoff_v1")`,
+    };
+    work.jira_result = { status: jira.status, tickets: stub };
+    applied.push({ field: "jira_result.tickets", kind: "omitted", reclaimed_chars: reclaimed });
+  }
+  if (!fits() && work.passed_define != null) {
+    const reclaimed = serializedChars(work.passed_define);
+    work.passed_define = {
+      omitted: true,
+      chars: reclaimed,
+      hint: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1") while the checkpoint still projects it`,
+    } satisfies OmittedStub;
+    applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
+  }
 }
 
 /**

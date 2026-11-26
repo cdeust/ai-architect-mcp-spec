@@ -127,9 +127,10 @@ function buildRememberContent(
   pending: PendingCompletion,
 ): string {
   const sectionsTotal = prdSections(state.sections).length;
-  const hasJiraTickets = state.sections.some(
-    (s) => s.section_type === "jira_tickets" && s.content,
-  );
+  // A checkpoint before jira_result kept the tickets as a section.
+  const hasJiraTickets = state.jira_result
+    ? state.jira_result.status === "passed"
+    : state.sections.some((s) => s.section_type === "jira_tickets" && s.content);
   const exportedFiles = state.written_files.length
     ? state.written_files.join("\n  - ")
     : "(none written)";
