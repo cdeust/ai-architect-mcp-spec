@@ -53,9 +53,9 @@ ENGINE_INPUTS = {
 ENGINE_ARGS = [
     "--strict-mcp-config",
     "--setting-sources", "user",
-    "--tools", "Read,Agent",
+    "--tools", "Read",
     "--permission-mode", "dontAsk",
-    "--allowedTools", "Read,Agent",
+    "--allowedTools", "Read",
     "--json-schema", json.dumps(publication.SCHEMA, separators=(",", ":")),
     "--model", "claude-opus-5-5",
 ]
@@ -341,10 +341,10 @@ def workflow_run_listeners(exclude=None) -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "ae88f41deaf38c42ff24c7e29ba318bde3fa212425396cec6531edcce37c5a88"
+REVIEWED_WORKFLOW_SHA256 = "cb64268a7e19e97552db498754f112ff92254020cde0f40ae147c000987ba7e4"
 # The versioned instructions the prompt carries; a change to them is a review change too.
 REVIEWED_INSTRUCTIONS_SHA256 = {
-    "scan-instructions.txt": "61735839b4c26fc0c007108cf6408a980c49e5170582469a449286f0500705c7",
+    "scan-instructions.txt": "e9f9c2dfa1523c9976a3b802d0ad2e45d2e72207b781ed5d5ac52bff5e1db2e4",
     "false-positive-filtering.txt": "54776122aec69e0691d1624d8364fd59d9a8795f9fafa2014650152aa3d80c8b",
 }
 
@@ -1473,15 +1473,17 @@ MUTATIONS = {
 }
 
 EXTRA = {
+    "agent-offered": ("engine-tools", lambda w, r: replace_arg(
+        w, '--tools "Read"\n', '--tools "Read,Agent"\n')),
     "bash-allowed": ("engine-tools", lambda w, r: replace_arg(
-        w, '--allowedTools "Read,Agent"', '--allowedTools "Bash,Read,Agent"')),
+        w, '--allowedTools "Read"', '--allowedTools "Bash,Read"')),
     "comment-tool": ("engine-tools", lambda w, r: replace_arg(
-        w, '--allowedTools "Read,Agent"',
-        '--allowedTools "Read,Agent,mcp__github_comment__update_claude_comment"')),
+        w, '--allowedTools "Read"',
+        '--allowedTools "Read,mcp__github_comment__update_claude_comment"')),
     "second-mode": ("engine-tools", lambda w, r: replace_arg(
         w, "--model", "--permission-mode acceptEdits\n--model")),
     "bypass-mode": ("engine-tools", lambda w, r: replace_arg(w, "dontAsk", "bypassPermissions")),
-    "all-tools": ("engine-tools", lambda w, r: replace_arg(w, '--tools "Read,Agent"\n', "")),
+    "all-tools": ("engine-tools", lambda w, r: replace_arg(w, '--tools "Read"\n', "")),
     "no-strict-mcp": ("engine-tools", lambda w, r: replace_arg(w, "--strict-mcp-config\n", "")),
     "no-schema": ("engine-tools", lambda w, r: replace_arg(w, "--json-schema", "--append")),
     "user-settings-only": ("engine-tools", lambda w, r: replace_arg(

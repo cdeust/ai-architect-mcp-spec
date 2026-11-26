@@ -3,15 +3,14 @@
 
 The CLI of .github/claude/cli runs against a fake model served here, which asks for one
 tool call per turn: reads outside the checkout (a file, `..`, a link, /proc, .git,
-credential files, runner folders), searches, a listing, a shell, a fetch, and the same
-from two sub-agents. No secret and no real model are involved; the reads aim at planted
+credential files, runner folders), searches, a listing, a shell and a fetch. No secret and no real model are involved; the reads aim at planted
 canaries. Two arms (docs/claude-security-review.md, "Proof of the read boundary"):
 
 - control: no managed settings and wide arguments. The planted reads must leak there,
   and the project hook must run, or the trial is blind and fails;
 - engine: the managed settings installed by the workflow's own install step, and the
   engine's exact `claude_args`. Nothing may leak, no hook may run, every call must be
-  answered, and no sub-agent may be offered a tool outside Read.
+  answered, and the offered tools must match the read-only session contract.
 
 Exit status 1 when either arm fails. Linux only: it needs /proc and sudo.
 """
@@ -39,14 +38,13 @@ INSTALL_STEP = "Install read-only managed settings"
 TOKEN = "CANARY-" + secrets.token_hex(8)
 PARENT = os.environ.get("TRIAL_PARENT_CANARY", "")
 MAIN = "TRIAL-MAIN read-boundary trial"
-SUB = "TRIAL-SUBAGENT"
 # Text a successful read returns and an error message never echoes: no probe names it.
 MARKERS = (TOKEN, "repositoryformatversion", "--setting-sources")
-# Tools a sub-agent must never be offered under the engine's settings.
-FORBIDDEN = {"Bash", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "Edit", "Write",
-             "MultiEdit", "NotebookEdit", "PowerShell", "RemoteTrigger"}
+# The pinned CLI supplies its structured response tool and a deferred-tool placeholder.
+# The workflow selects Read as its only built-in capability.
+ENGINE_TOOLS = {"Read", "StructuredOutput", "DeferredToolPlaceholder"}
 CONTROL_ARGS = ["--strict-mcp-config", "--setting-sources", "local", "--permission-mode",
-                "dontAsk", "--allowedTools", "Read,Grep,Glob,Agent,Bash,WebFetch"]
+                "dontAsk", "--allowedTools", "Read,Grep,Glob,Bash,WebFetch"]
 # source: operational bound on one arm; the fake model answers at once.
 ARM_TIMEOUT_SECONDS = 600
 
@@ -118,15 +116,7 @@ def probes(plant: Plant) -> list[Probe]:
         Probe("WebFetch", "WebFetch", {"url": f"http://127.0.0.1:{plant.port}/canary",
                                        "prompt": "Quote the page."}),
     ]
-    return found + [Probe(f"Agent {name}", "Agent", {"description": "trial", "prompt": f"{SUB} {name}",
-                                                     "subagent_type": name})
-                    for name in ("general-purpose", "Explore", "security-code-reviewer")]
-
-
-def sub_probes(plant: Plant) -> list[Probe]:
-    return [p for p in probes(plant) if p.label in {
-        "Read file outside the checkout", "Read /proc/self/environ", "Read .git/config",
-        "Grep outside the checkout", "Glob outside the checkout", "Bash cat", "WebFetch"}]
+    return found
 
 
 def leaked(text: str, markers=MARKERS) -> bool:
@@ -150,9 +140,6 @@ def conversation(body: dict) -> str:
     for message in body.get("messages", []):
         if message.get("role") == "user":
             first = _text(message.get("content"))
-            if SUB in first:
-                rest = first[first.index(SUB) + len(SUB):].split()
-                return rest[0] if rest else "sub"
             return "main" if MAIN in first else "side"
     return "side"
 
@@ -166,13 +153,15 @@ def tool_results(body: dict) -> list[dict]:
 class Model:
     """The fake model: one scripted tool call per turn, everything recorded."""
 
-    def __init__(self, main: list[Probe], sub: list[Probe]):
-        self.main, self.sub, self.log, self.lock = main, sub, [], threading.Lock()
+    def __init__(self):
+        self.main: list[Probe] = []
+        self.log: list[dict] = []
+        self.lock = threading.Lock()
 
     def answer(self, body: dict) -> tuple[list[dict], str]:
         conv, tools = conversation(body), [t.get("name") for t in body.get("tools") or []]
         results = tool_results(body)
-        script = self.main if conv == "main" else [] if conv == "side" else self.sub
+        script = self.main if conv == "main" else []
         with self.lock:
             self.log.append({"conv": conv, "tools": tools, "results": len(results)})
             if results and len(results) <= len(script):
@@ -288,7 +277,7 @@ def install_script(workflow: dict) -> str:
                 if s.get("name") == INSTALL_STEP)
 
 
-def run_arm(arm: Arm, plant: Plant) -> None:
+def run_arm(arm: Arm, plant: Plant) -> int:
     env = {"HOME": str(plant.home), "PATH": os.environ["PATH"],
            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{plant.port}",
            "ANTHROPIC_API_KEY": "trial-not-a-key", "CANARY": TOKEN,
@@ -298,18 +287,18 @@ def run_arm(arm: Arm, plant: Plant) -> None:
                           cwd=plant.workspace, env=env, capture_output=True, text=True,
                           timeout=ARM_TIMEOUT_SECONDS)
     print(f"[{arm.name}] CLI exit {done.returncode}; stderr: {done.stderr.strip()[:500]}")
+    return done.returncode
 
 
-def verdict(name: str, log: list[dict], scripts: tuple[list[Probe], list[Probe]],
-            hook_ran: bool) -> list[str]:
+def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> list[str]:
     """The failures of an arm, empty when it holds."""
-    main, sub = scripts
     rows = [r for r in log if "probe" in r]
     failures = []
     if name == "control":
         for probe in (p for p in main if p.leaks_in_control):
-            if not any(r["conv"] == "main" and r["probe"] == probe.label and leaked(r["text"])
-                       for r in rows):
+            marker = "repositoryformatversion" if probe.label == "Read .git/config" else TOKEN
+            if not any(r["conv"] == "main" and r["probe"] == probe.label
+                       and not r["is_error"] and marker in r["text"] for r in rows):
                 failures.append(f"blind: {probe.label} did not leak without the settings")
         if not hook_ran:
             failures.append("blind: the project hook did not run without the settings")
@@ -319,21 +308,15 @@ def verdict(name: str, log: list[dict], scripts: tuple[list[Probe], list[Probe]]
             failures.append(f"leak: {r['conv']}: {r['probe']}")
     answered = {r["probe"] for r in rows if r["conv"] == "main"}
     failures += [f"unanswered: {p.label}" for p in main if p.label not in answered]
-    # A sub-agent that never ran, or stopped early, proves nothing about what it may do;
-    # one whose launch was refused (an unknown agent type) cannot run at all.
-    for probe in (p for p in main if p.tool == "Agent"):
-        agent = probe.input["subagent_type"]
-        if any(r["conv"] == "main" and r["probe"] == probe.label and r["is_error"] for r in rows):
-            continue
-        done = {r["probe"] for r in rows if r["conv"] == agent}
-        failures += [f"unproven: sub-agent {agent} did not answer {p.label}"
-                     for p in sub if p.label not in done]
     if hook_ran:
         failures.append("a project hook ran under the managed settings")
-    for r in log:
-        offered = FORBIDDEN & set(r.get("tools", []))
-        if r.get("conv") not in (None, "side") and offered:
-            failures.append(f"offered: {r['conv']}: {sorted(offered)}")
+    inventories = [set(r["tools"]) for r in log if "tools" in r and r["tools"]]
+    if not any(r["conv"] == "main" and "Read" in r.get("tools", []) for r in log):
+        failures.append("unproven: the engine never offered Read")
+    for offered in inventories:
+        extra = offered - ENGINE_TOOLS
+        if extra:
+            failures.append(f"unexpected tools: {sorted(extra)}")
     return failures
 
 
@@ -343,9 +326,8 @@ def table(name: str, log: list[dict]) -> str:
     for r in (r for r in log if "probe" in r):
         excerpt = " ".join(r["text"].split())[:90].replace("|", "\\|").replace(TOKEN, "<canary>")
         lines.append(f"| {r['conv']} | {r['probe']} | {r['is_error']} | {leaked(r['text'])} | {excerpt} |")
-    subs = sorted({(r["conv"], tuple(sorted(r["tools"]))) for r in log
-                   if r.get("conv") not in (None, "side", "main") and "tools" in r})
-    lines += ["", *[f"- tools offered to sub-agent `{c}`: {', '.join(t) or 'none'}" for c, t in subs]]
+    inventories = sorted({tuple(sorted(r["tools"])) for r in log if r.get("tools")})
+    lines += ["", *[f"- tools offered: {', '.join(names)}" for names in inventories]]
     return "\n".join(lines) + "\n"
 
 
@@ -357,10 +339,10 @@ def main() -> int:
     engine = engine_step(workflow)
     home = Path(os.environ["HOME"])
     report, failures = [], []
-    model = Model([], [])
+    model = Model()
     server = serve(model)
     plant = Plant(home, ROOT, server.server_address[1])
-    model.main, model.sub = probes(plant), sub_probes(plant)
+    model.main = probes(plant)
     try:
         plant_canaries(plant)
         arms = [Arm("control", CONTROL_ARGS, {}, False),
@@ -371,13 +353,15 @@ def main() -> int:
             if arm.managed:
                 subprocess.run(["bash", "-e", "-c", install_script(workflow)], cwd=ROOT, check=True)
             try:
-                run_arm(arm, plant)
+                exit_code = run_arm(arm, plant)
+                if exit_code:
+                    failures.append(f"{arm.name}: CLI exited {exit_code}")
             finally:
                 if arm.managed:
                     subprocess.run(["sudo", "rm", "-rf", "/etc/claude-code"], check=True)
             hook_ran = (home / "trial-hook-ran").exists()
             failures += [f"{arm.name}: {f}" for f in verdict(arm.name, model.log,
-                                                            (model.main, model.sub), hook_ran)]
+                                                            model.main, hook_ran)]
             report.append(table(arm.name, model.log))
     finally:
         server.shutdown()

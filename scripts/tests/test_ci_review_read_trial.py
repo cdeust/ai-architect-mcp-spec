@@ -2,8 +2,8 @@
 
 Source: scripts/ci_claude_read_trial.py. The trial itself runs in CI on Linux
 (claude-read-boundary.yml); these tests hold that it asks for every read the review
-named, that a blind control fails it, and that any leak, hook, unanswered call or extra
-sub-agent tool fails the engine arm.
+named, that a blind control fails it, and that any leak, hook, unanswered call or unexpected
+engine tool fails the engine arm.
 """
 
 from __future__ import annotations
@@ -43,19 +43,13 @@ class ProbeTests(unittest.TestCase):
                 self.assertIn(path, asked)
         self.assertTrue(any(p and p.endswith("/proc/self/environ") and "/../" in p for p in asked))
         tools = {p.tool for p in trial.probes(PLANT)}
-        self.assertEqual(tools, {"Read", "Grep", "Glob", "Bash", "WebFetch", "Agent"})
-        agents = {p.input.get("subagent_type") for p in trial.probes(PLANT) if p.tool == "Agent"}
-        self.assertEqual(agents, {"general-purpose", "Explore", "security-code-reviewer"})
+        self.assertEqual(tools, {"Read", "Grep", "Glob", "Bash", "WebFetch"})
 
     def test_no_probe_names_a_leak_marker(self):
         # An error message echoes the path it refused: no probe may carry a marker.
         for probe in trial.probes(PLANT):
             with self.subTest(probe=probe.label):
                 self.assertFalse(trial.leaked(json.dumps(probe.input)))
-
-    def test_the_sub_agents_try_the_core_reads_and_tools(self):
-        self.assertEqual({p.tool for p in trial.sub_probes(PLANT)},
-                         {"Read", "Grep", "Glob", "Bash", "WebFetch"})
 
     def test_the_engine_arm_is_the_workflow_s_own(self):
         workflow = yaml.safe_load(trial.WORKFLOW.read_text())
@@ -69,14 +63,13 @@ class ProbeTests(unittest.TestCase):
 class ModelTests(unittest.TestCase):
     def test_requests_are_sorted_into_conversations(self):
         self.assertEqual(trial.conversation(body(trial.MAIN)), "main")
-        self.assertEqual(trial.conversation(body(f"{trial.SUB} general-purpose")), "general-purpose")
-        self.assertEqual(trial.conversation(body(f"x {trial.SUB}")), "sub")
         self.assertEqual(trial.conversation(body("Write a title")), "side")
         self.assertEqual(trial.conversation(body(trial.MAIN, tools=())), "side")
 
     def test_one_probe_per_turn_then_the_structured_output_then_the_end(self):
         main = trial.probes(PLANT)[:2]
-        model = trial.Model(main, [])
+        model = trial.Model()
+        model.main = main
         (block,), stop = model.answer(body(trial.MAIN))
         self.assertEqual((block["name"], block["input"], stop), (main[0].tool, main[0].input, "tool_use"))
         (block,), _ = model.answer(body(trial.MAIN, 1))
@@ -90,7 +83,8 @@ class ModelTests(unittest.TestCase):
                          [(main[0].label, False), (main[1].label, True)])
 
     def test_side_requests_get_no_tool_call(self):
-        model = trial.Model(trial.probes(PLANT), [])
+        model = trial.Model()
+        model.main = trial.probes(PLANT)
         (block,), stop = model.answer(body("Summarize", tools=()))
         self.assertEqual((block["type"], stop), ("text", "end_turn"))
 
@@ -109,52 +103,47 @@ def row(conv, probe, text="refused", error=True):
 
 class VerdictTests(unittest.TestCase):
     MAIN = trial.probes(PLANT)
-    SUB = trial.sub_probes(PLANT)
 
-    def answered(self, text_of=lambda p: "refused"):
-        log = [row("main", p, text_of(p), error=p.tool != "Agent") for p in self.MAIN]
-        log += [row(agent, p) for agent in ("general-purpose", "Explore", "security-code-reviewer")
-                for p in self.SUB]
-        log += [{"conv": "general-purpose", "tools": ["Read"], "results": 0}]
-        return log
+    def answered(self):
+        return [row("main", p) for p in self.MAIN] + [
+            {"conv": "main", "tools": ["Read", "StructuredOutput"], "results": 0}]
 
-    def test_an_engine_arm_that_refuses_everything_holds(self):
-        self.assertEqual(trial.verdict("engine", self.answered(), (self.MAIN, self.SUB), False), [])
+    def test_restricted_engine_accepts_the_complete_record(self):
+        self.assertEqual(trial.verdict("engine", self.answered(), self.MAIN, False), [])
 
-    def test_any_leak_hook_gap_or_extra_tool_fails_the_engine_arm(self):
-        leak = self.answered(lambda p: trial.TOKEN if p.label == "Read /proc/self/environ" else "no")
-        self.assertIn("leak: main: Read /proc/self/environ",
-                      trial.verdict("engine", leak, (self.MAIN, self.SUB), False))
-        self.assertIn("a project hook ran under the managed settings",
-                      trial.verdict("engine", self.answered(), (self.MAIN, self.SUB), True))
-        gap = [r for r in self.answered() if r.get("probe") != "Bash cat" or r["conv"] != "main"]
-        self.assertIn("unanswered: Bash cat", trial.verdict("engine", gap, (self.MAIN, self.SUB), False))
-        lazy = [r for r in self.answered() if r.get("conv") != "security-code-reviewer"]
-        self.assertTrue(any(f.startswith("unproven: sub-agent security-code-reviewer")
-                            for f in trial.verdict("engine", lazy, (self.MAIN, self.SUB), False)))
-        refused = [r for r in lazy if not (r.get("conv") == "main"
-                                           and r.get("probe") == "Agent security-code-reviewer")]
-        refused.append(row("main", next(p for p in self.MAIN
-                                        if p.label == "Agent security-code-reviewer"),
-                           "Agent type 'security-code-reviewer' not found."))
-        self.assertEqual(trial.verdict("engine", refused, (self.MAIN, self.SUB), False), [])
-        offered = self.answered() + [{"conv": "security-code-reviewer", "tools": ["Read", "Grep"],
-                                      "results": 0}]
-        self.assertIn("offered: security-code-reviewer: ['Grep']",
-                      trial.verdict("engine", offered, (self.MAIN, self.SUB), False))
-        for marker in ("repositoryformatversion", "--setting-sources"):
-            with self.subTest(marker=marker):
-                log = self.answered(lambda p, m=marker: m if p.label == "Read .git/config" else "")
-                self.assertTrue(trial.verdict("engine", log, (self.MAIN, self.SUB), False))
+    def test_engine_rejects_a_leak_a_hook_or_a_missing_answer(self):
+        log = self.answered()
+        log[0]["text"] = trial.TOKEN
+        log.pop(1)
+        failures = trial.verdict("engine", log, self.MAIN, True)
+        self.assertIn(f"leak: main: {self.MAIN[0].label}", failures)
+        self.assertIn(f"unanswered: {self.MAIN[1].label}", failures)
+        self.assertIn("a project hook ran under the managed settings", failures)
 
-    def test_a_control_arm_that_does_not_leak_is_blind(self):
-        failures = trial.verdict("control", self.answered(), (self.MAIN, self.SUB), True)
-        self.assertEqual(len(failures), sum(p.leaks_in_control for p in self.MAIN))
-        self.assertIn("blind: the project hook did not run without the settings",
-                      trial.verdict("control", self.answered(lambda p: trial.TOKEN),
-                                    (self.MAIN, self.SUB), False))
-        self.assertEqual(trial.verdict("control", self.answered(lambda p: trial.TOKEN),
-                                       (self.MAIN, self.SUB), True), [])
+    def test_engine_requires_read_and_rejects_every_unexpected_offer(self):
+        for name in ("Agent", "Grep", "UnrecognizedTool"):
+            for conv in ("main", "side"):
+                with self.subTest(name=name, conv=conv):
+                    log = self.answered()
+                    log[-1] = {"conv": conv, "tools": [name], "results": 0}
+                    failures = trial.verdict("engine", log, self.MAIN, False)
+                    self.assertIn("unproven: the engine never offered Read", failures)
+                    self.assertIn(f"unexpected tools: ['{name}']", failures)
+
+    def control(self):
+        return [row("main", p, "repositoryformatversion" if p.label == "Read .git/config"
+                    else trial.TOKEN, error=False) for p in self.MAIN if p.leaks_in_control]
+
+    def test_control_requires_its_own_target_and_a_successful_result(self):
+        log = self.control()
+        self.assertEqual(trial.verdict("control", log, self.MAIN, True), [])
+        git = next(r for r in log if r["probe"] == "Read .git/config")
+        git["text"] = trial.TOKEN
+        log[0]["is_error"] = True
+        failures = trial.verdict("control", log, self.MAIN, False)
+        self.assertIn("blind: Read .git/config did not leak without the settings", failures)
+        self.assertIn(f"blind: {log[0]['probe']} did not leak without the settings", failures)
+        self.assertIn("blind: the project hook did not run without the settings", failures)
 
     def test_the_control_must_leak_the_reads_the_settings_close(self):
         must = {p.label for p in self.MAIN if p.leaks_in_control}

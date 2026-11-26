@@ -140,10 +140,11 @@ already uses.
 - **Bots.** `allowed_bots` lists `claude[bot]` and `chatgpt-codex-connector[bot]`,
   so their pushes are reviewed. With bots allowed, the action authenticates git
   through a helper rather than a token in the remote URL (`git-config.ts`).
-- **Tools.** `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents.
-  - Tools that need no permission (a cloud scheduled task through RemoteTrigger, a
-    message, a notification) are not offered at all. `--allowedTools` pre-approves
-    Read and Agent and adds nothing.
+- **Tools.** The engine selects and pre-approves `Read`. It scans the diff and
+  applies the false-positive filter in the same session. On the pinned CLI the
+  project reviewer was unavailable, and a built-in child received `Agent` in its
+  own inventory. The production engine therefore has no delegation capability.
+  [Linux trial on the parent](https://github.com/cdeust/ai-architect-mcp-spec/actions/runs/45772511415/job/139748259276)
   - The managed settings (`.github/claude/managed-settings.json`, one file for every
     Claude workflow of the repository) also deny, as defence in depth should the flag
     be lost:
@@ -243,7 +244,7 @@ so does the publish job. The budget counts the step and its job by name.
 | Spoofing and tampering: a pull request changes what runs with the subscription token | The secret-bearing workflow runs on `workflow_run`, from `main`; the pull request's copy of it never runs. The secret comes from the environment `review-subscriptions` (main only), on that job alone. The request file holds no permission, secret, action or checkout. | contracts `trigger`, `environment`, `request-origin`; `request_violations`; mutations back to `pull_request`, `pull_request_target`, an added `push`, another `workflow_run` source, the environment removed or renamed, an environment on `publish`, a secret, an action or permissions in the request; `test_ci_review_secret_scope.py` |
 | Spoofing: fork, Dependabot or an unrelated run reaches the token | The job `if` checks the request run's event, conclusion, path, head repository, actor and triggering actor. `resolve` reads the pull request from the API: open, same head, branch and repository, not a draft, base `main`, author not Dependabot. The action checks the write access of the actors and of a fork's owner. | contracts `request-origin`, `resolve`; mutations `fork-allowed`, `other-path`, `failed-request`, `dependabot-actor`; `ResolveTests` |
 | Tampering: the PR's `.claude/`, `CLAUDE.md`, hooks or scripts run in the review | Both jobs check out `main` at `github.sha` with `persist-credentials: false`, and every script and instruction file comes from it. No action other than checkout and the engine runs. The PR head is never checked out. Root-owned, read-only managed settings disable all hooks. No step runs after the engine in its job. The whole parsed workflow and both instruction files are pinned by digest. | `test_the_workflow_is_exactly_the_reviewed_one`, `test_the_instructions_are_exactly_the_reviewed_ones`; contracts `checkout-main`, `actions`, `managed-settings`, `order`, `engine-inputs`; mutations `head-checkout-added`, `persisted-credentials`, `publish-on-head`, `settings-writable`, `settings-from-elsewhere`, `step-after-engine`; proof job (hook canary) |
-| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read,Agent"`, `--permission-mode dontAsk` given once, `--strict-mcp-config`. The managed settings deny shells, search, edit, write, web and the outbound tools, and turn off the auto and bypass modes. Sub-agents get the same boundary, or the proof fails and Agent is removed. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, auto, `bypass-mode`, `second-mode`, `no-strict-mcp`, `no-schema`, `user-settings-only`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards`; proof job |
+| Tampering and elevation: prompt injection through the diff or the files it adds (the upstream README says the action is "not hardened against prompt injection") | The model publishes nothing: it has no comment tool. `--tools "Read"`, `--permission-mode dontAsk` given once, `--strict-mcp-config`. The managed settings deny shells, search, edit, write, web and the outbound tools, and turn off the auto and bypass modes. The CLI tool inventory excludes delegation. The prompt marks the PR as untrusted data. | contracts `engine-tools`, `engine-inputs`; mutations `all-tools`, `bash-allowed`, `comment-tool`, auto, `bypass-mode`, `second-mode`, `no-strict-mcp`, `no-schema`, `user-settings-only`, `commit-signing`, `settings-input`; `test_managed_settings_are_exactly_the_documented_guards`; proof job |
 | Elevation through another bot: an injected `@codex review`, a cross-reference or a `Verdict:` line in the comment | `publish` first normalises the text with NFKC, which turns `＠` and `﹫` into `@`, and makes every line ending a newline. It removes control, format, non-spacing and enclosing marks. It puts a zero-width space after every `@` and every `#` before a digit, replaces backticks, and breaks a `Verdict:` at the start of a line, whatever its case. Each prose field becomes one code span on one line. Paths are shown as ASCII escapes. The resolver (`_claude_verdicts`) reads verdicts of `claude[bot]` only; this comment is `github-actions[bot]`'s. | `PublishTests`; `test_its_comment_cannot_carry_a_verdict_the_resolver_accepts` |
 | Information disclosure: the token or the GitHub token reaches a comment, a log or an artifact (the repository is public) | Both tokens are in the CLI process's own environment (`run.ts` sets `GITHUB_TOKEN`; `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` cleans only subprocesses), so what bounds them is what the model can read; whatever the command line holds is under `/proc` too. The settings refuse `/proc`, `/sys`, `/dev`, `/etc`, `/tmp`, `/var`, `/opt`, `/run`, `/root`, `/srv`, `/mnt`, `/boot`, `/snap`, every runner folder `~/work/_*`, the runner install directories, every dotfile and dot folder of the home, and every `.git/` directory, and block reads outside the workspace. `publish` withholds any credential shape. `publish` holds no secret, and no artifact is uploaded. | contracts `secrets`, `engine-scrub`; mutations `second-secret`, `all-secrets`, `indexed-secret`, `secret-in-publish`; the exact deny list; `test_a_finding_holding_a_credential_shape_is_withheld_whole`; proof job |
 | Tampering: an upstream action or the CLI is changed | Every `uses:` is pinned to a full commit SHA with a version comment. The CLI comes from main's lockfile (`npm ci`, integrity-checked) and is checked to be 2.1.328; the action's install script does not run. | contracts `unpinned`, `pin-comment`, `actions`; mutations `@main`, `unpinned-cli`; `test_the_cli_lockfile_pins_the_version_the_engine_checks` |
@@ -302,24 +303,19 @@ every pull request and every push to `main`.
     `/proc/self/cwd/..`;
   - `~/.env`, `~/.git-credentials`, `/run`, `/root`, `/tmp` and `RUNNER_TEMP`;
   - `Grep` and `Glob` outside the checkout, `Bash`, `WebFetch`;
-  - an `Agent` call to `general-purpose`, to `Explore` and to this repository's
-    `security-code-reviewer`, each of which repeats the core reads, a search, a
-    listing, a shell and a fetch. A sub-agent whose launch is refused (an agent type
-    the session does not know) cannot run, and needs no further proof.
 - **Canaries.** Every target holds a random canary, and the CLI's environment holds
   it too. A planted `.claude/settings.local.json` hook writes a canary file when it
   runs.
 - **Two arms.**
   - The control arm runs without the managed settings and with wide arguments. The
     outside file, `..`, the link, `.git/config`, `Grep`, `Glob` and `Bash` must leak
-    there, and the hook must run. If not, the trial is blind and fails.
+    there with a successful result containing the expected content for that target.
+    The hook must run.
   - The engine arm runs under the managed settings with the engine's exact
     `claude_args`. It fails on any leak, a hook that ran, an unanswered call, a
-    sub-agent that did not answer every call, or a tool other than Read offered to
-    any conversation.
-
-If a sub-agent cannot be proven to keep the boundary, Agent is removed from the
-engine's tools.
+    missing Read capability or a tool outside the engine allowlist. The CLI may
+    advertise its structured response tool and deferred-tool placeholder. An offer
+    of Agent fails the trial even if no call used it.
 
 The job summary holds both tables, with the canary masked.
 
@@ -362,7 +358,7 @@ What stays exposed until the owner acts, in this order:
 - **No real review has run.** The engine runs only from `main`, so the first real
   review will be on the first trusted PR after the merge.
 - **What the proof job covers.** It shows on the pinned CLI, under Linux, what the
-  engine can read with the managed settings, sub-agents included, against a fake
+  engine can read with the managed settings against a fake
   model. It does not show what a real model does with that boundary.
   - It does not run the action's own TypeScript, which builds the session through the
     SDK.
@@ -380,7 +376,7 @@ What stays exposed until the owner acts, in this order:
 
 - **Cost, beyond the per-PR cap.** Concurrency is per head branch, so several PRs
   pushed at once run their engines at the same time. A run has no turn bound other
-  than its 30-minute timeout, and sub-agents run within it. A shared concurrency
+  than its 30-minute timeout. A shared concurrency
   group or a turn bound each needs an owner decision on the value.
 - **Debug logging.** Re-running the job with debug logging on (`ACTIONS_STEP_DEBUG`)
   makes the action print every message and tool result (`parse-sdk-options.ts`
