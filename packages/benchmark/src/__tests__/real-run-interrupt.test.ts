@@ -172,37 +172,35 @@ posixTest("drains a failed parallel batch before removing any process handler", 
   }
 });
 
-posixTest("the detached journal fixture releases its pipes when its driver is interrupted", async () => {
+posixTest.each(["SIGTERM", "IPC disconnect"] as const)("the journal driver and its detached child release their pipes on %s", async interruption => {
   const out = await tempDirectory("bench-driver-exit-");
-  const fixture = join(cwd, "src/__tests__/fixtures/journal-failure-child.cjs");
-  const script = `
-    const child = require("node:child_process").spawn(process.execPath, [process.argv[1]], {
-      env: { ...process.env, DRIVER_PID: String(process.pid) }, detached: true, stdio: ["ignore", "inherit", "inherit"],
-    });
-    process.stdout.write(String(child.pid));
-  `;
-  const driver = spawn(process.execPath, ["-e", script, fixture], { env: { OUT: out }, stdio: ["ignore", "pipe", "pipe"] });
+  const script = join(cwd, "src/__tests__/fixtures/journal-failure-driver.cjs");
+  const driver = spawn(process.execPath, [script], { env: { OUT: out }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   let pid = "";
   let stderr = "";
-  let closed = false;
+  const closed = () => (driver.exitCode !== null || driver.signalCode !== null)
+    && driver.stdout.closed && driver.stderr.closed && !driver.connected;
   driver.stdout.setEncoding("utf8").on("data", text => { pid += text; });
   driver.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
-  driver.once("close", () => { closed = true; });
   try {
     await expect.poll(async () => (await readFile(join(out, "ready"), "utf8").catch(() => "")).trim(),
       { timeout: 4000 }).toMatch(/^\d+$/);
     const ready = (await readFile(join(out, "ready"), "utf8")).trim();
     await expect.poll(() => pid).toBe(ready);
-    driver.kill("SIGTERM");
+    if (interruption === "SIGTERM") driver.kill("SIGTERM");
+    else driver.disconnect(); // Closing the worker's end is also what the OS does on worker loss.
     // The detached child inherits these pipes; the driver exiting alone cannot close them.
-    await expect.poll(() => closed, { timeout: 4000 }).toBe(true);
-    expect(driver.signalCode).toBe("SIGTERM");
+    await expect.poll(closed, { timeout: 4000 }).toBe(true);
+    if (interruption === "SIGTERM") expect(driver.signalCode).toBe("SIGTERM");
+    else expect(driver.exitCode).toBe(0);
     expect(stderr).toContain("Journal fixture driver finished");
   } finally {
-    driver.kill("SIGTERM");
-    if (!closed && /^\d+$/.test(pid)) {
-      try { process.kill(Number(pid), "SIGKILL"); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    if (!closed()) {
+      // Covers a failed readiness assertion, including a child yet to announce itself.
+      await writeFile(join(out, "stop"), "");
+      if (driver.connected) driver.disconnect();
+      driver.kill("SIGTERM");
+      await expect.poll(closed, { timeout: 4000 }).toBe(true);
     }
     await rm(out, { recursive: true, force: true });
   }
