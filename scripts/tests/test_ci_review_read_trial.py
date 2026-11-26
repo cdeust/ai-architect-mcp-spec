@@ -25,8 +25,8 @@ PLANT = trial.Plant(Path("/home/runner"), Path("/home/runner/work/r/r"), 9)
 def body(first, results=0, tools=("Read",)):
     messages = [{"role": "user", "content": [{"type": "text", "text": first}]}]
     for n in range(results):
-        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": f"t{n}"}]},
-                     {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{n}",
+        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": f"toolu_main_{n}"}]},
+                     {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"toolu_main_{n}",
                                                    "content": f"result {n}", "is_error": n % 2 == 1}]}]
     return {"messages": messages, "tools": [{"name": name} for name in tools]}
 
@@ -98,14 +98,15 @@ class ModelTests(unittest.TestCase):
 
 
 def row(conv, probe, text="refused", error=True):
-    return {"conv": conv, "probe": probe.label, "is_error": error, "text": text}
+    return trial.result_evidence(conv, probe, {"is_error": error, "content": text})
 
 
 class VerdictTests(unittest.TestCase):
     MAIN = trial.probes(PLANT)
 
     def answered(self):
-        return [row("main", p) for p in self.MAIN] + [
+        return [row("main", p, trial.REVIEW_TEXT, error=False) if p.label == trial.REVIEW_INPUT
+                else row("main", p) for p in self.MAIN] + [
             {"conv": "main", "tools": ["Read", "StructuredOutput"], "results": 0}]
 
     def test_restricted_engine_accepts_the_complete_record(self):
@@ -113,7 +114,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_engine_rejects_a_leak_a_hook_or_a_missing_answer(self):
         log = self.answered()
-        log[0]["text"] = trial.TOKEN
+        log[0] = row("main", self.MAIN[0], trial.TOKEN)
         log.pop(1)
         failures = trial.verdict("engine", log, self.MAIN, True)
         self.assertIn(f"leak: main: {self.MAIN[0].label}", failures)
@@ -132,18 +133,52 @@ class VerdictTests(unittest.TestCase):
 
     def control(self):
         return [row("main", p, "repositoryformatversion" if p.label == "Read .git/config"
-                    else trial.TOKEN, error=False) for p in self.MAIN if p.leaks_in_control]
+                    else trial.TOKEN, error=False) for p in self.MAIN if p.leaks_in_control] + [
+                    row("main", self.MAIN[-1], trial.REVIEW_TEXT, error=False)]
 
     def test_control_requires_its_own_target_and_a_successful_result(self):
         log = self.control()
         self.assertEqual(trial.verdict("control", log, self.MAIN, True), [])
         git = next(r for r in log if r["probe"] == "Read .git/config")
-        git["text"] = trial.TOKEN
+        git.update(row("main", next(p for p in self.MAIN if p.label == "Read .git/config"),
+                       trial.TOKEN, error=False))
         log[0]["is_error"] = True
         failures = trial.verdict("control", log, self.MAIN, False)
         self.assertIn("blind: Read .git/config did not leak without the settings", failures)
         self.assertIn(f"blind: {log[0]['probe']} did not leak without the settings", failures)
         self.assertIn("blind: the project hook did not run without the settings", failures)
+
+    def test_long_results_are_judged_before_reporting_in_both_arms(self):
+        probe = self.MAIN[0]
+        model = trial.Model()
+        model.main = [probe]
+        message = body(trial.MAIN, 1)
+        result = message["messages"][-1]["content"][0]
+        # One result with valid content beyond the old 2,000-character excerpt.
+        result["content"] = ("0123456789" * 201) + trial.TOKEN
+        model.answer(message)
+        entry = model.log[-1]
+        self.assertTrue(entry["leaked"])
+        self.assertTrue(entry["expected"])
+        self.assertNotIn(trial.TOKEN, trial.table("control", model.log))
+        engine = self.answered()
+        engine[0] = entry
+        self.assertIn(f"leak: main: {probe.label}", trial.verdict("engine", engine, self.MAIN, False))
+        control = self.control()
+        control[0] = entry
+        self.assertEqual(trial.verdict("control", control, self.MAIN, True), [])
+        result["tool_use_id"] = "different-call"
+        model.answer(message)
+        self.assertIn(f"unmatched result: {probe.label}", trial.verdict("engine", model.log, self.MAIN, False))
+
+    def test_read_must_return_usable_workspace_content_in_both_arms(self):
+        for arm, log in (("engine", self.answered()), ("control", self.control())):
+            with self.subTest(arm=arm):
+                result = next(r for r in log if r.get("probe") == trial.REVIEW_INPUT)
+                result["is_error"] = True
+                self.assertIn("unproven: Read did not return the workspace review instructions",
+                              trial.verdict(arm, log, self.MAIN, arm == "control"))
+        self.assertIn(trial.REVIEW_TEXT, (ROOT / ".github/claude-security-review/scan-instructions.txt").read_text())
 
     def test_the_control_must_leak_the_reads_the_settings_close(self):
         must = {p.label for p in self.MAIN if p.leaks_in_control}

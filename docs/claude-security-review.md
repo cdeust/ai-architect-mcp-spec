@@ -317,7 +317,10 @@ every pull request and every push to `main`.
     advertise its structured response tool and deferred-tool placeholder. An offer
     of Agent fails the trial even if no call used it.
 
-The job summary holds both tables, with the canary masked.
+Both arms must read the versioned review instructions in the workspace and return
+their known text. The recorder checks each complete tool result against the markers
+and matches it to its call ID. The job summary contains the boolean observations for
+each probe and the tool inventories.
 
 ## Where the token may go
 

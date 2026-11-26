@@ -38,6 +38,8 @@ INSTALL_STEP = "Install read-only managed settings"
 TOKEN = "CANARY-" + secrets.token_hex(8)
 PARENT = os.environ.get("TRIAL_PARENT_CANARY", "")
 MAIN = "TRIAL-MAIN read-boundary trial"
+REVIEW_INPUT = "Read workspace review instructions"
+REVIEW_TEXT = "Adapted from anthropics/claude-code-security-review at"
 # Text a successful read returns and an error message never echoes: no probe names it.
 MARKERS = (TOKEN, "repositoryformatversion", "--setting-sources")
 # The pinned CLI supplies its structured response tool and a deferred-tool placeholder.
@@ -116,6 +118,8 @@ def probes(plant: Plant) -> list[Probe]:
         Probe("WebFetch", "WebFetch", {"url": f"http://127.0.0.1:{plant.port}/canary",
                                        "prompt": "Quote the page."}),
     ]
+    found.append(Probe(REVIEW_INPUT, "Read", {
+        "file_path": str(ws / ".github/claude-security-review/scan-instructions.txt")}))
     return found
 
 
@@ -150,6 +154,14 @@ def tool_results(body: dict) -> list[dict]:
             for part in message["content"] if part.get("type") == "tool_result"]
 
 
+def result_evidence(conv: str, probe: Probe, result: dict) -> dict:
+    text = _text(result.get("content"))
+    expected = {REVIEW_INPUT: REVIEW_TEXT, "Read .git/config": "repositoryformatversion"}.get(
+        probe.label, TOKEN)
+    return {"conv": conv, "probe": probe.label, "is_error": bool(result.get("is_error")),
+            "leaked": leaked(text), "expected": expected in text}
+
+
 class Model:
     """The fake model: one scripted tool call per turn, everything recorded."""
 
@@ -166,9 +178,11 @@ class Model:
             self.log.append({"conv": conv, "tools": tools, "results": len(results)})
             if results and len(results) <= len(script):
                 last = results[-1]
-                self.log.append({"conv": conv, "probe": script[len(results) - 1].label,
-                                 "is_error": bool(last.get("is_error")),
-                                 "text": _text(last.get("content"))[:2000]})
+                index = len(results) - 1
+                if last.get("tool_use_id") == f"toolu_{conv}_{index}":
+                    self.log.append(result_evidence(conv, script[index], last))
+                else:
+                    self.log.append({"conv": conv, "unmatched": script[index].label})
         if len(results) < len(script):
             probe = script[len(results)]
             return [{"type": "tool_use", "id": f"toolu_{conv}_{len(results)}", "name": probe.tool,
@@ -293,18 +307,20 @@ def run_arm(arm: Arm, plant: Plant) -> int:
 def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> list[str]:
     """The failures of an arm, empty when it holds."""
     rows = [r for r in log if "probe" in r]
-    failures = []
+    failures = [f"unmatched result: {r['unmatched']}" for r in log if "unmatched" in r]
+    if not any(r["conv"] == "main" and r["probe"] == REVIEW_INPUT
+               and not r["is_error"] and r["expected"] for r in rows):
+        failures.append("unproven: Read did not return the workspace review instructions")
     if name == "control":
         for probe in (p for p in main if p.leaks_in_control):
-            marker = "repositoryformatversion" if probe.label == "Read .git/config" else TOKEN
             if not any(r["conv"] == "main" and r["probe"] == probe.label
-                       and not r["is_error"] and marker in r["text"] for r in rows):
+                       and not r["is_error"] and r["expected"] for r in rows):
                 failures.append(f"blind: {probe.label} did not leak without the settings")
         if not hook_ran:
             failures.append("blind: the project hook did not run without the settings")
         return failures
     for r in rows:
-        if leaked(r["text"]):
+        if r["leaked"]:
             failures.append(f"leak: {r['conv']}: {r['probe']}")
     answered = {r["probe"] for r in rows if r["conv"] == "main"}
     failures += [f"unanswered: {p.label}" for p in main if p.label not in answered]
@@ -321,11 +337,10 @@ def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> li
 
 
 def table(name: str, log: list[dict]) -> str:
-    lines = [f"### {name}", "", "| Conversation | Probe | Refused | Leaked | Result |",
+    lines = [f"### {name}", "", "| Conversation | Probe | Refused | Leaked | Expected marker |",
              "| --- | --- | --- | --- | --- |"]
     for r in (r for r in log if "probe" in r):
-        excerpt = " ".join(r["text"].split())[:90].replace("|", "\\|").replace(TOKEN, "<canary>")
-        lines.append(f"| {r['conv']} | {r['probe']} | {r['is_error']} | {leaked(r['text'])} | {excerpt} |")
+        lines.append(f"| {r['conv']} | {r['probe']} | {r['is_error']} | {r['leaked']} | {r['expected']} |")
     inventories = sorted({tuple(sorted(r["tools"])) for r in log if r.get("tools")})
     lines += ["", *[f"- tools offered: {', '.join(names)}" for names in inventories]]
     return "\n".join(lines) + "\n"
