@@ -245,3 +245,9 @@ test("the delivery gate builds through this check, so a worker sees a stale dist
   expect(build.command).toEqual(["node", "scripts/check-dist-in-sync.mjs", "--rebuild"]);
   expect(config.checks.findIndex(check => check.name === "build")).toBe(0); // before the tests that run on what it built
 });
+
+test("rebuild form: ignores the dist a build creates for a package that commits none", () => {
+  const root = copyOfCommit(COMMITTED);
+  const run = rebuild(root, write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]) + write_("packages/other/dist/x.js", "built, never committed\n"));
+  expect(run.status, run.stderr).toBe(0);
+});

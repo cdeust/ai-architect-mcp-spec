@@ -81,8 +81,12 @@ export function problems() {
 
 // ─── The form for a tree without git ────────────────────────────────────────
 
-/** The generated files of the tree at ROOT, by path (with `/`), as a map to the digest of their bytes. */
-export function fingerprints() {
+/**
+ * The generated files of the tree at ROOT, by path (with `/`), as a map to the digest of their bytes.
+ * `distributions` limits the package `dist` directories looked at: a build also creates the `dist` of
+ * packages whose output is not committed (git ignores it), and those are not a difference.
+ */
+export function fingerprints(distributions) {
   const found = new Map();
   const add = path => found.set(path, createHash("sha256").update(readFileSync(join(ROOT, path))).digest("hex"));
   for (const path of ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json"]) if (existsSync(join(ROOT, path))) add(path);
@@ -95,21 +99,28 @@ export function fingerprints() {
   };
   if (existsSync(join(ROOT, "packages"))) {
     for (const entry of readdirSync(join(ROOT, "packages"), { withFileTypes: true })) {
-      if (entry.isDirectory() && existsSync(join(ROOT, "packages", entry.name, "dist"))) walk(`packages/${entry.name}/dist`);
+      const dist = `packages/${entry.name}/dist`;
+      if (entry.isDirectory() && existsSync(join(ROOT, dist)) && (distributions === undefined || distributions.has(dist))) walk(dist);
     }
   }
   return found;
 }
 
+/** The package `dist` directories that hold a file at ROOT now: the ones the commit carries. */
+function committedDistributions() {
+  return new Set([...fingerprints().keys()].map(path => /^(packages\/[^/]+\/dist)\//.exec(path)?.[1]).filter(Boolean));
+}
+
 /** Run the build, then say what differs: `M`odified, `A`dded or `D`eleted generated files. */
 export function rebuildProblems(commands) {
-  const before = fingerprints();
+  const distributions = committedDistributions();
+  const before = fingerprints(distributions);
   if (before.size === 0) return ["no generated file to compare: the tree has no bundle and no dist"];
   for (const [program, ...args] of commands) {
     const run = spawnSync(program, args, { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: BUILD_TIMEOUT_MS });
     if (run.error || run.status !== 0) return [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`];
   }
-  const after = fingerprints();
+  const after = fingerprints(distributions);
   const lines = [];
   for (const path of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     if (!after.has(path)) lines.push(`D ${path}`);
