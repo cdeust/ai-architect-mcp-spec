@@ -21,7 +21,9 @@ What the gate runs is in `delivery-gate.json` and `scripts/gate/profiles/` (chec
 4. **Push and open the pull request, ready.** Follow [CI contract rule 10](../../../docs/agent-guidance.md#ci-contract-for-agents-and-routines) for when to fetch and push, and open the pull request ready for review (`gh pr create`, never `--draft`). If the pre-push hook is not installed, run `pnpm gate:install` (it needs `origin/main` fetched, with the gate on it). Put the rule 8 counts and the gate's mutation line (`N mutant(s) on the changed lines, all detected`) in the pull request body.
 5. **Review in fresh contexts.** Start one subagent per reviewer of `.claude/agents/` (code quality, test coverage, security, performance, documentation accuracy), all in one message, each given the files of the change and what it is meant to guarantee, and nothing of this conversation. Ask each to defeat the change, not to confirm it. Fix what they find, then go back to step 1. Do this review before the push in step 4, for the first push and every later one.
 
-6. **How it merges.** The review bots give advice and gate nothing. The merge waits for the owner's approval of the current head: the owner sets the `owner-approved` label, and the resolver merges when the required checks are green and the owner's record names this head and `main` ([CI contract rule 1](../../../docs/agent-guidance.md#ci-contract-for-agents-and-routines), [review and merge](../../../docs/review-subscriptions.md)). No agent sets that label; the session guard refuses the calls that may. Every push, including a merge of `main`, is a new head that needs a new approval: keep the pull request green and up to date, and fix it until it merges. A commit message or a comment that names gh and the label is refused by the guard: pass it through a file (`git commit -F`, `--body-file`).
+6. **How it merges.** The protected resolver re-reads Claude and Codex on the exact tested
+   head. The owner retains the veto. A new commit needs two current approvals.
+   See [review evidence](../../../docs/review-subscriptions.md).
 
 ## When a push is refused
 

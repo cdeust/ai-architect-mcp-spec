@@ -57,19 +57,12 @@ def run_main(outcome):
 
 WAITS = (
     "merge held: Pipeline has not succeeded on this head",
-    "merge held: the owner has not approved this head",
-    "merge held: the approval label was not set by the owner",
-    "merge held: the approval names another head",
-    "merge held: the approval was given for another base",
-    "merge held: the base changed after the approval",
-    "merge held: the Pipeline predates the move of the base to main",
-    "merge held: the approval record has not finished",
-    "merge held: the approval record did not run; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml",
-    "merge held: the owner has not approved this head: the label is on the pull request but no approval record exists; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml",
-    "merge held: a push came after the approval",
-    "merge held: the approval was removed after it was given",
+    "merge held: review names an older head",
+    "merge held: native Codex approval is missing",
+    "merge held: native Claude approval is missing or conflicting",
     "PR head advanced after testing",
 )
+
 
 
 class HeldMergeTests(unittest.TestCase):
@@ -83,10 +76,12 @@ class HeldMergeTests(unittest.TestCase):
 
     def test_every_waiting_reason_of_the_resolver_is_covered(self):
         source = ENGINE.read_text()
+        literal = set(__import__("re").findall(r'"(merge held: [^"{}]+)"', source))
+        self.assertTrue(literal.issubset(WAITS))
+        verifier = (ENGINE.parents[2] / "scripts/ci_review_proof.py").read_text()
         for reason in WAITS:
-            self.assertIn(f'"{reason}"', source)
-        held = set(__import__("re").findall(r'"(merge held: [^"]+)"', source))
-        self.assertEqual(held, {r for r in WAITS if r.startswith("merge held:")})
+            if reason.startswith("merge held: native"):
+                self.assertIn(reason.removeprefix("merge held: "), verifier)
 
     def test_any_other_refusal_still_fails(self):
         for reason in (

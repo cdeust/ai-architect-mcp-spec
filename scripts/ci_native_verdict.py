@@ -12,7 +12,10 @@ PREFIX = "<!-- codex-review-state:v1 "
 QUERY = """query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$pr) {
-      headRefOid state isDraft
+      headRefOid state isDraft baseRefName
+      timelineItems(last:1, itemTypes:[BASE_REF_CHANGED_EVENT]) {
+        nodes { ... on BaseRefChangedEvent { createdAt } }
+      }
       comments(first:100, after:$endCursor) {
         pageInfo { hasNextPage endCursor }
         nodes { body lastEditedAt author { __typename login ... on Bot { id } }

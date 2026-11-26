@@ -21,8 +21,7 @@ PRD generation and verification MCP (prd-gen). Node.js host-driven pipeline runn
 ## Etiquette
 
 Conventional commits, staged file-by-file. One PR per concern. A pull request merges when
-its required checks are green and the owner approved its current head (CI contract, rule 1);
-the review bots give advice and gate nothing.
+its required checks are green and both Claude and Codex approve its exact head.
 CI is the authority: it exists to catch regressions and enforce the engineering standards.
 
 ## CI contract for agents and routines
@@ -32,49 +31,15 @@ a scheduled routine, the local manager. It follows the contract of `cdeust/Corte
 source of truth for CI. Where the prompt of a routine says otherwise, this section wins:
 the prompt was written before the contract, and the repository's own standards apply.
 
-1. **The owner's approval decides the merge.** Owner decision of 25 November 2026. The
-   protected resolver merges a pull request when the required checks of its head are
-   green and the owner approved that exact head. The owner sets the label
-   `owner-approved`; the workflow `Owner approval`, run from `main`, records the event
-   with the pull request's head commit and who set it. The resolver merges only if the
-   owner's newest approval record names the current head, and no push and no removal of
-   the label came after it. Any other head, including one approved earlier and returned
-   to, needs a new approval. No agent sets the label, as no agent merges by hand: the
-   owner sets it. The session guard refuses the calls that may set it; it is a barrier
-   against mistakes and naive injection, not a security boundary, since agents act under
-   the owner's account (what it cannot stop is in
-   [review and merge](review-subscriptions.md#threat-model)).
-   The record depends on `pull_request_target`, which GitHub blocks by default in public
-   repositories from 2 December 2026 unless an Actions event policy allows it. The
-   policy this repository needs, created by the coordinator under the owner's account and
-   never by an agent of a pull request, is in
-   [review and merge](review-subscriptions.md#the-pull_request_target-dependency).
-   Without it no approval is recorded and the resolver holds every merge, saying why.
-   Setting the label never ends in silence: when the record did not run or has not
-   finished in 10 minutes, the check `Wake the resolver` fails on the pull request and
-   says why; the owner's gesture that starts again is to remove the label and set it
-   again. A head that carries a merge of `main` is a new head and needs a new approval. The one
-   merge without the owner's approval is a low-risk Dependabot update (ADR-1126). The
-   owner can always merge by hand. The review bots (Claude, Codex, any security review)
-   are optional: they give advice, and their absence, failure or exhausted quota blocks
-   nothing. A review by a session other than the author is still owed before the pull
-   request is opened (rule 10), but no mechanical check reads it. A pull request that
-   changes this merge rule is judged by the resolver of `main`, so the owner merges it by
-   hand, on a green gate and an independent review. See
-   [review and merge](review-subscriptions.md).
-2. **Three reviews per branch.** A push to a pull request ready for review triggers the
-   optional Claude review, within a cost cap. The budget counts successful workflow runs for
-   that pull request and branch whose review action step succeeded. A spent budget blocks no
-   merge: the review stops running. Push once per verdict, with every blocker of that
-   verdict fixed, and never while a `PR Review` run is in progress on the pull request:
-   the review would land on a commit that is no longer the head.
-3. **Budget spent: no new branch for the bots.** The review budget is a cost cap, not a
-   merge condition, so a spent budget does not call for a continuation branch. Open one only
-   when the owner asks for it: push the same commits to `<branch>-r<N>`, open a pull request
-   with the same title and body plus a "Continuation" section naming the old one, leave one
-   "Continued in #n" line on the old one, close it.
-   A forced push of any kind, `--force-with-lease` included, is never used: it does not
-   reset the budget and it rewrites a branch another agent may hold.
+1. **Claude and Codex both decide the merge.** The protected resolver requires both
+   native App verdicts on the current head and honours the owner's veto. The review
+   status and the resolver independently read GitHub. A missing bot or a spent quota
+   holds the merge, including for Dependabot. See [review evidence](review-subscriptions.md).
+2. **Three automatic Claude reviews per branch.** A successful action with a verdict
+   consumes a round. The existing `claude-rereview` label grants one extra round.
+   Push fixes together after the active review finishes.
+3. **An exhausted budget holds the current head.** The owner decides a continuation or
+   a new review. Keep the branch and the open PR. Never force a push.
 4. **No comparison with the main branch.** Do not measure how far a branch is behind, do
    not rebase a pull request branch onto the main branch, do not use the branch-update
    button or its API, and do not write that a pull request is late: a late pull request
@@ -84,15 +49,10 @@ the prompt was written before the contract, and the repository's own standards a
    A semantic conflict counts as a real conflict: the pull request removes or changes
    what `main` has just started to use, even when the texts merge (#406 removed the
    manifest #402 installs).
-5. **Several pull requests may be open; each is carried to its merge.** Owner decision of
-   25 November 2026: "Une PR n'a rien à faire en draft. Si elle n'est pas prête elle n'a pas
-   à être poussée. Si elle est prête elle doit être corrigée jusqu'à être mergée." A pull
-   request is opened ready, never as a draft. Its author fixes it, push after push, until
-   it merges. Several pull requests may be open at the same time. When one conflicts with
-   `main` (`mergeable_state` is `dirty`), it takes `main` by a merge commit (rule 4).
-6. **No comment after an approve.** An approve is the owner's label on the current head; a
-   bot's `Verdict: approve` is advice and approves no merge, but it too ends the comments. No
-   reply to the notes, no summary, no acknowledgement.
+5. **One pull request in flight.** A pull request is in flight while a check runs on it, a
+   review runs on it, or an approve waits for the merge. While one is in flight, open no
+   other pull request (issue, relaunch or next slice) and push to no other branch.
+6. **No comment after an approve.** No reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
 7. **Owner decisions are left alone.** Leave a pull request on the branch
@@ -126,7 +86,7 @@ the prompt was written before the contract, and the repository's own standards a
     and regression jobs passing. It is opened ready for review, never as a draft. Before it
     is opened, a reviewer other than its author has read its head, and its body carries the
     counts of rule 8. That review is owed by the contract; the merge itself waits for the
-    owner's approval (rule 1). Opening it ready starts the optional review
+    two current bot approvals (rule 1). Opening it ready starts review
     ([`opened`](../.github/workflows/claude-review.yml#L7)).
     For every push from a local machine, the delivery gate's pre-push hook requires a
     passed verdict on the tip. Make each push worth a gate run, such as one fix or one

@@ -1,0 +1,36 @@
+{
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__github__add_issue_comment$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I /etc/claude-code/review-comment.py"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Read(.git/**)",
+      "Read(//proc/**)",
+      "Read(~/.claude/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.gitconfig)",
+      "Read(//home/runner/work/_temp/**)"
+    ],
+    "blockReadsOutsideWorkingDirectories": true,
+    "disableAutoMode": "disable",
+    "disableBypassPermissionsMode": "disable"
+  }
+}

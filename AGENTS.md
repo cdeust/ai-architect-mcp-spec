@@ -8,3 +8,8 @@ Read `CLAUDE.md`, `docs/agent-guidance.md` and `CONTRIBUTING.md` before changes 
 - Preserve the host-driven contract: the server emits NextAction and the host executes it. Keep generation, submission and verification in their documented order.
 - Enforce the dependency direction in CONTRIBUTING.md: core is inward of validation/verification/strategy/meta-prompting, then orchestration, then mcp-server. Production TypeScript `any` requires the documented ADR.
 - Observable behavior changes must include contract or regression tests in the same PR, including error paths and emitted signals. Apply the project's source-discipline rules to constants and research claims.
+
+Codex reviews the exact PR head and reports code-review findings through the native
+GitHub integration. Report a blocker for defects in behavior, safety or the project contract.
+The resolver re-reads the authenticated native summary and requires a completed review
+with no unresolved findings. The independent Claude code review is required too.

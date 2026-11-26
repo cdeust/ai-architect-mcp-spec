@@ -227,7 +227,7 @@ class CliTests(unittest.TestCase):
         runs = [run(i, i) for i in (1, 2, 3)]
         lines, text = self.invoke(runs, {i: ["success"] for i in (1, 2, 3)})
         self.assertIn("skip=true", lines)
-        self.assertIn("holds no merge", text)
+        self.assertIn("Both reviews remain required", text)
         self.assertNotIn("refinement PR", text)
         self.assertIn(budget.BYPASS_LABEL, text)
 
@@ -254,14 +254,13 @@ class WorkflowWiringTests(unittest.TestCase):
             if step.get("uses", "").startswith("anthropics/claude-code-action@")
         )
 
-    def test_the_review_is_optional_and_nothing_verifies_its_verdict(self):
-        # Owner decision of 2026-11-25: no job of this workflow gates the merge.
-        self.assertEqual(set(self.jobs), {"budget", "review"})
-        self.assertIs(self.action()["continue-on-error"], True)
-        summary = self.jobs["review"]["steps"][-1]
-        self.assertEqual(summary["if"], "always()")
-        self.assertEqual(summary["env"], {"OUTCOME": "${{ steps.claude.outcome }}"})
-        self.assertIn("GITHUB_STEP_SUMMARY", summary["run"])
+    def test_claude_is_mandatory_and_records_only_an_explicit_structured_approval(self):
+        self.assertNotIn("continue-on-error", self.action())
+        record = self.jobs["review"]["steps"][-1]
+        self.assertEqual(record["name"], "Record Claude approval")
+        self.assertEqual(record["if"], "fromJSON(steps.claude.outputs.structured_output).verdict == 'approve'")
+        self.assertNotIn("track_progress", self.action()["with"])
+        self.assertIn("4411a9e9b0283becf4b924f7bce360fd7756c78c", self.action()["uses"])
 
     def test_reviews_of_one_pr_are_admitted_one_at_a_time(self):
         self.assertEqual(
@@ -279,56 +278,30 @@ class WorkflowWiringTests(unittest.TestCase):
         job = self.jobs["budget"]
         self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
         self.assertNotIn("secrets.", yaml.safe_dump(job))
-        count, admit = job["steps"][-2:]
-        self.assertEqual(count["run"], "python3 -I scripts/ci_review_budget.py")
-        self.assertEqual(admit["name"], "Admit a subscription review round")
-        self.assertEqual(admit["if"], "steps.count.outputs.skip == 'false'")
+        self.assertEqual(job["steps"][-1]["run"], "python3 -I scripts/ci_review_budget.py")
 
-    def test_budget_checks_out_main_and_keeps_no_credentials(self):
-        checkout = self.jobs["budget"]["steps"][0]
-        self.assertEqual(checkout["with"]["ref"], "main")
-        self.assertFalse(checkout["with"]["persist-credentials"])
+    def test_secret_bearing_workflow_checks_out_only_the_protected_commit(self):
+        events = self.workflow[True]
+        self.assertEqual(events["pull_request_target"]["branches"], ["main"])
+        for job in self.jobs.values():
+            checkout = job["steps"][0]["with"]
+            self.assertEqual(checkout["ref"], "${{ github.sha }}")
+            self.assertFalse(checkout["persist-credentials"])
+        self.assertEqual(self.jobs["review"]["needs"], "budget")
+        self.assertEqual(self.jobs["review"]["if"], "needs.budget.outputs.skip == 'false'")
+        predicate = self.jobs["budget"]["if"]
+        for clause in ("head.repo.full_name == github.repository", "!github.event.pull_request.draft",
+                       "github.event.pull_request.user.login != 'dependabot[bot]'"):
+            self.assertIn(clause, predicate)
 
-    def test_review_waits_for_the_budget_and_honours_its_skip(self):
-        review = self.jobs["review"]
-        self.assertEqual(review["needs"], "budget")
-        self.assertIn("needs.budget.outputs.skip != 'true'", review["if"])
-
-    def test_budget_and_review_share_the_same_event_predicate(self):
-        base = [
-            "head.repo.full_name == github.repository",
-            "!github.event.pull_request.draft",
-            "github.actor != 'dependabot[bot]'",
-        ]
-        for clause in base:
-            self.assertIn(clause, self.jobs["budget"]["if"])
-            self.assertIn(clause, self.jobs["review"]["if"])
-
-    def test_prompt_carries_the_severity_contract_from_the_budget_outputs(self):
-        prompt = self.action()["with"]["prompt"]
-        self.assertTrue(prompt.startswith("/review-pr "))
-        for needle in (
-            "needs.budget.outputs.round",
-            "needs.budget.outputs.cap",
-            "needs.budget.outputs.reviewed_sha",
-            "A Blocker is a defect you traced or reproduced",
-            "at most 3 Notes",
-            "which part of the PR is accepted",
-            'End with exactly one line: "Verdict: approve" or "Verdict: block".',
-        ):
-            self.assertIn(needle, prompt)
-
-    def test_prompt_puts_the_run_link_in_every_comment_that_carries_the_verdict(self):
-        # ADR-1130: the resolver binds a verdict to a head through the run its comment
-        # links. A review posted with `gh pr comment` carried the verdict and no link.
-        prompt = self.action()["with"]["prompt"]
-        link = (
-            '"[View job run](${{ github.server_url }}/${{ github.repository }}'
-            '/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }})"'
-        )
-        self.assertIn(link, prompt)
-        self.assertIn("in every comment that carries the verdict line", prompt)
-        self.assertLess(prompt.index("End with exactly one line"), prompt.index(link))
+    def test_target_budget_uses_the_actual_pr_head_from_the_protected_run(self):
+        rows = [{"id": n, "created_at": "2026-11-26", "conclusion": "success", "display_title": title}
+                for n, title in enumerate((f"Review PR 7 at {SHA}", f"Review PR 8 at {SHA}", "unexpected"), 1)]
+        def gh(args):
+            self.assertIn("event=pull_request_target", args)
+            self.assertIn("--paginate", args)
+            return "\n".join(json.dumps(row) for row in rows)
+        self.assertEqual([r["head_sha"] for r in budget.protected_candidates(gh, "o/r", 7, 10, "today")], [SHA])
 
     def test_cap_is_three(self):
         self.assertEqual(budget.CAP, 3)

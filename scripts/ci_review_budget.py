@@ -11,8 +11,7 @@ preceded the contract (ADR-1129). A verified Codex receipt counts once per head,
 including a completed review whose findings block the subsequent verdict check.
 
 Writes `round`, `cap`, `skip` and `reviewed_sha` to $GITHUB_OUTPUT. At the cap
-no fourth review runs. The cap bounds the cost of the optional review; it holds no merge,
-which waits for the owner's approval (docs/agent-guidance.md, rule 1). The label `claude-rereview` raises the cap by one
+no fourth review runs without the budget extension; the merge still needs both verdicts. The label `claude-rereview` raises the cap by one
 (a fourth review, never a fifth), however long the label stays attached (ADR-1119).
 Any API or protocol error exits non-zero: no silent fallback to "review".
 
@@ -39,8 +38,7 @@ Gh = Callable[[list[str]], str]
 CAP = 3
 BYPASS_LABEL = "claude-rereview"
 EXHAUSTED = (
-    f"{CAP} of {CAP} reviews used. A fourth review is not run; the review is optional and "
-    "this holds no merge, which waits for the owner's approval. The label "
+    f"{CAP} of {CAP} reviews used. Both reviews remain required. The label "
     f"{BYPASS_LABEL} allows one more review (ADR-1119)."
 )
 # The step of claude-review.yml that runs the action; the test pins this name.
@@ -111,6 +109,19 @@ def candidate_runs(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str):
     ]
 
 
+def protected_candidates(gh, repo, pr, run_id, created):
+    # pull_request_target runs on main; the protected title carries the actual PR head.
+    text = gh([f"repos/{repo}/actions/workflows/claude-review.yml/runs", "--method", "GET",
+               "--paginate", "--jq", ".workflow_runs[] | {id, conclusion, display_title, created_at}",
+               "-f", "event=pull_request_target", "-f", f"created=>={created}", "-f", f"per_page={PER_PAGE}"])
+    selected = []
+    for row in _lines(text):
+        matched = re.fullmatch(rf"Review PR {pr} at ([a-f0-9]{{40}})", row["display_title"])
+        if matched and row["id"] != run_id and row["conclusion"] == "success":
+            selected.append({**row, "head_sha": matched[1]})
+    return selected
+
+
 def review_source(gh: Gh, repo: str, run: Record) -> str | None:
     jq = (
         f'[select(any(.jobs[]; .name == "{BUDGET_JOB}")) | .jobs[] as $job | $job.steps[]? '
@@ -145,8 +156,10 @@ def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
     }
 
 
-def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels):
+def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels, created=None):
     runs = candidate_runs(gh, repo, pr, run_id, head_ref)
+    if created:
+        runs.extend(protected_candidates(gh, repo, pr, run_id, created))
     reviews, native_heads = [], set()
     for run in sorted(runs, key=lambda row: row["created_at"]):
         source = review_source(gh, repo, run)
@@ -182,6 +195,7 @@ def main() -> int:
         int(env["RUN_ID"]),
         env["HEAD_REF"],
         json.loads(env.get("LABELS", "[]")),
+        env.get("CREATED"),
     )
     with open(output_file(env), "a", encoding="utf-8") as out:
         for key, value in result.items():

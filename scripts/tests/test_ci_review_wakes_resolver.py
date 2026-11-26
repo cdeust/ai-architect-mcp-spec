@@ -1,6 +1,4 @@
-"""The owner's approval wakes the resolver too, so the merge does not depend on
-which of the approval and the Pipeline finishes first (ADR-1127). The review
-bots wake nothing: they are optional (owner decision of 2026-11-25)."""
+"""Review receipts wake the protected resolver in either completion order."""
 
 from pathlib import Path
 import textwrap
@@ -22,84 +20,22 @@ def resolver():
     return namespace
 
 
-def review(**changes):
-    run = {
-        "name": "Owner approval wake",
-        "path": ".github/workflows/owner-approval-wake.yml",
-        "event": "pull_request",
-        "status": "completed",
-        "conclusion": "success",
-        "head_repository": {"full_name": REPO},
-        "head_sha": HEAD,
-        "pull_requests": [{"number": 7}],
-    }
-    return {**run, **changes}
-
-
-class FakeApi:
-    def __init__(self, pipelines):
-        self.pipelines, self.paths = pipelines, []
-
-    def records(self, path, key=None):
-        self.paths.append(path)
-        return self.pipelines
-
-
 class ReviewWakesResolverTests(unittest.TestCase):
-    def pipeline_of(self, source, pipelines):
-        api = FakeApi(pipelines)
-        return resolver()["_pipeline_of_approval"](source, REPO, api), api
-
-    def held(self, source, pipelines, message):
-        ns = resolver()
-        with self.assertRaises(ns["PostMergeError"]) as caught:
-            ns["_pipeline_of_approval"](source, REPO, FakeApi(pipelines))
-        self.assertIn(message, str(caught.exception))
-
-    def test_the_newest_successful_pipeline_of_the_head_is_the_source(self):
-        runs = [{"id": 5, "head_sha": HEAD, "pull_requests": [{"number": 7}]}, {"id": 9, "head_sha": HEAD, "pull_requests": [{"number": 7}]}]
-        found, api = self.pipeline_of(review(), runs)
-        self.assertEqual(found["id"], 9)
-        self.assertEqual(
-            api.paths,
-            [
-                f"/repos/{REPO}/actions/workflows/pipeline.yml/runs"
-                f"?head_sha={HEAD}&event=pull_request&status=success"
-            ],
-        )
-
-    def test_a_pipeline_of_another_head_does_not_count(self):
-        self.held(review(), [{"id": 9, "head_sha": "b" * 40, "pull_requests": [{"number": 7}]}], "has not succeeded")
-
-    def test_no_successful_pipeline_holds_the_merge(self):
-        self.held(review(), [], "Pipeline has not succeeded on this head")
-
-    def test_a_review_that_failed_or_ran_elsewhere_is_refused(self):
-        for change in (
-            {"conclusion": "failure"},
-            {"status": "in_progress"},
-            {"event": "pull_request_target"},
-            {"path": ".github/workflows/other.yml"},
-        ):
-            self.held(review(**change), [], "did not complete successfully")
-        fork = review(head_repository={"full_name": "someone/Cortex"})
-        self.held(fork, [], "head repository differs")
-
     def test_a_pr_merged_before_the_review_ended_is_not_tested_twice(self):
         text = (WORKFLOWS / "pipeline-post-merge.yml").read_text()
         body = text.split("def resolve(event", 1)[1].split("def main", 1)[0]
-        held = body.split('run.get("woken_by_approval")', 1)[1].split("return {", 2)[1]
+        held = body.split('run.get("woken_by_review")', 1)[1].split("return {", 2)[1]
         self.assertIn('"run_tests": "false"', held)
         self.assertLess(
-            body.index('run.get("woken_by_approval")'),
+            body.index('run.get("woken_by_review")'),
             body.index('"run_tests": "true"'),
         )
 
     def test_both_workflows_wake_the_resolver(self):
         caller = (WORKFLOWS / "pipeline-after-merge.yml").read_text()
-        self.assertIn("workflows: [Pipeline, Owner approval wake]", caller)
-        approval_name = (WORKFLOWS / "owner-approval-wake.yml").read_text().splitlines()[0]
-        self.assertEqual(approval_name, "name: Owner approval wake")
+        self.assertIn("workflows: [Pipeline, PR Review, Review updated]", caller)
+        approval_name = (WORKFLOWS / "review-updated.yml").read_text().splitlines()[0]
+        self.assertEqual(approval_name, "name: Review updated")
 
 
 if __name__ == "__main__":
