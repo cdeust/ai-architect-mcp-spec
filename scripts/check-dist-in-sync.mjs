@@ -30,7 +30,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 // The bundle, the npm metadata `pnpm bundle` stamps beside it (scripts/stamp-bundle-version.mjs), and each package dist.
 export const GENERATED = ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json", ":(glob)packages/*/dist/**"];
@@ -154,7 +154,11 @@ export function rebuildProblems(commands) {
   return lines;
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compared by real path: macOS temporary directories and Windows short names reach the same file under two
+// spellings, and a guard that thinks it was imported would end with exit 0 without checking anything.
+const runDirectly = process.argv[1] !== undefined && realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
+
+if (runDirectly) {
   const args = process.argv.slice(2);
   const rebuild = args[0] === "--rebuild";
   const custom = args.indexOf("--");

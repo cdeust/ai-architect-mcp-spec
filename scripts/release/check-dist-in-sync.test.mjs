@@ -2,7 +2,7 @@
 // build of the source. Each case is a repository where a "build" has just been
 // run on top of a commit, which is the state CI sees after `pnpm build && pnpm bundle`.
 import { afterEach, expect, test } from "vitest";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -259,4 +259,18 @@ test("rebuild form: ignores a file the build writes into a committed dist when .
   const unlisted = rebuild(root, write_("packages/app/dist/b.js", "new module\n"));
   expect(unlisted.status).toBe(1);
   expect(unlisted.stderr).toContain("A packages/app/dist/b.js");
+});
+
+test.skipIf(process.platform === "win32")("checks the repository when started through a symbolic link to it", () => {
+  // macOS reaches its temporary directory as /var/folders, a link to /private/var/folders. A script that
+  // compared the two spellings of its own path took itself for an import and exited 0 without checking.
+  const root = committed();
+  write(root, "mcp-server/index.js", "var a = 2;\n");
+  const holder = mkdtempSync(join(tmpdir(), "dist-in-sync-link-"));
+  temporary.push(holder);
+  const link = join(holder, "repo");
+  symlinkSync(root, link);
+  const run = spawnSync(process.execPath, [join(link, "scripts/check-dist-in-sync.mjs")], { cwd: link, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
+  expect(run.status, run.stdout).toBe(1);
+  expect(run.stderr).toContain(" M mcp-server/index.js");
 });
