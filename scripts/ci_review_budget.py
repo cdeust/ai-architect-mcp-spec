@@ -3,8 +3,8 @@
 
 Runs from the trusted default-branch checkout of claude-review.yml, before the
 review action. It reads workflow-run metadata only: no PR content, no comment
-text. A Claude review counts when its run is a success of the same PR, ran under the
-review contract (it has the "Claude review budget" job) and the action step
+text. A Claude review counts when its own run attempt succeeded for the same PR, ran under the
+review contract (the in-job counting step, or the historical budget job) and the action step
 ("PR Review") itself succeeded, so runs that skipped the action because the cap
 was reached do not count as reviews, nor do reviews of the workflow that
 preceded the contract (ADR-1129). Historical runs that only verified Codex used no Claude round.
@@ -42,11 +42,10 @@ EXHAUSTED = (
 )
 # The step of claude-review.yml that runs the action; the test pins this name.
 ACTION_STEP = "PR Review"
-# The job of claude-review.yml that runs this script; the test pins this name.
-# A run without it predates the review contract (the cap, then the verdict line
-# the merge waits for) and does not count: a pull request reviewed only under
-# the old workflow could otherwise never receive a verdict (ADR-1129).
+# Historical runs used a separate budget job. New runs count in the action's
+# own job so a failed-job rerun also checks the remaining rounds (ADR-1129).
 BUDGET_JOB = "Claude review budget"
+BUDGET_STEP = "Count the reviews this PR already received"
 SHA = re.compile(r"[0-9a-f]{40}")
 # source: GitHub REST per_page maximum.
 PER_PAGE = 100
@@ -69,68 +68,86 @@ def gh_api(args: list[str]) -> str:
     return done.stdout
 
 
-def _lines(text: str) -> list[Record]:
-    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
-    if any(not isinstance(row, dict) for row in rows):
-        raise BudgetError("protocol")
-    return rows
+def page_records(gh, args, key):
+    pages = json.loads(gh([*args, "--paginate", "--slurp"]))
+    if not isinstance(pages, list) or not pages:
+        raise BudgetError("missing REST pages")
+    records = [record for page in pages for record in page[key]]
+    if (any(type(page["total_count"]) is not int or page["total_count"] != len(records) for page in pages)
+            or any(type(record["id"]) is not int or record["id"] < 1 for record in records)
+            or len({record["id"] for record in records}) != len(records)):
+        raise BudgetError("incomplete or ambiguous REST results")
+    return records
 
 
-def candidate_runs(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str):
-    jq = (
-        ".workflow_runs[] | {id, conclusion, head_sha, created_at, "
-        "prs: [.pull_requests[].number]}"
-    )
-    text = gh(
-        [
-            f"repos/{repo}/actions/workflows/claude-review.yml/runs",
-            "--method",
-            "GET",
-            "--paginate",
-            "--jq",
-            jq,
-            "-f",
-            "event=pull_request",
-            "-f",
-            f"branch={head_ref}",
-            "-f",
-            f"per_page={PER_PAGE}",
-        ]
-    )
-    return [
-        row
-        for row in _lines(text)
-        if row.get("id") != run_id
-        and row.get("conclusion") in {"success", "failure"}
-        and pr in row.get("prs", [])
-    ]
+def workflow_runs(gh, repo, *filters):
+    args = [f"repos/{repo}/actions/workflows/claude-review.yml/runs", "--method", "GET",
+            "-f", f"per_page={PER_PAGE}"]
+    for field in filters:
+        args.extend(("-f", field))
+    return page_records(gh, args, "workflow_runs")
 
 
-def protected_candidates(gh, repo, pr, run_id, created):
+def candidate_runs(gh: Gh, repo: str, pr: int, head_ref: str):
+    return [row for row in workflow_runs(gh, repo, "event=pull_request", f"branch={head_ref}")
+            if [pull["number"] for pull in row["pull_requests"]] == [pr]]
+
+
+def protected_candidates(gh, repo, pr, created):
     # pull_request_target runs on main; the protected title carries the actual PR head.
-    text = gh([f"repos/{repo}/actions/workflows/claude-review.yml/runs", "--method", "GET",
-               "--paginate", "--jq", ".workflow_runs[] | {id, conclusion, display_title, created_at}",
-               "-f", "event=pull_request_target", "-f", f"created=>={created}", "-f", f"per_page={PER_PAGE}"])
     selected = []
-    for row in _lines(text):
+    for row in workflow_runs(gh, repo, "event=pull_request_target", f"created=>={created}"):
         matched = re.fullmatch(rf"Review PR {pr} at ([a-f0-9]{{40}})", row["display_title"])
-        if matched and row["id"] != run_id and row["conclusion"] == "success":
+        if matched:
             selected.append({**row, "head_sha": matched[1]})
     return selected
 
 
-def ran_claude_review(gh: Gh, repo: str, run: Record) -> bool:
-    jq = (
-        f'[.[].jobs[]] | select(any(.[]; .name == "{BUDGET_JOB}")) '
-        f'| [.[] | select(.name == "Claude review") | .steps[]? '
-        f'| select(.name == "{ACTION_STEP}") | .conclusion]'
-    )
-    text = gh([f"repos/{repo}/actions/runs/{run['id']}/jobs", "--paginate", "--slurp", "--jq", jq])
-    # jq empty output means a run before the budget contract.
-    conclusions = json.loads(text) if text.strip() else []
-    if not isinstance(conclusions, list):
-        raise BudgetError("protocol")
-    return run.get("conclusion") == "success" and "success" in conclusions
+def counted_reviews(gh, repo, run, last_attempt):
+    run_id = run["id"]
+    prefix = f"repos/{repo}/actions/runs/{run_id}"
+    # gh accepts --paginate with --slurp, and forbids adding --jq to that pair.
+    jobs = page_records(gh, [f"{prefix}/jobs?filter=all&per_page={PER_PAGE}"], "jobs")
+    if any(job["run_id"] != run_id for job in jobs):
+        raise BudgetError("job belongs to another run")
+    legacy = any(job["name"] == BUDGET_JOB for job in jobs)
+    def succeeded(attempt):
+        if attempt == run["run_attempt"]:
+            return run["conclusion"] == "success"
+        record = json.loads(gh([f"{prefix}/attempts/{attempt}"]))
+        if (record["id"] != run_id or record["run_attempt"] != attempt or record["status"] != "completed"
+                or not isinstance(record["conclusion"], str) or not record["conclusion"]):
+            raise BudgetError("historical run attempt is not verified")
+        return record["conclusion"] == "success"
+
+    present = {job["run_attempt"] for job in jobs}
+    if any(succeeded(attempt) for attempt in set(range(1, last_attempt + 1)) - present):
+        raise BudgetError("missing jobs of a successful attempt")
+    reviews, seen = [], set()
+    for job in jobs:
+        attempt = job["run_attempt"]
+        if type(attempt) is not int or attempt < 1 or attempt > run["run_attempt"]:
+            raise BudgetError("invalid historical review attempt")
+        if attempt > last_attempt or job["name"] != "Claude review":
+            continue
+        if attempt in seen:
+            raise BudgetError("ambiguous Claude job for one attempt")
+        seen.add(attempt)
+        if job["status"] != "completed" or job["conclusion"] != "success":
+            continue
+        relevant = [step for step in job["steps"] if step["name"] in (BUDGET_STEP, ACTION_STEP)]
+        steps = {step["name"]: step for step in relevant}
+        if len(steps) != len(relevant):
+            raise BudgetError("ambiguous Claude job steps")
+        counted = steps.get(BUDGET_STEP, {})
+        if not legacy and counted.get("conclusion") != "success":
+            continue
+        action = steps.get(ACTION_STEP, {})
+        if action.get("conclusion") != "success":
+            continue
+        if succeeded(attempt):
+            reviews.append({"head_sha": run["head_sha"], "created_at": action["completed_at"]})
+    return reviews
 
 
 def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
@@ -149,11 +166,25 @@ def decide(reviews: list[Record], labels: list[str], cap: int = CAP) -> Record:
     }
 
 
-def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels, created=None):
-    runs = candidate_runs(gh, repo, pr, run_id, head_ref)
+def budget(gh: Gh, repo: str, pr: int, run_id: int, head_ref: str, labels, created=None, run_attempt=1):
+    runs = candidate_runs(gh, repo, pr, head_ref)
     if created:
-        runs.extend(protected_candidates(gh, repo, pr, run_id, created))
-    reviews = [run for run in runs if ran_claude_review(gh, repo, run)]
+        runs.extend(protected_candidates(gh, repo, pr, created))
+    seen, reviews = set(), []
+    for run in runs:
+        identity, attempt = run["id"], run["run_attempt"]
+        if type(attempt) is not int or attempt < 1 or type(identity) is not int or identity < 1 or identity in seen:
+            raise BudgetError("invalid or duplicate workflow run")
+        seen.add(identity)
+        last = attempt
+        if identity == run_id:
+            if attempt != run_attempt:
+                raise BudgetError("current attempt does not match workflow history")
+            last = attempt - 1
+        if last:
+            reviews.extend(counted_reviews(gh, repo, run, last))
+    if run_attempt < 1 or (run_attempt > 1 and run_id not in seen):
+        raise BudgetError("current rerun history unavailable")
     return decide(reviews, labels)
 
 
@@ -181,6 +212,7 @@ def main() -> int:
         env["HEAD_REF"],
         json.loads(env.get("LABELS", "[]")),
         env.get("CREATED"),
+        int(env["RUN_ATTEMPT"]),
     )
     with open(output_file(env), "a", encoding="utf-8") as out:
         for key, value in result.items():

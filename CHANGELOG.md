@@ -169,7 +169,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - Spec PR review requires current Claude and Codex App approvals on the tested commit. The protected resolver authenticates both authors and their last editors. It re-reads both verdicts when one changes, including on dependency updates. Both the published status and resolver reject outstanding adverse evidence. A retarget requires a new Claude run, a new Pipeline and a dated Codex code review that began after the base changed. The quota reader is retired.
 
-- The pinned Claude Code CLI that `claude.yml` and the owner-mention contract install (#402) moves from `.github/actions/claude-subscription-quota` to `.github/owner-mention-cli`, unchanged, since the quota reader that held it is removed. Dependabot now updates it and the `unit` command audits it, which neither did at the old path. A test requires every `npm ci --prefix` of the workflows and of `ci.json` to name a locked manifest.
+- The protected owner-mention job and new review workflows share one locked Claude CLI at its existing installation path. The previous default-branch workflow can install the same CLI during rollout. The quota action and its reader are removed. Dependabot updates the CLI, and the unit job audits its lockfile.
 
 - The delivery hook enforces its existing push, manual merge and repository-write rules. The retired owner-approval label grants no merge authority. The protected resolver binds each Pipeline wake to one PR, checks both Apps and rereads the human veto before submitting the tested SHA.
 

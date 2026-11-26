@@ -71,9 +71,12 @@ def review_pages(api, repository, number, head):
 
 EDIT_HISTORY = """query($id:ID!, $after:String) {
   node(id:$id) { ... on IssueComment {
-    id body lastEditedAt
+    id body createdAt lastEditedAt
+    author { __typename login ... on Bot { id } }
+    editor { __typename login ... on Bot { id } }
     userContentEdits(first:100, after:$after) {
-      nodes { editedAt deletedAt diff editor { __typename login ... on Bot { id } } }
+      totalCount
+      nodes { id editedAt deletedAt diff editor { __typename login ... on Bot { id } } }
       pageInfo { hasNextPage endCursor }
     }
   } }
@@ -81,26 +84,79 @@ EDIT_HISTORY = """query($id:ID!, $after:String) {
 
 
 def comment_history(api, row):
-    cursor, seen = None, set()
+    cursor, seen_cursors, revisions = None, set(), set()
+    total = None
     while True:
         result = api.request("POST", "/graphql", {"query": EDIT_HISTORY, "variables": {"id": row["id"], "after": cursor}})
         if result.get("errors"):
             raise ValueError("unable to read native comment history")
         comment = result["data"]["node"]
-        if not comment or any(comment[key] != row[key] for key in ("id", "body", "lastEditedAt")):
+        if not comment or any(comment[key] != row[key] for key in ("id", "body", "createdAt", "lastEditedAt", "author", "editor")):
             raise ValueError("native comment changed while reading its history")
         edits = comment["userContentEdits"]
-        yield from edits["nodes"]
+        size = edits["totalCount"]
+        if type(size) is not int or size < 0 or (total is not None and size != total):
+            raise ValueError("inconsistent native edit count")
+        total = size
+        for revision in edits["nodes"]:
+            identity = revision["id"]
+            if not isinstance(identity, str) or not identity or identity in revisions:
+                raise ValueError("duplicate or missing native edit identity")
+            revisions.add(identity)
+            yield revision
         info = edits["pageInfo"]
         if info["hasNextPage"] is False:
+            if len(revisions) != total:
+                raise ValueError("incomplete native comment history")
             return
         cursor = info["endCursor"]
-        if info["hasNextPage"] is not True or not isinstance(cursor, str) or not cursor or cursor in seen:
+        if info["hasNextPage"] is not True or not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
             raise ValueError("invalid native edit pagination")
-        seen.add(cursor)
+        seen_cursors.add(cursor)
 
 
-def claude_state(pages, head, repo, runs, action):
+def claude_revisions(row, history):
+    created = timestamp(row["createdAt"])
+    if row["lastEditedAt"] is None:
+        if row["editor"] is not None:
+            raise ValueError("unverified Claude verdict editor")
+        yield created, row["body"]
+        return
+    latest = timestamp(row["lastEditedAt"])
+    if row["editor"] != CLAUDE or latest < created:
+        raise ValueError("unverified Claude verdict editor or timestamp")
+    previous = None
+    for edit in history(row):
+        at, body = timestamp(edit["editedAt"]), edit["diff"]
+        if (edit["editor"] != CLAUDE or edit["deletedAt"] is not None or not isinstance(body, str)
+                or at < created or (previous is not None and at > previous)):
+            raise ValueError("unverified Claude verdict history")
+        if previous is None and (at != latest or body != row["body"]):
+            raise ValueError("missing latest Claude comment revision")
+        yield at, body
+        previous = at
+    if previous != created:
+        raise ValueError("missing original Claude comment revision")
+
+
+def claude_receipt(body, commit, link, attempts):
+    lines = body.strip().split("\n")
+    if commit not in lines:
+        return None
+    if (len(lines) < 3 or lines[-3] != commit or lines.count(commit) != 1
+            or sum(line.startswith("Verdict:") for line in lines) != 1
+            or lines[-1] not in ("Verdict: approve", "Verdict: block")):
+        raise ValueError("invalid Claude verdict")
+    match = link.fullmatch(lines[-2])
+    if not match:
+        raise ValueError("unknown Claude attempt on this head")
+    run_id, attempt = map(int, match.groups())
+    if attempt > attempts.get(run_id, 0):
+        raise ValueError("unobserved Claude attempt on this head")
+    return (run_id, attempt), lines[-1]
+
+
+def claude_state(pages, head, repo, runs, action, history):
     attempts = {run["id"]: run["run_attempt"] for run in runs}
     current = runs[-1]["id"], runs[-1]["run_attempt"]
     link = re.compile(rf"\[View job run\]\(https://github\.com/{re.escape(repo)}/actions/runs/"
@@ -112,39 +168,98 @@ def claude_state(pages, head, repo, runs, action):
         for row in native["native_comments"](page, head)["nodes"]:
             if row["author"] != CLAUDE:
                 continue
-            lines = row["body"].strip().split("\n")
-            if commit not in lines:
-                continue
-            if row["editor"] != (CLAUDE if row["lastEditedAt"] is not None else None):
-                raise ValueError("unverified Claude verdict editor")
-            if (len(lines) < 3 or lines[-3] != commit or lines.count(commit) != 1
-                    or sum(line.startswith("Verdict:") for line in lines) != 1
-                    or lines[-1] not in ("Verdict: approve", "Verdict: block")):
-                raise ValueError("invalid Claude verdict")
-            match = link.fullmatch(lines[-2])
-            if not match:
-                raise ValueError("unknown Claude attempt on this head")
-            run_id, attempt = map(int, match.groups())
-            identity = run_id, attempt
-            if identity in seen or attempt > attempts.get(run_id, 0):
-                raise ValueError("ambiguous or unobserved Claude attempt on this head")
-            seen.add(identity)
-            created = timestamp(row["createdAt"])
-            last_change = timestamp(row["lastEditedAt"]) if row["lastEditedAt"] is not None else created
-            if last_change < created:
-                raise ValueError("inconsistent Claude comment timestamps")
-            if lines[-1] == "Verdict: block":
-                blocks.append(last_change)
-            elif identity == current:
-                # An edit can retract an approval but cannot issue another structured
-                # approval or establish when a previously blocked review was repeated.
-                if row["lastEditedAt"] is None:
-                    approval = created
+            identity = None
+            # A later revision can remove the footer or change its verdict. Read
+            # every revision before determining whether this comment names the head.
+            for at, body in claude_revisions(row, history):
+                receipt = claude_receipt(body, commit, link, attempts)
+                if receipt is None:
+                    continue
+                attempt, verdict = receipt
+                if attempt in seen or (identity is not None and attempt != identity):
+                    raise ValueError("ambiguous Claude attempt on this head")
+                identity = attempt
+                if verdict == "Verdict: block":
+                    blocks.append(at)
+                elif attempt == current and row["lastEditedAt"] is None:
+                    approval = at
+            if identity is not None:
+                seen.add(identity)
     started_at = timestamp(action["started_at"])
     if approval is None or not started_at <= approval <= timestamp(action["completed_at"]):
         return "block"
     # A distinct review which actually started after the block can resolve it.
     return "block" if any(at >= started_at for at in blocks) else "approve"
+
+
+DELETIONS = """query($owner:String!, $repo:String!, $pr:Int!, $after:String) {
+  repository(owner:$owner, name:$repo) { pullRequest(number:$pr) {
+    headRefOid baseRefName
+    timelineItems(first:100, after:$after, itemTypes:[COMMENT_DELETED_EVENT]) {
+      totalCount
+      nodes { ... on CommentDeletedEvent { id createdAt deletedCommentAuthor { __typename login ... on Bot { id } } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  } }
+}"""
+
+
+def last_provider_deletions(api, repository, number, head):
+    owner, repo = repository.split("/")
+    variables = {"owner": owner, "repo": repo, "pr": number}
+    deleted = {CLAUDE["id"]: "", native["BOT"]["id"]: ""}
+    seen, events, total = set(), set(), None
+    while True:
+        data = api.request("POST", "/graphql", {"query": DELETIONS, "variables": variables})
+        if data.get("errors"):
+            raise ValueError("unable to read PR comment deletions")
+        pr = data["data"]["repository"]["pullRequest"]
+        if pr["headRefOid"] != head or pr["baseRefName"] != "main":
+            raise ValueError("PR changed while reading comment deletions")
+        timeline = pr["timelineItems"]
+        size = timeline["totalCount"]
+        if type(size) is not int or size < 0 or (total is not None and total != size):
+            raise ValueError("inconsistent comment-deletion count")
+        total = size
+        for event in timeline["nodes"]:
+            identity = event["id"]
+            if not isinstance(identity, str) or not identity or identity in events:
+                raise ValueError("missing or duplicate comment-deletion event")
+            events.add(identity)
+            author = event["deletedCommentAuthor"]
+            if author is not None and (not isinstance(author, dict) or not author.get("__typename")
+                    or not author.get("login") or (author["__typename"] == "Bot" and not author.get("id"))):
+                raise ValueError("unknown deleted comment author")
+            at = timestamp(event["createdAt"])
+            # GitHub preserves the deleted author's identity and the deletion time,
+            # but not the body or head. Unknown authors can be either reviewer.
+            for bot in (CLAUDE, native["BOT"]):
+                if author is None or author.get("id") == bot["id"]:
+                    deleted[bot["id"]] = max(deleted[bot["id"]], at)
+        info = timeline["pageInfo"]
+        if info["hasNextPage"] is False:
+            if len(events) != total:
+                raise ValueError("incomplete PR comment-deletion history")
+            return deleted
+        cursor = info["endCursor"]
+        if info["hasNextPage"] is not True or not isinstance(cursor, str) or not cursor or cursor in seen:
+            raise ValueError("invalid PR deletion pagination")
+        seen.add(cursor)
+        variables = dict(variables, after=cursor)
+
+
+def review_snapshot(pages):
+    # Only reviewer records and the base change affect the verdict. Human
+    # discussion may continue while an edited provider comment is verified.
+    snapshot = []
+    for page in pages:
+        pr = page["data"]["repository"]["pullRequest"]
+        changes = tuple(item["createdAt"] for item in pr["timelineItems"]["nodes"])
+        rows = [(row["id"], row["createdAt"], row["lastEditedAt"], row["body"], row["author"], row["editor"])
+                for row in pr["comments"]["nodes"] if row["author"] in (CLAUDE, native["BOT"])]
+        snapshot.append((pr["baseRefName"], changes, rows))
+    # Page boundaries can move when an unrelated comment is added.
+    return ({(base, changes) for base, changes, _ in snapshot}, [row for _, _, rows in snapshot for row in rows])
 
 
 def attempt_snapshot(runs):
@@ -174,6 +289,7 @@ def require_reviews(api, repository, pr, head, tested_at=None):
             raise ValueError("Claude did not record an approval in this attempt")
         steps_by_name[name] = steps[0]
     pages = list(review_pages(api, repository, pr["number"], head))
+    initial_reviews = review_snapshot(pages)
     last_change = None
     for page in pages:
         pull = page["data"]["repository"]["pullRequest"]
@@ -186,9 +302,19 @@ def require_reviews(api, repository, pr, head, tested_at=None):
             proofs = [run["created_at"]] + ([] if tested_at is None else [tested_at])
             if any(timestamp(at) <= changed for at in proofs):
                 raise ValueError("a new review and Pipeline are required after the base change")
-    if native["state"](pages, head, created_after=last_change, history=lambda row: comment_history(api, row))[0] != "approve":
+    def history(row):
+        return comment_history(api, row)
+
+    deleted = last_provider_deletions(api, repository, pr["number"], head)
+    cutoff = max(last_change or "", deleted[native["BOT"]["id"]])
+    if native["state"](pages, head, created_after=cutoff, history=history)[0] != "approve":
         raise ValueError("native Codex approval is missing")
-    if claude_state(pages, head, repository, runs, steps_by_name["PR Review"]) != "approve":
+    if claude_state(pages, head, repository, runs, steps_by_name["PR Review"], history) != "approve":
         raise ValueError("native Claude approval is missing or conflicting")
+    if deleted[CLAUDE["id"]] >= timestamp(steps_by_name["PR Review"]["started_at"]):
+        raise ValueError("a new Claude review is required after an unobservable comment deletion")
+    if (review_snapshot(review_pages(api, repository, pr["number"], head)) != initial_reviews
+            or last_provider_deletions(api, repository, pr["number"], head) != deleted):
+        raise ValueError("review evidence changed during verification")
     if attempt_snapshot(current_runs(api, repository, pr, head)) != before:
         raise ValueError("protected Claude attempts changed while reading the reviews")

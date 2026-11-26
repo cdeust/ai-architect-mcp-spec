@@ -16,7 +16,7 @@ npm() {
   if test "$1" = audit; then
     case "$*" in
       'audit --prefix scripts/ci-mention --omit=dev --audit-level=high') return "$NPM_AUDIT_STATUS" ;;
-      'audit --prefix .github/owner-mention-cli --omit=dev --audit-level=high') return "$CLI_AUDIT_STATUS" ;;
+      'audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high') return "$CLI_AUDIT_STATUS" ;;
       *) return 2 ;;
     esac
   fi
@@ -56,7 +56,7 @@ class ProductionAuditGate(unittest.TestCase):
         mention = "npm audit --prefix scripts/ci-mention --omit=dev --audit-level=high"
         self.assertIn(mention, steps)
         self.assertLess(steps.index(mention), steps.index("install --frozen-lockfile"))
-        cli = "npm audit --prefix .github/owner-mention-cli --omit=dev --audit-level=high"
+        cli = "npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high"
         self.assertIn(cli, steps)
         self.assertLess(steps.index(cli), steps.index("install --frozen-lockfile"))
 
@@ -87,7 +87,7 @@ class OwnerMentionCliAuditGate(unittest.TestCase):
         result = ProductionAuditGate.run_unit(self, 0, cli_audit_status=1)
         self.assertEqual(result.returncode, 1, result.stdout)
         steps = result.stdout.splitlines()
-        self.assertIn("npm audit --prefix .github/owner-mention-cli --omit=dev --audit-level=high", steps)
+        self.assertIn("npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high", steps)
         self.assertNotIn("install --frozen-lockfile", steps)
         self.assertNotIn("build", steps)
 

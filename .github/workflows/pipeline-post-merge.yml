@@ -88,6 +88,7 @@ jobs:
           import sys
           import tempfile
           from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
           from urllib.request import Request, urlopen
 
 
@@ -155,6 +156,18 @@ jobs:
               return value
 
 
+          def _associated_pr_number(run):
+              associations = run.get("pull_requests")
+              if not isinstance(associations, list) or len(associations) != 1:
+                  return None
+              pr = associations[0]
+              if (isinstance(pr, dict) and type(pr.get("number")) is int and pr["number"] > 0
+                      and isinstance(pr.get("head"), dict) and pr["head"].get("sha") == run.get("head_sha")
+                      and isinstance(pr.get("base"), dict) and pr["base"].get("ref") == "main"):
+                  return pr["number"]
+              return None
+
+
           def _validate_run(run, repository):
               require(isinstance(run, dict), "missing workflow_run")
               require(run.get("event") == "pull_request", "source event is not pull_request")
@@ -181,6 +194,7 @@ jobs:
                   "invalid source run attempt",
               )
               full_sha(run.get("head_sha"))
+              require(_associated_pr_number(run) is not None, "source Pipeline has no unique tested PR association")
 
 
           # source: the matrix of the environment and install jobs of pipeline.yml.
@@ -284,7 +298,7 @@ jobs:
               runs = [run for run in api.records(
                   f"{path}?head_sha={head}&event=pull_request&status=success", "workflow_runs")
                   if run.get("head_sha") == head and type(run.get("id")) is int
-                  and [pr.get("number") for pr in run.get("pull_requests") or []] == [number]]
+                  and _associated_pr_number(run) == number]
               require(runs, "merge held: Pipeline has not succeeded on this head")
               return max(runs, key=lambda run: run["id"])
 
@@ -308,13 +322,17 @@ jobs:
               run = api.request("GET", f"{prefix}/actions/runs/{source['id']}")
               _validate_run(run, repository)
               require(
-                  run["id"] == source["id"] and run["head_sha"] == source["head_sha"],
+                  run["id"] == source["id"] and run["head_sha"] == source["head_sha"]
+                  and run["head_branch"] == source["head_branch"] and run["created_at"] == source["created_at"]
+                  and run["head_repository"].get("id") == source["head_repository"].get("id")
+                  and _associated_pr_number(run) == _associated_pr_number(source),
                   "source run identity changed",
               )
               require(
                   run.get("run_attempt") == source.get("run_attempt"),
                   "source run has a newer attempt",
               )
+              run["tested_pr_number"] = _historical_pr(run, repository, api)
               run["woken_by_review"] = woken_by_review
               jobs = _effective_jobs(
                   api.records(f"{prefix}/actions/runs/{run['id']}/jobs?filter=all", "jobs"), run
@@ -323,24 +341,45 @@ jobs:
               return run
 
 
+          def _historical_pr(run, repository, api):
+              # The run's pull_requests[].head.sha changes when the branch advances
+              # (observed on architect-os#152). Treat that association as a cross-check.
+              # The original run retains its head repository, branch and creation time.
+              source = run["head_repository"]
+              branch = run["head_branch"]
+              repo_id = source.get("id")
+              require(type(repo_id) is int and repo_id > 0 and source.get("full_name") == repository,
+                      "source repository identity unavailable")
+              when = proof["timestamp"](run["created_at"])
+              owner = repository.split("/")[0]
+              query = urlencode({"state": "all", "head": f"{owner}:{branch}", "sort": "created", "direction": "asc"})
+              numbers = []
+              for pr in api.records(f"/repos/{repository}/pulls?{query}"):
+                  # Exact source on every returned record; a missing/renamed head
+                  # cannot establish identity. GitHub closes PRs whose head is renamed.
+                  head = pr.get("head") or {}
+                  repo = head.get("repo") or {}
+                  require(head.get("ref") == branch and repo.get("id") == repo_id
+                          and repo.get("full_name") == repository, "historical PR source differs")
+                  if proof["timestamp"](pr["created_at"]) <= when:
+                      number = pr.get("number")
+                      require(type(number) is int and number > 0, "invalid historical PR number")
+                      numbers.append(number)
+              # Include closed PRs and every base. A delayed run or a reopened PR
+              # cannot borrow another PR's success. A reused branch remains on hold
+              # when both PRs existed before the run, even if the first was closed.
+              require(numbers == [_associated_pr_number(run)], "merge held: source branch has no unique historical PR")
+              return numbers[0]
+
+
           def _pull_request(run, repository, api):
               prefix = f"/repos/{repository}"
-              # PR association can be empty; accept only one exact same-repository head.
-              associations = run.get("pull_requests") or []
-              if not associations:
-                  associations = [
-                      pr
-                      for pr in api.records(f"{prefix}/commits/{run['head_sha']}/pulls")
-                      if pr.get("state") == "open"
-                      and pr.get("head", {}).get("sha") == run["head_sha"]
-                      and pr.get("head", {}).get("repo", {}).get("full_name") == repository
-                      and pr.get("base", {}).get("ref") == "main"
-                      and pr.get("base", {}).get("repo", {}).get("full_name") == repository
-                  ]
-              require(len(associations) == 1, "source run must identify exactly one PR")
-              number = associations[0].get("number")
-              require(type(number) is int and number > 0, "invalid PR number")
+              number = run.get("tested_pr_number")
+              require(type(number) is int and number == _associated_pr_number(run), "unverified tested PR number")
               pr = api.request("GET", f"{prefix}/pulls/{number}")
+              require(pr.get("number") == number and pr.get("head", {}).get("ref") == run["head_branch"]
+                      and (pr["head"].get("repo") or {}).get("id") == run["head_repository"]["id"],
+                      "PR source differs from the tested PR")
               _pr_identity(pr, repository, run["head_sha"])
               return number, pr
 
@@ -1298,7 +1337,7 @@ jobs:
 
       - name: Exercise the owner mention tool catalog
         run: |
-          npm ci --prefix .github/owner-mention-cli --no-fund
+          npm ci --prefix .github/actions/claude-subscription-quota --no-fund
           npm ci --prefix scripts/ci-mention --ignore-scripts --no-fund
           python3 -B scripts/tests/native_ci_mention.py
 

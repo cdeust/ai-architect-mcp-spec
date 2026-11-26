@@ -1,5 +1,6 @@
 """Credential and publication contracts of the owner mention workflow."""
 from pathlib import Path
+from urllib.parse import unquote
 import re
 import unittest
 
@@ -69,7 +70,7 @@ class MentionJobs(unittest.TestCase):
         api.assert_not_called()
         event["issue"]["pull_request"] = {"url": "fixture"}
         pr = {"state": "open", "head": {"repo": {"full_name": repo}, "ref": "feature", "sha": sha},
-              "base": {"repo": {"full_name": repo, "default_branch": "main"}}}
+              "base": {"ref": "main", "repo": {"full_name": repo, "default_branch": "main"}}}
         api.return_value = pr
         self.assertEqual(resolve(event, repo, sha, "12", api).branch, "feature")
         pr["base"]["repo"]["default_branch"] = "feature"
@@ -201,6 +202,13 @@ class MentionPublication(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.calls, self.issue_state, self.existing_pulls, self.comments = [], "open", [], []
+        self.nodes = {}
+        self.repo = {"full_name": self.REPO, "default_branch": "main", "owner": {"login": "owner", "id": 1234}}
+        self.pr = None
+        self.run = {"id": 42, "actor": {"login": "owner", "id": 1234}, "display_title": "Owner mention on issue #7", "repository": self.repo, "head_repository": self.repo,
+                    "path": ".github/workflows/claude.yml", "event": "issue_comment", "head_branch": "main",
+                    "head_sha": self.revision, "status": "completed", "conclusion": "success"}
+
 
     def git(self, *args):
         return self.subprocess.run(["git", *args], check=True, capture_output=True,
@@ -212,15 +220,32 @@ class MentionPublication(unittest.TestCase):
 
     def api(self, path, method="GET", body=None):
         self.calls.append((method, path, body))
+        if path == "":
+            return self.repo
+        if path == "actions/runs/42":
+            return self.run
         if path == "issues/7":
-            return {"state": self.issue_state}
+            return {"number": 7, "state": self.issue_state, "user": {"login": "owner"},
+                    **({"pull_request": {"url": "pulls/7"}} if self.pr else {})}
+        if path == "pulls/7" and self.pr:
+            return self.pr
+        if path.startswith("git/ref/"):
+            ref = "refs/" + unquote(path.removeprefix("git/ref/"))
+            return {"ref": ref, "object": {"type": "commit", "sha": self.git("--git-dir", str(self.remote), "rev-parse", ref)}}
+        if path.startswith("git/commits/"):
+            parent = self.git("--git-dir", str(self.remote), "rev-parse", path.rsplit("/", 1)[-1] + "^")
+            return {"sha": path.rsplit("/", 1)[-1], "parents": [{"sha": parent}]}
         if path.startswith("pulls?") and method == "GET":
             return self.existing_pulls
-        if path == "pulls" and method == "POST":
-            return {"html_url": "https://github.com/owner/spec/pull/9"}
         if path.startswith("issues/7/comments?") and method == "GET":
             return self.comments
+        if path == "graphql" and method == "POST":
+            return {"data": {"node": self.nodes[body["variables"]["id"]]}}
         if path == "issues/7/comments" and method == "POST":
+            node = "IC_" + str(len(self.comments) + 1)
+            self.comments.append({"user": {"node_id": self.module["CLAUDE"]["id"]}, "node_id": node, **body})
+            self.nodes[node] = {"id": node, "author": self.module["CLAUDE"], "editor": None,
+                                "lastEditedAt": None, **body}
             return {}
         raise AssertionError((method, path))
 
@@ -238,7 +263,7 @@ class MentionPublication(unittest.TestCase):
         return set(out.split())
 
     def writes(self):
-        return [call for call in self.calls if call[0] != "GET"]
+        return [call for call in self.calls if call[0] != "GET" and call[1] != "graphql"]
 
     def assert_refused(self, candidate, message):
         with self.assertRaisesRegex(ValueError, message):
@@ -246,7 +271,7 @@ class MentionPublication(unittest.TestCase):
         self.assertEqual(self.branches(), {"refs/heads/main"}, "a refused request pushed a branch")
         self.assertEqual(self.writes(), [], "a refused request wrote to GitHub")
 
-    def test_issue_request_pushes_the_patch_opens_a_ready_pr_and_answers_once(self):
+    def test_issue_publishes_one_immutable_candidate_for_the_delivery_routine(self):
         self.publish(self.candidate())
         branch = "refs/heads/claude/issue-7-42"
         self.assertEqual(self.branches(), {"refs/heads/main", branch})
@@ -256,32 +281,133 @@ class MentionPublication(unittest.TestCase):
         # The instant, not Git's spelling of it (Z or +00:00 depends on the version).
         self.assertEqual(self.git("--git-dir", str(self.remote), "log", "-1", "--format=%an %at %cn %ct", commit),
                          "Claude 1795600860 Claude 1795600860")  # 2026-11-25T10:01:00Z
-        pulls = [body for method, path, body in self.writes() if path == "pulls"]
-        self.assertEqual(pulls, [{"head": "claude/issue-7-42", "base": "main", "title": "Owner request",
-                                  "body": "Requested in #7.", "draft": False}])
-        comments = [body["body"] for method, path, body in self.writes() if path == "issues/7/comments"]
-        self.assertEqual(comments, ["Done.\n\nPull request: https://github.com/owner/spec/pull/9"
-                                    "\n\n<!-- owner-mention-run 42 -->"])
-
-    def test_a_deleted_account_among_the_answers_does_not_stop_publication(self):
-        self.comments = [{"user": None, "body": None},
-                         {"user": {"login": "claude[bot]"}, "body": "earlier\n\n<!-- owner-mention-run 42 -->"}]
+        self.assertEqual([path for _, path, _ in self.writes()], ["issues/7/comments"])
+        self.assertIn(f"https://github.com/owner/spec/commit/{commit}", self.comments[0]["body"])
+        self.assertEqual(self.inspect(), {"repository": self.REPO, "number": 7, "parent": self.revision,
+                         "commit": commit, "base": "main", "target": "claude/issue-7-42", "pr": False,
+                         "branch": "claude/issue-7-42", "status": "awaiting verification"})
         self.publish(self.candidate())
-        self.assertNotIn("issues/7/comments", [path for method, path, body in self.writes()])
+        self.assertEqual(len(self.writes()), 1, "a retry repeated the authenticated handoff")
 
-    def test_an_existing_pr_is_reused_and_an_existing_answer_is_not_repeated(self):
-        self.existing_pulls = [{"html_url": "https://github.com/owner/spec/pull/5"}]
-        self.comments = [{"user": {"login": "claude[bot]"}, "body": "earlier\n\n<!-- owner-mention-run 42 -->"}]
+    def inspect(self):
+        return self.module["inspect_candidate"](self.REPO, 7, 42, self.api)
+
+    def test_closed_or_already_promoted_candidate_is_never_opened_twice(self):
         self.publish(self.candidate())
-        self.assertIn("refs/heads/claude/issue-7-42", self.branches())
-        self.assertEqual(self.writes(), [])
+        c = self.inspect()
+        pr = {"number": 19, "head": {"repo": self.repo, "ref": c["branch"], "sha": c["commit"]},
+              "base": {"repo": self.repo, "ref": "main"}}
+        for state in ("open", "closed"):
+            self.existing_pulls = [{**pr, "state": state}]
+            result = self.inspect()
+            self.assertEqual((result["status"], result["published_pr"]), ("already published", 19))
+        self.existing_pulls[0]["head"]["sha"] = self.revision
+        with self.assertRaisesRegex(ValueError, "Pull request for the candidate changed"):
+            self.inspect()
+        self.assertEqual(len(self.writes()), 1)
 
-    def test_pull_request_target_receives_the_commit_and_no_new_pull_request(self):
+    def test_tampered_author_edited_or_copied_handoff_and_wrong_workflow_are_refused(self):
+        self.publish(self.candidate())
+        comment = self.comments[0]
+        original = self.nodes[comment["node_id"]]
+        for change in ({"author": {**original["author"], "login": "lookalike"}},
+                       {"author": {**original["author"], "id": "different"}},
+                       {"editor": original["author"]}, {"lastEditedAt": "2026-11-25T10:02:00Z"},
+                       {"body": "changed"}, {"id": "another comment"}):
+            with self.subTest(change=change):
+                self.nodes[comment["node_id"]] = {**original, **change}
+                with self.assertRaisesRegex(ValueError, "authenticated candidate"):
+                    self.inspect()
+        self.nodes[comment["node_id"]] = original
+        self.comments.insert(0, {"user": None, "body": None})
+        self.inspect()
+        self.run["path"] = ".github/workflows/other.yml"
+        with self.assertRaisesRegex(ValueError, "workflow is unverified"):
+            self.inspect()
+
+    def test_a_duplicate_authenticated_comment_can_repeat_but_cannot_contradict_the_original(self):
+        self.publish(self.candidate())
+        original = self.comments[0]
+        other = {**original, "node_id": "IC_2"}
+        self.comments.append(other)
+        self.nodes["IC_2"] = {**self.nodes[original["node_id"]], "id": "IC_2"}
+        self.assertEqual(self.inspect()["status"], "awaiting verification")
+        other["body"] = "<!-- owner-mention-run 42 -->"
+        self.nodes["IC_2"]["body"] = other["body"]
+        with self.assertRaisesRegex(ValueError, "unambiguous authenticated candidate"):
+            self.inspect()
+
+    def test_workflow_binds_original_owner_subject_and_controller_head(self):
+        workflow = (ROOT / ".github/workflows/claude.yml").read_text()
+        self.assertIn('run-name: "Owner mention on ${{ github.event.issue.pull_request && \'PR\' || \'issue\' }} #${{ github.event.issue.number }}"', workflow.splitlines())
+        self.publish(self.candidate())
+        original = dict(self.run)
+        for key, value in (("display_title", "Owner mention on PR #7"), ("display_title", "Owner mention on issue #8"),
+                           ("actor", {"id": 444, "login": "owner"}), ("head_branch", "candidate"),
+                           ("event", "pull_request"), ("head_repository", {"full_name": "fork/spec"}),
+                           ("status", "in_progress"), ("conclusion", "failure")):
+            with self.subTest(key=key, value=value):
+                self.run = {**original, key: value}
+                with self.assertRaisesRegex(ValueError, "unverified or incomplete"):
+                    self.inspect()
+        self.run = {**original, "head_sha": "f" * 40}
+        with self.assertRaisesRegex(ValueError, "proposal base changed"):
+            self.inspect()
+        self.run = original
+        self.assertEqual(self.inspect()["status"], "awaiting verification")
+
+    def test_an_advanced_candidate_or_base_is_not_delivered(self):
+        self.publish(self.candidate())
+        c = self.inspect()
+        self.git("--git-dir", str(self.remote), "update-ref", "refs/heads/main", c["commit"])
+        with self.assertRaisesRegex(ValueError, "base changed"):
+            self.inspect()
+        self.git("--git-dir", str(self.remote), "update-ref", "refs/heads/" + c["branch"], self.revision)
+        with self.assertRaisesRegex(ValueError, "ref, commit or parent differs"):
+            self.inspect()
+        with self.assertRaisesRegex(ValueError, "already names another commit"):
+            self.publish(self.candidate())
+        self.assertEqual(self.git("--git-dir", str(self.remote), "rev-parse", "refs/heads/" + c["branch"]), self.revision)
+
+    def test_pull_request_uses_a_separate_proposal_branch_until_verified(self):
         import os
         os.environ["EXPECTED_BRANCH"] = "feature"
+        self.git("--git-dir", str(self.remote), "update-ref", "refs/heads/feature", self.revision)
+        self.run["display_title"] = "Owner mention on PR #7"
+        self.pr = {"state": "open", "head": {"repo": self.repo, "ref": "feature", "sha": self.revision},
+                   "base": {"repo": self.repo, "ref": "main"}}
         self.publish(self.candidate(branch="feature", pull_request=True))
-        self.assertIn("refs/heads/feature", self.branches())
-        self.assertEqual([path for method, path, body in self.writes()], ["issues/7/comments"])
+        self.assertEqual(self.git("--git-dir", str(self.remote), "rev-parse", "refs/heads/feature"), self.revision)
+        c = self.inspect()
+        self.assertEqual((c["target"], c["branch"], c["status"]), ("feature", "claude/issue-7-42", "awaiting verification"))
+        self.pr["base"]["ref"] = "another"
+        with self.assertRaisesRegex(ValueError, "destination changed"):
+            self.inspect()
+        self.pr["base"]["ref"] = "main"
+        self.pr["head"]["sha"] = "f" * 40
+        with self.assertRaisesRegex(ValueError, "pull request head changed"):
+            self.inspect()
+        self.pr["head"]["sha"] = c["commit"]
+        self.assertEqual(self.inspect()["status"], "already published")
+        self.assertEqual(len(self.writes()), 1)
+
+    def test_conflicting_retry_leaves_the_first_result_and_the_remote_untouched(self):
+        self.write_proposal(b"", "Original answer.")
+        self.publish(self.candidate())
+        self.write_proposal(self.patch_bytes, "New result.")
+        with self.assertRaisesRegex(ValueError, "already published another result"):
+            self.publish(self.candidate())
+        self.assertEqual(self.branches(), {"refs/heads/main"})
+        self.assertEqual(len(self.writes()), 1)
+
+    def test_model_text_cannot_turn_a_plain_answer_into_a_candidate(self):
+        self.publish(self.candidate())
+        text = self.comments[0]["body"]
+        self.comments.clear()
+        self.write_proposal(b"", text)
+        self.publish(self.candidate())
+        with self.assertRaisesRegex(ValueError, "has no candidate"):
+            self.inspect()
 
     def test_changed_branch_is_refused_without_writes(self):
         self.assert_refused(self.candidate(branch="claude/issue-7-43"), "target changed")

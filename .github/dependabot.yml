@@ -45,9 +45,9 @@ updates:
       prefix-development: "chore(deps-dev)"
 
   # The pinned Claude Code CLI that claude.yml and the owner-mention contract
-  # install (.github/owner-mention-cli). A bump is a reviewed change of the pin.
+  # install (.github/actions/claude-subscription-quota). A bump is a reviewed change of the pin.
   - package-ecosystem: "npm"
-    directory: "/.github/owner-mention-cli"
+    directory: "/.github/actions/claude-subscription-quota"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2

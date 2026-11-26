@@ -8,7 +8,7 @@ import re
 import runpy
 import unittest
 
-from test_ci_review_required import resolver
+from test_ci_review_required import completed_jobs, resolver
 
 ROOT = Path(__file__).resolve().parents[2]
 REPO = "owner/spec"
@@ -16,7 +16,7 @@ HEAD, OLD_HEAD = "a" * 40, "b" * 40
 CLAUDE = {"login": "claude", "id": "BOT_kgDODIGtWg", "__typename": "Bot"}
 CODEX = {"login": "chatgpt-codex-connector", "id": "BOT_kgDOC98s_g", "__typename": "Bot"}
 PR = {"number": 7, "state": "open", "draft": False, "labels": [], "title": "Review",
-      "head": {"sha": HEAD, "repo": {"full_name": REPO}}, "base": {"ref": "main", "repo": {"full_name": REPO}}}
+      "created_at": "2026-11-25T12:00:00Z", "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPO, "id": 120}}, "base": {"ref": "main", "repo": {"full_name": REPO}}}
 LINK = f"https://github.com/{REPO}/actions/runs/15/attempts/1"
 FOOTER = f"Reviewed commit: {HEAD}\n[View job run]({LINK})\nVerdict: approve"
 COMMENT_IDS = count()
@@ -24,7 +24,7 @@ NATIVE = "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1
 
 
 def row(author, body):
-    return {"body": body, "author": author, "createdAt": "2026-11-26T00:10:00Z",
+    return {"id": f"IC_{next(COMMENT_IDS)}", "body": body, "author": author, "createdAt": "2026-11-26T00:10:00Z",
             "lastEditedAt": None, "editor": None}
 
 
@@ -37,7 +37,7 @@ def native(sha=HEAD, status="completed", unresolved=False, completed="2026-11-26
     elif status == "running":
         summary += (f'\n| 📝 **Code Review** | 🔄 **Running** since <relative-time datetime="{completed}">'
                     f'{completed}</relative-time> | `{sha[:7]}` | New commits |')
-    return {**row(CODEX, summary), "id": f"IC_{next(COMMENT_IDS)}"}
+    return row(CODEX, summary)
 
 
 def done(name):
@@ -64,6 +64,8 @@ class Api:
         self.job["steps"][0].update(started_at="2026-11-26T00:07:00Z", completed_at="2026-11-26T00:11:00Z")
         self.rows = [[row(CLAUDE, FOOTER)], [native()]]
         self.edit_pages = None
+        self.claude_edits = {}
+        self.deletions = [[]]
         self.base_changes = []
         self.merged, self.statuses = [], []
         self.pipelines = [{**done("Pipeline"), "id": 61, "head_sha": HEAD, "pull_requests": [PR]}]
@@ -81,18 +83,35 @@ class Api:
 
     def request(self, method, path, body=None):
         if (method, path) == ("POST", "/graphql"):
+            if "COMMENT_DELETED_EVENT" in body["query"]:
+                index = int(body["variables"].get("after", 0))
+                more = index + 1 < len(self.deletions)
+                return {"data": {"repository": {"pullRequest": {"headRefOid": HEAD, "baseRefName": "main",
+                        "timelineItems": {"totalCount": sum(map(len, self.deletions)),
+                        "nodes": [{"id": f"DE_{index}_{n}", **event} for n, event in enumerate(self.deletions[index])],
+                        "pageInfo": {
+                            "hasNextPage": more, "endCursor": str(index + 1) if more else None}}}}}}
             if "id" in body["variables"]:
                 comment = next(row for page in self.rows for row in page if row.get("id") == body["variables"]["id"])
-                when = re.search(r'datetime="([^"]+)"', comment["body"])[1]
-                before = datetime.fromisoformat(when.replace("Z", "+00:00")) - timedelta(seconds=2)
-                start = before.strftime("%Y-%m-%dT%H:%M:%SZ")
-                edit = {"diff": native(status="running", completed=start)["body"], "editor": CODEX,
-                        "deletedAt": None, "editedAt": start}
-                pages = self.edit_pages if self.edit_pages is not None else [[edit]]
+                if comment["author"] == CLAUDE:
+                    def revision(at):
+                        return {"diff": comment["body"], "editor": CLAUDE, "deletedAt": None, "editedAt": at}
+                    pages = self.claude_edits.get(comment["id"], [[revision(comment["lastEditedAt"]),
+                                                                  revision(comment["createdAt"])]])
+                elif self.edit_pages is not None:
+                    pages = self.edit_pages
+                else:
+                    when = re.search(r'datetime="([^"]+)"', comment["body"])[1]
+                    before = datetime.fromisoformat(when.replace("Z", "+00:00")) - timedelta(seconds=2)
+                    start = before.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    pages = [[{"diff": native(status="running", completed=start)["body"], "editor": CODEX,
+                               "deletedAt": None, "editedAt": start}]]
                 index = int(body["variables"]["after"] or 0)
                 more = index + 1 < len(pages)
-                return {"data": {"node": {**comment, "userContentEdits": {"nodes": pages[index],
-                        "pageInfo": {"hasNextPage": more, "endCursor": str(index + 1) if more else None}}}}}
+                edits = [{"id": f"EDIT_{index}_{i}", **edit} for i, edit in enumerate(pages[index])]
+                return {"data": {"node": {**comment, "userContentEdits": {"nodes": edits,
+                        "totalCount": sum(map(len, pages)), "pageInfo": {
+                            "hasNextPage": more, "endCursor": str(index + 1) if more else None}}}}}
             index = int(body["variables"].get("endCursor") == "second")
             result = page(self.rows[index], more=index == 0)
             result["data"]["repository"]["pullRequest"]["timelineItems"]["nodes"] = self.base_changes
@@ -307,6 +326,64 @@ class BothReviews(unittest.TestCase):
                 self.api.job["steps"][0]["started_at"] = f"2026-11-26T{started}Z"
                 self.check_both_entrypoints(allowed)
 
+    def test_rewriting_or_removing_a_block_footer_cannot_restore_an_older_approval(self):
+        self.api.other_runs = [{**self.api.run, "id": 12, "updated_at": "2026-11-26T00:05:00Z"}]
+        earlier = FOOTER.replace("/15/attempts/", "/12/attempts/")
+        created, blocked, edited = ["2026-11-26T00:" + minute + ":00Z" for minute in ("03", "08", "09")]
+        earlier_row = {**row(CLAUDE, earlier), "createdAt": created, "lastEditedAt": edited, "editor": CLAUDE}
+        self.api.rows[1].append(earlier_row)
+        def history(at, body):
+            return {"editedAt": at, "diff": body, "deletedAt": None, "editor": CLAUDE}
+        for latest in (earlier, "Summary withdrawn", earlier.replace(HEAD, OLD_HEAD)):
+            with self.subTest(latest=latest):
+                earlier_row["body"] = latest
+                original = history(created, earlier)
+                adverse = history(blocked, earlier.replace("approve", "block"))
+                revisions = [[history(edited, latest)], [adverse, original]]
+                self.api.claude_edits[earlier_row["id"]] = revisions
+                for started, allowed in (("07", False), ("08", False), ("09", True)):
+                    self.api.job["steps"][0]["started_at"] = f"2026-11-26T00:{started}:00Z"
+                    self.check_both_entrypoints(allowed)
+                for pages in ([[revisions[0][0]], [adverse]], [[], []], [[adverse, original]],
+                              [[revisions[0][0], {**adverse, "deletedAt": edited}, original]],
+                              [[revisions[0][0], {**adverse, "editor": CODEX}, original]],
+                              [[revisions[0][0], original, adverse]],
+                              [[{**revisions[0][0], "id": "same"}, {**adverse, "id": "same"}, original]]):
+                    self.api.claude_edits[earlier_row["id"]] = pages
+                    self.check_both_entrypoints(False)
+
+    def test_whole_claude_comment_deletion_requires_a_later_review(self):
+        other = {"__typename": "User", "login": "maintainer"}
+        for author, at, allowed in ((CLAUDE, "06", True), (CLAUDE, "07", False), (CLAUDE, "08", False),
+                                    (None, "08", False), ({}, "08", False), (other, "08", True),
+                                    (CODEX, "08", True), (CODEX, "09", False)):
+            with self.subTest(author=author, at=at):
+                self.api.deletions = [[], [{"createdAt": f"2026-11-26T00:{at}:00Z", "deletedCommentAuthor": author}]]
+                self.check_both_entrypoints(allowed)
+
+    def test_withdrawals_during_verification_hold_both_consumers(self):
+        class Changing(Api):
+            def __init__(self, withdrawal):
+                super().__init__()
+                self.withdrawal, self.reads = withdrawal, 0
+
+            def request(self, method, path, body=None):
+                if path == "/graphql" and "COMMENT_DELETED_EVENT" in body["query"]:
+                    self.reads += 1
+                    if self.reads == 1:
+                        if self.withdrawal == "edit":
+                            self.rows[0][0]["body"] = FOOTER.replace("approve", "block")
+                    if self.reads == 2 and self.withdrawal == "deletion":
+                        self.deletions = [[{"createdAt": "2026-11-26T00:10:30Z", "deletedCommentAuthor": CLAUDE}]]
+                return deepcopy(super().request(method, path, body))
+
+        publish = runpy.run_path(str(ROOT / "scripts/ci_review_status.py"))["publish"]
+        for withdrawal in ("edit", "deletion"):
+            with self.subTest(withdrawal=withdrawal):
+                self.api = Changing(withdrawal)
+                self.held()
+                self.assertFalse(publish(Changing(withdrawal), REPO, 7, LINK))
+
     def test_new_attempt_during_comment_collection_invalidates_each_consumer(self):
         class Changing(Api):
             def __init__(self):
@@ -350,6 +427,77 @@ class BothReviews(unittest.TestCase):
         self.api.pipelines[0]["pull_requests"] = [{"number": 8}]
         with self.assertRaises(self.ns["PostMergeError"]):
             resolve(wake, REPO, self.api)
+
+    def test_direct_and_review_wakes_require_the_same_historical_pipeline_pr(self):
+        # PR 8 can use exactly the same commit after PR 7 closes. A search of
+        # current PRs by commit cannot tell which PR had the successful Pipeline.
+        other = {**PR, "number": 8}
+        pipeline = {**done("Pipeline"), "id": 61, "run_attempt": 1, "head_branch": "feature",
+                    "head_sha": HEAD, "event": "pull_request", "path": ".github/workflows/pipeline.yml",
+                    "head_repository": {"full_name": REPO, "id": 120}, "created_at": "2026-11-26T01:00:00Z",
+                    "pull_requests": [PR]}
+        wake = {**self.api.run, "name": "Review updated", "event": "issue_comment", "head_branch": "main",
+                "head_sha": OLD_HEAD, "display_title": "Review updated PR 7",
+                "path": ".github/workflows/review-updated.yml", "pull_requests": []}
+        class Records(Api):
+            def request(self, method, path, body=None):
+                if (method, path) == ("GET", f"/repos/{REPO}/actions/runs/61"):
+                    return self.reloaded
+                return super().request(method, path, body)
+            def records(self, path, key=None):
+                if path == f"/repos/{REPO}/pulls?state=all&head=owner%3Afeature&sort=created&direction=asc":
+                    return self.history
+                if path == f"/repos/{REPO}/actions/runs/61/jobs?filter=all":
+                    return [{**job, "id": i, "run_id": 61, "run_attempt": 1, "head_sha": HEAD}
+                            for i, job in enumerate(completed_jobs(), 1)]
+                return super().records(path, key)
+        api = Records()
+        api.pipelines = [pipeline]
+        api.history = [PR]
+        def source(event):
+            return self.ns["_source_run"]({"repository": {"full_name": REPO}, "workflow_run": event}, REPO, api)
+        for event in (pipeline, wake, self.api.run):
+            with self.subTest(wake=event["name"]):
+                api.reloaded = dict(pipeline)
+                run = source(event)
+                self.assertEqual(self.ns["_pull_request"](run, REPO, api), (7, PR))
+                for association in ([], [PR, other], [other], [{"number": 7}],
+                                    [{**PR, "head": {"sha": OLD_HEAD}}], [{**PR, "base": {"ref": "dev"}}]):
+                    api.reloaded = {**pipeline, "pull_requests": association}
+                    with self.assertRaises(self.ns["PostMergeError"]):
+                        source(event)
+        api.reloaded = {**pipeline, "pull_requests": [other]}
+        with self.assertRaises(self.ns["PostMergeError"]):
+            source({**pipeline, "pull_requests": []})
+        # Both live API reads agree on PR 7, but only PR 8 existed when the run
+        # began. Also exercise delivery after PR 7 reopened, when the first PR is
+        # already closed and the API again lists PR 7 on both reads.
+        replacement = {**PR, "created_at": "2026-11-26T01:00:01Z"}
+        closed = {**other, "state": "closed", "closed_at": "2026-11-25T23:30:00Z"}
+        for history in ([closed, replacement], [closed, PR], [], [{**PR, "head": {**PR["head"], "repo": None}}],
+                        [{**PR, "head": {**PR["head"], "ref": "renamed"}}]):
+            api.history, api.reloaded = history, pipeline
+            for event in (pipeline, self.api.run, wake):
+                with self.subTest(history=history, wake=event["name"]), self.assertRaises(self.ns["PostMergeError"]):
+                    source(event)
+        # An unrelated PR created later cannot retroactively lose the original's test.
+        api.history = [PR, {**other, "created_at": replacement["created_at"]}]
+        for event in (pipeline, self.api.run, wake):
+            self.assertEqual(source(event)["tested_pr_number"], 7)
+        # The association's nested head is a live field; GitHub can advance it
+        # while the original head_sha remains fixed (architect-os#152).
+        updated = {**PR, "head": {**PR["head"], "sha": OLD_HEAD}}
+        api.pipelines = [dict(pipeline, pull_requests=[updated])]
+        api.reloaded = api.pipelines[0]
+        for event in (api.reloaded, self.api.run, wake):
+            with self.assertRaises(self.ns["PostMergeError"]):
+                source(event)
+        # The live PR read must return the historically tested PR itself.
+        api.pr = other
+        with self.assertRaises(self.ns["PostMergeError"]):
+            self.ns["_pull_request"](pipeline, REPO, api)
+        with self.assertRaises(self.ns["PostMergeError"]):
+            self.ns["_pull_request"]({**pipeline, "pull_requests": []}, REPO, api)
 
     def test_normal_status_producer_replaces_a_success_after_native_approval_is_withdrawn(self):
         publish = runpy.run_path(str(ROOT / "scripts/ci_review_status.py"))["publish"]

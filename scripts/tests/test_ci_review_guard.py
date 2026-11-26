@@ -29,17 +29,38 @@ class InstalledManifestsTests(unittest.TestCase):
 
     def test_every_installed_prefix_has_a_locked_manifest(self):
         prefixes = self.prefixes()
-        self.assertIn(("claude.yml", ".github/owner-mention-cli"), prefixes)  # positive control
+        self.assertIn(("claude.yml", ".github/actions/claude-subscription-quota"), prefixes)  # positive control
         for name, prefix in prefixes:
             with self.subTest(workflow=name, prefix=prefix):
                 self.assertTrue((ROOT / prefix / "package.json").is_file())
                 self.assertTrue((ROOT / prefix / "package-lock.json").is_file())
 
+    def test_previous_protected_workflow_can_install_the_cli_used_by_the_current_runner(self):
+        # The workflow of the pre-merge base installs this prefix on the merged tree.
+        prefix = ".github/actions/claude-subscription-quota"
+        manifest = json.loads((ROOT / prefix / "package.json").read_text())
+        lock = json.loads((ROOT / prefix / "package-lock.json").read_text())
+        package = "@anthropic-ai/claude-code"
+        self.assertEqual(lock["packages"]["node_modules/" + package]["version"], manifest["dependencies"][package])
+        launcher = (ROOT / "scripts/ci-mention/prepare.py").read_text()
+        self.assertIn(f'{prefix}/node_modules/.bin/claude', launcher)
+        self.assertFalse((ROOT / prefix / "action.yml").exists())
+        self.assertFalse((ROOT / prefix / "read.py").exists())
+
+    def test_unrelated_events_cannot_replace_pending_review_status(self):
+        workflow = yaml.safe_load((WORKFLOWS / "review-updated.yml").read_text())
+        condition = workflow["jobs"]["verify"]["if"].strip()
+        group = " ".join(line.strip() for line in workflow["concurrency"]["group"].splitlines())
+        self.assertIn("(" + condition + ")", group)
+        self.assertIn("format('pr-{0}',", group)
+        self.assertIn("|| format('skip-{0}', github.run_id)", group)
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+
     def test_the_owner_mention_cli_is_updated_and_audited(self):
         dependabot = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
-        self.assertIn("/.github/owner-mention-cli", [u["directory"] for u in dependabot["updates"]])
+        self.assertIn("/.github/actions/claude-subscription-quota", [u["directory"] for u in dependabot["updates"]])
         unit = json.loads((ROOT / "ci.json").read_text())["unit"]
-        self.assertIn("npm audit --prefix .github/owner-mention-cli --omit=dev --audit-level=high", unit)
+        self.assertIn("npm audit --prefix .github/actions/claude-subscription-quota --omit=dev --audit-level=high", unit)
 
 
 if __name__ == "__main__":
