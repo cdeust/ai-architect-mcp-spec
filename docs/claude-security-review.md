@@ -14,11 +14,7 @@ The workflow has two jobs.
 
 1. **`security-review`** has `contents: read`, `pull-requests: read` and `actions: read`.
    - It checks out `main` and runs the guards. The token and the files must be
-     present on main. The event's head must still be the PR's head. The definition
-     that runs (the PR's, at its merge commit, parsed as YAML) must still have a job
-     of each counted name holding a step of its counted name, as the budget matches
-     them in the jobs API. A PR that renames or moves one of them gets no security
-     review, and the summary says so. The budget must have room, and the
+     present on main. The event's head must still be the PR's head. The budget must have room, and the
      subscription must have quota.
    - It installs read-only managed settings and writes the pull request diff to
      `.claude-security-review/` in the workspace.
@@ -150,9 +146,8 @@ It could become the engine if all of these held:
 
 To replace the engine, change only the `Claude security review` step, its two
 prerequisites and the schema. Every other step above it is a guard and stays, and
-so does the publish job. The budget counts the step and its job by name: a PR that
-renames either gets no review, and after such a rename merges, earlier attempts recorded
-under the old name are no longer counted for open PRs.
+so does the publish job. The budget counts the step and its job by name (see "Not
+handled here" for a rename).
 
 ## Guards
 
@@ -166,7 +161,7 @@ under the old name are no longer counted for open PRs.
 | Tampering: an upstream action is changed | Every `uses:` is pinned to a full commit SHA with a version comment, and Dependabot (`github-actions`) updates both. The local quota action is main's copy. | contracts `unpinned`, `pin-comment`; mutation `@main` |
 | Elevation: a token wider than needed | `permissions: {}` at the top. The review job is read-only. Only `publish` has `pull-requests: write`, and it holds no secret. There is no `id-token`, so the session never holds the Claude App token, whose default request includes `contents: write` (`src/github/token.ts`). | contracts `workflow-permissions`, `job-permissions`, `published`, `engine-inputs`; mutations `app-token`, `publish-wide` |
 | Injection into `run:` | No `run:` contains `${{ }}`: values pass through `env:`, including the model's JSON, which reaches `publish` as an environment variable. actionlint and zizmor (pedantic) report nothing. | contract `expression-in-run` |
-| Denial of service and cost: a retry loop on the subscription | A PR gets at most 3 attempts (`budget`, ADR-1119). An attempt is any job attempt whose engine step ran, whatever it concluded, re-runs included: every attempt of every finished run is read with `filter=all`, and so are this run's earlier attempts. The scan stops once the cap is reached. When the API counts more runs of the branch than it lists, or lists 1,000 (its limit with a branch filter), the job fails rather than undercount. A row repeated by pagination counts once. A `publish` re-run alone counts for the engine attempt before it. A failing review or a re-run therefore cannot loop. A head already attempted is never attempted again, whether after a reopen, a `ready_for_review`, a re-run or a push back to an earlier head. A later round starts from the last published review, never from an attempt that published nothing. A re-run of an old run whose head is no longer the PR's head spends no round, and nothing is counted for it. A round runs only when the subscription quota action reports headroom (more than 0%) with usage credits off. Concurrency allows one run per PR, and `timeout-minutes` is 30. | `BudgetTests` (including stale heads, renamed counted names, the 1,000-run refusal, repeated rows and the early stop), `JqFilterTests`, `GuardScriptTests`; contracts `concurrency`, `timeout`, `gated`; mutations `budget-ungated`, `quota-ungated`, `decide-ungated` |
+| Denial of service and cost: a retry loop on the subscription | A PR gets at most 3 attempts (`budget`, ADR-1119). An attempt is any job attempt whose engine step ran, whatever it concluded, re-runs included: every attempt of every finished run is read with `filter=all`, and so are this run's earlier attempts. The scan stops once the cap is reached. When the API counts more runs of the branch than it lists, or lists 1,000 (its limit with a branch filter), the job fails rather than undercount. A row repeated by pagination counts once. A `publish` re-run alone counts for the engine attempt before it. A failing review or a re-run therefore cannot loop. A head already attempted is never attempted again, whether after a reopen, a `ready_for_review`, a re-run or a push back to an earlier head. A later round starts from the last published review, never from an attempt that published nothing. A re-run of an old run whose head is no longer the PR's head spends no round, and nothing is counted for it. A round runs only when the subscription quota action reports headroom (more than 0%) with usage credits off. Concurrency allows one run per PR, and `timeout-minutes` is 30. | `BudgetTests` (including stale heads, the 1,000-run refusal, repeated rows and the early stop), `JqFilterTests`, `GuardScriptTests`; contracts `concurrency`, `timeout`, `gated`; mutations `budget-ungated`, `quota-ungated`, `decide-ungated` |
 | Repudiation, and false positives that block a merge | The review is advisory. The only required check is `merge`, and the workflow name is outside every `workflow_run` list. The comment names the head and links the run attempt. | contract `wakes-merge`, `test_the_merge_resolver_never_reads_this_workflow`, `PublishTests` |
 | A missing secret, a first PR whose files are not on main yet, or an unreadable quota | The job ends green and states the reason in its summary. The quota step is the only `continue-on-error` step, and its outcome is read. | `GuardScriptTests`; contracts `quota-soft`, `continue-on-error` |
 | Malformed or oversized model output | The engine receives the schema with its bounds: patterns, ranges, `maxItems` and `maxLength`. `publish` drops and counts a finding whose shape, types, path, category or ranges break it, cuts prose to its bound, and refuses an output whose shape breaks it; the attempt still counts. If the engine enforces the bounds, the worst-case JSON stays under the 128 KiB of one environment string (`execve(2)`) and the job output under 1 MB. If it does not, an oversized output makes `publish` fail at start, which is closed: no comment, and the attempt counts. The comment stays under 60,000 characters, under GitHub's 65,536: whole findings are dropped, the drop is stated, and the run link is kept. | `test_invalid_findings_are_dropped_and_counted_not_fatal`, `test_output_whose_shape_breaks_the_schema_is_refused`, the two worst-case size tests, `test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces`; mutations `publish-raw-findings`, `output-dropped` |
@@ -202,6 +197,13 @@ remove each guard in turn and require the matching check to fail
   bound other than its 30-minute timeout, and Task sub-agents run within it. A
   shared concurrency group, a quota reserve or a turn bound each needs an owner
   decision on the value.
+- Renaming the engine step, the publish step or their jobs: attempts are matched by
+  name in the jobs API, and the budget is main's script while a `pull_request` run
+  follows the PR's workflow. A PR that renames them escapes the cap for its own
+  runs, and once such a rename merges, earlier attempts under the old names stop
+  counting for open PRs. This is the trust model of `claude-review.yml`: a trusted
+  author could as well delete the budget step. The workflow digest in the tests makes
+  the change deliberate; it does not prevent it.
 - Renaming a PR's head branch: the runs API filters on the branch name, so the
   earlier runs of a renamed branch are not counted. That needs write access.
 

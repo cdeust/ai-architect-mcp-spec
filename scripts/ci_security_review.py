@@ -11,10 +11,11 @@ the job of that name) ran, whatever it concluded. It caps spend, not successes: 
 CAP attempts no further one runs (the cap of claude-review.yml, ADR-1119, owner rule
 2026-11-04, taken over for this second review by the task's decision of 2026-11-25),
 and a head already attempted is not attempted again. Nor does a run spend a round
-when its head is no longer the PR's head, or when the workflow that runs lacks a
-name the budget counts by. The commit a
+when its head is no longer the PR's head. Attempts are matched by the job and step
+names below: a PR that renames them escapes the count for its own runs, as a trusted
+author could also delete this step (docs, "Not handled here"). The commit a
 later round starts from is the last one whose review was published. Writes
-`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed`, `stale` and `renamed` to
+`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed` and `stale` to
 $GITHUB_OUTPUT. Any
 API or protocol error exits non-zero: no silent fallback to "review".
 
@@ -32,7 +33,6 @@ https://docs.github.com/en/rest/commits/commits#compare-two-commits
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -179,65 +179,24 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
-# The (job name, step name) pairs the budget counts attempts by (attempts()).
-COUNTED_PAIRS = ((JOB, ACTION_STEP), (PUBLISH_JOB, PUBLISH_STEP))
-
-
-def names_present(definition: str) -> bool:
-    """Whether the workflow that runs has, for each counted pair, a job of that name
-    holding a step of that name: what attempts() matches in the jobs API. Parsed as
-    YAML, so quotes, comments and folded lines read as GitHub reads them. A definition
-    that does not parse, or lacks a pair, fails closed: that PR is not reviewed."""
-    import yaml  # PyYAML, as the ci-contract tests need (CONTRIBUTING.md)
-
-    try:
-        workflow = yaml.safe_load(definition)
-    except yaml.YAMLError:
-        return False
-    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
-    if not isinstance(jobs, dict):
-        return False
-    pairs = {(job.get("name"), step.get("name"))
-             for job in jobs.values() if isinstance(job, dict)
-             for step in (job.get("steps") or []) if isinstance(step, dict)}
-    return all(pair in pairs for pair in COUNTED_PAIRS)
-
-
-def preconditions(gh: Gh, repo: str, pr: int, head_sha: str, merge_sha: str) -> Record:
-    """Why this event must not spend a round, before any count.
-
-    `stale`: the event's head is no longer the PR's head (a re-run of an old run).
-    `renamed`: the definition that runs (the PR's, at its merge commit) lacks a job or
-    step name the budget counts attempts by, so its attempts could not be counted;
-    such a PR gets no security review, and the summary says so.
-    """
+def stale(gh: Gh, repo: str, pr: int, head_sha: str) -> bool:
+    """Whether the event's head is no longer the PR's head (a re-run of an old run)."""
     current = gh([f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"]).strip()
     if not SHA.fullmatch(current):
         raise BudgetError("protocol")
-    if current != head_sha:
-        # Decided before reading an old merge commit GitHub may no longer serve.
-        return {"stale": "true", "renamed": "false"}
-    content = gh([f"repos/{repo}/contents/.github/workflows/{WORKFLOW}", "--method", "GET",
-                  "-f", f"ref={merge_sha}", "--jq", ".content"])
-    try:
-        definition = base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
-    except ValueError as error:
-        raise BudgetError("protocol") from error
-    return {"stale": "false", "renamed": "false" if names_present(definition) else "true"}
+    return current != head_sha
 
 
 def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: str,
-           head_sha: str, merge_sha: str) -> Record:
+           head_sha: str) -> Record:
     # No bypass label: the review is advisory, a fourth one buys nothing the
     # merge waits for.
-    for sha in (head_sha, merge_sha):
-        if not SHA.fullmatch(sha):
-            raise BudgetError("protocol")
-    gate = preconditions(gh, repo, pr, head_sha, merge_sha)
-    if "true" in gate.values():
+    if not SHA.fullmatch(head_sha):
+        raise BudgetError("protocol")
+    if stale(gh, repo, pr, head_sha):
         # A stated skip: nothing is counted, so no count can turn it red.
         return {"round": 0, "cap": CAP, "skip": "true", "reviewed_sha": "",
-                "head_reviewed": "false", **gate}
+                "head_reviewed": "false", "stale": "true"}
     runs = attempted_runs(gh, repo, pr, run_id, run_attempt, head_ref, head_sha)
     result = decide(runs, [], cap=CAP)
     # A later round reviews only what changed since a review that was published;
@@ -249,7 +208,7 @@ def budget(gh: Gh, repo: str, pr: int, run_id: int, run_attempt: int, head_ref: 
     # to an earlier head) has nothing new: it spends no round.
     seen = {run.get("head_sha") for run in runs}
     result["head_reviewed"] = "true" if head_sha in seen else "false"
-    result.update(gate)
+    result["stale"] = "false"
     if result["head_reviewed"] == "true":
         result["skip"] = "true"
     return result
@@ -387,8 +346,7 @@ def main(argv: list[str]) -> int:
     env = os.environ
     if argv == ["budget"]:
         result = budget(gh_api, env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
-                        int(env["RUN_ATTEMPT"]), env["HEAD_REF"], env["HEAD_SHA"],
-                        env["MERGE_SHA"])
+                        int(env["RUN_ATTEMPT"]), env["HEAD_REF"], env["HEAD_SHA"])
         with open(output_file(env), "a", encoding="utf-8") as out:
             for key, value in result.items():
                 out.write(f"{key}={value}\n")

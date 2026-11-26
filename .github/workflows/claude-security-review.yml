@@ -88,7 +88,6 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          MERGE_SHA: ${{ github.sha }}
         run: python3 -I scripts/ci_security_review.py budget
       # An unreadable quota is a stated skip, not a red advisory job.
       - name: Measure Claude subscription quota
@@ -107,15 +106,12 @@ jobs:
           SKIP: ${{ steps.budget.outputs.skip }}
           HEAD_REVIEWED: ${{ steps.budget.outputs.head_reviewed }}
           STALE: ${{ steps.budget.outputs.stale }}
-          RENAMED: ${{ steps.budget.outputs.renamed }}
           QUOTA: ${{ steps.quota.outcome }}
           ELIGIBLE: ${{ steps.quota.outputs.eligible }}
           REMAINING: ${{ steps.quota.outputs.remaining }}
         run: |
           set -euo pipefail
-          if [ "$RENAMED" = true ]; then
-            reason="the workflow that runs lacks a job or step name the budget counts by; this pull request gets no security review"
-          elif [ "$STALE" = true ]; then
+          if [ "$STALE" = true ]; then
             reason="this run's head is no longer the pull request's head"
           elif [ "$HEAD_REVIEWED" = true ]; then
             reason="this head was already reviewed"

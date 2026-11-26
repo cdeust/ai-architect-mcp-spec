@@ -9,7 +9,6 @@ workflow must break the contract under the guard's own name
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -285,7 +284,7 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "b6351ccdc3f56b7163876255628602b582a45b394f9dfeabbda4f8ed6a38a88f"
+REVIEWED_WORKFLOW_SHA256 = "ae4fc287371f9755986ee284e66c34aff6b709699790e5f0dad25e95aba0b3ee"
 
 
 def _keyed(value):
@@ -430,7 +429,7 @@ class GuardScriptTests(unittest.TestCase):
 
     def test_the_review_runs_only_inside_the_budget_and_the_quota(self):
         ok = {"SKIP": "false", "HEAD_REVIEWED": "false", "QUOTA": "success",
-              "STALE": "false", "RENAMED": "false"}
+              "STALE": "false"}
         cases = [
             ({**ok, "ELIGIBLE": "true"}, "run=true\n", ""),
             ({**ok, "SKIP": "true", "QUOTA": "skipped"}, "run=false\n", "budget"),
@@ -441,8 +440,6 @@ class GuardScriptTests(unittest.TestCase):
             ({**ok, "QUOTA": "failure"}, "run=false\n", "could not be read"),
             ({**ok, "SKIP": "true", "STALE": "true", "QUOTA": "skipped"}, "run=false\n",
              "no longer the pull request's head"),
-            ({**ok, "SKIP": "true", "RENAMED": "true", "QUOTA": "skipped"}, "run=false\n",
-             "gets no security review"),
             ({**ok, "SKIP": "", "ELIGIBLE": "true"}, "run=false\n", "budget"),
         ]
         for env, expected, said in cases:
@@ -470,12 +467,8 @@ def jobs_of(*attempts):
     return rows
 
 
-MERGE = "e" * 40
-
-
-def fake_gh(runs, jobs, calls=None, current=None, workflow=None, total=None):
+def fake_gh(runs, jobs, calls=None, current=None, total=None):
     """What `gh api ... --jq` prints for the endpoints the budget reads."""
-    content = base64.b64encode(WORKFLOW.read_bytes() if workflow is None else workflow)
 
     def gh(args):
         if calls is not None:
@@ -485,10 +478,6 @@ def fake_gh(runs, jobs, calls=None, current=None, workflow=None, total=None):
             return "\n".join(json.dumps({**r, "total": count}) for r in runs)
         if args[0].startswith("repos/o/r/pulls/"):
             return (current or HEAD) + "\n"
-        if "/contents/" in args[0]:
-            # The contents API wraps base64 at 60 characters.
-            text = content.decode()
-            return "\n".join(text[i:i + 60] for i in range(0, len(text), 60)) + "\n"
         return "\n".join(json.dumps(j) for j in jobs.get(int(args[0].split("/")[-2]), []))
 
     return gh
@@ -500,12 +489,12 @@ HEAD = "f" * 40
 class BudgetTests(unittest.TestCase):
     def budget(self, runs, jobs, calls=None, head=HEAD, attempt=1, **gate):
         gh = fake_gh(runs, jobs, calls, current=gate.pop("current", head), **gate)
-        return security.budget(gh, "o/r", 7, 99, attempt, "feat", head, MERGE)
+        return security.budget(gh, "o/r", 7, 99, attempt, "feat", head)
 
     def test_first_review_runs(self):
         self.assertEqual(self.budget([], {}), {"round": 1, "cap": 3, "skip": "false",
                                                "reviewed_sha": "", "head_reviewed": "false",
-                                               "stale": "false", "renamed": "false"})
+                                               "stale": "false"})
 
     def test_every_attempt_of_the_engine_counts_whatever_it_concluded(self):
         runs = [run(1, 1, "1" * 40), run(2, 2, "2" * 40), run(3, 3, "3" * 40),
@@ -562,9 +551,7 @@ class BudgetTests(unittest.TestCase):
         calls = []
         self.budget([run(1, 1)], {1: jobs_of({"engine": "success"})}, calls)
         self.assertEqual(calls[0], ["repos/o/r/pulls/7", "--jq", ".head.sha"])
-        self.assertEqual(calls[1], [f"repos/o/r/contents/.github/workflows/{security.WORKFLOW}",
-                                    "--method", "GET", "-f", f"ref={MERGE}", "--jq", ".content"])
-        calls = calls[2:]
+        calls = calls[1:]
         runs_jq = calls[0][calls[0].index("--jq") + 1]
         self.assertEqual(calls[0], [
             f"repos/o/r/actions/workflows/{security.WORKFLOW}/runs", "--method", "GET",
@@ -592,22 +579,14 @@ class BudgetTests(unittest.TestCase):
 
             with self.subTest(runs=runs_text, jobs=jobs_text), \
                     self.assertRaises(security.BudgetError):
-                security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD, MERGE)
+                security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD)
 
-    def test_bad_shas_and_unreadable_gates_are_refused(self):
-        for head, merge, current, workflow in (("main", MERGE, None, None),
-                                               (HEAD, "x", None, None),
-                                               (HEAD, MERGE, "not-a-sha", None)):
-            with self.subTest(head=head, merge=merge, current=current), \
+    def test_a_bad_head_or_pr_head_is_refused(self):
+        for head, current in (("main", None), ("main", HEAD), (HEAD, "not-a-sha")):
+            with self.subTest(head=head, current=current), \
                     self.assertRaises(security.BudgetError):
                 gh = fake_gh([], {}, current=current or head)
-                security.budget(gh, "o/r", 7, 99, 1, "feat", head, merge)
-
-        def broken(args):
-            return "!!!" if "/contents/" in args[0] else fake_gh([], {})(args)
-
-        with self.assertRaises(security.BudgetError):
-            security.budget(broken, "o/r", 7, 99, 1, "feat", HEAD, MERGE)
+                security.budget(gh, "o/r", 7, 99, 1, "feat", head)
 
     def test_more_runs_than_listed_is_refused_not_undercounted(self):
         with self.assertRaises(security.BudgetError):
@@ -631,54 +610,6 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
         # No count runs, so a count error (here: total above the rows) cannot turn it red.
         self.assertFalse(any(c[0].endswith("/runs") for c in calls))
-
-    def test_a_definition_without_a_counted_name_spends_no_round(self):
-        text = WORKFLOW.read_text()
-        self.assertEqual(set(security.COUNTED_PAIRS),
-                         {(security.JOB, security.ACTION_STEP),
-                          (security.PUBLISH_JOB, security.PUBLISH_STEP)})
-        engine_job = "    name: Claude security review\n"
-        engine_step = "      - name: Claude security review\n"
-        publish_job = f"    name: {security.PUBLISH_JOB}\n"
-        publish_step = f"      - name: {security.PUBLISH_STEP}\n"
-        for line in (engine_job, engine_step, publish_job, publish_step):
-            self.assertEqual(text.count(line), 1, line)
-        edits = {
-            "engine job only": (engine_job, engine_job.rstrip("\n") + " (v2)\n"),
-            "engine step only": (engine_step, engine_step.rstrip("\n") + " (v2)\n"),
-            "publish job": (publish_job, publish_job.rstrip("\n") + " (v2)\n"),
-            "publish step": (publish_step, publish_step.rstrip("\n") + " (v2)\n"),
-            "folded continuation": (engine_job, engine_job + "      (v2)\n"),
-            "step moved to another job": (engine_job, "    name: Claude security engine\n"),
-            "not YAML": (engine_job, engine_job + "  : [\n"),
-        }
-        for label, (old, new) in edits.items():
-            with self.subTest(edit=label):
-                renamed = text.replace(old, new, 1)
-                result = self.budget([], {}, workflow=renamed.encode())
-                self.assertEqual((result["skip"], result["renamed"]), ("true", "true"))
-        for label, (old, new) in {
-            "quoted": (engine_step, '      - name: "Claude security review"\n'),
-            "commented": (publish_job, publish_job.rstrip("\n") + "  # the comment\n"),
-        }.items():
-            with self.subTest(edit=label):
-                result = self.budget([], {}, workflow=text.replace(old, new, 1).encode())
-                self.assertEqual((result["skip"], result["renamed"]), ("false", "false"))
-        # Any other change to the definition is not a reason to skip: no comparison with main.
-        result = self.budget([], {}, workflow=(text + "\n# changed\n").encode())
-        self.assertEqual((result["skip"], result["renamed"], result["stale"]),
-                         ("false", "false", "false"))
-
-    def test_a_stale_run_never_reads_its_old_merge_commit(self):
-        base = fake_gh([], {}, current="c" * 40)
-
-        def gh(args):
-            if "/contents/" in args[0]:
-                raise subprocess.CalledProcessError(1, "gh")
-            return base(args)
-
-        result = security.budget(gh, "o/r", 7, 99, 1, "feat", HEAD, MERGE)
-        self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
 
     def test_a_listing_at_the_api_limit_is_refused_whatever_total_count_says(self):
         rows = [run(i, 1, "1" * 40) for i in range(1, security.RUNS_LISTING_LIMIT + 1)]
