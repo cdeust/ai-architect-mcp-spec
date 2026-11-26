@@ -328,6 +328,33 @@ class BotsAreOptionalTests(unittest.TestCase):
         with self.assertRaises(ns["PostMergeError"]):
             ns["_validate_jobs"]([dict(j, conclusion="failure") if j["name"] == "unit" else j for j in green])
 
+    def test_codex_out_of_usage_neither_reddens_a_check_nor_holds_an_approved_merge(self):
+        # Run 45719916984 (#407, 2026-11-26) and #400 (run 45694083586): the
+        # connector answered "You have reached your Codex usage limits for code
+        # reviews", the CI raised "Codex did not complete a code review", and the
+        # PR could not merge. Now no workflow asks for or waits on a Codex review,
+        # and the resolver reads no PR comment, so the native summary marked
+        # failed and the usage-limit reply change nothing.
+        for path in WORKFLOWS.glob("*.yml"):
+            text = path.read_text()
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("ci_review_codex.py", text)
+                self.assertNotIn("Codex GitHub review", text)
+                self.assertNotIn("ci_native_verdict", text if path.name != "native-review-acceptance.yml" else "")
+        self.assertFalse((ROOT / "scripts/ci_review_codex.py").exists())
+
+        class WithCodexComments(FakeApi):
+            def records(self, path, key=None):
+                if path.endswith("/issues/7/comments"):
+                    raise AssertionError("the resolver read a PR comment")
+                return super().records(path, key)
+
+        api = WithCodexComments([record(T2)])
+        ns = resolver()
+        ns["_merge_open_pr"](pull(), "/merge", HEAD, api, REPO)
+        self.assertEqual([put[0] for put in api.puts], ["PUT"])
+        self.assertFalse(any("comments" in path for path in api.paths))
+
     def test_review_bots_do_not_wake_the_resolver(self):
         caller = yaml.safe_load((WORKFLOWS / "pipeline-after-merge.yml").read_text())
         self.assertEqual(caller[True]["workflow_run"]["workflows"], ["Pipeline", "Owner approval wake"])
