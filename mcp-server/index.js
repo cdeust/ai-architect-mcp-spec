@@ -106145,7 +106145,7 @@ var concludeVerificationInput = () => ({
 });
 var handleConcludeVerification = async ({ scope, section_type, verdicts, consensus_strategy, run_id, claim_types, claims }) => {
   let claimsMap;
-  if (claims !== void 0 && claims.length > 0) {
+  if (claims !== void 0) {
     const map4 = /* @__PURE__ */ new Map();
     for (const raw of claims) {
       const parsed = ClaimSchema.safeParse({
