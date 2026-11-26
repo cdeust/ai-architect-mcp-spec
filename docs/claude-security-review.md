@@ -77,8 +77,11 @@ already uses.
 - **Bots.** `allowed_bots` lists `claude[bot]` and `chatgpt-codex-connector[bot]`,
   so their pushes are reviewed. With bots allowed, the action authenticates git
   through a helper rather than a token in the remote URL (`git-config.ts`).
-- **Tools.** Read and Task (sub-agents) are allowed. Bash, Grep, Glob, LSP and the
-  MCP resource tools are denied outright: the Claude Code docs apply `Read` deny
+- **Tools.** `--tools "Read,Agent"` limits the built-in tools to Read and sub-agents,
+  so tools that need no permission (a cloud routine through RemoteTrigger, a
+  message, a notification) are not offered at all; `--allowedTools` only pre-approves.
+  The managed settings deny Bash, Grep, Glob, LSP, the MCP resource tools and those
+  no-permission tools as well, as defence in depth: the Claude Code docs apply `Read` deny
   rules to Grep and Glob only for the folder a search starts from, so a search from
   `/` could reach a denied file, and tools that need no permission would run under
   `dontAsk` without an allow rule. The managed settings also set
@@ -181,7 +184,9 @@ remove each guard in turn and require the matching check to fail
 - No review has run yet. On the pull request that adds the workflow, main does not
   have these files, so the job takes the "not installed on main yet" skip. The
   first real review will be on the first trusted PR after the merge.
-- The managed-settings keys were checked against the strings of CLI 2.1.306. The
+- The managed-settings keys and denied tool names were checked against the strings
+  of CLI 2.1.306; `blockReadsOutsideWorkingDirectories` needs 2.1.257 or later, and
+  `--tools` is a CLI flag the action passes through. The
   action installs 2.1.328, and no one has observed it enforce them, link
   resolution included.
 - The following was read in the action's code but not observed:

@@ -49,6 +49,7 @@ ENGINE_INPUTS = {
 ENGINE_ARGS = [
     "--strict-mcp-config",
     "--setting-sources", "user",
+    "--tools", "Read,Agent",
     "--permission-mode", "dontAsk",
     "--allowedTools", "Read,Task",
     "--json-schema", json.dumps(publication.SCHEMA, separators=(",", ":")),
@@ -73,7 +74,9 @@ PUBLISH_ENV = {
 }
 # The full managed deny list: every rule is a guard of the threat model.
 DENY = {
-    "Bash", "Grep", "Glob", "LSP", "ListMcpResourcesTool", "ReadMcpResourceTool", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
+    "Bash", "Grep", "Glob", "LSP", "ListMcpResourcesTool", "ReadMcpResourceTool", "RemoteTrigger",
+    "SendMessage", "PushNotification", "CronCreate", "CronDelete", "ScheduleWakeup", "Skill",
+    "EnterWorktree", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
     "mcp__github_ci", "mcp__github_file_ops",
     "Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)", "Read(//etc/**)", "Read(//tmp/**)",
     "Read(//var/**)", "Read(//opt/**)", "Read(//home/runner/runners/**)",
@@ -283,7 +286,7 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "80da37166be91a7fb3a0fe2ed48c1086893c797b6e4e87786f65d4dd14e7f096"
+REVIEWED_WORKFLOW_SHA256 = "828aa3f68b54e1989bbf71b1c70a5d581f885e8bea9b62bbc131e7e7dbed3c27"
 
 
 def _keyed(value):
@@ -1237,6 +1240,7 @@ EXTRA = {
         w, "Read,Task", "Read,Task,mcp__github_comment__update_claude_comment")),
     "second-mode": ("engine-tools", lambda w, r: replace_arg(
         w, "--model", "--permission-mode acceptEdits\n--model")),
+    "all-tools": ("engine-tools", lambda w, r: replace_arg(w, '--tools "Read,Agent"\n', "")),
     "no-strict-mcp": ("engine-tools", lambda w, r: replace_arg(w, "--strict-mcp-config\n", "")),
     "no-schema": ("engine-tools", lambda w, r: replace_arg(w, "--json-schema", "--append")),
     "fork-allowed": ("trusted-authors", lambda w, r: job(w).__setitem__("if", "true") or w),
