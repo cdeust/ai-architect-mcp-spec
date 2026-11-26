@@ -79,16 +79,19 @@ function refuse(state: PipelineState, cause: Failure["cause"], detail: string, m
   };
 }
 
-function keepMarkdownReply(state: PipelineState, markdown: string | undefined) {
-  if (!markdown?.trim()) {
+function keepMarkdownReply(state: PipelineState, response: { raw_text?: string; error?: string } | undefined) {
+  const markdown = response?.raw_text?.trim();
+  // A failed reply, even with partial text, is not a deliverable (as before the structured request).
+  if (response?.error || !markdown) {
+    const reason = response?.error || "no response";
     return {
-      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: no response`, "upstream_failure"), current_step: "file_export" as const },
+      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: ${reason}`, "upstream_failure"), current_step: "file_export" as const },
       action: { kind: "emit_message" as const, level: "warn" as const, message: "JIRA generation failed; proceeding to file export anyway." },
     };
   }
   const section = {
     section_type: "jira_tickets" as const, status: "passed" as const, attempt: 1,
-    violation_count: 0, last_violations: [], attempt_log: [], content: markdown.trim(),
+    violation_count: 0, last_violations: [], attempt_log: [], content: markdown,
   };
   return {
     state: { ...state, sections: [...state.sections, section], current_step: "file_export" as const },
@@ -102,7 +105,7 @@ function acceptanceIds(state: PipelineState): ReadonlySet<string> {
 
 export const handleJiraGeneration: StepHandler = ({ state, result }) => {
   if (result?.kind === "subagent_batch_result" && result.batch_id === MARKDOWN_BATCH_ID) {
-    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === INVOCATION_ID)?.raw_text);
+    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === INVOCATION_ID));
   }
   // Result of our spawn.
   if (result?.kind === "subagent_batch_result" && result.batch_id === JIRA_BATCH_ID) {

@@ -128,6 +128,11 @@ describe("ticket prose", () => {
       expect(issues([{ ...first, description: value }])).toEqual(["TICKET_TEXT_CONTROL_CHARACTER"]);
     }
     expect(accepted([{ ...first, description: " \n " }])).toBe(false);
+    // The Cc ranges end at U+001F and U+009F; their neighbours are text.
+    for (const value of ["a\u0000b", "a\u001Fb", "a\u007Fb", "a\u009Fb", "a\u000Bb"]) {
+      expect(issues([{ ...first, description: value }])).toEqual(["TICKET_TEXT_CONTROL_CHARACTER"]);
+    }
+    for (const value of ["a b ~", "a\u00A0b", "a\u00A1b"]) expect(accepted([{ ...first, description: value }])).toBe(true);
   });
 
   it("needs a positive integer phase", () => {

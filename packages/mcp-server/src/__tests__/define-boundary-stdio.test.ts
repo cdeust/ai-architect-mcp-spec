@@ -541,12 +541,18 @@ it("serves the ticketed Define of the gate after PRD only, across restarts", asy
     let envelope = await call<Envelope>(server, "submit_action_result", {
       run_id, result: { kind: "user_answer", question_id: action.question_id, selected: ["PRD only"] },
     });
+    let last: ActionResult | undefined;
     for (let count = 0; envelope.current_step !== "complete" && count < 10; count++) {
       const result = host.respond(NextActionSchema.parse(envelope.action));
       if (!result) break;
+      last = result;
       envelope = await call<Envelope>(server, "submit_action_result", { run_id, result });
     }
     expect(envelope).toMatchObject({ current_step: "complete", action: { kind: "done" } });
+    // A host that lost the final response retries it: the run keeps its terminal action and its Define.
+    const retried = await call<Envelope>(server, "submit_action_result", { run_id, result: last });
+    expect(retried.action).toEqual(envelope.action);
+    expect((await server.call("get_pipeline_state", args)).text).toBe(atGate.text);
     await server.close();
     server = await start();
     expect((await server.call("get_pipeline_state", args)).text).toBe(atGate.text);

@@ -67,8 +67,10 @@ export const HandoffTicketsSchema = z.array(TicketSchema).min(1).superRefine(val
 // list field stays on its line, so it cannot forge a ticket, a total or a
 // heading the handoff does not carry; no field holds an invisible format character.
 const prose = z.string().trim().min(1).regex(/^[^\p{Cc}\p{Cf}\u2028\u2029]*$/u, "TICKET_TEXT_NOT_SINGLE_LINE");
+// One character class, no alternation, so the match is linear: Cc is U+0000-U+001F
+// and U+007F-U+009F; only LF (U+000A) is allowed of them.
 const paragraphs = z.string().trim().min(1)
-  .regex(/^(?:[^\p{Cc}\p{Cf}\u2028\u2029]|\n)*$/u, "TICKET_TEXT_CONTROL_CHARACTER");
+  .regex(/^[^\x00-\x09\x0b-\x1f\x7f-\x9f\p{Cf}\u2028\u2029]*$/u, "TICKET_TEXT_CONTROL_CHARACTER");
 export const JiraTicketSchema = TicketSchema.extend({
   title: prose,
   description: paragraphs,
