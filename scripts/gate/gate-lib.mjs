@@ -605,7 +605,8 @@ export function approvalWrite(call, label) {
   const names = text.includes(label.toLowerCase()) || NAMELESS.test(text) || LABEL_VARIABLE.test(text)
     || (BODY.test(text) && LABEL_PATH.test(text));
   if (!names) return false;
-  return typeof command !== "string" || !isRead(text);
+  // A tool's input is JSON text, which begins with `{` and is never a gh read.
+  return !isRead(text);
 }
 
 /**
