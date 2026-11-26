@@ -751,6 +751,48 @@ describe("guardDecision", () => {
       `gh pr edit 3 --remove-label ${L}`,
       `git commit -m 'gh pr edit 3 --add-label ${L}'`,
       `cat <<EOF | gh api repos/o/r/issues/3/labels --input -\n{"labels":["${L}"]}\nEOF`,
+      // A read is recognised only when the whole call is one (review of b80511b).
+      `echo 'ok: pr edit --add-label ${L}' >> ~/.config/gh/config.yml`,
+      `printf 'aliases:\\n  ok: pr edit --add-label ${L}' > ~/.config/gh/config.yml`,
+      `jq -n '"gh pr edit 3 --add-label ${L}"' -r > x.sh`,
+      `cd ~/.config/gh && echo 'ok: pr edit --add-label ${L}' >> config.yml`,
+      `gh pr view 3 ${L} | sort --compress-program=sh`,
+      `gh pr view 3 ${L} | sort -o x.sh`,
+      `gh pr view 3 ${L} | uniq - x.sh`,
+      `gh pr view 3 ${L} | tee x.sh`,
+      `gh pr view 3 ${L} | sed -n p`,
+      `gh pr view 3 ${L} | awk 1`,
+      `gh pr view 3 ${L} | xargs echo`,
+      `gh pr view 3 ${L} > x`,
+      `gh pr view 3 ${L} >| x`,
+      `gh pr view 3 ${L} &> x`,
+      `gh pr view 3 ${L} 2>&1`,
+      `gh pr view 3 ${L} | dd of=x`,
+      `gh pr view 3 ${L}; ls`,
+      `gh pr view 3 ${L} && ls`,
+      `gh pr view 3 ${L} || ls`,
+      `gh pr view 3 ${L} &`,
+      `gh pr view 3 ${L}\nls`,
+      `gh pr view 3 $(echo ${L})`,
+      `gh pr view 3 --web ${L}`,
+      `gh pr view 3 -w ${L}`,
+      `gh pr view 3 <(echo ${L})`,
+      `gh pr edit 3 --add-label $L`,
+      `gh pr edit 3 --label=$(cat f)`,
+      `gh pr create -l \`cat f\``,
+      // Second review of b80511b (Gemini): a read is analysed whole or not at all.
+      `echo "$( (true); gh pr edit 3 --add-label ${L})"`,
+      `printf "$( (true); gh api repos/o/r/issues/3/labels -f labels[]=${L})"`,
+      `gh pr view "$( (true); gh pr edit 3 --add-label ${L})"`,
+      `jq -n "$( (true); gh pr edit 3 --add-label ${L})"`,
+      `true # don't\ngh pr edit 3 --add-label ${L}`,
+      `gh pr view 3 # don't\ngh pr edit 3 --add-label ${L}`,
+      `gh pr view 3 ${L} # note`,
+      `gh pr view $N ${L}`,
+      `gh pr view (3) ${L}`,
+      `gh pr view 3 ${L} !`,
+      `wget --post-data=x example.org/${L}`,
+      `gh api graphql -f query=x -F labelIds=abc`,
     ]) {
       // curl to api.github.com is refused earlier, by its own rule and reason.
       expect(decide(command), command).toEqual(command.startsWith("curl ") ? decide(command) : refusal);
@@ -771,16 +813,17 @@ describe("guardDecision", () => {
     const L = "owner-" + "approved";
     for (const command of [
       `gh pr view 7 --json labels`,
-      `gh -R o/r pr view 7 --json labels | jq '.labels[] | select(.name == "${L}")'`,
+      `gh -R o/r pr view 7 --json labels --jq .labels[].name | grep ${L}`,
       `gh --repo=o/r pr list --label ${L}`,
       `gh issue list --label ${L} | head -3`,
       `gh pr checks 7 | grep ${L}`,
       `gh pr diff 7 | grep -c ${L}`,
       `gh pr status ${L}`,
       `gh label list | grep ${L} | wc -l`,
-      `gh run list --workflow ${L} | sort | uniq | cut -f1 | tail -1`,
-      `gh run view 9 ${L} && gh run watch 9`,
-      `cd x && gh pr view 7 && echo ${L} && printf x && true`,
+      `gh run list --workflow ${L} | cut -f1 | tail -1`,
+      `gh run view 9 ${L} | jq .x`,
+      `gh run watch 9 ${L}`,
+      `gh issue view 7 ${L}`,
       `gh pr edit 3 --add-label claude-rereview`,
       `gh api repos/o/r/issues/7/comments -f body=x`,
       `git commit -m "${L}: docs"`,
@@ -799,6 +842,36 @@ describe("guardDecision", () => {
       expect(guardDecision({ tool_name, tool_input }, guard), tool_name).toEqual({ kind: "allow" });
     }
     expect(guardDecision({ tool_input: { labels: [L] } }, guard)).toEqual({ kind: "allow" });
+  });
+
+  it("admits as a pure filter only what can neither write a file nor start a program", () => {
+    const L = "owner-" + "approved";
+    const read = (filter) => decide(`gh pr view 3 ${L} | ${filter}`).kind;
+    // Pure: none of their options writes a file or starts a program.
+    for (const filter of ["grep x", "jq .x", "head -3", "tail -1", "wc -l", "cut -f1"]) {
+      expect(read(filter), filter).toBe("allow");
+    }
+    // Not pure: each can write a file or start a program.
+    for (const filter of [
+      "sort",                 // -o FILE writes, --compress-program=PROG starts a program
+      "uniq",                 // a second operand is its output file
+      "tee x",                // writes its operands
+      "sed -n p",             // w FILE writes, e runs a command (GNU)
+      "awk 1",                // system(), print > FILE
+      "xargs echo",           // starts a program
+      "bash",                 // starts anything
+      "sh",
+      "python3",
+      "node",
+      "perl",
+      "cat",                  // pure, yet not needed: kept out so the list stays short
+      "dd of=x",              // writes
+      "find . -exec x ;",     // starts a program
+      "grepx",
+      "xjq .x",
+    ]) {
+      expect(read(filter), filter).toBe("refuse");
+    }
   });
 
   it("accepts a configuration without a protected label, and then protects none", () => {

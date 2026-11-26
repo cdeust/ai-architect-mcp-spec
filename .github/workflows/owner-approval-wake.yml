@@ -12,6 +12,11 @@ on:
 
 permissions: {}
 
+# A newer label event supersedes the wait of an older one on the same PR.
+concurrency:
+  group: owner-approval-wake-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   wake:
     name: Wake the resolver
@@ -29,6 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ACTOR: ${{ github.actor }}
         run: python3 -I scripts/ci_owner_approval_wake.py

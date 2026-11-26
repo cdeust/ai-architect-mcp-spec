@@ -227,7 +227,8 @@ class CliTests(unittest.TestCase):
         runs = [run(i, i) for i in (1, 2, 3)]
         lines, text = self.invoke(runs, {i: ["success"] for i in (1, 2, 3)})
         self.assertIn("skip=true", lines)
-        self.assertIn("refinement PR", text)
+        self.assertIn("holds no merge", text)
+        self.assertNotIn("refinement PR", text)
         self.assertIn(budget.BYPASS_LABEL, text)
 
     def test_the_output_file_must_sit_inside_the_runner_temp(self):

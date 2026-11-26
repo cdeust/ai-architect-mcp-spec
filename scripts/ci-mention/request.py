@@ -151,8 +151,10 @@ def publish(event, repository, token, candidate, api, scratch):
             existing = api("pulls?" + query)
             pr = existing[0] if existing else api("pulls", "POST", {"head": candidate.branch, "base": candidate.base,
                      "title": event["issue"]["title"], "body": f"Requested in #{number}.",
-                     "draft": True})
-            answer += f"\n\nDraft pull request: {pr['html_url']}"
+                     "draft": False})
+            # Owner decision of 2026-11-25: no draft; the merge waits for the owner's
+            # approval of the head (docs/agent-guidance.md, rule 1).
+            answer += f"\n\nPull request: {pr['html_url']}"
     elif candidate.revision != revision:
         raise ValueError("The target advanced during preparation")
     if answer:

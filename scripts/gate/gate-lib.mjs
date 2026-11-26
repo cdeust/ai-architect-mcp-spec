@@ -538,8 +538,11 @@ export function guardDecision(call, guard) {
   return { kind: "allow" };
 }
 
-/** The text of a call as the shell reads its words: no quotes, no escapes, one case. */
-const plain = (text) => text.replace(/["'`\\]/g, "").toLowerCase();
+/**
+ * The text of a call as the shell reads its words: no quotes, no escapes, one
+ * case. A backquote stays: it starts a substitution, which no read has.
+ */
+const plain = (text) => text.replace(/["'\\]/g, "").toLowerCase();
 
 /** What can write to GitHub from a shell, wherever it stands in the call. */
 const VEHICLE = /(?:^|[^a-z0-9_.-])(?:gh|curl|wget|https?|hub|xh)(?:$|[^a-z0-9_-])|github\.com/;
@@ -551,14 +554,32 @@ const NAMELESS = /\bla_[a-z0-9_-]{6}|labelstolabelable|labelsfromlabelable|label
 const BODY = /--input|@/;
 const LABEL_PATH = /issues|pulls|labels|graphql/;
 
+/** A label option whose value the guard cannot read: a variable or a substitution. */
+const LABEL_VARIABLE = /(?:--add-label|--label|\s-l)(?:\s+|=)?\S*[$`]/;
+
 /**
- * The reads that stay allowed, recognised whole: gh's reads of pull
- * requests, issues, labels and runs, and the filters a read pipes into.
+ * A read recognised whole: the call is one gh read of pull requests, issues,
+ * labels or runs (no `--web`, which starts a program), piped only into pure
+ * filters, and nothing else: no redirection, no `;`, `&&`, `||`, `&`, line
+ * end or substitution. A pure filter can neither write a file nor start a
+ * program with the options it has: grep, jq, head, tail, wc, cut. sort is
+ * out (`-o FILE`, `--compress-program=PROG`), and so are uniq (a second
+ * operand is its output file), tee, sed, awk and xargs.
  */
-const READ = new RegExp(
-  "^(?:gh(?:\\s+(?:-r|--repo)(?:\\s+|=)\\S+)*\\s+(?:(?:pr|issue)\\s+(?:view|list|checks|diff|status)|label\\s+list|run\\s+(?:view|list|watch))" +
-  "|(?:cd|grep|jq|head|tail|wc|sort|uniq|cut|echo|printf|true))(?:\\s|$)",
-);
+const GH_READ = /^\s*gh(?:\s+(?:-r|--repo)(?:\s+|=)\S+)*\s+(?:(?:pr|issue)\s+(?:view|list|checks|diff|status)|label\s+list|run\s+(?:view|list|watch))(?:\s|$)/;
+const PURE_FILTER = /^\s*(?:grep|jq|head|tail|wc|cut)(?:\s|$)/;
+/**
+ * The only characters a read may hold. Anything else (a substitution `$(`,
+ * a backquote, a parenthesis, a comment `#`, a redirection, `;`, `&`, a line
+ * end) is not analysed: the call falls back to the coarse rule.
+ */
+const READ_CHARACTERS = /^[a-z0-9 \-_.\/=:,|[\]{}*^@+%~]*$/;
+const WEB = /\s(?:--web|-w)(?:\s|$)/;
+const isRead = (text) => {
+  if (!READ_CHARACTERS.test(text) || WEB.test(text)) return false;
+  const [first, ...filters] = text.split("|");
+  return GH_READ.test(first) && filters.every((filter) => PURE_FILTER.test(filter));
+};
 
 /**
  * precondition:  `call` is the JSON a PreToolUse hook receives; `label` is
@@ -581,10 +602,10 @@ export function approvalWrite(call, label) {
   if (typeof command !== "string" && !github) return false;
   const text = plain(typeof command === "string" ? command : JSON.stringify(call.tool_input ?? null));
   if (!github && !VEHICLE.test(text)) return false;
-  const names = text.includes(label.toLowerCase()) || NAMELESS.test(text)
+  const names = text.includes(label.toLowerCase()) || NAMELESS.test(text) || LABEL_VARIABLE.test(text)
     || (BODY.test(text) && LABEL_PATH.test(text));
   if (!names) return false;
-  return typeof command !== "string" || !commandsOf(command).every((one) => READ.test(plain(one)));
+  return typeof command !== "string" || !isRead(text);
 }
 
 /**

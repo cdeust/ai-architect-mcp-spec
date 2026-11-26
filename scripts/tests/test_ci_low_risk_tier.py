@@ -103,6 +103,14 @@ class LowRiskTierTests(unittest.TestCase):
     def test_a_manifest_counts_wherever_the_package_lives(self):
         self.assertTrue(self.low(files=("pnpm-lock.yaml", "packages/x/package.json")))
         self.assertFalse(self.low(files=(".github/actions/x/package.json",)))
+        # Second review of b80511b (D04a): the case of the path does not move it out.
+        self.assertFalse(self.low(files=(".GITHUB/owner-mention-cli/package.json",)))
+        self.assertFalse(self.low(files=(".GitHub/x/package.json",)))
+
+    def test_a_file_list_github_cannot_list_whole_is_not_low_risk(self):
+        # D05: GitHub lists at most 3000 files of a pull request.
+        self.assertTrue(self.low(files=("pnpm-lock.yaml",) * 2999))
+        self.assertFalse(self.low(files=("pnpm-lock.yaml",) * 3000))
 
     def test_another_author_or_an_unsigned_commit_is_not(self):
         self.assertFalse(self.low(pr=pull(login="cdeust", kind="User")))

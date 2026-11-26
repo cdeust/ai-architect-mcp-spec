@@ -21,8 +21,8 @@ jobs:
   budget:
     name: Claude review budget
     # Owner rule 2026-11-04 (ADR-1119): three automatic reviews per PR. The
-    # fourth is not run: the accepted part merges, the rest goes to a new
-    # refinement PR. Reads run metadata only, with no secret and no write scope.
+    # fourth is not run. The cap bounds the cost of this optional review and holds
+    # no merge. Reads run metadata only, with no secret and no write scope.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && !github.event.pull_request.draft

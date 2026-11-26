@@ -246,7 +246,7 @@ class MentionPublication(unittest.TestCase):
         self.assertEqual(self.branches(), {"refs/heads/main"}, "a refused request pushed a branch")
         self.assertEqual(self.writes(), [], "a refused request wrote to GitHub")
 
-    def test_issue_request_pushes_the_patch_opens_a_draft_and_answers_once(self):
+    def test_issue_request_pushes_the_patch_opens_a_ready_pr_and_answers_once(self):
         self.publish(self.candidate())
         branch = "refs/heads/claude/issue-7-42"
         self.assertEqual(self.branches(), {"refs/heads/main", branch})
@@ -258,9 +258,9 @@ class MentionPublication(unittest.TestCase):
                          "Claude 1795600860 Claude 1795600860")  # 2026-11-25T10:01:00Z
         pulls = [body for method, path, body in self.writes() if path == "pulls"]
         self.assertEqual(pulls, [{"head": "claude/issue-7-42", "base": "main", "title": "Owner request",
-                                  "body": "Requested in #7.", "draft": True}])
+                                  "body": "Requested in #7.", "draft": False}])
         comments = [body["body"] for method, path, body in self.writes() if path == "issues/7/comments"]
-        self.assertEqual(comments, ["Done.\n\nDraft pull request: https://github.com/owner/spec/pull/9"
+        self.assertEqual(comments, ["Done.\n\nPull request: https://github.com/owner/spec/pull/9"
                                     "\n\n<!-- owner-mention-run 42 -->"])
 
     def test_a_deleted_account_among_the_answers_does_not_stop_publication(self):
@@ -269,7 +269,7 @@ class MentionPublication(unittest.TestCase):
         self.publish(self.candidate())
         self.assertNotIn("issues/7/comments", [path for method, path, body in self.writes()])
 
-    def test_existing_draft_is_reused_and_an_existing_answer_is_not_repeated(self):
+    def test_an_existing_pr_is_reused_and_an_existing_answer_is_not_repeated(self):
         self.existing_pulls = [{"html_url": "https://github.com/owner/spec/pull/5"}]
         self.comments = [{"user": {"login": "claude[bot]"}, "body": "earlier\n\n<!-- owner-mention-run 42 -->"}]
         self.publish(self.candidate())

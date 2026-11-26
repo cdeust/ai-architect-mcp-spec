@@ -282,6 +282,9 @@ jobs:
                   "source head repository differs",
               )
               head = full_sha(approval.get("head_sha"))
+              numbers = [pr.get("number") for pr in approval.get("pull_requests") or []]
+              require(len(numbers) == 1 and type(numbers[0]) is int,
+                      "source approval must name exactly one PR")
               path = f"/repos/{repository}/actions/workflows/pipeline.yml/runs"
               runs = [
                   run
@@ -290,6 +293,7 @@ jobs:
                       "workflow_runs",
                   )
                   if run.get("head_sha") == head and type(run.get("id")) is int
+                  and [pr.get("number") for pr in run.get("pull_requests") or []] == numbers
               ]
               require(runs, "merge held: Pipeline has not succeeded on this head")
               return max(runs, key=lambda run: run["id"])
@@ -337,7 +341,8 @@ jobs:
                   associations = [
                       pr
                       for pr in api.records(f"{prefix}/commits/{run['head_sha']}/pulls")
-                      if pr.get("head", {}).get("sha") == run["head_sha"]
+                      if pr.get("state") == "open"
+                      and pr.get("head", {}).get("sha") == run["head_sha"]
                       and pr.get("head", {}).get("repo", {}).get("full_name") == repository
                       and pr.get("base", {}).get("ref") == "main"
                       and pr.get("base", {}).get("repo", {}).get("full_name") == repository
@@ -467,12 +472,17 @@ jobs:
               updates = _declared_updates(commits[0])
               if updates is None or not set(updates) <= LOW_RISK_UPDATES:
                   return False
-              files = set()
+              files, rows = set(), 0
               for row in api.records(path + "/files"):
+                  rows += 1
                   # A rename counts under both of its names.
                   files |= {row.get("filename"), row.get("previous_filename")} - {None}
-              # A workflow or action directory never holds a dependency manifest.
-              if any(name.startswith(".github/") for name in files):
+              # GitHub lists at most FILES_LISTED_AT_MOST files: a longer list is not read whole.
+              if rows >= FILES_LISTED_AT_MOST:
+                  return False
+              # A workflow or action directory never holds a dependency manifest,
+              # whatever the case the path is written in.
+              if any(name.lower().startswith(".github/") for name in files):
                   return False
               # By file name: a workspace carries one manifest per package.
               names = {name.rsplit("/", 1)[-1] for name in files}
@@ -570,8 +580,12 @@ jobs:
           NO_RECORD = "merge held: the owner has not approved this head: the label is on the pull request but no approval record exists; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml"
           NOT_RUN = "merge held: the approval record did not run; an Actions event policy may block pull_request_target for .github/workflows/owner-approval.yml"
           RECORD_TITLE = re.compile(
-              r"Owner approval (labeled|synchronize) PR ([1-9][0-9]*) label (\S+) at ([0-9a-f]{40}) by (\S+)"
+              r"Owner approval (labeled|synchronize|opened|reopened|edited|ready_for_review) "
+              r"PR ([1-9][0-9]*) label (\S+) base (\S+) at ([0-9a-f]{40}) by (\S+)"
           )
+          # Events after the approval that make it stale: another head, a reopened or
+          # undrafted pull request. A base other than main is checked on its own.
+          STALE = {"synchronize", "reopened", "ready_for_review"}
 
 
           def _records(pr, repository, api):
@@ -591,12 +605,18 @@ jobs:
                       and re.fullmatch(STAMP, run["created_at"])
                   ):
                       continue
-                  found.append((run["created_at"], run.get("id"), match, run))
+                  require(type(run.get("id")) is int, "approval record without a run id")
+                  found.append((run["created_at"], run["id"], match, run))
               return sorted(found, key=lambda record: (record[0], record[1]))
 
 
-          def _owner_approves(pr, head, repository, api):
-              """The owner's newest approval names this exact head, and nothing undid it."""
+          def _owner_approves(pr, head, repository, api, tested_at=None):
+              """The owner's newest approval names this exact head and main, and nothing undid it.
+
+              `tested_at` is the creation date of the Pipeline run that proves the head;
+              when the pull request ever targeted another base, that run must come after
+              its last record with another base, so it judged the merge into main.
+              """
               require(
                   any(label.get("name") == APPROVAL_LABEL for label in pr.get("labels") or []),
                   "merge held: the owner has not approved this head",
@@ -613,7 +633,7 @@ jobs:
                   approvals,
                   NO_RECORD,
               )
-              at, _, title, run = approvals[-1]
+              at, approval_id, title, run = approvals[-1]
               # Only a run that executed main's workflow is a record. GitHub creates a
               # run it blocks as a failed run, and its title may not be the one main
               # defines; the conclusion of a run from main is not the PR's to set.
@@ -627,12 +647,27 @@ jobs:
                   (person or {}).get("login") == owner["login"] and (person or {}).get("type") == "User"
                   for person in (run.get("actor"), run.get("triggering_actor"))
               )
-              require(by_owner and title[5] == owner["login"],
+              require(by_owner and title[6] == owner["login"],
                       "merge held: the approval label was not set by the owner")
-              require(title[4] == head, "merge held: the approval names another head")
+              require(title[4] == "main", "merge held: the approval was given for another base")
+              require(title[5] == head, "merge held: the approval names another head")
+              later = [record for record in records if (record[0], record[1]) > (at, approval_id)]
               require(
-                  not any(record[0] > at and record[2][1] == "synchronize" for record in records),
+                  not any(record[2][1] in STALE for record in later),
                   "merge held: a push came after the approval",
+              )
+              require(
+                  not any(record[2][4] != "main" for record in later),
+                  "merge held: the base changed after the approval",
+              )
+              # When the pull request ever targeted another base, the Pipeline that
+              # proves the head must come after its move back to main.
+              off_main = [index for index, record in enumerate(records) if record[2][4] != "main"]
+              moved_at = records[off_main[-1] + 1][0] if off_main else None
+              require(
+                  moved_at is None or (isinstance(tested_at, str) and re.fullmatch(STAMP, tested_at)
+                                       and tested_at > moved_at),
+                  "merge held: the Pipeline predates the move of the base to main",
               )
               removed = [
                   event.get("created_at")
@@ -647,7 +682,7 @@ jobs:
               )
 
 
-          def _merge_open_pr(pr, merge_path, head, api, repository):
+          def _merge_open_pr(pr, merge_path, head, api, repository, tested_at=None):
               require(
                   pr.get("state") == "open" and pr.get("draft") is False,
                   "PR is closed or draft",
@@ -664,7 +699,7 @@ jobs:
                   # The one merge without the owner's approval (ADR-1126).
                   print("post-merge: low-risk dependency update, no approval required")
               else:
-                  _owner_approves(pr, head, repository, api)
+                  _owner_approves(pr, head, repository, api, tested_at)
               result = api.request(
                   "PUT",
                   merge_path,
@@ -806,7 +841,8 @@ jobs:
               if already_merged:
                   sha = full_sha(pr.get("merge_commit_sha"))
               else:
-                  sha = _merge_open_pr(pr, pr_path + "/merge", run["head_sha"], api, repository)
+                  sha = _merge_open_pr(pr, pr_path + "/merge", run["head_sha"], api, repository,
+                                       run.get("created_at"))
               _confirm_pr_merge(pr_path, pr, sha, api)
               if already_merged and _has_push_pipeline(repository, sha, api):
                   return {

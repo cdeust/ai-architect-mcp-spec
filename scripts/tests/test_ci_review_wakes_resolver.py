@@ -31,6 +31,7 @@ def review(**changes):
         "conclusion": "success",
         "head_repository": {"full_name": REPO},
         "head_sha": HEAD,
+        "pull_requests": [{"number": 7}],
     }
     return {**run, **changes}
 
@@ -56,7 +57,7 @@ class ReviewWakesResolverTests(unittest.TestCase):
         self.assertIn(message, str(caught.exception))
 
     def test_the_newest_successful_pipeline_of_the_head_is_the_source(self):
-        runs = [{"id": 5, "head_sha": HEAD}, {"id": 9, "head_sha": HEAD}]
+        runs = [{"id": 5, "head_sha": HEAD, "pull_requests": [{"number": 7}]}, {"id": 9, "head_sha": HEAD, "pull_requests": [{"number": 7}]}]
         found, api = self.pipeline_of(review(), runs)
         self.assertEqual(found["id"], 9)
         self.assertEqual(
@@ -68,7 +69,7 @@ class ReviewWakesResolverTests(unittest.TestCase):
         )
 
     def test_a_pipeline_of_another_head_does_not_count(self):
-        self.held(review(), [{"id": 9, "head_sha": "b" * 40}], "has not succeeded")
+        self.held(review(), [{"id": 9, "head_sha": "b" * 40, "pull_requests": [{"number": 7}]}], "has not succeeded")
 
     def test_no_successful_pipeline_holds_the_merge(self):
         self.held(review(), [], "Pipeline has not succeeded on this head")

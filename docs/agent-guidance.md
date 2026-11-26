@@ -21,7 +21,8 @@ PRD generation and verification MCP (prd-gen). Node.js host-driven pipeline runn
 ## Etiquette
 
 Conventional commits, staged file-by-file. One PR per concern. A pull request merges when
-CI is green and a review verdict is posted on it; the owner does not gate merges by hand.
+its required checks are green and the owner approved its current head (CI contract, rule 1);
+the review bots give advice and gate nothing.
 CI is the authority: it exists to catch regressions and enforce the engineering standards.
 
 ## CI contract for agents and routines
@@ -89,8 +90,9 @@ the prompt was written before the contract, and the repository's own standards a
    request is opened ready, never as a draft. Its author fixes it, push after push, until
    it merges. Several pull requests may be open at the same time. When one conflicts with
    `main` (`mergeable_state` is `dirty`), it takes `main` by a merge commit (rule 4).
-6. **No comment after an approve.** An approve is a bot's `Verdict: approve` or the owner's
-   label. No reply to the notes, no summary, no acknowledgement.
+6. **No comment after an approve.** An approve is the owner's label on the current head; a
+   bot's `Verdict: approve` is advice and approves no merge, but it too ends the comments. No
+   reply to the notes, no summary, no acknowledgement.
    Notes marked "no action before merge" go to a follow-up pull request after the merge.
    Before an approve, comment only with a pushed fix or a hold.
 7. **Owner decisions are left alone.** Leave a pull request on the branch

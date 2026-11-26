@@ -6,24 +6,26 @@ name: Owner approval
 # head_sha is the base branch's commit, so the head is read from this title.
 run-name: >-
   Owner approval ${{ github.event.action }} PR ${{ github.event.pull_request.number }}
-  label ${{ github.event.label.name || '-' }} at ${{ github.event.pull_request.head.sha }}
+  label ${{ github.event.label.name || '-' }} base ${{ github.event.pull_request.base.ref }}
+  at ${{ github.event.pull_request.head.sha }}
   by ${{ github.actor }}
 
 on:
   # zizmor: ignore[dangerous-triggers] no checkout and no code of the pull
   # request runs; the one step removes a label, with the PR number of the event.
   pull_request_target:
-    types: [labeled, synchronize]
+    types: [labeled, synchronize, opened, reopened, edited, ready_for_review]
 
 permissions: {}
 
 jobs:
   clear:
     name: Clear a stale approval
-    # A new head was pushed: the approval named another head. The resolver does
-    # not rely on this removal; it keeps the label on the PR truthful.
+    # A new head was pushed, or the base changed: the approval named another
+    # head or base. The resolver does not rely on this removal; it keeps the
+    # label on the PR truthful.
     if: >-
-      github.event.action == 'synchronize'
+      (github.event.action == 'synchronize' || github.event.changes.base != null)
       && contains(github.event.pull_request.labels.*.name, 'owner-approved')
     runs-on: ubuntu-latest
     timeout-minutes: 5 # source: operational cap; one API call.

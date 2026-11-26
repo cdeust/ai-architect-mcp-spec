@@ -11,8 +11,8 @@ preceded the contract (ADR-1129). A verified Codex receipt counts once per head,
 including a completed review whose findings block the subsequent verdict check.
 
 Writes `round`, `cap`, `skip` and `reviewed_sha` to $GITHUB_OUTPUT. At the cap
-no fourth review runs: the accepted part merges, the rest leaves the PR for a
-refinement PR with a new budget. The label `claude-rereview` raises the cap by one
+no fourth review runs. The cap bounds the cost of the optional review; it holds no merge,
+which waits for the owner's approval (docs/agent-guidance.md, rule 1). The label `claude-rereview` raises the cap by one
 (a fourth review, never a fifth), however long the label stays attached (ADR-1119).
 Any API or protocol error exits non-zero: no silent fallback to "review".
 
@@ -39,9 +39,9 @@ Gh = Callable[[list[str]], str]
 CAP = 3
 BYPASS_LABEL = "claude-rereview"
 EXHAUSTED = (
-    f"{CAP} of {CAP} reviews used. A fourth review is not run: merge the accepted "
-    "part, remove the rest from this PR and send it to a new refinement PR "
-    f"(new budget). The label {BYPASS_LABEL} allows one more review (ADR-1119)."
+    f"{CAP} of {CAP} reviews used. A fourth review is not run; the review is optional and "
+    "this holds no merge, which waits for the owner's approval. The label "
+    f"{BYPASS_LABEL} allows one more review (ADR-1119)."
 )
 # The step of claude-review.yml that runs the action; the test pins this name.
 ACTION_STEP = "PR Review"
