@@ -59,6 +59,17 @@ class Probe:
     leaks_in_control: bool = False
 
 
+@dataclass(frozen=True)
+class Arm:
+    """One run of the CLI: its name, its arguments, its extra environment, and whether
+    the managed settings are installed for it."""
+
+    name: str
+    args: list[str]
+    env: dict
+    managed: bool
+
+
 @dataclass
 class Plant:
     home: Path
@@ -277,15 +288,16 @@ def install_script(workflow: dict) -> str:
                 if s.get("name") == INSTALL_STEP)
 
 
-def run_arm(name: str, args: list[str], env_extra: dict, plant: Plant, model: Model) -> None:
+def run_arm(arm: Arm, plant: Plant) -> None:
     env = {"HOME": str(plant.home), "PATH": os.environ["PATH"],
            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{plant.port}",
            "ANTHROPIC_API_KEY": "trial-not-a-key", "CANARY": TOKEN,
-           "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", **env_extra}
-    done = subprocess.run([str(CLI), "-p", MAIN, *args, "--output-format", "stream-json", "--verbose"],
+           "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", **arm.env}
+    done = subprocess.run([str(CLI), "-p", MAIN, *arm.args, "--output-format", "stream-json",
+                           "--verbose"],
                           cwd=plant.workspace, env=env, capture_output=True, text=True,
                           timeout=ARM_TIMEOUT_SECONDS)
-    print(f"[{name}] CLI exit {done.returncode}; stderr: {done.stderr.strip()[:500]}")
+    print(f"[{arm.name}] CLI exit {done.returncode}; stderr: {done.stderr.strip()[:500]}")
 
 
 def verdict(name: str, log: list[dict], scripts: tuple[list[Probe], list[Probe]],
@@ -347,22 +359,22 @@ def main() -> int:
     model.main, model.sub = probes(plant), sub_probes(plant)
     try:
         plant_canaries(plant)
-        arms = [("control", CONTROL_ARGS, {}, False),
-                ("engine", shlex.split(engine["with"]["claude_args"]), engine.get("env", {}), True)]
-        for name, args, env_extra, managed in arms:
+        arms = [Arm("control", CONTROL_ARGS, {}, False),
+                Arm("engine", shlex.split(engine["with"]["claude_args"]), engine.get("env", {}), True)]
+        for arm in arms:
             model.log = []
             (home / "trial-hook-ran").unlink(missing_ok=True)
-            if managed:
+            if arm.managed:
                 subprocess.run(["bash", "-e", "-c", install_script(workflow)], cwd=ROOT, check=True)
             try:
-                run_arm(name, args, env_extra, plant, model)
+                run_arm(arm, plant)
             finally:
-                if managed:
+                if arm.managed:
                     subprocess.run(["sudo", "rm", "-rf", "/etc/claude-code"], check=True)
             hook_ran = (home / "trial-hook-ran").exists()
-            failures += [f"{name}: {f}" for f in verdict(name, model.log, (model.main, model.sub),
-                                                        hook_ran)]
-            report.append(table(name, model.log))
+            failures += [f"{arm.name}: {f}" for f in verdict(arm.name, model.log,
+                                                            (model.main, model.sub), hook_ran)]
+            report.append(table(arm.name, model.log))
     finally:
         server.shutdown()
         for path in reversed(plant.made):
