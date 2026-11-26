@@ -39,6 +39,7 @@ INSTALL_STEP = "Install read-only managed settings"
 TOKEN = "CANARY-" + secrets.token_hex(8)
 PARENT = os.environ.get("TRIAL_PARENT_CANARY", "")
 MAIN = "TRIAL-MAIN read-boundary trial"
+STRUCTURED_RESULT = {"findings": [], "summary": "trial"}
 REVIEW_INPUT = "Read workspace review instructions"
 REVIEW_TEXT = "You are a senior security engineer conducting a focused security review of this pull request."
 # Text a successful read returns and an error message never echoes: no probe names it.
@@ -149,10 +150,35 @@ def conversation(body: dict) -> str:
     return "side"
 
 
-def tool_results(body: dict) -> list[dict]:
-    return [part for message in body.get("messages", [])
-            if isinstance(message.get("content"), list)
-            for part in message["content"] if part.get("type") == "tool_result"]
+def tool_results(body: dict) -> list[tuple[dict, dict | None]]:
+    """Pair each result with the preceding assistant call in the one-call-per-turn script."""
+    found = []
+    previous_calls = []
+    for message in body.get("messages", []):
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        calls = []
+        results_first = True
+        for block in blocks:
+            if block.get("type") == "tool_result":
+                call = previous_calls[0] if (message.get("role") == "user" and results_first
+                                             and len(previous_calls) == 1) else None
+                found.append((block, call))
+            else:
+                results_first = False
+                if message.get("role") == "assistant" and block.get("type") == "tool_use":
+                    calls.append(block)
+        previous_calls = calls
+    return found
+
+
+def result_digest(result: dict) -> bytes:
+    content = result.get("content")
+    if isinstance(content, list):
+        content = [{key: value for key, value in part.items() if key != "cache_control"}
+                   if isinstance(part, dict) else part for part in content]
+    answer = (result["tool_use_id"], content, result.get("is_error", False))
+    return hashlib.sha256(json.dumps(answer, sort_keys=True).encode()).digest()
 
 
 def result_evidence(conv: str, probe: Probe, result: dict) -> dict:
@@ -174,20 +200,22 @@ class Model:
     def start_arm(self) -> None:
         with self.lock:
             self.log: list[dict] = []
-            self.issued: dict[tuple[str, int], str] = {}
+            self.issued: dict[tuple[str, int], dict] = {}
             self.observed: dict[tuple[str, int], bytes] = {}
 
-    def record_results(self, conv: str, results: list[dict], script: list[Probe]) -> None:
-        for index, result in enumerate(results):
+    def record_results(self, conv: str, results: list[tuple[dict, dict | None]], script: list[Probe]) -> None:
+        for index, (result, call) in enumerate(results):
             key = (conv, index)
             probe = script[index] if index < len(script) else None
             label = probe.label if probe else "StructuredOutput"
-            if key not in self.issued or result.get("tool_use_id") != self.issued[key]:
+            issued = self.issued.get(key)
+            if (not call or not issued or result.get("tool_use_id") != issued["id"]
+                    or any(call.get(part) != issued[part] for part in ("id", "name", "input"))):
                 self.log.append({"conv": conv, "unmatched": label})
                 continue
             # Requests replay the conversation. Keep a digest in memory so even two
             # distinct results with the same marker booleans cannot mask a change.
-            digest = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).digest()
+            digest = result_digest(result)
             if key in self.observed:
                 if self.observed[key] != digest:
                     self.log.append({"conv": conv, "conflicting": label})
@@ -208,18 +236,20 @@ class Model:
             self.record_results(conv, results, script)
             blocks, stop = self.reply(conv, tools, results, script)
             if stop == "tool_use":
-                self.issued[(conv, len(results))] = blocks[0]["id"]
+                self.issued[(conv, len(results))] = blocks[0]
+                if blocks[0]["name"] == "StructuredOutput":
+                    self.log.append({"conv": conv, "issued_terminal": True})
             return blocks, stop
 
     @staticmethod
-    def reply(conv: str, tools: list[str], results: list[dict], script: list[Probe]) -> tuple[list[dict], str]:
+    def reply(conv: str, tools: list[str], results: list[tuple[dict, dict | None]], script: list[Probe]) -> tuple[list[dict], str]:
         if len(results) < len(script):
             probe = script[len(results)]
             return [{"type": "tool_use", "id": f"toolu_{conv}_{len(results)}", "name": probe.tool,
                      "input": probe.input}], "tool_use"
         if conv == "main" and "StructuredOutput" in tools and len(results) == len(script):
             return [{"type": "tool_use", "id": "toolu_out", "name": "StructuredOutput",
-                     "input": {"findings": [], "summary": "trial"}}], "tool_use"
+                     "input": STRUCTURED_RESULT}], "tool_use"
         return [{"type": "text", "text": "TRIAL DONE"}], "end_turn"
 
 
@@ -321,7 +351,27 @@ def install_script(workflow: dict) -> str:
                 if s.get("name") == INSTALL_STEP)
 
 
-def run_arm(arm: Arm, plant: Plant) -> int:
+def structured_completion(stdout: str) -> bool:
+    """Read the final SDK result of this single CLI query, without retaining its text."""
+    result = None
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(message, dict):
+            return False
+        if message.get("type") == "result":
+            if result is not None:
+                return False
+            result = message
+    return bool(result and result.get("subtype") == "success" and result.get("is_error") is False
+                and result.get("structured_output") == STRUCTURED_RESULT)
+
+
+def run_arm(arm: Arm, plant: Plant) -> tuple[int, bool | None]:
     env = {"HOME": str(plant.home), "PATH": os.environ["PATH"],
            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{plant.port}",
            "ANTHROPIC_API_KEY": "trial-not-a-key", "CANARY": TOKEN,
@@ -330,8 +380,8 @@ def run_arm(arm: Arm, plant: Plant) -> int:
                            "--verbose"],
                           cwd=plant.workspace, env=env, capture_output=True, text=True,
                           timeout=ARM_TIMEOUT_SECONDS)
-    print(f"[{arm.name}] CLI exit {done.returncode}; stderr: {done.stderr.strip()[:500]}")
-    return done.returncode
+    print(f"[{arm.name}] CLI exit {done.returncode}")
+    return done.returncode, structured_completion(done.stdout) if arm.managed else None
 
 
 def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> list[str]:
@@ -342,6 +392,9 @@ def verdict(name: str, log: list[dict], main: list[Probe], hook_ran: bool) -> li
     terminal = [r for r in log if r.get("terminal")]
     if any(r["is_error"] for r in terminal):
         failures.append("StructuredOutput returned an error")
+    if name == "engine" and (not any(r.get("issued_terminal") for r in log)
+                             or not any(r.get("structured_completion") for r in log)):
+        failures.append("unproven: the engine did not produce the expected structured result")
     if name == "engine" and any(r["leaked"] for r in terminal):
         failures.append("leak: main: StructuredOutput")
     if not any(r["conv"] == "main" and r["probe"] == REVIEW_INPUT
@@ -379,6 +432,8 @@ def table(name: str, log: list[dict]) -> str:
         lines.append(f"| {r['conv']} | {r['probe']} | {r['is_error']} | {r['leaked']} | {r['expected']} |")
     inventories = sorted({tuple(sorted(r["tools"])) for r in log if r.get("tools")})
     lines += ["", *[f"- tools offered: {', '.join(names)}" for names in inventories]]
+    if name == "engine":
+        lines.append(f"- expected final structured result: {any(r.get('structured_completion') for r in log)}")
     return "\n".join(lines) + "\n"
 
 
@@ -404,7 +459,9 @@ def main() -> int:
             if arm.managed:
                 subprocess.run(["bash", "-e", "-c", install_script(workflow)], cwd=ROOT, check=True)
             try:
-                exit_code = run_arm(arm, plant)
+                exit_code, complete = run_arm(arm, plant)
+                if complete is not None:
+                    model.log.append({"conv": "main", "structured_completion": complete})
                 if exit_code:
                     failures.append(f"{arm.name}: CLI exited {exit_code}")
             finally:

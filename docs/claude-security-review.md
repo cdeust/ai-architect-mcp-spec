@@ -320,9 +320,14 @@ every pull request and every push to `main`.
 Both arms must read the versioned review instructions in the workspace and return
 a line specific to the scan instructions. The recorder matches each result in the
 transcript to a call already issued in that arm, including a returned structured
-output. Identical history can be retransmitted. An extra or conflicting result
-fails the trial. Full results are graded in memory. The job summary contains the boolean observations for
-each probe and the tool inventories.
+output. Its user result must immediately follow the matching assistant call.
+Identical answers can be retransmitted with different cache breakpoints. An extra or
+conflicting answer fails the trial. In the engine arm the final CLI result must also
+be successful and contain the exact scripted structured output. The control arm runs
+without a JSON schema. The job summary shows the engine completion flag, probe
+observations and tool inventories. Raw results are graded in memory.
+See the [SDK completion contract](https://code.claude.com/docs/en/agent-sdk/structured-outputs)
+and the [Messages tool-result contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls).
 
 ## Where the token may go
 

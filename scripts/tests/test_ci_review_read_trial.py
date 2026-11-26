@@ -8,10 +8,14 @@ engine tool fails the engine arm.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 import yaml
 
@@ -22,11 +26,14 @@ import ci_claude_read_trial as trial  # noqa: E402
 PLANT = trial.Plant(Path("/home/runner"), Path("/home/runner/work/r/r"), 9)
 
 
-def body(first, results=0, tools=("Read",)):
+def body(first, results=0, tools=("Read",), probes=None):
     messages = [{"role": "user", "content": [{"type": "text", "text": first}]}]
     ids = [f"toolu_main_{n}" for n in range(results)] if isinstance(results, int) else results
+    probes = trial.probes(PLANT) if probes is None else probes
     for n, call_id in enumerate(ids):
-        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": call_id}]},
+        tool, args = ("StructuredOutput", {"findings": [], "summary": "trial"}) if call_id == "toolu_out" else (
+            probes[n].tool, probes[n].input)
+        messages += [{"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": tool, "input": args}]},
                      {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call_id,
                                                    "content": f"result {n}", "is_error": n % 2 == 1}]}]
     return {"messages": messages, "tools": [{"name": name} for name in tools]}
@@ -88,14 +95,14 @@ class ModelTests(unittest.TestCase):
         model = trial.Model()
         model.main = [trial.Probe("first note", "Read", {"file_path": "first.txt"})]
         model.answer(body(trial.MAIN, tools=tools))
-        model.answer(body(trial.MAIN, 1, tools=tools if offer_terminal else ("Read",)))
-        end = body(trial.MAIN, ["toolu_main_0", "toolu_out"], tools=tools)
+        model.answer(body(trial.MAIN, 1, tools=tools if offer_terminal else ("Read",), probes=model.main))
+        end = body(trial.MAIN, ["toolu_main_0", "toolu_out"], tools=tools, probes=model.main)
         end["messages"][-1]["content"][0]["is_error"] = False
         return model, end
 
     def transcript_failures(self, model):
         workspace = trial.Probe(trial.REVIEW_INPUT, "Read", {})
-        log = model.log + [row("main", workspace, trial.REVIEW_TEXT, error=False)]
+        log = model.log + [row("main", workspace, trial.REVIEW_TEXT, error=False), {"conv": "main", "structured_completion": True}]
         return trial.verdict("engine", log, model.main, False)
 
     def test_identical_terminal_history_is_accepted_once(self):
@@ -145,6 +152,42 @@ class ModelTests(unittest.TestCase):
         self.assertIn("unmatched result: first note", failures)
         self.assertIn("unmatched result: StructuredOutput", failures)
 
+    def test_transport_cache_breakpoints_do_not_change_the_answer(self):
+        model = trial.Model()
+        model.main = trial.probes(PLANT)[:1]
+        model.answer(body(trial.MAIN))
+        turn = body(trial.MAIN, 1)
+        result = turn["messages"][-1]["content"][0]
+        result["content"] = [{"type": "text", "text": "ordinary receipt"}]
+        model.answer(turn)
+        result["cache_control"] = {"type": "ephemeral"}
+        result["content"][0]["cache_control"] = {"type": "ephemeral"}
+        del result["is_error"]  # optional false has the same meaning
+        model.answer(turn)
+        self.assertFalse(any("conflicting" in r or "unmatched" in r for r in model.log))
+        result["is_error"] = True
+        model.answer(turn)
+        self.assertTrue(any("conflicting" in r for r in model.log))
+
+    def test_terminal_receipt_follows_its_actual_assistant_call_in_a_user_turn(self):
+        for case in ("result role", "call role", "intervening turn", "text first", "call ID", "call name", "call input"):
+            with self.subTest(case=case):
+                model, end = self.terminal_exchange()
+                messages = end["messages"]
+                if case == "result role":
+                    messages[-1]["role"] = "assistant"
+                elif case == "call role":
+                    messages[-2]["role"] = "user"
+                elif case == "intervening turn":
+                    messages.insert(-1, {"role": "assistant", "content": "ordinary note"})
+                elif case == "text first":
+                    messages[-1]["content"].insert(0, {"type": "text", "text": "note"})
+                else:
+                    field = {"call ID": "id", "call name": "name", "call input": "input"}[case]
+                    messages[-2]["content"][0][field] = "different"
+                model.answer(end)
+                self.assertIn("unmatched result: StructuredOutput", self.transcript_failures(model))
+
     def test_side_requests_get_no_tool_call(self):
         model = trial.Model()
         model.main = trial.probes(PLANT)
@@ -160,6 +203,45 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(json.loads(found[2][1]["delta"]["partial_json"]), {"file_path": "/x"})
 
 
+class CliResultTests(unittest.TestCase):
+    EXPECTED = {"findings": [], "summary": "trial"}
+
+    def stream(self, *results):
+        # Claude Agent SDK documents a tool-use message followed by the CLI result.
+        # An additional model HTTP request carrying the tool receipt is unnecessary.
+        messages = [{"type": "system", "subtype": "init"},
+                    {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "StructuredOutput",
+                                                                    "input": self.EXPECTED}]}}]
+        return "\n".join(json.dumps(message) for message in [*messages, *results])
+
+    def test_only_the_successful_expected_final_result_establishes_completion(self):
+        success = {"type": "result", "subtype": "success", "is_error": False, "structured_output": self.EXPECTED}
+        self.assertTrue(trial.structured_completion(self.stream(success)))
+        for final in ((), (success, success), ({k: v for k, v in success.items() if k != "structured_output"},),
+                      (dict(success, subtype="error_max_structured_output_retries"),), (dict(success, is_error=True),),
+                      (dict(success, structured_output={"findings": [], "summary": "wrong content"}),)):
+            with self.subTest(final=final):
+                self.assertFalse(trial.structured_completion(self.stream(*final)))
+        self.assertFalse(trial.structured_completion("not JSON"))
+
+    def test_runner_grades_captured_stdout_only_for_the_engine_and_reports_no_raw_output(self):
+        plain = {"type": "result", "subtype": "success", "is_error": False, "result": "ordinary control answer"}
+        for name, structured, answer, expected in (
+            ("control", False, plain, None), ("engine", True, plain, False),
+            ("engine", True, dict(plain, structured_output=self.EXPECTED), True),
+        ):
+            with self.subTest(arm=name, expected=expected):
+                completed = CompletedProcess([], 0, self.stream(answer), "ordinary diagnostic")
+                output = io.StringIO()
+                with patch.object(trial.subprocess, "run", return_value=completed), redirect_stdout(output):
+                    self.assertEqual(trial.run_arm(trial.Arm(name, [], {}, structured), PLANT), (0, expected))
+                self.assertNotIn("ordinary", output.getvalue())
+                if structured:
+                    report = trial.table(name, [{"conv": "main", "structured_completion": expected}])
+                    self.assertIn(f"expected final structured result: {expected}", report)
+                    self.assertNotIn("ordinary", report)
+
+
 def row(conv, probe, text="refused", error=True):
     return trial.result_evidence(conv, probe, {"is_error": error, "content": text})
 
@@ -170,10 +252,19 @@ class VerdictTests(unittest.TestCase):
     def answered(self):
         return [row("main", p, trial.REVIEW_TEXT, error=False) if p.label == trial.REVIEW_INPUT
                 else row("main", p) for p in self.MAIN] + [
+            {"conv": "main", "issued_terminal": True}, {"conv": "main", "structured_completion": True},
             {"conv": "main", "tools": ["Read", "StructuredOutput"], "results": 0}]
 
     def test_restricted_engine_accepts_the_complete_record(self):
         self.assertEqual(trial.verdict("engine", self.answered(), self.MAIN, False), [])
+
+    def test_engine_needs_both_the_issued_call_and_the_cli_completion(self):
+        for key in ("issued_terminal", "structured_completion"):
+            with self.subTest(missing=key):
+                log = [r for r in self.answered() if key not in r]
+                self.assertIn("unproven: the engine did not produce the expected structured result",
+                              trial.verdict("engine", log, self.MAIN, False))
+        self.assertEqual(trial.verdict("control", self.control(), self.MAIN, True), [])
 
     def test_engine_rejects_a_leak_a_hook_or_a_missing_answer(self):
         log = self.answered()
