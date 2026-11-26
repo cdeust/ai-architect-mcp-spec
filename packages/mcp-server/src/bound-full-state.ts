@@ -332,7 +332,7 @@ function shedTicketsAndDefine(work: Record<string, unknown>, fits: () => boolean
     const stub: OmittedStub = {
       omitted: true,
       chars: reclaimed,
-      hint: `tickets are in the exported 07-jira-tickets.md; estimates and links via get_pipeline_state(run_id, format:"define_handoff_v1")`,
+      hint: `tickets are in the exported 07-jira-tickets.md; once the gate is reached, estimates and links via get_pipeline_state(run_id, format:"define_handoff_v1")`,
     };
     work.jira_result = { status: jira.status, tickets: stub };
     applied.push({ field: "jira_result.tickets", kind: "omitted", reclaimed_chars: reclaimed });
@@ -342,7 +342,7 @@ function shedTicketsAndDefine(work: Record<string, unknown>, fits: () => boolean
     work.passed_define = {
       omitted: true,
       chars: reclaimed,
-      hint: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1")`,
+      hint: `re-fetch via get_pipeline_state(run_id, format:"define_handoff_v1") while the checkpoint still projects it`,
     } satisfies OmittedStub;
     applied.push({ field: "passed_define", kind: "omitted", reclaimed_chars: reclaimed });
   }

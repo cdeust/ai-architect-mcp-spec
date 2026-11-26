@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DefineHandoffV1Schema, JiraResultSchema } from "@prd-gen/core";
+import { ERROR_MESSAGE_CHARS } from "./bounded-io.js";
 
 /**
  * The checkpoint fields the architect-os handoff reads.
@@ -8,7 +9,11 @@ import { DefineHandoffV1Schema, JiraResultSchema } from "@prd-gen/core";
  *   (define-handoff.ts withPassedDefine).
  */
 export const HandoffStateFields = {
-  jira_result: JiraResultSchema.optional(),
+  // The detail of a failure fits one error entry, however the checkpoint was written.
+  jira_result: JiraResultSchema.refine(
+    result => result.status !== "failed" || result.detail.length <= ERROR_MESSAGE_CHARS,
+    { message: `jira_result.detail exceeds ${ERROR_MESSAGE_CHARS} chars`, path: ["detail"] },
+  ).optional(),
   passed_define: z.strictObject({ handoff: DefineHandoffV1Schema, intent: z.string() }).optional(),
 };
 

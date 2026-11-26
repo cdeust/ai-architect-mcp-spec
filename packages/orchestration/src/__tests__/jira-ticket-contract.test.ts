@@ -21,7 +21,7 @@ const state = {
 
 function submit(raw_text: string) {
   return handleJiraGeneration({ state, result: {
-    kind: "subagent_batch_result", batch_id: "jira_generation",
+    kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
     responses: [{ invocation_id: "jira_generation_engineer", raw_text }],
   } });
 }
@@ -99,13 +99,13 @@ describe("Jira generation contract", () => {
 
   it("records a missing or failed engineer response as a failed result", () => {
     const failed = handleJiraGeneration({ state, result: {
-      kind: "subagent_batch_result", batch_id: "jira_generation",
+      kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
       responses: [{ invocation_id: "jira_generation_engineer", error: "timeout" }],
     } });
     expect(failed.state).toMatchObject({ current_step: "file_export", jira_result: { status: "failed", cause: "missing", detail: "timeout" } });
     expect(failed.state.errors.at(-1)).toBe("[jira_generation] failed: missing: timeout");
     expect(failed.state.error_kinds.at(-1)).toBe("upstream_failure");
-    const missing = handleJiraGeneration({ state, result: { kind: "subagent_batch_result", batch_id: "jira_generation", responses: [] } });
+    const missing = handleJiraGeneration({ state, result: { kind: "subagent_batch_result", batch_id: "jira_generation_tickets", responses: [] } });
     expect(missing.state.jira_result).toEqual({ status: "failed", cause: "missing", detail: "no response" });
     expect(missing.action).toEqual({ kind: "emit_message", level: "warn", message: "JIRA generation failed; proceeding to file export anyway." });
   });
@@ -165,7 +165,7 @@ describe("Jira generation contract", () => {
     if (longKey.jira_result?.status !== "failed") throw new Error("Expected a refusal");
     expect(longKey.jira_result.detail).toHaveLength(ERROR_MESSAGE_CHARS);
     const timeout = handleJiraGeneration({ state, result: {
-      kind: "subagent_batch_result", batch_id: "jira_generation",
+      kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
       responses: [{ invocation_id: "jira_generation_engineer", error: "e".repeat(2_000) }],
     } }).state.jira_result;
     expect(timeout).toEqual({ status: "failed", cause: "missing", detail: "e".repeat(ERROR_MESSAGE_CHARS) });
@@ -186,7 +186,7 @@ describe("Jira generation contract", () => {
       last_violations: [], attempt_log: [], content: "- AC-002: A rejected criterion (FR-001).",
     }] };
     const refused = handleJiraGeneration({ state: withFailed, result: {
-      kind: "subagent_batch_result", batch_id: "jira_generation",
+      kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
       responses: [{ invocation_id: "jira_generation_engineer", raw_text: JSON.stringify({ tickets: [{ ...first, acceptance_ids: ["AC-002"] }] }) }],
     } }).state.jira_result;
     expect(refused).toMatchObject({ status: "failed", detail: "TICKET_ACCEPTANCE_UNKNOWN: TICKET-001 → AC-002" });
@@ -194,6 +194,42 @@ describe("Jira generation contract", () => {
 
   it.each(["TICKET-001", "TICKET-999"])("accepts the ticket ID %s", id => {
     expect(submit(JSON.stringify({ tickets: [{ ...first, id }] })).state.jira_result).toMatchObject({ status: "passed" });
+  });
+
+  it("keeps the Markdown reply of a request made before the structured one", () => {
+    const markdown = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation",
+      responses: [{ invocation_id: "jira_generation_engineer", raw_text: "  # Saved tickets\n" }],
+    } });
+    expect(markdown.state.jira_result).toBeUndefined();
+    expect(markdown.state.current_step).toBe("file_export");
+    expect(markdown.state.sections.at(-1)).toMatchObject({ section_type: "jira_tickets", status: "passed", content: "# Saved tickets" });
+    expect(markdown.action).toEqual({ kind: "emit_message", message: "JIRA tickets generated. Writing files." });
+    for (const responses of [[], [{ invocation_id: "jira_generation_engineer", raw_text: "  " }]]) {
+      const empty = handleJiraGeneration({ state, result: { kind: "subagent_batch_result", batch_id: "jira_generation", responses } });
+      expect(empty.state.jira_result).toBeUndefined();
+      expect(empty.state.sections.some(section => section.section_type === "jira_tickets")).toBe(false);
+      expect(empty.state.errors.at(-1)).toBe("[jira_generation] failed: no response");
+      expect(empty.state.current_step).toBe("file_export");
+      expect(empty.action).toEqual({ kind: "emit_message", level: "warn", message: "JIRA generation failed; proceeding to file export anyway." });
+    }
+    expect(handleJiraGeneration({ state }).action).toMatchObject({ batch_id: "jira_generation_tickets" });
+  });
+
+  it("records an empty engineer error as no response", () => {
+    const empty = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
+      responses: [{ invocation_id: "jira_generation_engineer", error: "" }],
+    } });
+    expect(empty.state.jira_result).toEqual({ status: "failed", cause: "missing", detail: "no response" });
+  });
+
+  it("cuts a long detail without splitting a character", () => {
+    const astral = handleJiraGeneration({ state, result: {
+      kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
+      responses: [{ invocation_id: "jira_generation_engineer", error: "e".repeat(ERROR_MESSAGE_CHARS - 1) + "😀😀" }],
+    } }).state.jira_result;
+    expect(astral).toEqual({ status: "failed", cause: "missing", detail: "e".repeat(ERROR_MESSAGE_CHARS - 1) });
   });
 
   it("accepts a diamond graph", () => {

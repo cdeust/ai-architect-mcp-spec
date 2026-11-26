@@ -1,6 +1,7 @@
 import { permitsDefineHandoff } from "./architect-os-boundary.js";
 import { findDefineDecisionConflicts } from "./define-decisions.js";
 import { semanticReviewFindings } from "./semantic-review.js";
+import { jiraTicketsRefusal } from "./jira-refusal.js";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { DefineHandoffV1Schema, isBlockingViolation, toHandoffTickets, type DefineHandoffV1 } from "@prd-gen/core";
@@ -90,6 +91,9 @@ export function readDefineHandoff(state: PipelineState, action: NextAction | nul
     action.question_id === IMPLEMENTATION_GATE_QUESTION_ID &&
     (!state.post_specs || state.post_specs.decision === "pending");
   if (!automatic && !legacy) {
+    // A run that finished without keeping a Define says why when its document does.
+    const reason = state.current_step === "complete" ? projectDefineState(state) : undefined;
+    if (reason && "error" in reason) return reason;
     return refusal("define_not_pending", "Define requires a pending implementation decision or a Define kept when the run finished.");
   }
 
@@ -149,7 +153,8 @@ function projectDefineState(state: PipelineState): Projection {
   }
   // A run that attempted tickets publishes them or nothing; only a checkpoint
   // of the Markdown-only generator reads without them.
-  if (jira?.status === "failed") return refusal("define_not_ready", `jira_tickets_${jira.cause}: ${jira.detail}`);
+  const ticketRefusal = jiraTicketsRefusal(state);
+  if (ticketRefusal) return refusal("define_not_ready", ticketRefusal);
   const semanticFinding = semanticReviewFindings(state)[0];
   if (semanticFinding) return refusal("define_not_ready", semanticFinding.message);
   return { handoff: parsed.data };

@@ -59,23 +59,30 @@ function envelope(state: PipelineState, action: NextAction | null): string {
 
 const sha = (text: string) => createHash("sha256").update(text + "\n").digest("hex");
 
-/** Answer the pending gate with "PRD only" and finish the run, as a host would. */
+/** Answer the gate with "PRD only" and finish the run, as a host would. */
 function finishPrdOnly(start: PipelineState) {
-  const report = step({ state: start });
-  if (report.action.kind !== "write_file") throw new Error("Expected the verification report");
-  const asked = step({ state: report.state, result: {
-    kind: "file_written", path: report.action.path, bytes: Buffer.byteLength(report.action.content),
-  } });
-  expect(asked.action).toMatchObject({ kind: "ask_user", question_id: "implementation_gate" });
-  const answered = step({ state: asked.state, result: {
-    kind: "user_answer", question_id: "implementation_gate", selected: ["PRD only"], freeform: "",
-  } });
-  expect(answered.action).toMatchObject({ kind: "call_cortex_tool", correlation_id: REMEMBER_CORRELATION_ID });
-  const done = step({ state: answered.state, result: {
-    kind: "tool_result", correlation_id: REMEMBER_CORRELATION_ID, success: true,
-  } });
-  expect(done.action).toMatchObject({ kind: "done" });
-  return { asked, answered, done };
+  let out = step({ state: start });
+  let asked: typeof out | undefined;
+  let answered: typeof out | undefined;
+  for (let steps = 0; steps < 10 && out.action.kind !== "done"; steps++) {
+    const action = out.action;
+    if (action.kind === "write_file") {
+      out = step({ state: out.state, result: { kind: "file_written", path: action.path, bytes: Buffer.byteLength(action.content) } });
+    } else if (action.kind === "ask_user") {
+      expect(action.question_id).toBe("implementation_gate");
+      asked = out;
+      out = step({ state: out.state, result: { kind: "user_answer", question_id: action.question_id, selected: ["PRD only"], freeform: "" } });
+    } else if (action.kind === "call_cortex_tool") {
+      expect(action.correlation_id).toBe(REMEMBER_CORRELATION_ID);
+      answered = out;
+      out = step({ state: out.state, result: { kind: "tool_result", correlation_id: REMEMBER_CORRELATION_ID, success: true } });
+    } else {
+      throw new Error(`Unexpected ${action.kind}`);
+    }
+  }
+  expect(out.action).toMatchObject({ kind: "done" });
+  if (!asked || !answered) throw new Error("Expected the gate question and the remembered summary");
+  return { asked, answered, done: out };
 }
 
 describe("Define v1 tickets", () => {
@@ -207,11 +214,20 @@ describe("the passed Define snapshot", () => {
     expect(readDefineHandoff({ ...state, pending_completion: null }, pending)).toMatchObject({ error: { code: "define_document_invalid" } });
   });
 
-  it("keeps no snapshot of a refused specification", () => {
+  it("keeps no snapshot of a refused specification and still says why after it finished", () => {
     const failed = finishPrdOnly(ready({ status: "failed", cause: "missing", detail: "no response" }));
     expect(failed.done.state.passed_define).toBeUndefined();
-    expect(readDefineHandoff(failed.done.state, failed.done.action)).toMatchObject({ error: { code: "define_not_pending" } });
+    expect(readDefineHandoff(failed.done.state, failed.done.action)).toEqual({ error: {
+      code: "define_not_ready", message: "jira_tickets_missing: no response",
+    } });
+    // The gate's question, report and outcome give the same reason as the read.
+    expect(failed.asked.action).toMatchObject({ description: expect.stringContaining("jira_tickets_missing: no response") });
+    expect(failed.done.action).toMatchObject({ outcome: { status: "needs_attention", reasons: expect.arrayContaining(["jira_tickets_missing: no response"]) } });
+    // A clean finished run without a snapshot has no reason to give.
+    const { done } = finishPrdOnly(ready(passed()));
+    expect(readDefineHandoff({ ...done.state, passed_define: undefined }, done.action)).toMatchObject({ error: { code: "define_not_pending" } });
   });
+
 
   it("refuses a snapshot the finished checkpoint no longer projects", () => {
     const { done } = finishPrdOnly(ready(passed()));
@@ -244,7 +260,7 @@ describe("the passed Define snapshot", () => {
 describe("the 07 deliverable of a refused ticket result", () => {
   const atJira = (): PipelineState => ({ ...ready(), current_step: "jira_generation", written_files: [] });
   const submit = (raw_text: string) => handleJiraGeneration({ state: atJira(), result: {
-    kind: "subagent_batch_result", batch_id: "jira_generation",
+    kind: "subagent_batch_result", batch_id: "jira_generation_tickets",
     responses: [{ invocation_id: "jira_generation_engineer", raw_text }],
   } }).state;
   /** Drive file_export as a host would and return its run notes. */

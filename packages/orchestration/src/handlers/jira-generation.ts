@@ -25,9 +25,16 @@ import { projectDefineDocument } from "@prd-gen/validation";
 import { documentSections } from "../section-plan.js";
 import { JIRA_GENERATION_INV_ID as INVOCATION_ID } from "./protocol-ids.js";
 import { parseJiraDraft } from "./jira-ticket-draft.js";
-import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
+import { clipChars, ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
 
-const BATCH_ID = "jira_generation";
+/** The batch of the structured ticket request. */
+export const JIRA_BATCH_ID = "jira_generation_tickets";
+/**
+ * The batch of the Markdown-only request. A run saved with that request in
+ * flight answers it after an upgrade: its reply is kept as it was before,
+ * as a section, and the run stays a checkpoint without jira_result.
+ */
+const MARKDOWN_BATCH_ID = "jira_generation";
 
 /** The section types JIRA tickets are built from (shared with file_export). */
 export const JIRA_SOURCE_TYPES: readonly SectionType[] = [
@@ -57,7 +64,7 @@ export const JIRA_FAILED_PREFIX = "[jira_generation] failed";
 type Failure = Extract<JiraResult, { status: "failed" }>;
 
 function refuse(state: PipelineState, cause: Failure["cause"], detail: string, message: string) {
-  const bounded = detail.slice(0, ERROR_MESSAGE_CHARS);
+  const bounded = clipChars(detail, ERROR_MESSAGE_CHARS);
   const withError = appendError(
     state,
     `${JIRA_FAILED_PREFIX}: ${cause}: ${bounded}`,
@@ -72,21 +79,41 @@ function refuse(state: PipelineState, cause: Failure["cause"], detail: string, m
   };
 }
 
+function keepMarkdownReply(state: PipelineState, markdown: string | undefined) {
+  if (!markdown?.trim()) {
+    return {
+      state: { ...appendError(state, `${JIRA_FAILED_PREFIX}: no response`, "upstream_failure"), current_step: "file_export" as const },
+      action: { kind: "emit_message" as const, level: "warn" as const, message: "JIRA generation failed; proceeding to file export anyway." },
+    };
+  }
+  const section = {
+    section_type: "jira_tickets" as const, status: "passed" as const, attempt: 1,
+    violation_count: 0, last_violations: [], attempt_log: [], content: markdown.trim(),
+  };
+  return {
+    state: { ...state, sections: [...state.sections, section], current_step: "file_export" as const },
+    action: { kind: "emit_message" as const, message: "JIRA tickets generated. Writing files." },
+  };
+}
+
 function acceptanceIds(state: PipelineState): ReadonlySet<string> {
   return new Set(projectDefineDocument(documentSections(state.sections)).acceptance.map(({ id }) => id));
 }
 
 export const handleJiraGeneration: StepHandler = ({ state, result }) => {
+  if (result?.kind === "subagent_batch_result" && result.batch_id === MARKDOWN_BATCH_ID) {
+    return keepMarkdownReply(state, result.responses.find((r) => r.invocation_id === INVOCATION_ID)?.raw_text);
+  }
   // Result of our spawn.
   if (
     result?.kind === "subagent_batch_result" &&
-    result.batch_id === BATCH_ID
+    result.batch_id === JIRA_BATCH_ID
   ) {
     const response = result.responses.find(
       (r) => r.invocation_id === INVOCATION_ID,
     );
     if (!response || response.error || !response.raw_text) {
-      return refuse(state, "missing", response?.error ?? "no response",
+      return refuse(state, "missing", response?.error || "no response",
         "JIRA generation failed; proceeding to file export anyway.");
     }
     const draft = parseJiraDraft(response.raw_text, acceptanceIds(state));
@@ -127,7 +154,7 @@ export const handleJiraGeneration: StepHandler = ({ state, result }) => {
     action: {
       kind: "spawn_subagents",
       purpose: "draft",
-      batch_id: BATCH_ID,
+      batch_id: JIRA_BATCH_ID,
       invocations: [
         {
           invocation_id: INVOCATION_ID,

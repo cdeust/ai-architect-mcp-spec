@@ -17,7 +17,7 @@ import {
   MAX_PIPELINE_ERRORS,
   type PipelineState,
 } from "../index.js";
-import { ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
+import { clipChars, ERROR_MESSAGE_CHARS } from "../types/state/bounded-io.js";
 import { TRUNCATED } from "../types/state/helpers.js";
 
 function freshState(): PipelineState {
@@ -84,8 +84,24 @@ describe("appendError — entry size", () => {
     expect(TRUNCATED).toBe(" …[truncated]");
     expect(long.endsWith(" …[truncated]")).toBe(true);
     expect(long.startsWith("x".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length))).toBe(true);
+    const astral = appendError(freshState(), "z".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length - 1) + "😀".repeat(10), "structural").errors.at(-1)!;
+    expect(astral).toBe("z".repeat(ERROR_MESSAGE_CHARS - TRUNCATED.length - 1) + TRUNCATED);
+    expect(clipChars("ab😀", 3)).toBe("ab");
+    expect(clipChars("ab😀", 4)).toBe("ab😀");
+    expect(clipChars("abc", 2)).toBe("ab");
+    expect(clipChars("ab", 2)).toBe("ab");
     const exact = "y".repeat(ERROR_MESSAGE_CHARS);
     expect(appendError(freshState(), exact, "structural").errors.at(-1)).toBe(exact);
+  });
+});
+
+describe("a loaded jira_result", () => {
+  it("refuses a failure detail longer than one error entry", () => {
+    const failed = (detail: string) => ({ ...freshState(), jira_result: { status: "failed", cause: "invalid", detail } });
+    expect(PipelineStateSchema.safeParse(failed("x".repeat(ERROR_MESSAGE_CHARS))).success).toBe(true);
+    expect(PipelineStateSchema.safeParse(failed("x".repeat(ERROR_MESSAGE_CHARS + 1))).error?.issues).toMatchObject([
+      { path: ["jira_result", "detail"], message: "jira_result.detail exceeds 500 chars" },
+    ]);
   });
 });
 

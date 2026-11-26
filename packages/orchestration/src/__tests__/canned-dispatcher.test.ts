@@ -164,7 +164,7 @@ describe("makeCannedDispatcher routing", () => {
   it("spawn_subagents routes jira_generation_engineer to chained tickets for the source criteria", () => {
     const action: NextAction = {
       kind: "spawn_subagents",
-      batch_id: "jira_generation",
+      batch_id: "jira_generation_tickets",
       purpose: "draft",
       invocations: [
         {

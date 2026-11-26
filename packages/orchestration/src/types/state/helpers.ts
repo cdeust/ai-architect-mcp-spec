@@ -1,6 +1,6 @@
 import type { PipelineState } from "./core-state.js";
 import { PipelineStateSchema } from "./core-state.js";
-import { ERROR_MESSAGE_CHARS, MAX_PIPELINE_ERRORS } from "./bounded-io.js";
+import { clipChars, ERROR_MESSAGE_CHARS, MAX_PIPELINE_ERRORS } from "./bounded-io.js";
 import { REQUEST_SIZE_DEFAULT, type PRDContext, type RequestSize } from "@prd-gen/core";
 
 export function newPipelineState(input: {
@@ -101,7 +101,7 @@ export function appendError(
   // than it would let the capped list overrun the response budget, so it is
   // cut, with a visible mark, here for every caller.
   const bounded = message.length > ERROR_MESSAGE_CHARS
-    ? `${message.slice(0, ERROR_MESSAGE_CHARS - TRUNCATED.length)}${TRUNCATED}`
+    ? `${clipChars(message, ERROR_MESSAGE_CHARS - TRUNCATED.length)}${TRUNCATED}`
     : message;
   const nextErrors = [...state.errors, bounded];
   const nextKinds = [...state.error_kinds, kind];
