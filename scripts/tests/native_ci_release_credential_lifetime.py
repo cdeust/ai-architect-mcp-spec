@@ -18,6 +18,7 @@ RELEASE_CREDENTIAL_WORKFLOWS (paths joined by os.pathsep) replaces the workflows
 test, so the same proof can be run against another repository's revision.
 """
 from pathlib import Path
+import json
 import os
 import shutil
 import signal
@@ -38,6 +39,7 @@ RUNNER_SIGTERM_WINDOW_S = 2.5
 OPENSSH_PARENT_CHECK_S = 10  # ssh-agent.c: parent_alive_interval for a command-scoped agent
 
 HOSTILE_SSH_CONFIG = """Host *
+  ForwardAgent yes
   ProxyCommand /usr/bin/false
   IdentitiesOnly yes
   IdentityFile ~/.ssh/host-identity
@@ -70,10 +72,11 @@ log="$FIXTURE_LOG/ssh.$$"
 } > "$log.env"
 [ -z "${FIXTURE_RECORD_AGENT-}" ] || printf '%s' "$SSH_AGENT_PID" > "$FIXTURE_LOG/agent-pid"
 : > "$log.ready"
-# A blocked transport hangs until Git goes away, then ends as a real client would.
 # A blocked transport never ends by itself, like an authenticated ssh session
-# whose shell keeps it alive: only the publisher stopping it ends it.
+# whose shell keeps it alive, and it ignores SIGTERM: only SIGKILL of its session
+# ends it.
 if [ -n "${FIXTURE_BLOCK-}" ]; then
+  trap '' TERM
   while :; do sleep 0.05; done
 fi
 grep -qx signed=0 "$log.env" || exit 255
@@ -87,13 +90,30 @@ PYTHON_WRAPPER = """#!/usr/bin/env bash
 # Its output goes to its own log: holding the step's output open would make the
 # test wait for it and hide a step that did not.
 exec >> "$FIXTURE_LOG/publisher.out" 2>&1
+# A stuck publisher: it never starts, ignores SIGTERM and only SIGKILL ends it.
+if [ -n "${FIXTURE_STUCK_PUBLISHER-}" ]; then
+  trap '' TERM
+  : > "$FIXTURE_LOG/publisher-started"
+  exec sleep 3600
+fi
 "$FIXTURE_REAL_PYTHON" "$@" <&0 &
 child=$!
+printf '%s' "$child" > "$FIXTURE_LOG/publisher-pid"
 finish() {
   status=$?
+  : > "$FIXTURE_LOG/publisher-exited"
   # A stopped agent resumes inside the release's grace once the publisher is done.
   if [ -n "${FIXTURE_RESUME_AGENT_S-}" ]; then
-    ( sleep "$FIXTURE_RESUME_AGENT_S"; kill -CONT "$(cat "$FIXTURE_LOG/agent-pid")" ) </dev/null &
+    # In a session of its own: the fixture's resumer is no child the step left behind.
+    "$FIXTURE_REAL_PYTHON" -c 'import os, signal, sys, time
+os.setsid(); time.sleep(float(sys.argv[1]))
+try:
+    os.kill(int(open(sys.argv[2]).read()), signal.SIGCONT)
+except ProcessLookupError:
+    pass
+finally:
+    open(sys.argv[3], "w").close()' \
+      "$FIXTURE_RESUME_AGENT_S" "$FIXTURE_LOG/agent-pid" "$FIXTURE_LOG/resumer-done" </dev/null >/dev/null 2>&1 &
   fi
   exit "$status"
 }
@@ -103,7 +123,7 @@ finish
 """
 
 AGENT_WRAPPER = """#!/bin/sh
-printf '%s\n' "${1-}" >> "$FIXTURE_LOG/agent-starts"  # one line per call
+printf '%s %s\n' "${1-}" "${2-}" >> "$FIXTURE_LOG/agent-starts"  # one line per call
 exec "$FIXTURE_REAL_AGENT" "$@"
 """
 
@@ -132,7 +152,7 @@ def git(*args, **kwargs):
 
 
 class Fixture:
-    def __init__(self, root, publish_body, key=None):
+    def __init__(self, root, publish_body, key=None, tags=None):
         self.root = root
         # The step's TMPDIR holds the agent socket; sun_path forbids a deep directory.
         self.socket_base = Path(tempfile.mkdtemp(prefix="rc", dir="/tmp"))
@@ -144,7 +164,8 @@ class Fixture:
         (keys / "id").unlink()
         self.secret_body = self.private.splitlines()[1]
         self.public = keys / "id.pub"
-        self.runner_temp = root / "runner"
+        # A space in RUNNER_TEMP: every path built from it must stay quoted.
+        self.runner_temp = root / "runner temp"
         self.runner_temp.mkdir()
         (self.runner_temp / "release-known-hosts").write_text(
             "github.invalid " + self.public.read_text().split(" ", 2)[0] + " " +
@@ -184,7 +205,7 @@ class Fixture:
             "GIT_CONFIG_NOSYSTEM": "1",
             "RUNNER_TEMP": str(self.runner_temp),
             "SSH_KEY": self.private if key is None else key,
-            "RELEASE_TAGS": '["' + TAG + '"]',
+            "RELEASE_TAGS": json.dumps(tags or [TAG]),
             "TESTED_SHA": self.sha,
             "GITHUB_ENV": str(self.commands["github-env"]),
             "GITHUB_OUTPUT": str(self.commands["github-output"]),
@@ -237,9 +258,9 @@ class Fixture:
             time.sleep(0.05)
         raise AssertionError("transport never started")
 
-    def remote_tag(self):
+    def remote_tag(self, tag=TAG):
         out = subprocess.run(["git", "--git-dir", str(self.remote), "rev-parse", "--verify", "-q",
-                              "refs/tags/" + TAG + "^{}"], capture_output=True, text=True)
+                              "refs/tags/" + tag + "^{}"], capture_output=True, text=True)
         return out.stdout.strip() or None
 
     def cleanup(self):
@@ -253,6 +274,11 @@ class Fixture:
         # parent again, is found through what the transport recorded, then removed
         # with its socket directory wherever the workflow under test put it.
         agents = [record["agent"] for record in self.transports() if record.get("agent")]
+        # Git's own session (git, the shell it runs ssh through) and the publisher.
+        agents += [record[key] for record in self.transports() for key in ("parent", "grandparent")
+                   if record.get(key)]
+        if (self.log / "publisher-pid").exists():
+            agents.append((self.log / "publisher-pid").read_text())
         if (self.log / "agent-pid").exists():
             agents.append((self.log / "agent-pid").read_text())
         for pid in agents:
@@ -279,10 +305,10 @@ def publish_body(path):
 
 
 class ReleaseCredentialLifetime(unittest.TestCase):
-    def fixture(self, path, key=None):
+    def fixture(self, path, key=None, tags=None):
         temp = Path(tempfile.mkdtemp(prefix="rc"))
         self.addCleanup(shutil.rmtree, temp, True)
-        fixture = Fixture(temp, publish_body(path), key)
+        fixture = Fixture(temp, publish_body(path), key, tags)
         self.addCleanup(shutil.rmtree, fixture.socket_base, True)
         self.addCleanup(fixture.cleanup)
         return fixture
@@ -291,7 +317,13 @@ class ReleaseCredentialLifetime(unittest.TestCase):
         """Nothing that could still use the key outlives the step."""
         starts = (fixture.log / "agent-starts").read_text().splitlines() \
             if (fixture.log / "agent-starts").exists() else []
-        starts = [first for first in starts if first != "-k"]
+        starts = [line for line in starts if line.split()[:1] != ["-k"]]
+        # The agent's socket directory, known even when no transport ran.
+        for line in starts:
+            if line.split()[:1] == ["-a"]:
+                socket = Path(line.split(None, 1)[1]) if Path(line.split(None, 1)[1]).is_absolute() \
+                    else fixture.repo / line.split(None, 1)[1]
+                self.assertFalse(socket.parent.exists(), "the socket directory outlived the step")
         self.assertEqual(len(starts), 1, "exactly one signing agent is started: %r" % starts)
         group = [row for row in processes() if row[1] == str(fixture.process.pid) and not row[2].startswith("Z")]
         self.assertEqual(group, [], "a child of the step outlived it")
@@ -332,6 +364,7 @@ class ReleaseCredentialLifetime(unittest.TestCase):
         self.assertEqual(record["signed"], "0", "the agent signs with the release identity")
         self.assertEqual(config.get("identityfile"), "none")
         self.assertEqual(config.get("identitiesonly"), "no")
+        self.assertEqual(config.get("forwardagent"), "no", "the agent holding the key is never forwarded")
         self.assertEqual(config.get("batchmode"), "yes")
         self.assertEqual(config.get("stricthostkeychecking"), "true")
         self.assertEqual(config.get("globalknownhostsfile"), "/dev/null")
@@ -451,10 +484,8 @@ class ReleaseCredentialLifetime(unittest.TestCase):
     def test_signal_during_the_grace_period_does_not_cut_the_release_short(self):
         def check(path):
             fixture = self.stuck_agent(path, "")
-            deadline = time.monotonic() + 30
-            while not (fixture.log / "agent-stopped").exists() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            time.sleep(1.2)  # the release is now inside its 2 s grace for the agent
+            self.wait_for(fixture, "publisher-exited")
+            time.sleep(0.5)  # the release is now inside its 1 s grace for the agent
             os.kill(fixture.process.pid, signal.SIGTERM)
             status, output = fixture.finish(timeout=RUNNER_SIGINT_WINDOW_S)
             self.assertEqual(status, 1, output)
@@ -470,6 +501,106 @@ class ReleaseCredentialLifetime(unittest.TestCase):
             status, output = fixture.finish()
             self.assertEqual(status, 0, output)
             self.assertNotIn("::error::", output)
+            self.assert_released(fixture)
+        self.each_workflow(check)
+
+    def wait_for(self, fixture, marker, timeout=30):
+        deadline = time.monotonic() + timeout
+        while not (fixture.log / marker).exists():
+            if time.monotonic() > deadline:
+                self.fail(marker + " never appeared")
+            time.sleep(0.02)
+
+    def agent_pid(self, fixture):
+        """The running agent, found by the socket path its wrapper logged."""
+        line = next(l for l in (fixture.log / "agent-starts").read_text().splitlines() if l.startswith("-a "))
+        path = line.split(None, 1)[1]
+        rows = [row for row in processes() if path in row[3] and "ssh-agent" in row[3] and not row[2].startswith("Z")]
+        self.assertTrue(rows, "the agent is running")
+        return int(rows[0][0])
+
+    def test_agent_resuming_after_its_grace_is_killed_and_fails_the_step(self):
+        def check(path):
+            # Resumed 1.5 s after the publisher exits: past the 1 s grace.
+            fixture = self.stuck_agent(path, "", resume_after_s="1.5")
+            status, output = fixture.finish()
+            self.assertEqual(status, 1, output)
+            self.assertIn("::error::the signing agent did not stop on SIGTERM", output)
+            self.wait_for(fixture, "resumer-done")  # the fixture's own resumer, not the step's
+            self.assert_released(fixture)
+        self.each_workflow(check)
+
+    def test_stuck_publisher_cannot_delay_the_agent_and_is_killed(self):
+        """The key ends first; a publisher that ignores SIGTERM is killed within a bound."""
+        def check(path, sig, window):
+            fixture = self.fixture(path)
+            fixture.env["FIXTURE_STUCK_PUBLISHER"] = "1"
+            fixture.start()
+            self.wait_for(fixture, "publisher-started")
+            agent = self.agent_pid(fixture)
+            signalled = time.monotonic()
+            os.kill(fixture.process.pid, sig)
+            while alive(agent) and time.monotonic() - signalled < window:
+                time.sleep(0.02)
+            self.assertLess(time.monotonic() - signalled, 0.5, "the agent ends before the publisher is handled")
+            try:
+                status, output = fixture.finish(timeout=window)
+            except subprocess.TimeoutExpired:
+                self.fail("the step did not stop within the runner's %.1f s window" % window)
+            self.assertEqual(status, 1, output)
+            self.assertIn("::error::the publisher did not stop on SIGTERM", output)
+            self.assert_released(fixture)
+        for sig, window in ((signal.SIGINT, RUNNER_SIGINT_WINDOW_S), (signal.SIGTERM, RUNNER_SIGTERM_WINDOW_S)):
+            with self.subTest(signal=sig.name):
+                self.each_workflow(lambda path: check(path, sig, window))
+
+    def test_publisher_killed_during_git_leaves_no_transport(self):
+        def check(path):
+            fixture = self.fixture(path)
+            fixture.start(block=True)
+            fixture.wait_ready()
+            os.kill(int((fixture.log / "publisher-pid").read_text()), signal.SIGKILL)
+            status, output = fixture.finish(timeout=RUNNER_SIGINT_WINDOW_S)
+            self.assertNotEqual(status, 0, output)
+            self.assert_released(fixture)  # git, its shell and ssh included
+        self.each_workflow(check)
+
+    def test_socket_directory_falls_back_to_tmp(self):
+        def check(path, tmpdir):
+            fixture = self.fixture(path)
+            if tmpdir is None:
+                fixture.env.pop("TMPDIR")  # ubuntu-latest sets none
+            else:
+                deep = fixture.socket_base / ("d" * (100 - len(str(fixture.socket_base))))
+                deep.mkdir()
+                fixture.env["TMPDIR"] = str(deep)
+            fixture.start()
+            status, output = fixture.finish()
+            self.assertEqual(status, 0, output)
+            self.assertEqual(fixture.remote_tag(), fixture.sha, output)
+            for record in fixture.transports():
+                self.assertTrue(record["socket"].startswith("/tmp/release-agent."), record["socket"])
+            if tmpdir is not None:
+                self.assertEqual(os.listdir(deep), [], "nothing is left in the deep TMPDIR")
+                deep.rmdir()
+            self.assert_released(fixture)
+        for tmpdir in (None, "deep"):
+            with self.subTest(tmpdir=tmpdir):
+                self.each_workflow(lambda path: check(path, tmpdir))
+
+    def test_atomic_push_publishes_no_tag_when_one_is_refused(self):
+        second = "v0.0.1-fixture"
+
+        def check(path):
+            fixture = self.fixture(path, tags=[TAG, second])
+            hook = fixture.remote / "hooks" / "update"
+            hook.write_text(f'#!/bin/sh\n[ "$1" = refs/tags/{second} ] && exit 1\nexit 0\n')
+            hook.chmod(0o700)
+            fixture.start()
+            status, output = fixture.finish()
+            self.assertEqual(status, 1, output)
+            self.assertIsNone(fixture.remote_tag(TAG), "an atomic push publishes neither tag")
+            self.assertIsNone(fixture.remote_tag(second))
             self.assert_released(fixture)
         self.each_workflow(check)
 
