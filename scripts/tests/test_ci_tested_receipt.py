@@ -16,7 +16,7 @@ PRODUCER = f"https://github.com/{REPO}/.github/workflows/tested-receipt.yml@refs
 PREDICATE = "https://github.com/cdeust/ai-architect-mcp-spec/tested-receipt/v1"
 
 
-def signed(subject_bytes, identity, run_id, attempt, predicate=None):
+def signed(subject_bytes, identity, run_id, attempt, predicate=None, predicate_type=PREDICATE, san=None):
     """What `gh attestation verify --format json` returns for one attestation."""
     return {
         "digest": hashlib.sha256(subject_bytes).hexdigest(),
@@ -24,10 +24,10 @@ def signed(subject_bytes, identity, run_id, attempt, predicate=None):
         "result": {
             "attestation": {},
             "verificationResult": {
-                "statement": {"predicateType": PREDICATE,
+                "statement": {"predicateType": predicate_type,
                               "predicate": predicate if predicate is not None else json.loads(subject_bytes)},
                 "signature": {"certificate": {
-                    "subjectAlternativeName": identity,
+                    "subjectAlternativeName": san or identity,
                     "runInvocationURI": f"https://github.com/{REPO}/actions/runs/{run_id}/attempts/{attempt}",
                 }},
             },
@@ -108,6 +108,18 @@ class TestedReceipt(unittest.TestCase):
     def test_certificate_of_another_run_is_refused(self):
         line = self.observe([receipt_run()], Registry(signed(self.subject(), PRODUCER, 501, 1)))
         self.assertIn(": invalid (receipt does not bind", line)
+
+    def test_another_predicate_type_is_refused(self):
+        registry = Registry(signed(self.subject(), PRODUCER, 500, 1, predicate_type="https://slsa.dev/provenance/v1"))
+        self.assertIn(": invalid (receipt does not bind", self.observe([receipt_run()], registry))
+
+    def test_a_result_naming_another_signer_is_refused_even_if_gh_returns_it(self):
+        """The certificate is checked again, not left to gh's --cert-identity alone."""
+        for san in (f"https://github.com/{REPO}/.github/workflows/tested-receipt.yml@refs/pull/7/merge",
+                    f"https://github.com/{REPO}/.github/workflows/tested-receipt.yml@refs/heads/main-copy"):
+            with self.subTest(san=san):
+                registry = Registry(signed(self.subject(), PRODUCER, 500, 1, san=san))
+                self.assertIn(": invalid (receipt does not bind", self.observe([receipt_run()], registry))
 
     def test_predicate_other_than_the_subject_is_refused(self):
         line = self.observe([receipt_run()], Registry(signed(self.subject(), PRODUCER, 500, 1, predicate={})))
@@ -337,7 +349,8 @@ class BoundedVerifier(unittest.TestCase):
     def test_a_refused_or_unreadable_verification_is_an_error(self):
         import os
         from unittest.mock import patch
-        for code, out in ((1, ""), (0, "not json")):
+        # A refusal is an error even when gh still prints well-formed JSON.
+        for code, out in ((1, '[{"verificationResult": {}}]'), (1, ""), (0, "not json")):
             class Done:
                 returncode, stdout = code, out
             with patch("subprocess.run", lambda *a, Done=Done, **k: Done()), \
