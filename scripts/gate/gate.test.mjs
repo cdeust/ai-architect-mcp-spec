@@ -33,6 +33,7 @@ import {
   unsafeNames,
   validateConfig,
   verdictRefusal,
+  writesLabel,
 } from "./gate-lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -95,6 +96,11 @@ describe("validateConfig", () => {
       [without("guard.push"), "guard.push must be a list"],
       [withValue("guard.push", [7]), "guard.push[0] must be a regular expression"],
       [withValue("guard.push", ["ok", "["]), "guard.push[1] is not a regular expression"],
+      [withValue("guard.protectedLabel", null), "guard.protectedLabel.name must be a label"],
+      [withValue("guard.protectedLabel", {}), "guard.protectedLabel.name must be a label"],
+      [without("guard.protectedLabel.name"), "guard.protectedLabel.name must be a label"],
+      [without("guard.protectedLabel.why"), "guard.protectedLabel.why must say why"],
+      [withValue("guard.protectedLabel.why", ""), "guard.protectedLabel.why must say why"],
       [without("guard.refuse"), "guard.refuse must be a list"],
       [withValue("guard.refuse", "x"), "guard.refuse must be a list"],
       [withValue("guard.refuse", [null]), "guard.refuse[0].pattern must be a regular expression"],
@@ -746,6 +752,141 @@ describe("guardDecision", () => {
     }
     expect(guardDecision({ tool_name: "mcp__github__issue_write", tool_input: { labels: ["bug"] } }, guard))
       .toEqual({ kind: "allow" });
+  });
+
+  it("accepts a configuration without a protected label, and then protects none", () => {
+    const copy = structuredClone(CONFIG);
+    delete copy.guard.protectedLabel;
+    expect(validateConfig(copy)).toBe(copy);
+    expect(guardDecision(bash("gh pr edit 3 --add-label owner-approved"), copy.guard)).toEqual({ kind: "allow" });
+    expect(guardDecision({ tool_name: "mcp__github__issue_write", tool_input: { labels: ["owner-approved"] } },
+      copy.guard)).toEqual({ kind: "allow" });
+  });
+
+  it("reads a GitHub tool's input for the label only on GitHub tools that name it", () => {
+    const label = guard.protectedLabel;
+    const tool = (tool_name, tool_input) => guardDecision({ tool_name, tool_input }, guard);
+    expect(tool("mcp__github__update_pull_request", { labels: ["Owner-Approved"] }).kind).toBe("refuse");
+    expect(tool("mcp__github__update_pull_request", { labels: ["bug"] })).toEqual({ kind: "allow" });
+    expect(tool("mcp__other__write", { labels: [label.name] })).toEqual({ kind: "allow" });
+    expect(tool("github__issue_write", { labels: [label.name] })).toEqual({ kind: "allow" });
+    expect(guardDecision({ tool_input: { labels: [label.name] } }, guard)).toEqual({ kind: "allow" });
+    expect(tool("mcp__github__issue_write", undefined)).toEqual({ kind: "allow" });
+  });
+
+  it("finds the gh a command runs, past assignments, wrappers and gh's own options", () => {
+    const sets = (command) => writesLabel(command, "owner-approved");
+    for (const command of [
+      "gh pr edit 3 --add-label owner-approved",
+      "A=1 B=2 gh pr edit 3 --add-label owner-approved",
+      "env -i A=1 gh pr edit 3 --add-label owner-approved",
+      "env -u X -i gh pr edit 3 --add-label owner-approved",
+      "nice -n 5 gh pr edit 3 --add-label owner-approved",
+      "time -o t gh pr edit 3 --add-label owner-approved",
+      "xargs -n 1 gh pr edit 3 --add-label owner-approved",
+      "exec -a x gh pr edit 3 --add-label owner-approved",
+      "nohup sudo -u me command gh pr edit 3 --add-label owner-approved",
+      "/opt/bin/gh pr edit 3 --add-label owner-approved",
+      "gh.exe pr edit 3 --add-label owner-approved",
+      "gh -R o/r --hostname h pr edit 3 --add-label owner-approved",
+      "gh --repo o/r --verbose pr edit 3 --add-label owner-approved",
+    ]) {
+      expect(sets(command), command).toBe(true);
+    }
+    for (const command of [
+      "1x=y gh pr edit 3 --add-label owner-approved",
+      "xgh pr edit 3 --add-label owner-approved",
+      "ghx pr edit 3 --add-label owner-approved",
+      "gh.exe2 pr edit 3 --add-label owner-approved",
+      "toString gh pr edit 3 --add-label owner-approved",
+      "echo gh pr edit 3 --add-label owner-approved",
+      "env",
+      "gh",
+      "gh -R",
+    ]) {
+      expect(sets(command), command).toBe(false);
+    }
+  });
+
+  it("reads the label options of pr and issue edit and create", () => {
+    const sets = (command) => writesLabel(command, "owner-approved");
+    for (const command of [
+      "gh pr edit 3 --add-label owner-approved",
+      "gh pr edit 3 --title t --add-label Owner-Approved",
+      "gh pr edit 3 --add-label",
+      "gh pr edit 3 --add-label \"\"",
+      "gh pr edit 3 --add-label $L",
+      "gh pr edit 3 --add-label `x`",
+      "gh pr edit 3 --add-label=bug,owner-approved",
+      "gh pr create --label owner-approved",
+      "gh pr create --label=owner-approved",
+      "gh issue create -l owner-approved",
+      "gh issue edit 3 -lowner-approved",
+    ]) {
+      expect(sets(command), command).toBe(true);
+    }
+    for (const command of [
+      "gh pr edit 3 --add-label bug",
+      "gh pr edit 3 --add-label=bug",
+      "gh pr edit 3 --remove-label owner-approved",
+      "gh pr edit 3 --title owner-approved",
+      "gh pr create -lbug",
+      "gh pr view 3 --add-label owner-approved",
+      "gh pr merge-label 3 --add-label owner-approved",
+      "gh repo edit --add-label owner-approved",
+    ]) {
+      expect(sets(command), command).toBe(false);
+    }
+  });
+
+  it("reads label, alias and api writes", () => {
+    const sets = (command) => writesLabel(command, "owner-approved");
+    for (const command of [
+      "gh label create owner-approved",
+      "gh label edit x --name owner-approved",
+      "gh label clone o/r owner-approved",
+      "gh label create \"\"",
+      "gh alias set ok x",
+      "gh alias import file",
+      "gh api -X PATCH repos/o/r/issues/3",
+      "gh api -XPATCH repos/o/r/issues/3",
+      "gh api --method PATCH repos/o/r/pulls/3",
+      "gh api --method=post repos/o/r/issues/3/labels",
+      "gh api repos/o/r/issues/3/labels -f labels[]=x",
+      "gh api repos/o/r/issues/3/labels/x -X DELETE",
+      "gh api repos/o/r/issues/3?a=b -F x=y",
+      "gh api /repos/o/r/issues/3 --field x=y",
+      "gh api repos/o/r/issues/3 --raw-field x=y",
+      "gh api repos/o/r/issues/3 --input b.json",
+      "gh api graphql -f query=x",
+      "gh api graphql?x -F query=x",
+      "gh api $E -X POST",
+      "gh api -X POST \"\"",
+      "gh api -X GET repos/o/r/issues/3 -X PATCH",
+    ]) {
+      expect(sets(command), command).toBe(true);
+    }
+    for (const command of [
+      "gh label list",
+      "gh label delete owner-approved",
+      "gh label create bug",
+      "gh alias list",
+      "gh api repos/o/r/issues/3",
+      "gh api repos/o/r/issues/3 -X GET -f x=y",
+      "gh api repos/o/r/issues/3 --method get",
+      "gh api repos/o/r/issues/3/comments -f body=x",
+      "gh api -X POST repos/o/r/issues/3/comments",
+      "gh api -X POST repos/o/r/issues/3/comments -f body=\"\"",
+      "gh api -X POST repos/o/r/issues",
+      "gh api -X PATCH repos/o/r/xissues/3",
+      "gh api -X PATCH repos/o/r/issues/3/labelsx",
+      "gh api -X POST repos/o/r/graphqlx",
+      "gh api -X PATCH repos/o/r/git/refs/x",
+      "gh api -X",
+      "gh api",
+    ]) {
+      expect(sets(command), command).toBe(false);
+    }
   });
 
   it("does not read the text a command carries: a comment, a message or a script that names a refused command", () => {

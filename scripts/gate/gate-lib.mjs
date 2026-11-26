@@ -526,9 +526,6 @@ export function guardDecision(call, guard) {
   if (typeof command !== "string") return { kind: "allow" };
   // Each command of the text on its own, whatever its case.
   const commands = commandsOf(command);
-  if (label !== undefined && commands.some((one) => writesLabel(one, label.name))) {
-    return { kind: "refuse", reason: label.why };
-  }
   const words = guardWords(guard);
   const matches = (source) => {
     const expressionOf = new RegExp(fill(source, words), "i");
@@ -536,6 +533,9 @@ export function guardDecision(call, guard) {
   };
   const rule = guard.refuse.find(({ pattern }) => matches(pattern));
   if (rule !== undefined) return { kind: "refuse", reason: rule.why };
+  if (label !== undefined && commands.some((one) => writesLabel(one, label.name))) {
+    return { kind: "refuse", reason: label.why };
+  }
   if (guard.push.some(matches)) return { kind: "push" };
   return { kind: "allow" };
 }
@@ -565,72 +565,61 @@ const GH_GLOBAL = ["-R", "--repo", "--hostname"];
  */
 function ghArguments(command) {
   const words = command.split(" ");
+  const at = (i) => words[i] ?? "";
   let i = 0;
   for (;;) {
-    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i += 1;
-    const name = (words[i] ?? "").split("/").pop();
-    if (!(name in WRAPPERS)) break;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(at(i))) i += 1;
+    const name = at(i).split("/").pop();
+    if (!Object.hasOwn(WRAPPERS, name)) break;
     i += 1;
-    while (i < words.length && words[i].startsWith("-")) {
-      const option = words[i].split("=")[0];
-      i += WRAPPERS[name].includes(option) && !words[i].includes("=") ? 2 : 1;
-    }
+    while (at(i).startsWith("-")) i += WRAPPERS[name].includes(at(i)) ? 2 : 1;
   }
-  if (!/^(?:gh|gh\.exe)$/.test((words[i] ?? "").split("/").pop())) return null;
+  if (!/^gh(?:\.exe)?$/.test(at(i).split("/").pop())) return null;
   i += 1;
-  while (i < words.length && words[i].startsWith("-")) {
-    i += GH_GLOBAL.includes(words[i]) ? 2 : 1;
-  }
+  while (at(i).startsWith("-")) i += GH_GLOBAL.includes(at(i)) ? 2 : 1;
   return words.slice(i);
 }
 
 /** A word the guard cannot read: a quoted string, a variable, a substitution. */
-const unreadable = (word) => word.includes('""') || word.includes("$") || word.includes("`");
+const unreadable = (word) => /""|\$|`/.test(word);
+
+/** Where a write through `gh api` can set a label: an issue, a pull request, their labels, GraphQL. */
+const LABEL_TARGET = /(?:^|\/)(?:(?:issues|pulls)\/[^/?]+(?:\/labels(?:\/[^?]*)?)?|graphql)(?:\?.*)?$/;
 
 /**
  * precondition:  `command` is one command as commandsOf gives it; `label` is
  *                the name of the protected label.
- * postcondition: true when the command may set `label` through gh: an edit or
- *                a creation of an issue or a pull request that adds a label,
- *                a label created or edited, an alias (it can expand to any of
- *                these), any GraphQL call (its query is a quoted string the
- *                guard cannot read), or a REST write to an issue, a pull
- *                request or its labels; in every case unless the label each
- *                names is readable and is not `label`. Comments stay allowed.
+ * postcondition: true when the command may set `label` through gh:
+ *                `pr`/`issue` `edit`/`create` with a label option whose value
+ *                names it or cannot be read; `label create`/`edit`/`clone`
+ *                naming it or with a word it cannot read; any `alias set` or
+ *                `alias import` (an alias can expand to all of these); a
+ *                `gh api` write (a method other than GET, or a field without
+ *                a method) that names an issue, a pull request, their labels
+ *                or GraphQL, or a word it cannot read outside a field. Reads,
+ *                removals and comments stay allowed.
  */
 export function writesLabel(command, label) {
   const args = ghArguments(command);
   if (args === null) return false;
-  const named = (word) => unreadable(word) || word.toLowerCase().includes(label.toLowerCase());
-  const [group, action] = args;
+  const [group, action, ...options] = args;
+  const names = (word) => unreadable(word) || word.toLowerCase().includes(label.toLowerCase());
   if ((group === "pr" || group === "issue") && (action === "edit" || action === "create")) {
-    for (let i = 2; i < args.length; i += 1) {
-      const [option, attached] = args[i].split(/=(.*)/s);
-      if (["--add-label", "--label", "-l"].includes(option)) {
-        if (named(attached ?? args[i + 1] ?? '""')) return true;
-      } else if (/^-l./.test(args[i]) && named(args[i].slice(2))) return true;
-    }
-    return false;
+    return options.some((word, i) =>
+      ["--add-label", "--label", "-l"].includes(word) ? names(options[i + 1] ?? '""')
+        : /^(?:--add-label=|--label=|-l)/.test(word) && names(word));
   }
-  if (group === "label") return ["create", "edit", "clone"].includes(action) && args.slice(2).some(named);
+  if (group === "label") return ["create", "edit", "clone"].includes(action) && options.some(names);
   if (group === "alias") return action === "set" || action === "import";
   if (group !== "api") return false;
   const rest = args.slice(1);
-  const endpoint = rest.find((word, i) => !word.startsWith("-")
-    && !["-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "-H", "--header", "-q", "--jq",
-         "-t", "--template", "--cache", "-p", "--preview", "--hostname"].includes(rest[i - 1])) ?? '""';
-  if (/(?:^|\/)graphql$/.test(endpoint) || unreadable(endpoint)) return true;
-  let method = "GET";
-  let fields = false;
-  rest.forEach((word, i) => {
-    if (word === "-X" || word === "--method") method = (rest[i + 1] ?? "").toUpperCase();
-    else if (/^-X./.test(word)) method = word.slice(2).toUpperCase();
-    else if (word.startsWith("--method=")) method = word.slice(9).toUpperCase();
-    else if (/^(?:-f|-F|--field|--raw-field|--input)(?:$|=)|^-[fF]./.test(word)) fields = true;
-  });
-  const explicit = rest.some((word) => /^(?:-X|--method)/.test(word));
-  const writes = explicit ? method !== "GET" : fields;
-  return writes && /(?:^|\/)(?:issues|pulls)\/[^/]+(?:\/labels(?:\/.*)?)?$/.test(endpoint.replace(/\?.*$/, ""));
+  const methods = rest.flatMap((word, i) =>
+    word === "-X" || word === "--method" ? [rest[i + 1] ?? ""]
+      : /^(?:-X|--method=)/.test(word) ? [word.replace(/^(?:-X|--method=)/, "")] : []);
+  const fields = rest.some((word) => /^(?:-[fF]|--field|--raw-field|--input)/.test(word));
+  const writes = methods.length > 0 ? methods.some((method) => method.toUpperCase() !== "GET") : fields;
+  // A word it cannot read outside a `key=value` field could be the endpoint.
+  return writes && rest.some((word) => (unreadable(word) && !word.includes("=")) || LABEL_TARGET.test(word));
 }
 
 /**
