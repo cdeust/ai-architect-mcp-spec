@@ -120,6 +120,6 @@ export {
   type ProductionDispatcherOptions,
   type StubAgentInvokerOptions,
 } from "./production-dispatcher.js";
-export { readDefineHandoff } from "./define-handoff.js";
+export { defineEnvelopeText, readDefineHandoff } from "./define-handoff.js";
 export { buildVerifiedPlan } from "./verified-plan.js";
 export { readReviewAuthority, reviewDigest, ReviewIdSchema, type VerifiedPlan } from "./implementation-review.js";

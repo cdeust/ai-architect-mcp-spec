@@ -60,6 +60,13 @@ export const MAX_CLARIFICATION_TURNS = Math.floor(
  */
 // source: project error-message convention and measured maximum above.
 export const ERROR_MESSAGE_CHARS = 500;
+
+/** The first `max` UTF-16 units of `text`, without splitting a surrogate pair. */
+export function clipChars(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
 export const MAX_PIPELINE_ERRORS = Math.floor(
   MAX_RESPONSE_CHARS / 4 / ERROR_MESSAGE_CHARS,
 ); // 50

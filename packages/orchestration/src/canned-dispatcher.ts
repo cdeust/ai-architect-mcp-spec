@@ -105,6 +105,28 @@ export interface CannedDispatcherOptions {
   readonly pr_creation_footer_present?: boolean;
 }
 
+/**
+ * One chained ticket per acceptance criterion of the prompt's source, in the
+ * JSON form buildJiraPrompt requests. The rules' example IDs are not read.
+ */
+function fakeJiraTickets(prompt: string): string {
+  const source = /## Source: acceptance_criteria\n([\s\S]*?)(?=\n## Source: |\n<\/source_prd>)/.exec(prompt)?.[1];
+  const criteria = [...new Set(source?.match(/\bAC-\d{1,9}\b/g) ?? [])];
+  const points = [1, 2, 3, 5, 8];
+  const tickets = criteria.map((criterion, index) => ({
+    id: `TICKET-${String(index + 1).padStart(3, "0")}`,
+    title: `Deliver ${criterion}`,
+    description: `Canned work for ${criterion}.`,
+    acceptance_ids: [criterion],
+    story_points: points[index % points.length],
+    depends_on: index === 0 ? [] : [`TICKET-${String(index).padStart(3, "0")}`],
+    source: criterion,
+    phase: 1,
+    epic: "Canned",
+  }));
+  return JSON.stringify({ tickets });
+}
+
 export type CannedDispatcher = (action: NextAction) => ActionResult | undefined;
 
 /**
@@ -137,7 +159,7 @@ export function makeCannedDispatcher(
       return fake_section_draft(section_type);
     }
     if (invocation_id === JIRA_GENERATION_INV_ID) {
-      return "## JIRA Tickets\n\nCanned JIRA placeholder.";
+      return fakeJiraTickets(prompt);
     }
     if (invocation_id === GIT_HISTORY_INV_ID) {
       return "History is silent within the searched space (canned git-historian response).";

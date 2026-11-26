@@ -253,7 +253,7 @@ For a failed agent: include `error`. The runner records an `INCONCLUSIVE` verdic
 { "kind": "failed", "reason": "...", "step": "input_analysis" }
 ```
 
-**Execute:** Display `messages` (if any), then `reason` and the failing `step`. **Stop the loop.** If the user wants more detail, call `get_pipeline_state(run_id, format: "full")` and show `state.errors[]`. The `full` response is bounded to the 100,000-char MCP budget and degrades least-relevant detail first (grounding → oldest clarifications → section content); a `__bounded` block records anything omitted/elided, and `errors[]` is never shed. To pull the full code-graph grounding that `full` sheds first, call `get_pipeline_state(run_id, format: "grounding")`.
+**Execute:** Display `messages` (if any), then `reason` and the failing `step`. **Stop the loop.** If the user wants more detail, call `get_pipeline_state(run_id, format: "full")` and show `state.errors[]`. The `full` response is bounded to the 100,000-char MCP budget and degrades least-relevant detail first (grounding → oldest clarifications → section content → generated tickets → the kept Define; the tickets are in `07-jira-tickets.md` and the Define is re-read through `format: "define_handoff_v1"`); a `__bounded` block records anything omitted/elided, and `errors[]` is never shed. To pull the full code-graph grounding that `full` sheds first, call `get_pipeline_state(run_id, format: "grounding")`.
 
 ---
 
@@ -265,7 +265,9 @@ driving planning. Forward the validated handoff to architect-os. Treat a refusal
 as a blocked handoff and surface its reasons. No review question follows `done`.
 
 An older run can still expose an `implementation_gate` question. Read its
-handoff while that checkpoint is pending. `PRD only` closes the older run.
+handoff while that checkpoint is pending, or after `PRD only`, which closes the
+run: the gate keeps the Define that passed, and the finished run serves it while
+its checkpoint still projects the same document (until the run is dropped).
 Execution requires a separately approved plan in architect-os.
 
 ## ERROR TRANSPORT

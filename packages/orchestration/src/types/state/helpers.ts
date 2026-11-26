@@ -1,6 +1,6 @@
 import type { PipelineState } from "./core-state.js";
 import { PipelineStateSchema } from "./core-state.js";
-import { MAX_PIPELINE_ERRORS } from "./bounded-io.js";
+import { clipChars, ERROR_MESSAGE_CHARS, MAX_PIPELINE_ERRORS } from "./bounded-io.js";
 import { REQUEST_SIZE_DEFAULT, type PRDContext, type RequestSize } from "@prd-gen/core";
 
 export function newPipelineState(input: {
@@ -81,19 +81,29 @@ export function touch(state: PipelineState): PipelineState {
  *   invariant, enforced by the PipelineStateSchema refine).
  * Postcondition: result.errors.length === result.error_kinds.length AND
  *   result.errors.length <= MAX_PIPELINE_ERRORS AND result.errors ends with
- *   `message` (the new error is never the one evicted) AND
+ *   `message`, cut to ERROR_MESSAGE_CHARS with the TRUNCATED mark when longer
+ *   (the new error is never the one evicted) AND
  *   result.errors_dropped === state.errors_dropped + (1 if eviction occurred).
  *
  * source: curie cross-audit H-2 (Phase 3+4, 2026-04). Tag taxonomy
  * extended to three kinds in curie H1 (Phase 3+4 follow-up, 2026-04).
  * Bounded-I/O cap added Phase 1c (2026-06-10).
  */
+/** Ends an error entry cut to ERROR_MESSAGE_CHARS. */
+export const TRUNCATED = " …[truncated]";
+
 export function appendError(
   state: PipelineState,
   message: string,
   kind: "section_failure" | "structural" | "upstream_failure",
 ): PipelineState {
-  const nextErrors = [...state.errors, message];
+  // MAX_PIPELINE_ERRORS is derived from this per-entry size: an entry longer
+  // than it would let the capped list overrun the response budget, so it is
+  // cut, with a visible mark, here for every caller.
+  const bounded = message.length > ERROR_MESSAGE_CHARS
+    ? `${clipChars(message, ERROR_MESSAGE_CHARS - TRUNCATED.length)}${TRUNCATED}`
+    : message;
+  const nextErrors = [...state.errors, bounded];
   const nextKinds = [...state.error_kinds, kind];
   // FIFO eviction: once over cap, drop the oldest entry from BOTH arrays in
   // lockstep. The append above already added the newest entry, so slicing the

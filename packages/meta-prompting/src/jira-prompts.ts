@@ -2,8 +2,9 @@
  * JIRA ticket generation prompt.
  *
  * Takes the requirements + user_stories + acceptance_criteria sections and
- * produces a self-contained prompt for the engineer subagent to emit a
- * markdown JIRA ticket document.
+ * produces a self-contained prompt for the engineer subagent to emit the
+ * tickets as one JSON object; the pipeline validates them and renders
+ * 07-jira-tickets.md.
  */
 
 export interface JiraPromptInput {
@@ -15,14 +16,14 @@ export interface JiraPromptInput {
 }
 
 const RULES = [
-  "1. Output ONLY a markdown document. No JSON, no preamble, no fences.",
+  '1. Output ONLY JSON in this form, with no other keys, preamble or fences: {"tickets":[{"id":"TICKET-001","title":"Task title","description":"Work to do","acceptance_ids":["AC-001"],"story_points":3,"depends_on":[],"source":"FR-001","phase":1,"epic":"Delivery"}]}',
   "2. AC IDs MUST match the AC-XXX IDs in the source. NEVER create new AC numbering.",
-  "3. Each ticket: ID (TICKET-NNN), Title, Description, Acceptance Criteria (referencing AC-XXX), Story Points (Fibonacci), Depends On, Source.",
-  "4. SP totals: Epic SP = sum of story SPs. Phase SP = sum of stories in phase. Grand total = sum of phases.",
-  "5. NEVER list a ticket as a self-dependency.",
+  "3. Use distinct IDs from TICKET-001 to TICKET-999, at least one distinct acceptance ID per ticket, and positive Fibonacci story points (1, 2, 3, 5, 8, ...). Cite the source in each ticket.",
+  "4. SP totals and the summary are computed from tickets. Omit them from the JSON.",
+  "5. List only existing prerequisites, once each. No self-dependency or other cycle.",
   "6. Distribute SP unevenly — real complexity is uneven.",
-  "7. Group tickets into Phases (Phase 1, Phase 2, ...) reflecting delivery order.",
-  "8. End with a Summary table: | Phase | Story Count | Total SP |.",
+  "7. Use positive integer phase numbers and name each epic. Phases reflect delivery order.",
+  "8. Keep each title, epic and source on one line. A description may use line breaks; no field may hold tabs, carriage returns or other control characters.",
 ];
 
 export function buildJiraPrompt(input: JiraPromptInput): string {
@@ -44,6 +45,6 @@ export function buildJiraPrompt(input: JiraPromptInput): string {
     RULES.join("\n"),
     `</rules>`,
     "",
-    `Produce the JIRA ticket document now.`,
+    `Produce the structured JIRA tickets now.`,
   ].join("\n");
 }

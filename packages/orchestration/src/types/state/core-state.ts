@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { QualityScoreRecordSchema, ReliabilityObservationRecordSchema } from "./run-records.js";
+import { HandoffStateFields, PASSED_DEFINE_FOREIGN, passedDefineInRun } from "./handoff-state.js";
 import {
-  AgentIdentitySchema,
-  ClaimSchema,
   PRDContextSchema,
   REQUEST_SIZE_DEFAULT,
   RequestSizeSchema,
@@ -19,38 +19,6 @@ import {
 import { PostSpecsStateSchema } from "./post-specs-state.js";
 import { VerifyBudgetConfigSchema } from "./verify-budget.js";
 import { VerificationPolicySchema } from "./verification-policy.js";
-
-/**
- * What a concluded self-check knows about the quality of its document: the
- * figures of `validateDocument`. The run id and the audit flags are not here:
- * the composition root adds the first, and no audit-flag pass runs in the
- * pipeline (#121).
- */
-export const QualityScoreRecordSchema = z.object({
-  prd_context: PRDContextSchema,
-  rules_checked: z.number().int().nonnegative(),
-  rules_passed: z.number().int().nonnegative(),
-  critical_violations: z.number().int().nonnegative(),
-  total_score: z.number().min(0).max(1),
-});
-export type QualityScoreRecord = z.infer<typeof QualityScoreRecordSchema>;
-
-/**
- * One judge verdict set against the outcome retained for its claim, as the
- * verification orchestrator hands it to an observation hook
- * (`ClaimObservationFlushed`). Queued by the self-check that concludes on
- * judge verdicts and written by the composition root to the reliability
- * store: the reducer does no I/O (#121).
- */
-export const ReliabilityObservationRecordSchema = z.object({
-  claim_id: z.string(),
-  judge: AgentIdentitySchema,
-  claim_type: ClaimSchema.shape.claim_type,
-  ground_truth_is_fail: z.boolean(),
-  judge_was_correct: z.boolean(),
-  external_grounding: ClaimSchema.shape.external_grounding,
-});
-export type ReliabilityObservationRecord = z.infer<typeof ReliabilityObservationRecordSchema>;
 
 export const ClarificationTurnSchema = z.object({
   round: z.number().int().min(1),
@@ -472,6 +440,7 @@ export const PipelineStateSchema = z.object({
    * source: design-phases-3-5.md §2.1.
    */
   post_specs: PostSpecsStateSchema.nullable().default(null),
+  ...HandoffStateFields,
   /**
    * Judge-panel budget override for self-check's multi-judge verification
    * batch. Composition-root-injected only (mirrors `retry_policy`); the
@@ -496,5 +465,6 @@ export const PipelineStateSchema = z.object({
     message:
       "PipelineState: errors[] and error_kinds[] must have the same length (lockstep invariant — use appendError() to append, never spread directly).",
     path: ["error_kinds"],
-  });
+  })
+  .refine(passedDefineInRun, { message: PASSED_DEFINE_FOREIGN, path: ["passed_define"] });
 export type PipelineState = z.infer<typeof PipelineStateSchema>;
