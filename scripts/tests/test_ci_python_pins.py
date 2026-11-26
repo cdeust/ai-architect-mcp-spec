@@ -152,7 +152,8 @@ class OsvAudit(unittest.TestCase):
     def test_an_answer_it_cannot_trust_is_an_error(self):
         for body, status in (({"results": [{}]}, 200), ({"results": [{}, {}]}, 500), (b"<html>", 200), ([], 200),
                              ({"results": [{"next_page_token": "x"}, {}]}, 200), ({"results": [[], {}]}, 200),
-                             ({"results": [{"vulns": [{"summary": "no id"}]}, {}]}, 200), ({}, 200)):
+                             ({"results": [{"vulns": [{"summary": "no id"}]}, {}]}, 200), ({}, 200),
+                             ({"results": [{"vulns": {}}, {}]}, 200), ({"results": [{"vulns": ["GHSA-x"]}, {}]}, 200)):
             with self.subTest(body=body, status=status), self.assertRaises(Exception):
                 pins.advisories(self.PINS, opener(body, status))
 

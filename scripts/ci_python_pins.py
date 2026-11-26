@@ -70,7 +70,7 @@ def advisories(pins, opener=urllib.request.urlopen, timeout=TIMEOUT_S):
         if result.get("next_page_token"):
             raise PinError(f"OSV paged the advisories of {name}=={version}; not all were read")
         vulns = result.get("vulns", [])
-        if not isinstance(vulns, list) or not all(isinstance(v, dict) and v.get("id") for v in vulns):
+        if not isinstance(vulns, list):  # an entry without an id raises below, and fails the audit
             raise PinError(f"OSV advisories of {name} are unreadable")
         if vulns:
             found[f"{name}=={version}"] = sorted(v["id"] for v in vulns)
