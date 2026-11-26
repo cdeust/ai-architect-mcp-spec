@@ -33,7 +33,10 @@ import ci_security_review as security  # noqa: E402
 import ci_security_review_publish as publication  # noqa: E402
 
 WORKFLOW = ROOT / ".github/workflows/claude-security-review.yml"
-SETTINGS = ROOT / ".github/claude-security-review/managed-settings.json"
+REQUEST = ROOT / ".github/workflows/claude-security-review-request.yml"
+SETTINGS = ROOT / ".github/claude/managed-settings.json"
+# The one environment every job that names the Claude token declares; it admits main only.
+ENVIRONMENT = "review-subscriptions"
 SHA = "a" * 40
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 ACTION = "anthropics/claude-code-action@"
@@ -43,6 +46,7 @@ EXPECTED_PERMISSIONS = {"contents": "read", "pull-requests": "read", "actions": 
 ENGINE_INPUTS = {
     "claude_code_oauth_token": "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}",
     "github_token": "${{ github.token }}",
+    "path_to_claude_code_executable": "${{ steps.cli.outputs.path }}",
     "allowed_bots": "claude[bot],chatgpt-codex-connector[bot]",
     "prompt": "${{ steps.prompt.outputs.prompt }}",
 }
@@ -57,6 +61,7 @@ ENGINE_ARGS = [
 ]
 JOB_OUTPUTS = {
     "run": "${{ steps.decide.outputs.run }}",
+    "pr": "${{ steps.pr.outputs.pr }}",
     "round": "${{ steps.budget.outputs.round }}",
     "cap": "${{ steps.budget.outputs.cap }}",
     "findings": "${{ steps.engine.outputs.structured_output }}",
@@ -64,8 +69,8 @@ JOB_OUTPUTS = {
 PUBLISH_ENV = {
     "GH_TOKEN": "${{ github.token }}",
     "GH_REPO": "${{ github.repository }}",
-    "PR": "${{ github.event.pull_request.number }}",
-    "HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    "PR": "${{ needs.security-review.outputs.pr }}",
+    "HEAD_SHA": "${{ github.event.workflow_run.head_sha }}",
     "ROUND": "${{ needs.security-review.outputs.round }}",
     "CAP": "${{ needs.security-review.outputs.cap }}",
     "FINDINGS": "${{ needs.security-review.outputs.findings }}",
@@ -80,35 +85,68 @@ DENY = {
     "Projects", "Workflow", "Monitor", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
     "mcp__github_ci", "mcp__github_file_ops",
     "Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)", "Read(//etc/**)", "Read(//tmp/**)",
-    "Read(//var/**)", "Read(//opt/**)", "Read(//home/runner/runners/**)",
-    "Read(//home/runner/actions-runner/**)", "Read(//home/runner/work/_temp/**)",
-    "Read(//home/runner/work/_actions/**)", "Read(~/.claude/**)", "Read(~/.claude.json)",
-    "Read(~/.config/**)", "Read(~/.local/**)", "Read(~/.ssh/**)", "Read(~/.docker/**)",
-    "Read(~/.npmrc)", "Read(~/.gitconfig)", "Read(**/.git/**)",
+    "Read(//var/**)", "Read(//opt/**)", "Read(//home/runner/work/_*/**)", "Read(//run/**)",
+    "Read(//root/**)", "Read(//srv/**)", "Read(//mnt/**)", "Read(//boot/**)", "Read(//snap/**)",
+    "Read(//home/runner/runners/**)", "Read(//home/runner/actions-runner/**)",
+    "Read(~/.claude/**)", "Read(~/.claude.json)", "Read(~/.config/**)", "Read(~/.local/**)",
+    "Read(~/.ssh/**)", "Read(~/.docker/**)", "Read(~/.npmrc)", "Read(~/.gitconfig)",
+    "Read(~/.*)", "Read(~/.*/**)", "Read(~/.git-credentials)", "Read(~/.netrc)", "Read(~/.env*)",
+    "Read(**/.git/**)",
 }
 # Steps that must precede the engine, in this order (docs, "Guards").
 ORDER = [
     "Checkout trusted default branch",
-    "Find the trusted review on the default branch",
+    "Find the pull request of this head",
+    f"{security.MARKER_STEP} ${{{{ steps.pr.outputs.pr }}}}",
+    "Check the subscription token",
     "Count the security reviews this PR already received",
-    "Measure Claude subscription quota",
+    "Prepare the diff and the prompt",
     "Decide whether the review runs",
     "Install read-only managed settings",
-    "Prepare the diff and the prompt",
+    "Install the pinned Claude CLI",
     security.ACTION_STEP,
 ]
+FOUND_GATE = "steps.pr.outputs.found == 'true'"
+READY_GATE = "steps.ready.outputs.ready == 'true'"
 RUN_GATE = "steps.decide.outputs.run == 'true'"
 GATES = {
-    ORDER[2]: "steps.ready.outputs.ready == 'true'",
-    ORDER[3]: "steps.ready.outputs.ready == 'true' && steps.budget.outputs.skip == 'false'",
-    ORDER[4]: "steps.ready.outputs.ready == 'true'",
-    **{name: RUN_GATE for name in ORDER[5:]},
+    ORDER[2]: FOUND_GATE,
+    ORDER[3]: FOUND_GATE,
+    ORDER[4]: READY_GATE,
+    ORDER[5]: READY_GATE + " && steps.budget.outputs.skip == 'false'",
+    ORDER[6]: READY_GATE,
+    **{name: RUN_GATE for name in ORDER[7:]},
+    "Install subprocess isolation": RUN_GATE,
 }
-SECRET_STEPS = {ORDER[1], ORDER[3], security.ACTION_STEP}
+SECRET_STEPS = {ORDER[3], security.ACTION_STEP}
+REQUEST_PATH = ".github/workflows/claude-security-review-request.yml"
+# The request run this workflow trusts: a pull_request run of the request file that
+# succeeded, from a branch of this repository, not started by Dependabot.
+REQUEST_RULE = (
+    "github.event.workflow_run.event == 'pull_request' "
+    "&& github.event.workflow_run.conclusion == 'success' "
+    f"&& github.event.workflow_run.path == '{REQUEST_PATH}' "
+    "&& github.event.workflow_run.head_repository.full_name == github.repository "
+    "&& github.event.workflow_run.actor.login != 'dependabot[bot]' "
+    "&& github.event.workflow_run.triggering_actor.login != 'dependabot[bot]'"
+)
+TRUSTED_RULE = (
+    "github.event.pull_request.head.repo.full_name == github.repository "
+    "&& !github.event.pull_request.draft "
+    "&& github.actor != 'dependabot[bot]' "
+    "&& github.event.pull_request.user.login != 'dependabot[bot]'"
+)
+INSTALL_SETTINGS = (
+    "set -euo pipefail\n"
+    "sudo install -D -m 0444 -o root -g root \\\n"
+    "  .github/claude/managed-settings.json \\\n"
+    "  /etc/claude-code/managed-settings.json\n"
+    "sudo chmod 0555 /etc/claude-code\n"
+)
 
 
-def load():
-    return yaml.safe_load(WORKFLOW.read_text())
+def load(path=WORKFLOW):
+    return yaml.safe_load(path.read_text())
 
 
 def on(workflow):
@@ -128,34 +166,22 @@ def engine(workflow):
     return next(s for s in steps(workflow) if s.get("uses", "").startswith(ACTION))
 
 
-TRUSTED_RULE = (
-    "github.event.pull_request.head.repo.full_name == github.repository "
-    "&& !github.event.pull_request.draft "
-    "&& github.actor != 'dependabot[bot]' "
-    "&& github.event.pull_request.user.login != 'dependabot[bot]'"
-)
-
-
-INSTALL_SETTINGS = (
-    "set -euo pipefail\n"
-    "sudo install -D -m 0444 -o root -g root \\\n"
-    "  .github/claude-security-review/managed-settings.json \\\n"
-    "  /etc/claude-code/managed-settings.json\n"
-    "sudo chmod 0555 /etc/claude-code\n"
-)
-
-
 def all_steps(workflow):
     return [s for j in workflow["jobs"].values() for s in j.get("steps", [])]
 
 
+def flat(value) -> str:
+    return " ".join(str(value or "").split())
+
+
 def contracts_of_triggers_and_jobs(workflow) -> set[str]:
     found = set()
-    trigger = on(workflow)
-    if set(trigger) != {"pull_request"} or trigger["pull_request"] != {
-        "types": ["opened", "synchronize", "reopened", "ready_for_review"]
-    }:
+    if on(workflow) != {"workflow_run": {"workflows": ["Claude Security Review Request"],
+                                         "types": ["completed"]}}:
         found.add("trigger")
+    if workflow.get("run-name") != (f"{security.TITLE} ${{{{ github.event.workflow_run.head_branch }}}} "
+                                    "${{ github.event.workflow_run.head_sha }}"):
+        found.add("run-name")
     if workflow.get("permissions") != {}:
         found.add("workflow-permissions")
     if list(workflow["jobs"]) != [JOB, PUBLISH_JOB]:
@@ -163,21 +189,23 @@ def contracts_of_triggers_and_jobs(workflow) -> set[str]:
     job = workflow["jobs"][JOB]
     if job.get("permissions") != EXPECTED_PERMISSIONS:
         found.add("job-permissions")
-    if " ".join(str(job.get("if", "")).split()) != TRUSTED_RULE:
-        found.add("trusted-authors")
+    if flat(job.get("if")) != REQUEST_RULE:
+        found.add("request-origin")
+    if job.get("environment") != ENVIRONMENT or "environment" in workflow["jobs"].get(PUBLISH_JOB, {}):
+        found.add("environment")
     if not isinstance(job.get("timeout-minutes"), int):
         found.add("timeout")
     if workflow.get("concurrency") != {
-        "group": "claude-security-review-${{ github.event.pull_request.number }}",
+        "group": "claude-security-review-${{ github.event.workflow_run.head_branch }}",
         "cancel-in-progress": False,
     }:
         found.add("concurrency")
-    if workflow.get("name") in workflow_run_listeners():
+    if workflow.get("name") in workflow_run_listeners(exclude=WORKFLOW):
         found.add("wakes-merge")
     if job.get("name") != security.JOB:
         found.add("job-name")
     if any("continue-on-error" in j for j in workflow["jobs"].values()) or any(
-        "continue-on-error" in s and s.get("name") != ORDER[3] for s in all_steps(workflow)
+        "continue-on-error" in s for s in all_steps(workflow)
     ):
         found.add("continue-on-error")
     return found
@@ -189,14 +217,16 @@ def contracts_of_steps(workflow, raw: str) -> set[str]:
         if "${{" in s.get("run", ""):
             found.add("expression-in-run")
         uses = s.get("uses", "")
-        if uses and not uses.startswith("./") and not PINNED.match(uses):
+        if uses and not PINNED.match(uses):
             found.add("unpinned")
         if uses.startswith("actions/checkout@") and (
-            s.get("with", {}).get("ref") != "main"
+            s.get("with", {}).get("ref") != "${{ github.sha }}"
             or s.get("with", {}).get("persist-credentials") is not False
-            or "head.sha" in yaml.safe_dump(s)
+            or "head" in yaml.safe_dump(s)
         ):
             found.add("checkout-main")
+        if uses and not uses.startswith(("actions/checkout@", ACTION)):
+            found.add("actions")
     for line in raw.splitlines():
         if re.search(r"uses:\s*[\w.-]+/[\w./-]+@[0-9a-f]{40}\s*$", line):
             found.add("pin-comment")
@@ -206,15 +236,13 @@ def contracts_of_steps(workflow, raw: str) -> set[str]:
     for name, gate in GATES.items():
         if name in names and step(workflow, name).get("if") != gate:
             found.add("gated")
-    quota = step(workflow, ORDER[3]) if ORDER[3] in names else {}
-    decide_env = step(workflow, ORDER[4]).get("env", {}) if ORDER[4] in names else {}
-    if quota.get("continue-on-error") is not True or decide_env.get(
-        "QUOTA"
-    ) != "${{ steps.quota.outcome }}":
-        found.add("quota-soft")
-    install = step(workflow, ORDER[5]).get("run", "") if ORDER[5] in names else ""
+    install = step(workflow, ORDER[7]).get("run", "") if ORDER[7] in names else ""
     if install != INSTALL_SETTINGS:
         found.add("managed-settings")
+    pr = step(workflow, ORDER[1]) if ORDER[1] in names else {}
+    if pr.get("id") != "pr" or pr.get("run") != "python3 -I scripts/ci_security_review.py resolve" \
+            or pr.get("env", {}).get("HEAD_SHA") != "${{ github.event.workflow_run.head_sha }}":
+        found.add("resolve")
     return found
 
 
@@ -231,7 +259,7 @@ def contracts_of_secrets(workflow) -> set[str]:
            workflow["jobs"].get(PUBLISH_JOB, {}).get("steps", [])):
         found.add("secrets")
     names = [s.get("name") for s in steps(workflow)]
-    ready = step(workflow, ORDER[1]) if ORDER[1] in names else {}
+    ready = step(workflow, ORDER[3]) if ORDER[3] in names else {}
     if ready.get("env") != {"HAS_TOKEN": "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}"}:
         found.add("token-guard")
     return found
@@ -274,9 +302,35 @@ def violations(workflow, raw: str) -> set[str]:
             | contracts_of_secrets(workflow) | contracts_of_engine_and_publish(workflow))
 
 
-def workflow_run_listeners() -> set[str]:
+def request_violations(workflow) -> set[str]:
+    """The request file holds nothing: no permission, secret, action or checkout."""
+    found = set()
+    if on(workflow) != {"pull_request": {"types": ["opened", "synchronize", "reopened",
+                                                   "ready_for_review"]}}:
+        found.add("request-trigger")
+    if workflow.get("name") != "Claude Security Review Request" or workflow.get("permissions") != {}:
+        found.add("request-permissions")
+    if workflow.get("concurrency") != {
+        "group": "claude-security-review-request-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": True,
+    }:
+        found.add("request-superseded")
+    jobs = workflow.get("jobs", {})
+    job = jobs.get("request", {})
+    dumped = yaml.safe_dump(workflow)
+    if (list(jobs) != ["request"] or "permissions" in job or "environment" in job
+            or re.search(r"\bsecrets\b|\buses\b", dumped) or flat(job.get("if")) != TRUSTED_RULE
+            or [s.get("run") for s in job.get("steps", [])]
+            != ['echo "Claude security review requested for $HEAD_SHA"']):
+        found.add("request-empty")
+    return found
+
+
+def workflow_run_listeners(exclude=None) -> set[str]:
     names = set()
     for path in (ROOT / ".github/workflows").glob("*.yml"):
+        if path == exclude:
+            continue
         trigger = on(yaml.safe_load(path.read_text())) or {}
         if isinstance(trigger, dict) and "workflow_run" in trigger:
             names.update(trigger["workflow_run"].get("workflows", []))
@@ -287,7 +341,12 @@ def workflow_run_listeners() -> set[str]:
 # matters; this digest makes every other field (an env mapping, a run script, an
 # extra step, a timeout, a runner) a deliberate change: update it only together
 # with a review of the new workflow.
-REVIEWED_WORKFLOW_SHA256 = "45921d914f24bc747140cb2f49bac5df022d9bbcd0c82ecaebb6dce70cf35cf0"
+REVIEWED_WORKFLOW_SHA256 = "ae88f41deaf38c42ff24c7e29ba318bde3fa212425396cec6531edcce37c5a88"
+# The versioned instructions the prompt carries; a change to them is a review change too.
+REVIEWED_INSTRUCTIONS_SHA256 = {
+    "scan-instructions.txt": "61735839b4c26fc0c007108cf6408a980c49e5170582469a449286f0500705c7",
+    "false-positive-filtering.txt": "54776122aec69e0691d1624d8364fd59d9a8795f9fafa2014650152aa3d80c8b",
+}
 
 
 def _keyed(value):
@@ -308,15 +367,27 @@ class SecurityReviewContractTests(unittest.TestCase):
     def test_the_shipped_workflow_keeps_every_contract(self):
         self.assertEqual(violations(load(), WORKFLOW.read_text()), set())
 
+    def test_the_request_holds_nothing_worth_taking(self):
+        self.assertEqual(request_violations(load(REQUEST)), set())
+
     def test_the_workflow_is_exactly_the_reviewed_one(self):
         self.assertEqual(digest(load()), REVIEWED_WORKFLOW_SHA256)
 
+    def test_the_instructions_are_exactly_the_reviewed_ones(self):
+        for path in (security.SCAN, security.FALSE_POSITIVES):
+            with self.subTest(path=path.name):
+                self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                                 REVIEWED_INSTRUCTIONS_SHA256[path.name])
+
     def test_the_merge_resolver_never_reads_this_workflow(self):
+        own = {WORKFLOW, REQUEST, ROOT / ".github/workflows/claude-read-boundary.yml"}
         for path in (ROOT / ".github/workflows").glob("*.yml"):
-            if path != WORKFLOW:
+            if path not in own:
                 with self.subTest(path=path.name):
                     self.assertNotIn("claude-security-review", path.read_text())
-        self.assertNotIn("Claude Security Review", workflow_run_listeners())
+        self.assertNotIn("Claude Security Review", workflow_run_listeners(exclude=WORKFLOW))
+        self.assertEqual(workflow_run_listeners() & {"Claude Security Review Request"},
+                         {"Claude Security Review Request"})
 
     def test_its_comment_cannot_carry_a_verdict_the_resolver_accepts(self):
         # The live resolver path (_claude_verdicts) reads claude[bot] comments only;
@@ -341,17 +412,13 @@ class SecurityReviewContractTests(unittest.TestCase):
                          {(11, 1): {"approve"}})
         self.assertEqual(verdicts(7, admissions, "o/r", Api("github-actions[bot]")), {})
 
-    def test_the_ready_guard_lists_every_file_the_job_reads_from_main(self):
-        run = step(load(), ORDER[1])["run"]
-        for path in (security.SCAN, security.FALSE_POSITIVES, SETTINGS,
-                     ROOT / "scripts/ci_security_review.py"):
-            with self.subTest(path=path.name):
-                self.assertTrue(path.is_file())
-                self.assertIn(str(path.relative_to(ROOT)), run)
-
-    def test_the_engine_step_is_the_one_the_budget_counts(self):
+    def test_the_engine_step_and_marker_are_the_ones_the_budget_counts(self):
         self.assertEqual(engine(load())["name"], security.ACTION_STEP)
         self.assertEqual(load()["jobs"][JOB]["name"], security.JOB)
+        self.assertEqual(load()["jobs"][PUBLISH_JOB]["name"], security.PUBLISH_JOB)
+        self.assertTrue(ORDER[2].startswith(security.MARKER_STEP + " "))
+        self.assertTrue(load()["run-name"].startswith(security.TITLE + " "))
+        self.assertEqual(Path(security.WORKFLOW).name, WORKFLOW.name)
 
     def test_managed_settings_are_exactly_the_documented_guards(self):
         settings = json.loads(SETTINGS.read_text())
@@ -360,31 +427,28 @@ class SecurityReviewContractTests(unittest.TestCase):
         self.assertIs(settings["disableAllHooks"], True)
         self.assertIs(settings["allowManagedHooksOnly"], True)
         self.assertEqual(set(settings["permissions"]),
-                         {"disableBypassPermissionsMode", "deny", "blockReadsOutsideWorkingDirectories"})
+                         {"disableBypassPermissionsMode", "disableAutoMode", "deny",
+                          "blockReadsOutsideWorkingDirectories"})
         self.assertIs(settings["permissions"]["blockReadsOutsideWorkingDirectories"], True)
         self.assertEqual(settings["permissions"]["disableBypassPermissionsMode"], "disable")
+        self.assertEqual(settings["permissions"]["disableAutoMode"], "disable")
         self.assertEqual(set(settings["permissions"]["deny"]), DENY)
         self.assertEqual(len(settings["permissions"]["deny"]), len(DENY))
+
+    def test_the_cli_lockfile_pins_the_version_the_engine_checks(self):
+        lock = json.loads((ROOT / ".github/claude/cli/package-lock.json").read_text())
+        cli = lock["packages"]["node_modules/@anthropic-ai/claude-code"]
+        self.assertEqual(cli["version"], "2.1.328")
+        self.assertTrue(cli["integrity"].startswith("sha512-"))
+        self.assertIn("grep -Fx '2.1.328 (Claude Code)'", step(load(), ORDER[8])["run"])
 
 
 class GuardScriptTests(unittest.TestCase):
     """The shell of the two decision steps, executed as the runner would."""
 
-    ALL = (
-        "scripts/ci_security_review.py",
-        "scripts/ci_security_review_publish.py",
-        "scripts/ci_review_budget.py",
-        ".github/claude-security-review/scan-instructions.txt",
-        ".github/claude-security-review/false-positive-filtering.txt",
-        ".github/claude-security-review/managed-settings.json",
-    )
-
-    def execute(self, name, env, files=()):
+    def execute(self, name, env):
         script = step(load(), name)["run"]
         with tempfile.TemporaryDirectory() as tmp:
-            for rel in files:
-                (Path(tmp) / rel).parent.mkdir(parents=True, exist_ok=True)
-                (Path(tmp) / rel).write_text("x")
             out, summary = Path(tmp) / "out", Path(tmp) / "summary"
             subprocess.run(
                 ["bash", "-e", "-c", script], cwd=tmp, check=True, capture_output=True,
@@ -393,56 +457,42 @@ class GuardScriptTests(unittest.TestCase):
             )
             return out.read_text(), summary.read_text() if summary.exists() else ""
 
-    def test_ready_when_the_token_and_every_file_are_there(self):
-        out, summary = self.execute(ORDER[1], {"HAS_TOKEN": "true"}, self.ALL)
-        self.assertEqual((out, summary), ("ready=true\n", ""))
-
-    def test_a_missing_token_skips_green_and_says_so(self):
-        out, summary = self.execute(ORDER[1], {"HAS_TOKEN": "false"}, self.ALL)
+    def test_ready_only_with_the_token_and_a_missing_token_says_so(self):
+        self.assertEqual(self.execute(ORDER[3], {"HAS_TOKEN": "true"}), ("ready=true\n", ""))
+        out, summary = self.execute(ORDER[3], {"HAS_TOKEN": "false"})
         self.assertEqual(out, "ready=false\n")
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN secret is not configured", summary)
 
-    def test_a_file_missing_on_main_skips_green_and_names_it(self):
-        for missing in self.ALL:
-            with self.subTest(missing=missing):
-                present = [f for f in self.ALL if f != missing]
-                out, summary = self.execute(ORDER[1], {"HAS_TOKEN": "true"}, present)
-                self.assertEqual(out, "ready=false\n")
-                self.assertIn(missing, summary)
-
-    def test_the_review_runs_only_inside_the_budget_and_the_quota(self):
-        ok = {"SKIP": "false", "HEAD_REVIEWED": "false", "QUOTA": "success",
-              "STALE": "false"}
+    def test_the_review_runs_only_inside_the_budget_on_a_diff_with_changes(self):
+        ok = {"SKIP": "false", "HEAD_REVIEWED": "false", "EMPTY": "false"}
         cases = [
-            ({**ok, "ELIGIBLE": "true"}, "run=true\n", ""),
-            ({**ok, "SKIP": "true", "QUOTA": "skipped"}, "run=false\n", "budget"),
-            ({**ok, "SKIP": "true", "HEAD_REVIEWED": "true", "QUOTA": "skipped"},
-             "run=false\n", "already reviewed"),
-            ({**ok, "ELIGIBLE": "false", "REMAINING": "3"}, "run=false\n", "remaining: 3"),
-            ({**ok, "ELIGIBLE": "false", "REMAINING": ""}, "run=false\n", "remaining: unknown"),
-            ({**ok, "QUOTA": "failure"}, "run=false\n", "could not be read"),
-            ({**ok, "SKIP": "true", "STALE": "true", "QUOTA": "skipped"}, "run=false\n",
-             "no longer the pull request's head"),
-            ({**ok, "SKIP": "", "ELIGIBLE": "true"}, "run=false\n", "budget"),
+            (ok, "run=true\n", ""),
+            ({**ok, "SKIP": "true", "EMPTY": ""}, "run=false\n", "budget"),
+            ({**ok, "SKIP": "true", "HEAD_REVIEWED": "true", "EMPTY": ""}, "run=false\n",
+             "already reviewed"),
+            ({**ok, "EMPTY": "true"}, "run=false\n", "diff is empty"),
+            ({**ok, "EMPTY": ""}, "run=false\n", "diff is empty"),
+            ({**ok, "SKIP": ""}, "run=false\n", "budget"),
         ]
         for env, expected, said in cases:
             with self.subTest(env=env):
-                out, summary = self.execute(ORDER[4], env)
+                out, summary = self.execute(ORDER[6], env)
                 self.assertEqual(out, expected)
                 self.assertIn(said, summary)
 
 
-def run(run_id, day, sha=SHA, status="completed", prs=(7,)):
-    return {"id": run_id, "status": status, "head_sha": sha,
-            "created_at": f"2026-11-0{day}T10:00:00Z", "prs": list(prs)}
+def run(run_id, day, sha=SHA, branch="feat"):
+    return {"id": run_id, "title": f"{security.TITLE} {branch} {sha}",
+            "created_at": f"2026-11-0{day}T10:00:00Z"}
 
 
-def jobs_of(*attempts):
+def jobs_of(*attempts, pr=7):
     """Job records of a run, one dict per attempt: {"engine": conclusion, "publish": ...}."""
     rows = []
     for number, attempt in enumerate(attempts, 1):
+        marker = attempt.get("marker", pr)
         rows.append({"attempt": number, "name": security.JOB, "steps": [
-            {"name": "Install", "conclusion": "success"},
+            {"name": f"{security.MARKER_STEP} {marker}", "conclusion": "success"},
             {"name": security.ACTION_STEP, "conclusion": attempt.get("engine", "skipped")}]})
         if "publish" in attempt:
             rows.append({"attempt": number, "name": security.PUBLISH_JOB, "steps": [
@@ -450,7 +500,7 @@ def jobs_of(*attempts):
     return rows
 
 
-def fake_gh(runs, jobs, calls=None, current=None, total=None):
+def fake_gh(runs, jobs, calls=None, total=None, pages=None):
     """What `gh api ... --jq` prints for the endpoints the budget reads."""
 
     def gh(args):
@@ -458,45 +508,60 @@ def fake_gh(runs, jobs, calls=None, current=None, total=None):
             calls.append(args)
         if args[0].endswith(f"/{security.WORKFLOW}/runs"):
             count = len(runs) if total is None else total
-            return "\n".join(json.dumps({**r, "total": count}) for r in runs)
-        if args[0].startswith("repos/o/r/pulls/"):
-            return (current or HEAD) + "\n"
+            split = pages or [runs]
+            return "\n".join(json.dumps({"total": count, "runs": page}) for page in split)
         return "\n".join(json.dumps(j) for j in jobs.get(int(args[0].split("/")[-2]), []))
 
     return gh
 
 
 HEAD = "f" * 40
+SINCE = "2026-11-01T00:00:00Z"
+
+
+def event(head=HEAD, attempt=1, run_id=99):
+    return security.Event("o/r", 7, run_id, attempt, "feat", head, SINCE)
 
 
 class BudgetTests(unittest.TestCase):
     def budget(self, runs, jobs, calls=None, head=HEAD, attempt=1, **gate):
-        gh = fake_gh(runs, jobs, calls, current=gate.pop("current", head), **gate)
-        return security.budget(gh, security.Event("o/r", 7, 99, attempt, "feat", head))
+        return security.budget(fake_gh(runs, jobs, calls, **gate), event(head, attempt))
 
     def test_first_review_runs(self):
         self.assertEqual(self.budget([], {}), {"round": 1, "cap": 3, "skip": "false",
-                                               "reviewed_sha": "", "head_reviewed": "false",
-                                               "stale": "false"})
+                                               "reviewed_sha": "", "head_reviewed": "false"})
 
     def test_every_attempt_of_the_engine_counts_whatever_it_concluded(self):
         runs = [run(1, 1, "1" * 40), run(2, 2, "2" * 40), run(3, 3, "3" * 40)]
         jobs = {1: jobs_of({"engine": "success", "publish": "success"}),
-                2: jobs_of({"engine": "failure"}), 3: jobs_of({"engine": "cancelled"})}
+                2: jobs_of({"engine": "failure"}), 3: jobs_of({"engine": "timed_out"})}
         self.assertEqual(self.budget(runs, jobs)["skip"], "true")
         self.assertEqual(self.budget(runs[:2], jobs)["round"], 3)
+        for conclusion in ("cancelled", "timed_out", "neutral", "action_required"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(self.budget([run(1, 1)], {1: jobs_of({"engine": conclusion})})[
+                    "round"], 2)
 
-    def test_only_this_pr_s_runs_count_and_unfinished_runs_count_their_finished_attempts(self):
+    def test_only_this_pr_s_attempts_and_branch_count(self):
+        runs = [run(4, 4, "4" * 40), run(5, 5, "5" * 40, branch="other"), run(1, 1, "1" * 40),
+                run(6, 6, "6" * 40, branch="feat-2")]
+        jobs = {4: jobs_of({"engine": "success"}, pr=8), 5: jobs_of({"engine": "success"}),
+                1: jobs_of({"engine": "success"}), 6: jobs_of({"engine": "success"})}
+        # Run 4 is another PR's on the same branch, 5 and 6 other branches' runs.
+        self.assertEqual(self.budget(runs, jobs)["round"], 2)
+
+    def test_an_engine_without_its_marker_is_not_this_pr_s(self):
+        rows = [{"attempt": 1, "name": security.JOB, "steps": [
+            {"name": f"{security.MARKER_STEP} 7", "conclusion": "skipped"},
+            {"name": security.ACTION_STEP, "conclusion": "success"}]}]
+        self.assertEqual(self.budget([run(1, 1)], {1: rows})["round"], 1)
+
+    def test_unfinished_and_skipped_engines_are_not_attempts(self):
         rows = jobs_of({"engine": "failure"})
         rows.append({"attempt": 2, "name": security.JOB, "steps": [
+            {"name": f"{security.MARKER_STEP} 7", "conclusion": "success"},
             {"name": security.ACTION_STEP, "conclusion": None}]})
-        runs = [run(4, 4, "4" * 40, prs=(8,)), run(5, 5, "5" * 40, status="queued"),
-                run(1, 1, "1" * 40)]
-        jobs = {4: jobs_of({"engine": "success"}), 5: rows, 1: jobs_of({"engine": "success"})}
-        # Run 4 is another PR's; run 5 waits (a re-run) but its first attempt spent.
-        self.assertEqual(self.budget(runs, jobs)["round"], 3)
-
-    def test_a_skipped_engine_is_not_an_attempt(self):
+        self.assertEqual(self.budget([run(5, 5, "5" * 40)], {5: rows})["round"], 2)
         self.assertEqual(self.budget([run(1, 1)], {1: jobs_of({})})["round"], 1)
 
     def test_every_attempt_of_a_rerun_run_counts(self):
@@ -505,19 +570,22 @@ class BudgetTests(unittest.TestCase):
 
     def test_earlier_attempts_of_this_run_count_and_mark_the_head(self):
         jobs = {99: jobs_of({"engine": "failure"}, {"engine": "success"})}
-        result = self.budget([run(99, 1, status="in_progress")], jobs, attempt=3)
+        result = self.budget([run(99, 1, HEAD)], jobs, attempt=3)
         self.assertEqual((result["round"], result["skip"], result["head_reviewed"]),
                          (3, "true", "true"))
-        result = self.budget([run(99, 1, status="in_progress")],
-                             {99: jobs_of({"engine": "failure"}, {"engine": "success"})},
-                             attempt=1)
+        result = self.budget([run(99, 1, HEAD)], jobs, attempt=1)
         self.assertEqual(result["round"], 1)
 
-    def test_a_publish_rerun_alone_marks_its_engine_attempt_published(self):
-        rows = jobs_of({"engine": "success", "publish": "failure"})
-        rows.append({"attempt": 2, "name": security.PUBLISH_JOB, "steps": [
+    def test_a_publish_rerun_alone_marks_only_the_latest_engine_attempt_published(self):
+        rows = jobs_of({"engine": "success", "publish": "failure"},
+                       {"engine": "success", "publish": "failure"})
+        rows.append({"attempt": 3, "name": security.PUBLISH_JOB, "steps": [
             {"name": security.PUBLISH_STEP, "conclusion": "success"}]})
-        result = self.budget([run(1, 1, "1" * 40)], {1: rows})
+        attempts = security.attempts(fake_gh([], {1: rows}), "o/r", 1, 7)
+        # Attempt 3 re-ran publish alone: its success goes to attempt 2, never to 1 too.
+        self.assertEqual([(a["engine"], a["published"]) for a in attempts],
+                         [(True, False), (True, True), (False, True)])
+        result = self.budget([run(1, 1, "1" * 40)], {1: rows[:2] + rows[-1:]})
         self.assertEqual((result["round"], result["reviewed_sha"]), (2, "1" * 40))
 
     def test_the_cap_stops_the_fourth_attempt(self):
@@ -542,66 +610,54 @@ class BudgetTests(unittest.TestCase):
     def test_the_queries_name_this_workflow_and_read_every_attempt(self):
         calls = []
         self.budget([run(1, 1)], {1: jobs_of({"engine": "success"})}, calls)
-        self.assertEqual(calls[0], ["repos/o/r/pulls/7", "--jq", ".head.sha"])
-        calls = calls[1:]
         runs_jq = calls[0][calls[0].index("--jq") + 1]
         self.assertEqual(calls[0], [
             f"repos/o/r/actions/workflows/{security.WORKFLOW}/runs", "--method", "GET",
-            "--paginate", "--jq", runs_jq, "-f", "event=pull_request", "-f", "branch=feat",
-            "-f", "per_page=100"])
+            "--paginate", "--jq", runs_jq, "-f", "event=workflow_run",
+            "-f", f"created=>={SINCE}", "-f", "per_page=100"])
         jobs_jq = calls[1][calls[1].index("--jq") + 1]
         self.assertEqual(calls[1], [
             "repos/o/r/actions/runs/1/jobs", "--method", "GET", "--paginate", "--jq", jobs_jq,
             "-f", "filter=all", "-f", "per_page=100"])
 
     def test_a_protocol_error_is_not_a_silent_review(self):
-        cases = [("[1]", ""), (json.dumps(run(1, 1)), json.dumps({"attempt": "1", "name": "x"})),
-                 (json.dumps(run(1, 1)), json.dumps({"attempt": True, "name": "x"})),
-                 (json.dumps(run(1, 1)), json.dumps({"attempt": 1, "name": 3})),
-                 (json.dumps(run(1, 1)), "[]")]
+        page = json.dumps({"total": 1, "runs": [run(1, 1)]})
+        cases = [("[1]", ""), ("", ""), (json.dumps({"total": "1", "runs": []}), ""),
+                 (json.dumps({"total": 0, "runs": [1]}), ""),
+                 (json.dumps({"total": 1, "runs": [run(1, 1, "not-a-sha")]}), "[]"),
+                 (page, json.dumps({"attempt": "1", "name": "x"})),
+                 (page, json.dumps({"attempt": True, "name": "x"})),
+                 (page, json.dumps({"attempt": 1, "name": 3})), (page, "[]")]
         for runs_text, jobs_text in cases:
-            base = fake_gh([], {})
-
             def gh(args, runs_text=runs_text, jobs_text=jobs_text):
-                if args[0].endswith("/runs"):
-                    return runs_text
-                if args[0].endswith("/jobs"):
-                    return jobs_text
-                return base(args)
+                return runs_text if args[0].endswith("/runs") else jobs_text
 
             with self.subTest(runs=runs_text, jobs=jobs_text), \
                     self.assertRaises(security.BudgetError):
-                security.budget(gh, security.Event("o/r", 7, 99, 1, "feat", HEAD))
+                security.budget(gh, event())
 
-    def test_a_bad_head_or_pr_head_is_refused(self):
-        for head, current in (("main", None), ("main", HEAD), (HEAD, "not-a-sha")):
-            with self.subTest(head=head, current=current), \
-                    self.assertRaises(security.BudgetError):
-                gh = fake_gh([], {}, current=current or head)
-                security.budget(gh, security.Event("o/r", 7, 99, 1, "feat", head))
+    def test_a_bad_head_or_since_is_refused(self):
+        for bad in (event(head="main"), security.Event("o/r", 7, 99, 1, "feat", HEAD, "yesterday")):
+            with self.subTest(event=bad), self.assertRaises(security.BudgetError):
+                security.budget(fake_gh([], {}), bad)
 
     def test_more_runs_than_listed_is_refused_not_undercounted(self):
         with self.assertRaises(security.BudgetError):
             self.budget([run(1, 1)], {1: jobs_of({"engine": "success"})}, total=2)
+        with self.assertRaises(security.BudgetError):
+            self.budget([], {}, total=1)  # a page that counts a run it does not list
         self.assertEqual(self.budget([], {}, total=0)["round"], 1)
 
-    def test_the_baseline_is_the_latest_published_head_and_a_sha(self):
+    def test_runs_over_several_pages_are_all_read(self):
+        runs = [run(1, 1, "1" * 40), run(2, 2, "2" * 40)]
+        jobs = {1: jobs_of({"engine": "success"}), 2: jobs_of({"engine": "success"})}
+        self.assertEqual(self.budget(runs, jobs, pages=[runs[:1], runs[1:]])["round"], 3)
+
+    def test_the_baseline_is_the_latest_published_head(self):
         runs = [run(1, 1, "1" * 40), run(2, 2, "2" * 40)]
         jobs = {i: jobs_of({"engine": "success", "publish": "success"}) for i in (1, 2)}
         self.assertEqual(self.budget(runs, jobs)["reviewed_sha"], "2" * 40)
         self.assertEqual(self.budget(runs[::-1], jobs)["reviewed_sha"], "2" * 40)
-        with self.assertRaises(security.BudgetError):
-            self.budget([run(1, 1, "not-a-sha"), run(2, 2, "2" * 40)],
-                        {1: jobs_of({"engine": "success", "publish": "success"}),
-                         2: jobs_of({"engine": "failure"})})
-
-    def test_a_superseded_head_spends_no_round(self):
-        calls = []
-        result = self.budget([run(1, 1)], {1: jobs_of({"engine": "success"})}, calls,
-                             current="c" * 40, total=5)
-        self.assertEqual((result["skip"], result["stale"]), ("true", "true"))
-        # No count runs, so a count error (here: total above the rows) cannot turn it red.
-        self.assertFalse(any(c[0].endswith("/runs") for c in calls))
 
     def test_a_listing_at_the_api_limit_is_refused_whatever_total_count_says(self):
         rows = [run(i, 1, "1" * 40) for i in range(1, security.RUNS_LISTING_LIMIT + 1)]
@@ -628,6 +684,78 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(sum(1 for c in calls if c[0].endswith("/jobs")), security.CAP)
 
 
+def pull(**changes):
+    item = {"number": 7, "state": "open", "draft": False, "head_sha": HEAD, "head_repo": "o/r",
+            "head_ref": "feat", "base_ref": "main", "base_sha": "c" * 40, "author": "someone",
+            "created_at": SINCE}
+    item.update(changes)
+    return item
+
+
+class ResolveTests(unittest.TestCase):
+    def resolve(self, *pulls, calls=None):
+        def gh(args):
+            if calls is not None:
+                calls.append(args)
+            return "\n".join(json.dumps(p) for p in pulls)
+
+        return security.resolve(gh, "o/r", HEAD, "feat")
+
+    def test_the_open_pull_request_of_this_head_is_found(self):
+        calls = []
+        self.assertEqual(self.resolve(pull(), calls=calls),
+                         {"found": "true", "pr": 7, "base_sha": "c" * 40, "created_at": SINCE})
+        jq = calls[0][calls[0].index("--jq") + 1]
+        self.assertEqual(calls[0], [f"repos/o/r/commits/{HEAD}/pulls", "--method", "GET",
+                                    "--paginate", "--jq", jq, "-f", "per_page=100"])
+
+    def test_an_inadmissible_pull_request_is_a_stated_skip(self):
+        cases = [
+            ((), "no longer the head"),
+            ((pull(state="closed"),), "no longer the head"),
+            ((pull(head_sha="b" * 40),), "no longer the head"),
+            ((pull(head_repo="fork/r"),), "no longer the head"),
+            ((pull(head_ref="other"),), "no longer the head"),
+            ((pull(base_ref="feature-base"),), "does not target main"),
+            ((pull(draft=True),), "draft"),
+            ((pull(draft=None),), "draft"),
+            ((pull(author="dependabot[bot]"),), "Dependabot"),
+        ]
+        for pulls, said in cases:
+            with self.subTest(pulls=pulls):
+                result = self.resolve(*pulls)
+                self.assertEqual(result["found"], "false")
+                self.assertIn(said, result["reason"])
+                self.assertEqual(set(result), {"found", "reason"})
+
+    def test_a_malformed_answer_or_head_is_refused(self):
+        for bad in (pull(number="7"), pull(number=0), pull(number=True), pull(base_sha="main"),
+                    pull(created_at="soon"), pull(created_at=None)):
+            with self.subTest(pull=bad), self.assertRaises(security.BudgetError):
+                self.resolve(bad)
+        with self.assertRaises(security.BudgetError):
+            self.resolve(pull(), pull(number=8))
+        with self.assertRaises(security.BudgetError):
+            security.resolve(lambda a: "", "o/r", "HEAD", "feat")
+
+    def test_the_resolve_step_writes_its_outputs_and_states_a_skip(self):
+        for pulls, expected in (((pull(),), "found=true\npr=7\nbase_sha=" + "c" * 40
+                                 + f"\ncreated_at={SINCE}\n"), ((), "found=false\n")):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
+                out, summary = Path(tmp) / "cmd" / "out", Path(tmp) / "summary"
+                out.parent.mkdir()
+                env = {"GH_REPO": "o/r", "HEAD_SHA": HEAD, "HEAD_BRANCH": "feat",
+                       "RUNNER_TEMP": tmp, "GITHUB_OUTPUT": str(out),
+                       "GITHUB_STEP_SUMMARY": str(summary)}
+                text = "\n".join(json.dumps(p) for p in pulls)
+                with unittest.mock.patch.object(security, "gh_api", lambda a, text=text: text), \
+                        unittest.mock.patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(security.main(["resolve"]), 0)
+                self.assertEqual(out.read_text(), expected)
+                self.assertEqual("skipped" in (summary.read_text() if summary.exists() else ""),
+                                 not pulls)
+
+
 # jq ships on ubuntu-latest: in CI a missing jq fails the suite instead of skipping it.
 @unittest.skipUnless(shutil.which("jq") or os.environ.get("CI"), "jq is not installed")
 class JqFilterTests(unittest.TestCase):
@@ -646,7 +774,7 @@ class JqFilterTests(unittest.TestCase):
         return [a[a.index("--jq") + 1] for a in calls if "--jq" in a]
 
     def test_the_jobs_filter_keeps_attempt_name_and_step_conclusions(self):
-        (jq,) = self.capture(lambda gh: security.attempts(gh, "o/r", 1))
+        (jq,) = self.capture(lambda gh: security.attempts(gh, "o/r", 1, 7))
         payload = {"jobs": [{"run_attempt": 2, "name": security.JOB, "id": 5, "steps": [
             {"name": security.ACTION_STEP, "conclusion": "failure", "number": 3}]}]}
         self.assertEqual(
@@ -654,14 +782,23 @@ class JqFilterTests(unittest.TestCase):
             [{"attempt": 2, "name": security.JOB,
               "steps": [{"name": security.ACTION_STEP, "conclusion": "failure"}]}])
 
-    def test_the_run_filter_keeps_the_fields_the_budget_reads(self):
-        (jq,) = self.capture(lambda gh: security.attempted_runs(gh, security.Event("o/r", 7, 99, 1, "feat", SHA)))
-        payload = {"total_count": 1, "workflow_runs": [
-            {"id": 1, "status": "completed", "head_sha": SHA, "created_at": "t",
-             "pull_requests": [{"number": 7}], "extra": 1}]}
+    def test_the_run_filter_keeps_the_count_and_the_fields_the_budget_reads(self):
+        (jq,) = self.capture(lambda gh: security.attempted_runs(gh, event()))
+        payload = {"total_count": 3, "workflow_runs": [
+            {"id": 1, "status": "completed", "display_title": "t", "created_at": "c",
+             "head_sha": SHA, "pull_requests": [], "extra": 1}]}
         self.assertEqual(json.loads(self.jq(jq, payload)),
-                         {"id": 1, "head_sha": SHA,
-                          "created_at": "t", "prs": [7], "total": 1})
+                         {"total": 3, "runs": [{"id": 1, "title": "t", "created_at": "c"}]})
+        self.assertEqual(json.loads(self.jq(jq, {"total_count": 0, "workflow_runs": []})),
+                         {"total": 0, "runs": []})
+
+    def test_the_pulls_filter_keeps_what_resolve_checks(self):
+        (jq,) = self.capture(lambda gh: security.resolve(gh, "o/r", HEAD, "feat"))
+        payload = [{"number": 7, "state": "open", "draft": False, "created_at": SINCE,
+                    "user": {"login": "u"}, "title": "x",
+                    "head": {"sha": HEAD, "ref": "feat", "repo": {"full_name": "o/r"}},
+                    "base": {"sha": "c" * 40, "ref": "main"}}]
+        self.assertEqual(json.loads(self.jq(jq, payload)), pull(author="u"))
 
     def test_the_patch_filter_yields_one_record_per_file(self):
         jq = None
@@ -703,6 +840,15 @@ class PromptTests(unittest.TestCase):
         self.assertIn(SHA, text)
         self.assertIn(security.SINCE_DIFF, text)
         self.assertIn(f"review only what {security.PR_DIFF} contains too", text)
+
+    def test_a_value_holding_the_delimiter_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.object(security.secrets, "token_hex", lambda n: "f" * 32):
+            env = {"RUNNER_TEMP": tmp, "GITHUB_OUTPUT": f"{tmp}/cmd/out"}
+            Path(tmp, "cmd").mkdir()
+            with self.assertRaises(security.BudgetError):
+                security.write_output(env, "prompt", "a\nEOF_" + "f" * 32 + "\nb")
+            self.assertFalse(Path(env["GITHUB_OUTPUT"]).exists())
 
     def test_the_output_is_a_delimited_multiline_value(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -864,10 +1010,57 @@ class DiffTests(unittest.TestCase):
                     self.assertRaises(security.BudgetError):
                 security.diffs(lambda a: "", "o/r", security.Revisions(base, head, reviewed), Path(tmp))
 
-    def test_the_prompt_step_reads_the_event_base(self):
-        env = step(load(), ORDER[6])["env"]
-        self.assertEqual(env["BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
-        self.assertEqual(env["HEAD_SHA"], "${{ github.event.pull_request.head.sha }}")
+    def test_the_prompt_step_reads_the_resolved_base_and_the_request_head(self):
+        env = step(load(), ORDER[5])["env"]
+        self.assertEqual(env["BASE_SHA"], "${{ steps.pr.outputs.base_sha }}")
+        self.assertEqual(env["HEAD_SHA"], "${{ github.event.workflow_run.head_sha }}")
+        self.assertEqual(env["PR"], "${{ steps.pr.outputs.pr }}")
+
+    def prompt_step(self, gh):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "cmd" / "out"
+            out.parent.mkdir()
+            env = {"GH_REPO": "o/r", "PR": "7", "BASE_SHA": BASE, "HEAD_SHA": "b" * 40,
+                   "GITHUB_WORKSPACE": tmp, "ROUND": "1", "CAP": "3",
+                   "RUNNER_TEMP": tmp, "GITHUB_OUTPUT": str(out)}
+            with unittest.mock.patch.object(security, "gh_api", gh), \
+                    unittest.mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(security.main(["prompt"]), 0)
+            return out.read_text()
+
+    def test_an_empty_diff_is_said_and_carries_no_prompt(self):
+        for diff in ("", "  \n"):
+            with self.subTest(diff=diff):
+                text = self.prompt_step(lambda a, diff=diff: diff)
+                lines = text.splitlines()
+                self.assertEqual(lines[1], "true")
+                self.assertEqual(lines[4], "")
+                self.assertEqual(len(lines), 6)
+        self.assertEqual(self.prompt_step(lambda a: "diff").splitlines()[1], "false")
+
+    def test_a_cut_names_the_files_it_removes(self):
+        head = "diff --git a/a.ts b/a.ts\n" + "x" * security.MAX_DIFF_BYTES
+        tail = "".join(f"\ndiff --git a/z{i}.ts b/z{i}.ts\n+y" for i in range(security.MAX_CUT_NAMES + 2))
+        with tempfile.TemporaryDirectory() as tmp:
+            security.diffs(lambda a: head + tail, "o/r", security.Revisions(BASE, SHA), Path(tmp))
+            text = (Path(tmp) / security.PR_DIFF).read_text()
+        note = text[text.index("[Diff cut at"):]
+        self.assertIn('"a/z0.ts b/z0.ts"', note)
+        self.assertIn("and 2 more", note)
+        self.assertNotIn("a/a.ts", note)
+        with tempfile.TemporaryDirectory() as tmp:
+            security.diffs(lambda a: "x" * (security.MAX_DIFF_BYTES + 1), "o/r",
+                           security.Revisions(BASE, SHA), Path(tmp))
+            self.assertIn("after the cut: none.", (Path(tmp) / security.PR_DIFF).read_text())
+
+    def test_bytes_that_are_not_utf8_do_not_stop_the_review(self):
+        done = subprocess.CompletedProcess(["gh"], 0, stdout=b"+caf\xe9\n", stderr=b"")
+        with unittest.mock.patch.object(security.subprocess, "run", return_value=done) as call:
+            self.assertEqual(security.gh_api(["x"]), "+caf\ufffd\n")
+        self.assertNotIn("text", call.call_args.kwargs)
+        self.assertEqual(call.call_args.kwargs["timeout"], security.GH_TIMEOUT_SECONDS)
+        error = subprocess.CalledProcessError(1, "gh", stderr=b"HTTP 406 \xff\nmore")
+        self.assertEqual(security._why(error), "CalledProcessError 1 HTTP 406 \ufffd")
 
 
 def finding(**changes):
@@ -1141,6 +1334,44 @@ class PublishTests(unittest.TestCase):
                          separators=(",", ":"))
         self.assertLess(len(raw.encode()), 128 * 1024)
 
+    def test_a_finding_holding_a_credential_shape_is_withheld_whole(self):
+        keys = ["sk-ant-oat01-" + "A" * 20, "ghp_" + "a" * 36, "ghs_" + "b" * 36,
+                "gho_" + "c" * 36, "ghu_" + "d" * 36, "ghr_" + "e" * 36,
+                "github_pat_" + "f" * 30,
+                # Split by a format character, a space, a line break or a look-alike.
+                "sk-\u200bant-" + "A" * 20, "gh p_" + "a" * 36, "ghp_" + "a" * 18 + "\n" + "a" * 18,
+                "ｇｈｐ_" + "a" * 36]
+        for key in keys:
+            for field in ("description", "exploit_scenario", "recommendation"):
+                with self.subTest(key=key, field=field):
+                    body, _ = self.publish(output(finding(**{field: f"token {key} here"}),
+                                                  finding(line=4)))
+                    self.assertNotIn(key.replace("\u200b", ""), body)
+                    self.assertIn("1 finding(s) held the shape of a credential and are withheld.", body)
+                    self.assertIn("### Vuln 1:", body)
+                    self.assertNotIn("### Vuln 2:", body)
+                    self.assertIn("src/a.ts:4", body)
+        for key in keys[:3]:
+            with self.subTest(summary=key):
+                body, _ = self.publish(output(finding(), summary=f"read {key}"))
+                self.assertIn(publication.WITHHELD_SUMMARY, body)
+                self.assertNotIn(key, body)
+        body, _ = self.publish(output(finding(file="src/ghp_" + "a" * 36 + ".ts"), finding(line=4)))
+        self.assertIn("1 finding(s) held the shape of a credential and are withheld.", body)
+        self.assertNotIn("ghp_" + "a" * 36, body)
+        body, _ = self.publish(output(finding(description="ghp_short sk-ant-x")))
+        self.assertNotIn("withheld", body)
+
+    def test_a_blank_summary_is_refused_as_the_schema_refuses_it(self):
+        for summary in ("", "   ", "\n\t"):
+            with self.subTest(summary=summary), self.assertRaises(publication.BudgetError):
+                self.publish(output(finding(), summary=summary))
+        self.assertEqual(publication.SCHEMA["properties"]["summary"]["pattern"], r"\S")
+
+    def test_a_summary_that_neutralises_to_nothing_renders_as_empty(self):
+        body, _ = self.publish(output(finding(), summary="\u200b\u200e"))
+        self.assertIn("Summary: `(empty)`", body)
+
     def test_the_schema_given_to_the_engine_carries_the_bounds_publish_enforces(self):
         items = publication.SCHEMA["properties"]["findings"]["items"]
         props = items["properties"]
@@ -1161,6 +1392,8 @@ class PublishTests(unittest.TestCase):
             self.assertEqual(props[key]["maxLength"], limit)
         self.assertEqual(publication.SCHEMA["properties"]["summary"]["maxLength"],
                          publication.MAX_SUMMARY)
+        for key in ("description", "exploit_scenario", "recommendation"):
+            self.assertEqual(props[key]["pattern"], publication.TEXT_PATTERN)
         for path, ok in (("src/a.ts", True), ("/etc/x", False), ("a/../b", False),
                          ("..", False), ("a/..b", True), ("a`b", False), ("a/.b/c", True),
                          ("a b/c", True), (" a", False), ("a\\b", False), ("a\nb", False),
@@ -1200,39 +1433,43 @@ def replace_arg(w, old, new):
 
 
 MUTATIONS = {
-    "trigger": lambda w, r: w.__setitem__(trigger_key(w), {"pull_request_target": {}}) or w,
+    "trigger": lambda w, r: w.__setitem__(trigger_key(w), {"pull_request": {}}) or w,
+    "run-name": lambda w, r: w.pop("run-name") and w,
     "workflow-permissions": lambda w, r: w.__setitem__("permissions", {"contents": "write"}) or w,
     "jobs": lambda w, r: w["jobs"].__setitem__("extra", {"steps": []}) or w,
     "job-permissions": lambda w, r: job(w)["permissions"].__setitem__(
         "pull-requests", "write") or w,
-    "trusted-authors": lambda w, r: job(w).__setitem__(
-        "if", "github.event.pull_request.head.repo.full_name == github.repository") or w,
+    "request-origin": lambda w, r: job(w).__setitem__(
+        "if", "github.event.workflow_run.conclusion == 'success'") or w,
+    "environment": lambda w, r: job(w).pop("environment") and w,
     "timeout": lambda w, r: job(w).pop("timeout-minutes") and w,
     "concurrency": lambda w, r: w.pop("concurrency") and w,
     "wakes-merge": lambda w, r: w.__setitem__("name", "PR Review") or w,
     "job-name": lambda w, r: job(w).__setitem__("name", "security") or w,
-    "continue-on-error": lambda w, r: w["jobs"][PUBLISH_JOB].__setitem__(
-        "continue-on-error", True) or w,
+    "continue-on-error": lambda w, r: step(w, ORDER[5]).__setitem__("continue-on-error", True) or w,
     "expression-in-run": lambda w, r: set_in(
-        w, ORDER[4], "run", 'echo "${{ github.event.pull_request.title }}"'),
+        w, ORDER[6], "run", 'echo "${{ github.event.workflow_run.display_title }}"'),
     "unpinned": lambda w, r: engine(w).__setitem__(
         "uses", "anthropics/claude-code-action@main") or w,
+    "actions": lambda w, r: job(w)["steps"].insert(
+        1, {"uses": "./.github/actions/claude-subscription-quota"}) or w,
     "pin-comment": lambda w, r: (w, r.replace(" # v1.0.283", "", 1)),
     "checkout-main": lambda w, r: steps(w)[0]["with"].__setitem__(
-        "ref", "${{ github.event.pull_request.head.sha }}") or w,
+        "ref", "${{ github.event.workflow_run.head_sha }}") or w,
     "order": lambda w, r: job(w).__setitem__(
         "steps", [steps(w)[0], engine(w), *[s for s in steps(w)[1:] if s is not engine(w)]]) or w,
     "gated": lambda w, r: engine(w).pop("if") and w,
-    "secrets": lambda w, r: step(w, ORDER[6])["env"].__setitem__(
+    "managed-settings": lambda w, r: job(w).__setitem__(
+        "steps", [s for s in steps(w) if s.get("name") != ORDER[7]]) or w,
+    "resolve": lambda w, r: step(w, ORDER[1])["env"].__setitem__(
+        "HEAD_SHA", "${{ github.event.pull_request.head.sha }}") or w,
+    "secrets": lambda w, r: step(w, ORDER[5])["env"].__setitem__(
         "LEAK", "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}") or w,
-    "token-guard": lambda w, r: step(w, ORDER[1])["env"].pop("HAS_TOKEN") and w,
+    "token-guard": lambda w, r: step(w, ORDER[3])["env"].pop("HAS_TOKEN") and w,
     "engine-tools": lambda w, r: replace_arg(w, "dontAsk", "auto"),
     "engine-scrub": lambda w, r: engine(w).pop("env") and w,
     "engine-inputs": lambda w, r: engine(w)["with"].__setitem__("track_progress", True) or w,
     "published": lambda w, r: w["jobs"].pop(PUBLISH_JOB) and w,
-    "quota-soft": lambda w, r: step(w, ORDER[3]).pop("continue-on-error") and w,
-    "managed-settings": lambda w, r: job(w).__setitem__(
-        "steps", [s for s in steps(w) if s.get("name") != ORDER[5]]) or w,
 }
 
 EXTRA = {
@@ -1243,52 +1480,99 @@ EXTRA = {
         '--allowedTools "Read,Agent,mcp__github_comment__update_claude_comment"')),
     "second-mode": ("engine-tools", lambda w, r: replace_arg(
         w, "--model", "--permission-mode acceptEdits\n--model")),
+    "bypass-mode": ("engine-tools", lambda w, r: replace_arg(w, "dontAsk", "bypassPermissions")),
     "all-tools": ("engine-tools", lambda w, r: replace_arg(w, '--tools "Read,Agent"\n', "")),
     "no-strict-mcp": ("engine-tools", lambda w, r: replace_arg(w, "--strict-mcp-config\n", "")),
     "no-schema": ("engine-tools", lambda w, r: replace_arg(w, "--json-schema", "--append")),
-    "fork-allowed": ("trusted-authors", lambda w, r: job(w).__setitem__("if", "true") or w),
-    "dependabot-author": ("trusted-authors", lambda w, r: job(w).__setitem__(
-        "if", job(w)["if"].replace("github.event.pull_request.user.login", "github.actor")) or w),
+    "user-settings-only": ("engine-tools", lambda w, r: replace_arg(
+        w, "--setting-sources user\n", "")),
+    "pull-request-target": ("trigger", lambda w, r: w.__setitem__(
+        trigger_key(w), {"pull_request_target": {}}) or w),
+    "other-trigger-added": ("trigger", lambda w, r: on(w).__setitem__("push", {}) or w),
+    "other-request": ("trigger", lambda w, r: on(w)["workflow_run"].__setitem__(
+        "workflows", ["PR Review"]) or w),
+    "fork-allowed": ("request-origin", lambda w, r: job(w).__setitem__(
+        "if", job(w)["if"].replace("head_repository.full_name == github.repository", "true")) or w),
+    "other-path": ("request-origin", lambda w, r: job(w).__setitem__(
+        "if", job(w)["if"].replace(REQUEST_PATH, ".github/workflows/x.yml")) or w),
+    "failed-request": ("request-origin", lambda w, r: job(w).__setitem__(
+        "if", job(w)["if"].replace("'success'", "'failure'")) or w),
+    "dependabot-actor": ("request-origin", lambda w, r: job(w).__setitem__(
+        "if", job(w)["if"].replace(
+            "&& github.event.workflow_run.triggering_actor.login != 'dependabot[bot]'", "")) or w),
+    "other-environment": ("environment", lambda w, r: job(w).__setitem__(
+        "environment", "production") or w),
+    "publish-environment": ("environment", lambda w, r: w["jobs"][PUBLISH_JOB].__setitem__(
+        "environment", ENVIRONMENT) or w),
     "second-secret": ("secrets", lambda w, r: engine(w)["with"].__setitem__(
         "anthropic_api_key", "${{ secrets.ANTHROPIC_API_KEY }}") or w),
-    "all-secrets": ("secrets", lambda w, r: step(w, ORDER[6])["env"].__setitem__(
+    "all-secrets": ("secrets", lambda w, r: step(w, ORDER[5])["env"].__setitem__(
         "ALL", "${{ toJSON(secrets) }}") or w),
-    "indexed-secret": ("secrets", lambda w, r: step(w, ORDER[6])["env"].__setitem__(
+    "indexed-secret": ("secrets", lambda w, r: step(w, ORDER[5])["env"].__setitem__(
         "X", "${{ secrets['RELEASE_TAG_SSH_KEY'] }}") or w),
     "secret-in-publish": ("secrets", lambda w, r: publish_step(w)["env"].__setitem__(
         "T", "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}") or w),
     "app-token": ("engine-inputs", lambda w, r: engine(w)["with"].pop("github_token") and w),
+    "unpinned-cli": ("engine-inputs", lambda w, r: engine(w)["with"].pop(
+        "path_to_claude_code_executable") and w),
     "commit-signing": ("engine-inputs", lambda w, r: engine(w)["with"].__setitem__(
         "use_commit_signing", "true") or w),
     "settings-input": ("engine-inputs", lambda w, r: engine(w)["with"].__setitem__(
         "settings", "{}") or w),
-    "decide-ungated": ("gated", lambda w, r: step(w, ORDER[4]).pop("if") and w),
-    "quota-ungated": ("gated", lambda w, r: step(w, ORDER[3]).pop("if") and w),
-    "budget-ungated": ("gated", lambda w, r: step(w, ORDER[2]).pop("if") and w),
+    "decide-ungated": ("gated", lambda w, r: step(w, ORDER[6]).pop("if") and w),
+    "prompt-ungated": ("gated", lambda w, r: step(w, ORDER[5]).pop("if") and w),
+    "budget-ungated": ("gated", lambda w, r: step(w, ORDER[4]).pop("if") and w),
+    "marker-ungated": ("gated", lambda w, r: step(w, ORDER[2]).pop("if") and w),
+    "isolation-ungated": ("gated", lambda w, r: step(w, "Install subprocess isolation").pop(
+        "if") and w),
     "settings-writable": ("managed-settings", lambda w, r: set_in(
-        w, ORDER[5], "run", step(w, ORDER[5])["run"].replace("0444", "0666"))),
+        w, ORDER[7], "run", step(w, ORDER[7])["run"].replace("0444", "0666"))),
+    "settings-from-elsewhere": ("managed-settings", lambda w, r: set_in(
+        w, ORDER[7], "run", step(w, ORDER[7])["run"].replace(".github/claude/", "pr/"))),
+    "marker-renamed": ("order", lambda w, r: step(w, ORDER[2]).__setitem__("name", "Marker") or w),
     "head-checkout-added": ("checkout-main", lambda w, r: job(w)["steps"].insert(
         1, {"uses": steps(w)[0]["uses"], "with": {"ref": "refs/pull/1/head",
                                                   "persist-credentials": False}}) or w),
+    "persisted-credentials": ("checkout-main", lambda w, r: steps(w)[0]["with"].__setitem__(
+        "persist-credentials", True) or w),
     "step-after-engine": ("order", lambda w, r: steps(w).append(
         copy.deepcopy(publish_step(w))) or w),
     "publish-on-head": ("checkout-main", lambda w, r: w["jobs"][PUBLISH_JOB]["steps"][0][
-        "with"].__setitem__("ref", "${{ github.event.pull_request.head.sha }}") or w),
+        "with"].__setitem__("ref", "${{ github.event.workflow_run.head_sha }}") or w),
     "publish-soft": ("continue-on-error", lambda w, r: publish_step(w).__setitem__(
         "continue-on-error", True) or w),
     "publish-wrong-run": ("published", lambda w, r: publish_step(w)["env"].__setitem__(
         "RUN_URL", "x") or w),
     "publish-raw-findings": ("published", lambda w, r: publish_step(w)["env"].__setitem__(
         "FINDINGS", "${{ needs.security-review.outputs.round }}") or w),
+    "publish-event-pr": ("published", lambda w, r: publish_step(w)["env"].__setitem__(
+        "PR", "${{ github.event.workflow_run.pull_requests[0].number }}") or w),
     "publish-wide": ("published", lambda w, r: w["jobs"][PUBLISH_JOB]["permissions"].__setitem__(
         "contents", "write") or w),
     "publish-job-renamed": ("published", lambda w, r: w["jobs"][PUBLISH_JOB].__setitem__(
         "name", "Publish") or w),
     "publish-step-renamed": ("published", lambda w, r: publish_step(w).__setitem__(
         "name", "Publish") or w),
-    "user-settings-only": ("engine-tools", lambda w, r: replace_arg(
-        w, "--setting-sources user\n", "")),
     "output-dropped": ("published", lambda w, r: job(w)["outputs"].pop("findings") and w),
+    "resolve-other-script": ("resolve", lambda w, r: set_in(
+        w, ORDER[1], "run", "python3 -I scripts/ci_security_review.py budget")),
+}
+
+REQUEST_MUTATIONS = {
+    "request-trigger": lambda w: w.__setitem__(trigger_key(w), {"pull_request_target": {}}) or w,
+    "request-permissions": lambda w: w.__setitem__("permissions", {"contents": "read"}) or w,
+    "request-superseded": lambda w: w["concurrency"].__setitem__("cancel-in-progress", False) or w,
+    "request-empty": lambda w: w["jobs"]["request"]["steps"].insert(
+        0, {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"}) or w,
+}
+REQUEST_EXTRA = {
+    "request-secret": ("request-empty", lambda w: w["jobs"]["request"]["steps"][0].__setitem__(
+        "env", {"T": "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"}) or w),
+    "request-environment": ("request-empty", lambda w: w["jobs"]["request"].__setitem__(
+        "environment", ENVIRONMENT) or w),
+    "request-job-permissions": ("request-empty", lambda w: w["jobs"]["request"].__setitem__(
+        "permissions", {"contents": "read"}) or w),
+    "request-fork": ("request-empty", lambda w: w["jobs"]["request"].__setitem__("if", "true") or w),
 }
 
 
@@ -1306,6 +1590,14 @@ class SecurityReviewMutationTests(unittest.TestCase):
             with self.subTest(mutation=label):
                 workflow, raw = mutate(edit)
                 self.assertIn(contract, violations(workflow, raw))
+
+    def test_every_request_mutation_is_caught(self):
+        for name, edit in REQUEST_MUTATIONS.items():
+            with self.subTest(guard=name):
+                self.assertIn(name, request_violations(edit(copy.deepcopy(load(REQUEST)))))
+        for label, (contract, edit) in REQUEST_EXTRA.items():
+            with self.subTest(mutation=label):
+                self.assertIn(contract, request_violations(edit(copy.deepcopy(load(REQUEST)))))
 
 
 if __name__ == "__main__":

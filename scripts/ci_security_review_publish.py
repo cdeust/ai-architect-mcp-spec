@@ -2,8 +2,9 @@
 """Validation, neutralisation and publication of the advisory Claude security review.
 
 `publish` (called by scripts/ci_security_review.py) validates the model's JSON
-(structured_output, schema SCHEMA, the one the engine receives), keeps the findings at
-or above the confidence bar, and posts one comment. The model itself publishes nothing.
+(structured_output, schema SCHEMA, the one the engine receives), withholds every finding
+that holds the shape of a credential, keeps the findings at or above the confidence bar,
+and posts one comment. The model itself publishes nothing.
 Paths are shown as ASCII escapes in code spans; prose fields are cut to their bound
 after normalisation and shown as one code span each, so nothing the model writes
 renders, mentions, references or starts a line. Design: docs/claude-security-review.md.
@@ -58,6 +59,16 @@ PATH_PATTERN = (
     r"(?!(?:.*/)?\.{1,2}(?:/|$))(?!(?:.*/)?\s)(?!.*\s(?:/|$))[^\\`\n\r\t]+$"
 )
 CATEGORY_PATTERN = r"^[a-z][a-z0-9_]*$"
+# Prose must hold a visible character: the schema says so, and publish refuses the same.
+TEXT_PATTERN = r"\S"
+# The shape of a credential, read after canonical() and with every space removed, so a
+# format character or a space cannot split one: Claude Console keys and OAuth tokens
+# (sk-ant-) and GitHub tokens (ghp_, gho_, ghs_, ghu_, ghr_, github_pat_). The rule of
+# architect-os's comment guard (PR 146), so the two repositories refuse the same.
+# source: https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/
+CREDENTIAL = re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}|gh[opsur]_[A-Za-z0-9]{20,}"
+                        r"|github_pat_[A-Za-z0-9_]{20,}")
+WITHHELD_SUMMARY = "(withheld: the summary held the shape of a credential)"
 
 
 def _string(limit: int, pattern: str | None = None) -> Record:
@@ -72,7 +83,7 @@ SCHEMA = {
     "additionalProperties": False,
     "required": ["findings", "summary"],
     "properties": {
-        "summary": _string(MAX_SUMMARY),
+        "summary": _string(MAX_SUMMARY, TEXT_PATTERN),
         "findings": {
             "type": "array",
             "maxItems": MAX_FINDINGS,
@@ -86,9 +97,9 @@ SCHEMA = {
                     "line": {"type": "integer", "minimum": 0, "maximum": MAX_LINE},
                     "severity": {"type": "string", "enum": list(SEVERITIES)},
                     "category": _string(MAX_CATEGORY, CATEGORY_PATTERN),
-                    "description": _string(MAX_TEXT),
-                    "exploit_scenario": _string(MAX_TEXT),
-                    "recommendation": _string(MAX_TEXT),
+                    "description": _string(MAX_TEXT, TEXT_PATTERN),
+                    "exploit_scenario": _string(MAX_TEXT, TEXT_PATTERN),
+                    "recommendation": _string(MAX_TEXT, TEXT_PATTERN),
                     "confidence": {"type": "integer", "minimum": 1, "maximum": 10},
                 },
             },
@@ -125,6 +136,11 @@ def display_path(path: str) -> str:
     and every character of PATH_ESCAPES as a JSON escape, so what is shown is what the
     model named, look-alikes included, and nothing in it acts."""
     return "".join(PATH_ESCAPES.get(ch, ch) for ch in json.dumps(path)[1:-1])
+
+
+def credential(text: str) -> bool:
+    """Whether the text holds the shape of a credential, however it is spaced or hidden."""
+    return CREDENTIAL.search("".join(canonical(text).split())) is not None
 
 
 def neutral(text: str) -> str:
@@ -173,8 +189,11 @@ def _valid(item) -> bool:
     )
 
 
-def findings(raw: str) -> tuple[list[Record], int, str]:
-    """The kept findings, the count of invalid ones dropped, and the summary."""
+def findings(raw: str) -> tuple[list[Record], int, int, str]:
+    """The kept findings, the counts of invalid and withheld ones dropped, and the summary.
+
+    A finding any field of which holds the shape of a credential is withheld whole: the
+    comment is public, and a key the model read must not reach it in any form."""
     try:
         data = json.loads(raw)
     except (TypeError, ValueError) as error:
@@ -184,12 +203,17 @@ def findings(raw: str) -> tuple[list[Record], int, str]:
         or set(data) != {"findings", "summary"}
         or not isinstance(data["findings"], list)
         or not isinstance(data["summary"], str)
+        or not data["summary"].strip()
     ):
         raise BudgetError("schema")
-    kept, dropped = [], 0
+    kept, dropped, withheld = [], 0, 0
     for item in data["findings"][:MAX_FINDINGS]:
         if not _valid(item):
             dropped += 1
+            continue
+        if any(credential(item[key]) for key in ("file", "category", "description",
+                                                 "exploit_scenario", "recommendation")):
+            withheld += 1
             continue
         if item["confidence"] < MIN_CONFIDENCE:
             continue
@@ -205,15 +229,20 @@ def findings(raw: str) -> tuple[list[Record], int, str]:
             }
         )
     dropped += max(0, len(data["findings"]) - MAX_FINDINGS)
-    return kept, dropped, prose(data["summary"], MAX_SUMMARY)
+    summary = (f"`{WITHHELD_SUMMARY}`" if credential(data["summary"])
+               else prose(data["summary"], MAX_SUMMARY))
+    return kept, dropped, withheld, summary
 
 
-def render(kept: list[Record], dropped: int, summary: str, env) -> str:
+def render(kept: list[Record], dropped: tuple[int, int], summary: str, env) -> str:
+    invalid, withheld = dropped
     head = [f"## {MARKER}", "",
             f"Security review {env['ROUND']} of at most {env['CAP']}, head `{env['HEAD_SHA']}`. "
             "Advisory: it neither approves nor blocks.", "", f"Summary: {summary}", ""]
-    if dropped:
-        head += [f"{dropped} finding(s) did not match the output schema and are not shown.", ""]
+    if invalid:
+        head += [f"{invalid} finding(s) did not match the output schema and are not shown.", ""]
+    if withheld:
+        head += [f"{withheld} finding(s) held the shape of a credential and are withheld.", ""]
     blocks = [] if kept else [["No high-confidence security finding."]]
     for number, item in enumerate(kept, 1):
         blocks.append([
@@ -242,8 +271,8 @@ def render(kept: list[Record], dropped: int, summary: str, env) -> str:
 
 
 def publish(gh_input, env) -> str:
-    kept, dropped, summary = findings(env.get("FINDINGS", ""))
-    body = render(kept, dropped, summary, env)
+    kept, invalid, withheld, summary = findings(env.get("FINDINGS", ""))
+    body = render(kept, (invalid, withheld), summary, env)
     gh_input([f"repos/{env['GH_REPO']}/issues/{int(env['PR'])}/comments", "--method", "POST",
               "--input", "-"], json.dumps({"body": body}))
     return body

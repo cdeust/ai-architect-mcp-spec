@@ -1,40 +1,47 @@
 #!/usr/bin/env python3
-"""Budget and prompt of the advisory Claude security review; publication lives in
-scripts/ci_security_review_publish.py.
+"""Pull request, budget and prompt of the advisory Claude security review;
+publication lives in scripts/ci_security_review_publish.py.
 
-Every subcommand runs from a trusted default-branch checkout of
-claude-security-review.yml. Design and threat model: docs/claude-security-review.md.
+Every subcommand runs from the default-branch checkout of claude-security-review.yml,
+which GitHub runs from main on the completion of a request run (workflow_run). Design
+and threat model: docs/claude-security-review.md.
+
+`resolve`: finds the pull request whose head is the request run's head, from the API,
+and admits it only if it is open, not a draft, from a branch of this repository,
+targets main and was not opened by Dependabot. Writes `found`, `pr`, `base_sha` and
+`created_at`; a head that no admissible pull request has is a stated skip.
 
 `budget`: counts the attempts of the review engine on this pull request: every job
 attempt, re-runs included, in which the action step ("Claude security review" in
-the job of that name) ran, whatever it concluded. It caps spend, not successes: at
-CAP attempts no further one runs (the cap of claude-review.yml, ADR-1119, owner rule
-2026-11-04, taken over for this second review by the task's decision of 2026-11-25),
-and a head already attempted is not attempted again. Nor does a run spend a round
-when its head is no longer the PR's head. Attempts are matched by the job and step
-names below: a PR that renames them escapes the count for its own runs, as a trusted
-author could also delete this step (docs, "Not handled here"). The commit a
-later round starts from is the last one whose review was published. Writes
-`round`, `cap`, `skip`, `reviewed_sha`, `head_reviewed` and `stale` to
-$GITHUB_OUTPUT. Any
-API or protocol error exits non-zero: no silent fallback to "review".
+the job of that name) ran, whatever it concluded. A run belongs to a pull request by
+its title (head branch and head) and by the job's marker step, which names the pull
+request the `resolve` step found. It caps spend, not successes: at CAP attempts no
+further one runs (the cap of claude-review.yml, ADR-1119, owner rule 2026-11-04, taken
+over for this second review by the task's decision of 2026-11-25), and a head already
+attempted is not attempted again. The commit a later round starts from is the last one
+whose review was published. Writes `round`, `cap`, `skip`, `reviewed_sha` and
+`head_reviewed` to $GITHUB_OUTPUT. Any API or protocol error exits non-zero: no silent
+fallback to "review".
 
 `prompt`: writes the pull request diffs into the workspace (the action, in agent
 mode, never checks the pull request head out there), joins the versioned scan and
-false-positive instructions into the prompt and writes it to $GITHUB_OUTPUT. A
-pull request whose changes cannot be read at all stops here, before the engine.
+false-positive instructions into the prompt and writes it to $GITHUB_OUTPUT, with
+`empty`, whether the diff holds nothing. A pull request whose changes cannot be read
+at all stops here, before the engine.
 
 `publish`: see scripts/ci_security_review_publish.py.
 
 Sources: https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
 https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run
 https://docs.github.com/en/rest/commits/commits#compare-two-commits
+https://docs.github.com/en/rest/commits/commits#list-pull-requests-associated-with-a-commit
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -43,24 +50,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ci_review_budget import (  # noqa: E402
+    GH_TIMEOUT_SECONDS,
     PER_PAGE,
     SHA,
     BudgetError,
     Gh,
     Record,
     decide,
-    gh_api,
     output_file,
 )
 from ci_security_review_publish import gh_post, publish  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = "claude-security-review.yml"
-# The jobs and steps of claude-security-review.yml the budget reads; the test pins them.
+# The title, jobs and steps of claude-security-review.yml the budget reads; the test
+# pins them.
+TITLE = "Claude security review"
 JOB = "Claude security review"
+MARKER_STEP = "Security review of pull request"
 ACTION_STEP = "Claude security review"
 PUBLISH_JOB = "Publish the security review"
 PUBLISH_STEP = "Publish the validated findings"
+# source: the repository's default branch, which every trusted checkout here reads.
+DEFAULT_BRANCH = "main"
+DEPENDABOT = "dependabot[bot]"
 # source: owner decision 2026-11-04 (ADR-1119), three automatic reviews per PR.
 CAP = 3
 # source: docs.github.com, "List workflow runs for a workflow": with the `branch` or
@@ -76,6 +89,13 @@ PR_DIFF = f"{INPUT_DIR}/pr.diff"
 SINCE_DIFF = f"{INPUT_DIR}/since-last-review.diff"
 # source: operational bound, far above a reviewable pull request.
 MAX_DIFF_BYTES = 1_000_000
+# source: operational bound on the names a cut note lists; the rest are counted.
+MAX_CUT_NAMES = 200
+TIMESTAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+# A conclusion that says the step never ran. Anything else, timed_out included, spent.
+NOT_RUN = {None, "skipped"}
+
+
 def records(text: str) -> list[Record]:
     """JSON lines from `gh api --jq`, split on "\n" only: gh's encoder writes U+0085
     raw inside a value (str.splitlines would cut the record there), never a raw "\n"."""
@@ -85,13 +105,21 @@ def records(text: str) -> list[Record]:
     return rows
 
 
+def gh_api(args: list[str]) -> str:
+    """`gh api`, its output decoded leniently: a diff may hold bytes that are not UTF-8
+    (a Latin-1 file), and one of them must not stop the review."""
+    done = subprocess.run(["gh", "api", *args], capture_output=True, check=True,
+                          timeout=GH_TIMEOUT_SECONDS)
+    return done.stdout.decode("utf-8", "replace")
+
+
 def last_head(runs: list[Record]) -> str:
     return max(runs, key=lambda run: run["created_at"])["head_sha"] if runs else ""
 
 
 @dataclass(frozen=True)
 class Event:
-    """The pull request event a budget is computed for."""
+    """The pull request a budget is computed for, and the run computing it."""
 
     repo: str
     pr: int
@@ -99,6 +127,7 @@ class Event:
     run_attempt: int
     head_ref: str
     head_sha: str
+    since: str
 
 
 @dataclass(frozen=True)
@@ -110,33 +139,81 @@ class Revisions:
     reviewed: str = ""
 
 
-def listed_runs(gh: Gh, event: Event) -> list[Record]:
-    """This workflow's pull_request runs on the event's head branch, newest first.
+def resolve(gh: Gh, repo: str, head_sha: str, head_branch: str) -> Record:
+    """The one admissible pull request whose head is this head, or the reason none is."""
+    if not SHA.fullmatch(head_sha):
+        raise BudgetError("protocol")
+    jq = (".[] | {number, state, draft, head_sha: .head.sha, head_repo: .head.repo.full_name, "
+          "head_ref: .head.ref, base_ref: .base.ref, base_sha: .base.sha, "
+          "author: .user.login, created_at}")
+    pulls = records(gh([f"repos/{repo}/commits/{head_sha}/pulls", "--method", "GET",
+                        "--paginate", "--jq", jq, "-f", f"per_page={PER_PAGE}"]))
+    heads = [p for p in pulls if p.get("state") == "open" and p.get("head_sha") == head_sha
+             and p.get("head_repo") == repo and p.get("head_ref") == head_branch]
+    if not heads:
+        return {"found": "false",
+                "reason": "this head is no longer the head of an open pull request of this repository"}
+    targeted = [p for p in heads if p.get("base_ref") == DEFAULT_BRANCH]
+    if not targeted:
+        return {"found": "false", "reason": f"the pull request does not target {DEFAULT_BRANCH}"}
+    if len(targeted) > 1:
+        raise BudgetError("several open pull requests have this head")
+    pull = targeted[0]
+    if pull.get("draft") is not False:
+        return {"found": "false", "reason": "the pull request is a draft"}
+    if pull.get("author") == DEPENDABOT:
+        return {"found": "false", "reason": "Dependabot's pull requests are not reviewed"}
+    number, base, created = pull.get("number"), pull.get("base_sha"), pull.get("created_at")
+    if (type(number) is not int or number < 1 or not isinstance(base, str)
+            or not SHA.fullmatch(base) or not isinstance(created, str)
+            or not TIMESTAMP.fullmatch(created)):
+        raise BudgetError("protocol")
+    return {"found": "true", "pr": number, "base_sha": base, "created_at": created}
 
-    The API lists at most 1,000 runs for a branch filter, newest first: the oldest,
-    which hold the attempts, would fall off. Refuse rather than undercount.
+
+def listed_runs(gh: Gh, event: Event) -> list[Record]:
+    """This workflow's runs since the pull request was opened, newest first.
+
+    The API lists at most 1,000 runs for an event filter, newest first: the oldest,
+    which hold the attempts, would fall off. Refuse rather than undercount, and refuse
+    a page that counts runs it does not list.
     """
-    jq = (
-        ".total_count as $total | .workflow_runs[] | {id, head_sha, created_at, "
-        "prs: [.pull_requests[].number], total: $total}"
-    )
-    rows = records(gh([f"repos/{event.repo}/actions/workflows/{WORKFLOW}/runs", "--method",
-                       "GET", "--paginate", "--jq", jq, "-f", "event=pull_request",
-                       "-f", f"branch={event.head_ref}", "-f", f"per_page={PER_PAGE}"]))
+    if not TIMESTAMP.fullmatch(event.since):
+        raise BudgetError("protocol")
+    jq = "{total: .total_count, runs: [.workflow_runs[] | {id, title: .display_title, created_at}]}"
+    pages = records(gh([f"repos/{event.repo}/actions/workflows/{WORKFLOW}/runs", "--method",
+                        "GET", "--paginate", "--jq", jq, "-f", "event=workflow_run",
+                        "-f", f"created=>={event.since}", "-f", f"per_page={PER_PAGE}"]))
+    if not pages or not all(type(p.get("total")) is int and isinstance(p.get("runs"), list)
+                            for p in pages):
+        raise BudgetError("protocol")
+    rows = [row for page in pages for row in page["runs"]]
+    if any(not isinstance(row, dict) for row in rows):
+        raise BudgetError("protocol")
     unique = {row.get("id") for row in rows}
-    if rows and (type(rows[0].get("total")) is not int or rows[0]["total"] > len(unique)
-                 or len(unique) >= RUNS_LISTING_LIMIT):
-        raise BudgetError("the API lists fewer runs of this branch than it counts")
+    if max(p["total"] for p in pages) > len(unique) or len(unique) >= RUNS_LISTING_LIMIT:
+        raise BudgetError("the API lists fewer runs than it counts")
     return rows
+
+
+def head_of(row: Record, head_ref: str) -> str | None:
+    """The head a run reviewed, from its title, if the run is of this head branch."""
+    title, prefix = row.get("title"), f"{TITLE} {head_ref} "
+    if not isinstance(title, str) or not title.startswith(prefix):
+        return None
+    head = title[len(prefix):]
+    if not SHA.fullmatch(head):
+        raise BudgetError("protocol")
+    return head
 
 
 def attempted_runs(gh: Gh, event: Event) -> list[Record]:
     """Earlier engine attempts on this PR, each with whether its review was published.
 
-    Every run of this PR is read with all its attempts, finished or not (a re-run
-    waiting in the concurrency group still shows its earlier, finished attempts), and
-    this run with its earlier attempts, so a re-run neither escapes the cap nor erases
-    a spend. A step that has not finished has no conclusion and is not counted.
+    Every run of this head branch is read with all its attempts, finished or not (a
+    re-run waiting in the concurrency group still shows its earlier, finished attempts),
+    and this run with its earlier attempts, so a re-run neither escapes the cap nor
+    erases a spend. An attempt counts for this PR only if its marker step names it.
     """
     found, read = [], set()
     for row in listed_runs(gh, event):
@@ -146,20 +223,37 @@ def attempted_runs(gh: Gh, event: Event) -> list[Record]:
         read.add(row.get("id"))
         if len(found) >= CAP:
             break  # the round is refused anyway; reading further only spends API calls
-        if event.pr not in row.get("prs", []):
+        head = head_of(row, event.head_ref)
+        if head is None:
             continue
         current = row.get("id") == event.run_id
-        for attempt in attempts(gh, event.repo, row["id"]):
+        for attempt in attempts(gh, event.repo, row["id"], event.pr):
             if current and attempt["attempt"] >= event.run_attempt:
                 continue
             if attempt["engine"]:
-                found.append({**row, "head_sha": event.head_sha if current else row["head_sha"],
+                found.append({"id": row["id"], "head_sha": head,
                               "created_at": f"{row['created_at']}#{attempt['attempt']:04d}",
                               "published": attempt["published"]})
     return found
 
 
-def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
+def _attempt_steps(jobs: list[Record], pr: int) -> dict[int, Record]:
+    by_attempt: dict[int, Record] = {}
+    for job in jobs:
+        entry = by_attempt.setdefault(job["attempt"], {"attempt": job["attempt"], "marker": False,
+                                                       "engine": False, "published": False})
+        for step in job.get("steps") or []:
+            name, conclusion = step.get("name"), step.get("conclusion")
+            if job["name"] == JOB and name == f"{MARKER_STEP} {pr}" and conclusion == "success":
+                entry["marker"] = True
+            if job["name"] == JOB and name == ACTION_STEP and conclusion not in NOT_RUN:
+                entry["engine"] = True
+            if job["name"] == PUBLISH_JOB and name == PUBLISH_STEP and conclusion == "success":
+                entry["published"] = True
+    return by_attempt
+
+
+def attempts(gh: Gh, repo: str, run_id: int, pr: int) -> list[Record]:
     jq = ".jobs[] | {attempt: .run_attempt, name, steps: [.steps[]? | {name, conclusion}]}"
     jobs = records(gh([f"repos/{repo}/actions/runs/{run_id}/jobs", "--method", "GET",
                       "--paginate", "--jq", jq, "-f", "filter=all",
@@ -167,22 +261,13 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     if not all(type(job.get("attempt")) is int and isinstance(job.get("name"), str)
                for job in jobs):
         raise BudgetError("protocol")
-    by_attempt: dict[int, Record] = {}
-    for job in jobs:
-        entry = by_attempt.setdefault(job["attempt"], {"attempt": job["attempt"],
-                                                       "engine": False, "published": False})
-        for step in job.get("steps") or []:
-            if job["name"] == JOB and step.get("name") == ACTION_STEP and step.get(
-                "conclusion"
-            ) in {"success", "failure", "cancelled"}:
-                entry["engine"] = True
-            if job["name"] == PUBLISH_JOB and step.get("name") == PUBLISH_STEP and step.get(
-                "conclusion"
-            ) == "success":
-                entry["published"] = True
-    # "Re-run failed jobs" re-runs `publish` alone: its success belongs to the latest
-    # engine attempt at or before it in this run.
+    by_attempt = _attempt_steps(jobs, pr)
     ordered = [by_attempt[n] for n in sorted(by_attempt)]
+    # The engine of an attempt counts for this PR only beside its own marker. "Re-run
+    # failed jobs" re-runs `publish` alone: its success belongs to the latest engine
+    # attempt at or before it in this run.
+    for entry in ordered:
+        entry["engine"] = entry["engine"] and entry["marker"]
     for index, entry in enumerate(ordered):
         if entry["published"] and not entry["engine"]:
             for earlier in reversed(ordered[:index]):
@@ -192,36 +277,20 @@ def attempts(gh: Gh, repo: str, run_id: int) -> list[Record]:
     return ordered
 
 
-def stale(gh: Gh, repo: str, pr: int, head_sha: str) -> bool:
-    """Whether the event's head is no longer the PR's head (a re-run of an old run)."""
-    current = gh([f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha"]).strip()
-    if not SHA.fullmatch(current):
-        raise BudgetError("protocol")
-    return current != head_sha
-
-
 def budget(gh: Gh, event: Event) -> Record:
     # No bypass label: the review is advisory, a fourth one buys nothing the
     # merge waits for.
-    repo, pr, head_sha = event.repo, event.pr, event.head_sha
-    if not SHA.fullmatch(head_sha):
+    if not SHA.fullmatch(event.head_sha):
         raise BudgetError("protocol")
-    if stale(gh, repo, pr, head_sha):
-        # A stated skip: nothing is counted, so no count can turn it red.
-        return {"round": 0, "cap": CAP, "skip": "true", "reviewed_sha": "",
-                "head_reviewed": "false", "stale": "true"}
     runs = attempted_runs(gh, event)
     result = decide(runs, [], cap=CAP)
     # A later round reviews only what changed since a review that was published;
     # an attempt that published nothing narrows nothing.
     result["reviewed_sha"] = last_head([r for r in runs if r["published"]])
-    if result["reviewed_sha"] and not SHA.fullmatch(result["reviewed_sha"]):
-        raise BudgetError("protocol")
     # A head already attempted (a reopen, ready_for_review, a re-run, or a push back
     # to an earlier head) has nothing new: it spends no round.
     seen = {run.get("head_sha") for run in runs}
-    result["head_reviewed"] = "true" if head_sha in seen else "false"
-    result["stale"] = "false"
+    result["head_reviewed"] = "true" if event.head_sha in seen else "false"
     if result["head_reviewed"] == "true":
         result["skip"] = "true"
     return result
@@ -263,13 +332,22 @@ def prompt(env) -> str:
     )
 
 
+DIFF_HEADER = re.compile(r"^diff --git (.*)$", re.MULTILINE)
+
+
 def _cut(text: str) -> str:
+    """The diff bounded to MAX_DIFF_BYTES, with a note naming the files the cut removes,
+    so the model can say which files the review did not read."""
     data = text.encode("utf-8")
     if len(data) <= MAX_DIFF_BYTES:
         return text
-    return data[:MAX_DIFF_BYTES].decode("utf-8", "ignore") + (
+    kept = data[:MAX_DIFF_BYTES].decode("utf-8", "ignore")
+    cut = [json.dumps(name) for name in DIFF_HEADER.findall(text[len(kept):])]
+    names = ", ".join(cut[:MAX_CUT_NAMES]) + (
+        f" and {len(cut) - MAX_CUT_NAMES} more" if len(cut) > MAX_CUT_NAMES else "")
+    return kept + (
         f"\n[Diff cut at {MAX_DIFF_BYTES} bytes of {len(data)}: the rest is not reviewed. "
-        "Say so in the summary.]\n"
+        f"Files whose diff starts after the cut: {names or 'none'}. Say so in the summary.]\n"
     )
 
 
@@ -306,6 +384,8 @@ FAILURES = (subprocess.CalledProcessError, subprocess.TimeoutExpired)
 def _why(error: Exception) -> str:
     """The reason gh gave, for the log: its exit status and first stderr line."""
     stderr = getattr(error, "stderr", None) or ""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", "replace")
     first = stderr.splitlines()[0] if isinstance(stderr, str) and stderr else ""
     return f"{type(error).__name__} {getattr(error, 'returncode', '')} {first}".strip()
 
@@ -356,29 +436,54 @@ def write_output(env, key: str, value: str) -> None:
         out.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
 
 
+def _resolve(env) -> int:
+    result = resolve(gh_api, env["GH_REPO"], env["HEAD_SHA"], env["HEAD_BRANCH"])
+    with open(output_file(env), "a", encoding="utf-8") as out:
+        for key in ("found", "pr", "base_sha", "created_at"):
+            if key in result:
+                out.write(f"{key}={result[key]}\n")
+    if result["found"] == "true":
+        print(f"Pull request #{result['pr']} has this head.")
+    else:
+        print(f"Claude security review skipped: {result['reason']}.")
+        with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(f"Claude security review skipped: {result['reason']}.\n")
+    return 0
+
+
+def _budget(env) -> int:
+    event = Event(env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]), int(env["RUN_ATTEMPT"]),
+                  env["HEAD_REF"], env["HEAD_SHA"], env["SINCE"])
+    result = budget(gh_api, event)
+    with open(output_file(env), "a", encoding="utf-8") as out:
+        for key, value in result.items():
+            out.write(f"{key}={value}\n")
+    print(f"Claude security review {result['round']} of {result['cap']}: "
+          + ("not run" if result["skip"] == "true" else "go"))
+    return 0
+
+
+def _prompt(env) -> int:
+    revisions = Revisions(env["BASE_SHA"], env["HEAD_SHA"], env.get("REVIEWED_SHA", ""))
+    root = Path(env["GITHUB_WORKSPACE"])
+    since = diffs(gh_api, env["GH_REPO"], revisions, root)
+    empty = not (root / PR_DIFF).read_text(encoding="utf-8").strip()
+    values = {**env, "REVIEWED_SHA": env.get("REVIEWED_SHA", "") if since else ""}
+    write_output(env, "empty", "true" if empty else "false")
+    write_output(env, "prompt", "" if empty else prompt(values))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     env = os.environ
-    if argv == ["budget"]:
-        result = budget(gh_api, Event(env["GH_REPO"], int(env["PR"]), int(env["RUN_ID"]),
-                                      int(env["RUN_ATTEMPT"]), env["HEAD_REF"],
-                                      env["HEAD_SHA"]))
-        with open(output_file(env), "a", encoding="utf-8") as out:
-            for key, value in result.items():
-                out.write(f"{key}={value}\n")
-        print(f"Claude security review {result['round']} of {result['cap']}: "
-              + ("not run" if result["skip"] == "true" else "go"))
-        return 0
-    if argv == ["prompt"]:
-        revisions = Revisions(env["BASE_SHA"], env["HEAD_SHA"], env.get("REVIEWED_SHA", ""))
-        since = diffs(gh_api, env["GH_REPO"], revisions, Path(env["GITHUB_WORKSPACE"]))
-        values = {**env, "REVIEWED_SHA": env.get("REVIEWED_SHA", "") if since else ""}
-        write_output(env, "prompt", prompt(values))
-        return 0
+    commands = {"resolve": _resolve, "budget": _budget, "prompt": _prompt}
+    if len(argv) == 1 and argv[0] in commands:
+        return commands[argv[0]](env)
     if argv == ["publish"]:
         publish(gh_post, env)
         print("The security review comment is published.")
         return 0
-    print("usage: ci_security_review.py budget|prompt|publish", file=sys.stderr)
+    print("usage: ci_security_review.py resolve|budget|prompt|publish", file=sys.stderr)
     return 2
 
 

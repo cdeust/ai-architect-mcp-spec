@@ -1,0 +1,52 @@
+name: Claude Read Boundary
+
+# Proof of what the Claude security review's engine can read, on the pinned CLI and on
+# Linux, against a fake model (scripts/ci_claude_read_trial.py). It runs the pull
+# request's code on purpose and holds nothing worth taking: no secret, no environment,
+# read-only contents, no credential persisted. A control arm without the managed
+# settings must leak, or the trial is blind; the engine arm must leak nothing
+# (docs/claude-security-review.md, "Proof of the read boundary").
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: claude-read-boundary-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  trial:
+    name: Claude read boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # source: operational cap; two CLI sessions against a local fake model.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.11.1
+          package-manager-cache: false
+      - name: Install the pinned Claude CLI
+        run: |
+          set -euo pipefail
+          npm ci --prefix .github/claude/cli --no-audit --no-fund
+          .github/claude/cli/node_modules/.bin/claude --version | grep -Fx '2.1.328 (Claude Code)'
+      # As in the engine's job: the CLI's subprocess sandbox.
+      - name: Install subprocess isolation
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap socat
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --version
+      - name: Try every read against both arms
+        env:
+          TRIAL_PARENT_CANARY: CANARY-PARENT-not-a-secret
+        run: python3 -I scripts/ci_claude_read_trial.py

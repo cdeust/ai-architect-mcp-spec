@@ -3,6 +3,7 @@
   "allowManagedHooksOnly": true,
   "permissions": {
     "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
     "deny": [
       "Bash",
       "PowerShell",
@@ -41,10 +42,15 @@
       "Read(//tmp/**)",
       "Read(//var/**)",
       "Read(//opt/**)",
+      "Read(//home/runner/work/_*/**)",
+      "Read(//run/**)",
+      "Read(//root/**)",
+      "Read(//srv/**)",
+      "Read(//mnt/**)",
+      "Read(//boot/**)",
+      "Read(//snap/**)",
       "Read(//home/runner/runners/**)",
       "Read(//home/runner/actions-runner/**)",
-      "Read(//home/runner/work/_temp/**)",
-      "Read(//home/runner/work/_actions/**)",
       "Read(~/.claude/**)",
       "Read(~/.claude.json)",
       "Read(~/.config/**)",
@@ -53,6 +59,11 @@
       "Read(~/.docker/**)",
       "Read(~/.npmrc)",
       "Read(~/.gitconfig)",
+      "Read(~/.*)",
+      "Read(~/.*/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.netrc)",
+      "Read(~/.env*)",
       "Read(**/.git/**)"
     ],
     "blockReadsOutsideWorkingDirectories": true
