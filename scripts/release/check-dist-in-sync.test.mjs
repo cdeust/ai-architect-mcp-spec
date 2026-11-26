@@ -251,3 +251,12 @@ test("rebuild form: ignores the dist a build creates for a package that commits 
   const run = rebuild(root, write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]) + write_("packages/other/dist/x.js", "built, never committed\n"));
   expect(run.status, run.stderr).toBe(0);
 });
+
+test("rebuild form: ignores a file the build writes into a committed dist when .gitignore ignores it", () => {
+  const root = copyOfCommit({ ...COMMITTED, ".gitignore": "packages/app/dist/__tests__/\n" });
+  const run = rebuild(root, write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]) + write_("packages/app/dist/__tests__/t.js", "test output\n"));
+  expect(run.status, run.stderr).toBe(0);
+  const unlisted = rebuild(root, write_("packages/app/dist/b.js", "new module\n"));
+  expect(unlisted.status).toBe(1);
+  expect(unlisted.stderr).toContain("A packages/app/dist/b.js");
+});

@@ -27,7 +27,8 @@
 //   - finding no generated file at all is a failure, not a pass.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -111,6 +112,26 @@ function committedDistributions() {
   return new Set([...fingerprints().keys()].map(path => /^(packages\/[^/]+\/dist)\//.exec(path)?.[1]).filter(Boolean));
 }
 
+/**
+ * Which of `paths` the `.gitignore` files of the tree at ROOT ignore. A build also writes files git
+ * ignores into a committed `dist` (its `__tests__`, say); they are not part of the commit. A tree with
+ * no `.git` is asked through a throwaway empty repository whose work tree is ROOT.
+ */
+function ignored(paths) {
+  if (paths.length === 0) return new Set();
+  const gitDir = mkdtempSync(join(tmpdir(), "dist-in-sync-git-"));
+  try {
+    const env = closedEnvironment();
+    const init = spawnSync("git", ["init", "--bare", "-q", gitDir], { encoding: "utf8", timeout: GIT_TIMEOUT_MS, env });
+    if (init.error || init.status !== 0) throw new Error(`git init failed: ${init.error?.code ?? init.stderr.trim()}`);
+    const ask = spawnSync("git", ["--git-dir", gitDir, "--work-tree", ROOT, "check-ignore", "--no-index", "-z", "--stdin"], { encoding: "utf8", timeout: GIT_TIMEOUT_MS, env, input: paths.join("\0") });
+    if (ask.error || ask.status > 1) throw new Error(`git check-ignore failed: ${ask.error?.code ?? ask.stderr.trim()}`);
+    return new Set(entries(ask.stdout));
+  } finally {
+    rmSync(gitDir, { recursive: true, force: true });
+  }
+}
+
 /** Run the build, then say what differs: `M`odified, `A`dded or `D`eleted generated files. */
 export function rebuildProblems(commands) {
   const distributions = committedDistributions();
@@ -122,10 +143,13 @@ export function rebuildProblems(commands) {
   }
   const after = fingerprints(distributions);
   const lines = [];
+  const added = [...after.keys()].filter(path => !before.has(path));
+  const hidden = ignored(added);
   for (const path of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     if (!after.has(path)) lines.push(`D ${path}`);
-    else if (!before.has(path)) lines.push(`A ${path}`);
-    else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
+    else if (!before.has(path)) {
+      if (!hidden.has(path)) lines.push(`A ${path}`);
+    } else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
   }
   return lines;
 }
