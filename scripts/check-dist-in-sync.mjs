@@ -8,6 +8,12 @@
 // or new file there is the difference. #405 merged with a stale dist because the
 // only comparison, in release.yml, runs at publication and ignores the bundle.
 //
+// Two forms, one verdict ("rebuilding changes nothing"):
+//   node scripts/check-dist-in-sync.mjs            after a build, compare the tree with the commit by git (CI);
+//   node scripts/check-dist-in-sync.mjs --rebuild  fingerprint the generated files, rebuild, compare (the delivery
+//                                                  gate: it judges a copy of the committed tree that has no .git).
+// `--rebuild -- <command> [args]` replaces the default `pnpm build` then `pnpm bundle`.
+//
 // The answer must not depend on who runs it or from where:
 //   - it finds the repository from its own location, never from the directory it
 //     is started in, and refuses to run unless that is the root of the repository;
@@ -20,7 +26,8 @@
 //     skip-worktree, which is also what a sparse checkout sets) is itself a failure;
 //   - finding no generated file at all is a failure, not a pass.
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -28,6 +35,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const GENERATED = ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json", ":(glob)packages/*/dist/**"];
 // source: heuristic provisional; `git status` on a few paths answers in well under a second.
 const GIT_TIMEOUT_MS = 30_000;
+// source: heuristic provisional, to be replaced by the duration measured in the PR that introduced `--rebuild`.
+const BUILD_TIMEOUT_MS = 600_000;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Every setting that can change what `git status` reports, fixed here rather than read.
@@ -70,8 +79,52 @@ export function problems() {
   return entries(git("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", ...GENERATED));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const found = problems();
+// ─── The form for a tree without git ────────────────────────────────────────
+
+/** The generated files of the tree at ROOT, by path (with `/`), as a map to the digest of their bytes. */
+export function fingerprints() {
+  const found = new Map();
+  const add = path => found.set(path, createHash("sha256").update(readFileSync(join(ROOT, path))).digest("hex"));
+  for (const path of ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json"]) if (existsSync(join(ROOT, path))) add(path);
+  const walk = directory => {
+    for (const entry of readdirSync(join(ROOT, directory), { withFileTypes: true })) {
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) add(path);
+    }
+  };
+  if (existsSync(join(ROOT, "packages"))) {
+    for (const entry of readdirSync(join(ROOT, "packages"), { withFileTypes: true })) {
+      if (entry.isDirectory() && existsSync(join(ROOT, "packages", entry.name, "dist"))) walk(`packages/${entry.name}/dist`);
+    }
+  }
+  return found;
+}
+
+/** Run the build, then say what differs: `M`odified, `A`dded or `D`eleted generated files. */
+export function rebuildProblems(commands) {
+  const before = fingerprints();
+  if (before.size === 0) return ["no generated file to compare: the tree has no bundle and no dist"];
+  for (const [program, ...args] of commands) {
+    const run = spawnSync(program, args, { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: BUILD_TIMEOUT_MS });
+    if (run.error || run.status !== 0) return [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`];
+  }
+  const after = fingerprints();
+  const lines = [];
+  for (const path of [...new Set([...before.keys(), ...after.keys()])].sort()) {
+    if (!after.has(path)) lines.push(`D ${path}`);
+    else if (!before.has(path)) lines.push(`A ${path}`);
+    else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
+  }
+  return lines;
+}
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = process.argv.slice(2);
+  const rebuild = args[0] === "--rebuild";
+  const custom = args.indexOf("--");
+  const commands = rebuild && custom >= 0 ? [args.slice(custom + 1)] : [["pnpm", "build"], ["pnpm", "bundle"]];
+  const found = rebuild ? rebuildProblems(commands) : problems();
   if (found.length) {
     console.error(`The committed build output is out of date with the source (${found.length} problem(s)):`);
     for (const line of found) console.error(`  ${line}`);

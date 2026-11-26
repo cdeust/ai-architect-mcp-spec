@@ -6,6 +6,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // source: 30 s test timeout minus the 5 s margin left to Vitest to report (PR #407, vitest.shared.mts).
@@ -185,4 +186,62 @@ test("refuses to run in a directory that is not the root of its repository", () 
   const run = check(inner);
   expect(run.status).toBe(1);
   expect(run.stderr).toContain("not the root of its git repository");
+});
+
+// The form for the delivery gate: a copy of the committed tree, no .git, and a build to run.
+
+function copyOfCommit(files) {
+  const root = mkdtempSync(join(tmpdir(), "dist-in-sync-copy-"));
+  temporary.push(root);
+  mkdirSync(join(root, "scripts"));
+  copyFileSync(SOURCE, join(root, "scripts/check-dist-in-sync.mjs"));
+  for (const [path, text] of Object.entries(files)) write(root, path, text);
+  return root;
+}
+
+/** Runs the rebuild form with `build.cjs` (a script of the copy) as the build. */
+function rebuild(root, buildSource) {
+  write(root, "build.cjs", buildSource);
+  const run = spawnSync(process.execPath, [join(root, "scripts/check-dist-in-sync.mjs"), "--rebuild", "--", process.execPath, "build.cjs"], { cwd: root, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
+  expect(run.error).toBeUndefined();
+  return run;
+}
+
+const COMMITTED = { "packages/app/dist/a.js": "export const a = 1;\n", "mcp-server/index.js": "var a = 1;\n", "mcp-server/package.json": '{"version":"1.0.0"}\n' };
+const write_ = (path, text) => `require("node:fs").mkdirSync(require("node:path").dirname(${JSON.stringify(path)}), { recursive: true }); require("node:fs").writeFileSync(${JSON.stringify(path)}, ${JSON.stringify(text)});\n`;
+
+test("rebuild form: passes when the build reproduces every generated file, in a tree with no git", () => {
+  const root = copyOfCommit(COMMITTED);
+  const run = rebuild(root, write_("packages/app/dist/a.js", COMMITTED["packages/app/dist/a.js"]));
+  expect(run.status, run.stderr).toBe(0);
+});
+
+test("rebuild form: fails with the file a build changed, added or deleted", () => {
+  const root = copyOfCommit(COMMITTED);
+  const run = rebuild(root, write_("packages/app/dist/a.js", "export const a = 2;\n") + write_("packages/app/dist/new.js", "x\n") + `require("node:fs").rmSync("mcp-server/index.js");\n`);
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain("M packages/app/dist/a.js");
+  expect(run.stderr).toContain("A packages/app/dist/new.js");
+  expect(run.stderr).toContain("D mcp-server/index.js");
+});
+
+test("rebuild form: fails with a name when the build itself fails", () => {
+  const root = copyOfCommit(COMMITTED);
+  const run = rebuild(root, "process.exit(3);\n");
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain("failed (status 3): the generated files cannot be compared");
+});
+
+test("rebuild form: fails when the tree has no generated file", () => {
+  const root = copyOfCommit({ "README.md": "notes\n" });
+  const run = rebuild(root, "\n");
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain("no generated file");
+});
+
+test("the delivery gate builds through this check, so a worker sees a stale dist before CI does", () => {
+  const config = JSON.parse(readFileSync(fileURLToPath(new URL("../../delivery-gate.json", import.meta.url)), "utf8"));
+  const build = config.checks.find(check => check.name === "build");
+  expect(build.command).toEqual(["node", "scripts/check-dist-in-sync.mjs", "--rebuild"]);
+  expect(config.checks.findIndex(check => check.name === "build")).toBe(0); // before the tests that run on what it built
 });
