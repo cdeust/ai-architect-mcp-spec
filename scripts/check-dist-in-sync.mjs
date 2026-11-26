@@ -66,18 +66,18 @@ function git(...args) {
 
 const entries = output => output.split("\0").filter(Boolean);
 
-/** Problems found for the repository at ROOT; empty when the generated files match the commit. */
-export function problems() {
+/** How many generated files were compared, and the problems found (none when they match the commit). */
+function problems() {
   const top = git("rev-parse", "--show-toplevel").trim();
-  if (realpathSync(top) !== realpathSync(ROOT)) return [`${ROOT} is not the root of its git repository (${top})`];
+  if (realpathSync(top) !== realpathSync(ROOT)) return { compared: 0, found: [`${ROOT} is not the root of its git repository (${top})`] };
 
   // `ls-files -v` tags a file `H` when git looks at it; `h` is assume-unchanged, `S` and `s` skip-worktree.
   const tracked = entries(git("ls-files", "-v", "-z", "--", ...GENERATED));
-  if (tracked.length === 0) return ["no generated file to compare: the pathspecs matched nothing in this repository"];
+  if (tracked.length === 0) return { compared: 0, found: ["no generated file to compare: the pathspecs matched nothing in this repository"] };
   const hidden = tracked.filter(line => line[0] !== "H").map(line => line.slice(2));
-  if (hidden.length) return hidden.map(path => `${path} is hidden from git status (assume-unchanged, skip-worktree or sparse checkout)`);
+  if (hidden.length) return { compared: tracked.length, found: hidden.map(path => `${path} is hidden from git status (assume-unchanged, skip-worktree or sparse checkout)`) };
 
-  return entries(git("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", ...GENERATED));
+  return { compared: tracked.length, found: entries(git("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", ...GENERATED)) };
 }
 
 // ─── The form for a tree without git ────────────────────────────────────────
@@ -87,7 +87,7 @@ export function problems() {
  * `distributions` limits the package `dist` directories looked at: a build also creates the `dist` of
  * packages whose output is not committed (git ignores it), and those are not a difference.
  */
-export function fingerprints(distributions) {
+function fingerprints(distributions) {
   const found = new Map();
   const add = path => found.set(path, createHash("sha256").update(readFileSync(join(ROOT, path))).digest("hex"));
   for (const path of ["mcp-server/index.js", "mcp-server/package.json", "mcp-server/package-lock.json"]) if (existsSync(join(ROOT, path))) add(path);
@@ -132,14 +132,14 @@ function ignored(paths) {
   }
 }
 
-/** Run the build, then say what differs: `M`odified, `A`dded or `D`eleted generated files. */
-export function rebuildProblems(commands) {
+/** Run the build, then say how many generated files were compared and which differ: `M`odified, `A`dded or `D`eleted. */
+function rebuildProblems(commands) {
   const distributions = committedDistributions();
   const before = fingerprints(distributions);
-  if (before.size === 0) return ["no generated file to compare: the tree has no bundle and no dist"];
+  if (before.size === 0) return { compared: 0, found: ["no generated file to compare: the tree has no bundle and no dist"] };
   for (const [program, ...args] of commands) {
     const run = spawnSync(program, args, { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"], timeout: BUILD_TIMEOUT_MS });
-    if (run.error || run.status !== 0) return [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`];
+    if (run.error || run.status !== 0) return { compared: before.size, found: [`${[program, ...args].join(" ")} failed (${run.error?.code ?? `status ${run.status}`}): the generated files cannot be compared`] };
   }
   const after = fingerprints(distributions);
   const lines = [];
@@ -151,24 +151,22 @@ export function rebuildProblems(commands) {
       if (!hidden.has(path)) lines.push(`A ${path}`);
     } else if (before.get(path) !== after.get(path)) lines.push(`M ${path}`);
   }
-  return lines;
+  return { compared: before.size, found: lines };
 }
 
-// Compared by real path: macOS temporary directories and Windows short names reach the same file under two
-// spellings, and a guard that thinks it was imported would end with exit 0 without checking anything.
-const runDirectly = process.argv[1] !== undefined && realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
-
-if (runDirectly) {
-  const args = process.argv.slice(2);
-  const rebuild = args[0] === "--rebuild";
-  const custom = args.indexOf("--");
-  const commands = rebuild && custom >= 0 ? [args.slice(custom + 1)] : [["pnpm", "build"], ["pnpm", "bundle"]];
-  const found = rebuild ? rebuildProblems(commands) : problems();
-  if (found.length) {
-    console.error(`The committed build output is out of date with the source (${found.length} problem(s)):`);
-    for (const line of found) console.error(`  ${line}`);
-    console.error("Run 'pnpm build && pnpm bundle' and commit the result.");
-    process.exit(1);
-  }
-  console.log("The committed dist and bundle match the build of the source.");
+// There is no "was I run directly?" test on purpose. The one that was here compared two spellings of the path
+// of this file (macOS reaches its temporary directory through a link, Windows through short names), decided
+// it had been imported and ended with exit 0 without checking anything. The script runs whenever it is loaded,
+// and every run says how many generated files it compared: a run that compared none cannot succeed.
+const args = process.argv.slice(2);
+const rebuild = args[0] === "--rebuild";
+const custom = args.indexOf("--");
+const commands = rebuild && custom >= 0 ? [args.slice(custom + 1)] : [["pnpm", "build"], ["pnpm", "bundle"]];
+const { compared, found } = rebuild ? rebuildProblems(commands) : problems();
+if (found.length || compared === 0) {
+  console.error(`The committed build output is out of date with the source (${found.length} problem(s), ${compared} generated file(s) compared):`);
+  for (const line of found) console.error(`  ${line}`);
+  console.error("Run 'pnpm build && pnpm bundle' and commit the result.");
+  process.exit(1);
 }
+console.log(`Compared ${compared} generated file(s): the committed dist and bundle match the build of the source.`);

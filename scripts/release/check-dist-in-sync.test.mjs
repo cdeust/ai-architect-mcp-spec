@@ -47,7 +47,13 @@ function committed() {
 function check(root, { cwd = root, env: extra = {} } = {}) {
   const run = spawnSync(process.execPath, [join(root, "scripts/check-dist-in-sync.mjs")], { cwd, encoding: "utf8", timeout: CHILD_TIMEOUT_MS, env: { ...process.env, ...extra } });
   expect(run.error).toBeUndefined();
+  silentPass(run);
   return run;
+}
+
+/** An exit 0 must come with the count of the generated files it compared, and the count must not be zero. */
+function silentPass(run) {
+  if (run.status === 0) expect(run.stdout, "exit 0 without a count of compared files").toMatch(/^Compared [1-9]\d* generated file/);
 }
 
 test("passes when the build reproduces the committed files", () => {
@@ -55,7 +61,7 @@ test("passes when the build reproduces the committed files", () => {
   write(root, "packages/app/dist/a.js", "export const a = 1;\n"); // the build rewrites the same bytes
   const run = check(root);
   expect(run.status, run.stderr).toBe(0);
-  expect(run.stdout).toContain("match the build of the source");
+  expect(run.stdout).toBe("Compared 3 generated file(s): the committed dist and bundle match the build of the source.\n");
 });
 
 test("fails when the source changed and the dist was not rebuilt before the commit", () => {
@@ -204,6 +210,7 @@ function rebuild(root, buildSource) {
   write(root, "build.cjs", buildSource);
   const run = spawnSync(process.execPath, [join(root, "scripts/check-dist-in-sync.mjs"), "--rebuild", "--", process.execPath, "build.cjs"], { cwd: root, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
   expect(run.error).toBeUndefined();
+  silentPass(run);
   return run;
 }
 
@@ -273,4 +280,19 @@ test.skipIf(process.platform === "win32")("checks the repository when started th
   const run = spawnSync(process.execPath, [join(link, "scripts/check-dist-in-sync.mjs")], { cwd: link, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
   expect(run.status, run.stdout).toBe(1);
   expect(run.stderr).toContain(" M mcp-server/index.js");
+});
+
+test("a run that exits 0 always states how many files it compared, on every path it can be started by", () => {
+  const root = committed();
+  const holder = mkdtempSync(join(tmpdir(), "dist-in-sync-paths-"));
+  temporary.push(holder);
+  const link = join(holder, "repo");
+  if (process.platform !== "win32") symlinkSync(root, link);
+  const starts = [[root, join(root, "scripts/check-dist-in-sync.mjs")], [join(root, "packages"), join(root, "scripts/check-dist-in-sync.mjs")]];
+  if (process.platform !== "win32") starts.push([link, join(link, "scripts/check-dist-in-sync.mjs")]);
+  for (const [cwd, script] of starts) {
+    const run = spawnSync(process.execPath, [script], { cwd, encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
+    expect(run.status, `${script} from ${cwd}: ${run.stderr}`).toBe(0);
+    expect(run.stdout, `${script} from ${cwd}`).toMatch(/^Compared 3 generated file/);
+  }
 });
