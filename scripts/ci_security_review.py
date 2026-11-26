@@ -77,14 +77,16 @@ MAX_DIFF_BYTES = 1_000_000
 MIN_CONFIDENCE = 8
 # source: size bounds. The model's JSON reaches `publish` as one environment string,
 # which Linux caps at MAX_ARG_STRLEN, 128 KiB (execve(2)); at most
-# 8 x (3 x 500 + 200 + 80) + 1000 characters, 6 bytes each once JSON-escaped in
-# the worst case, is about 91 KiB. The comment is cut at COMMENT_LIMIT, under
-# GitHub's 65,536 characters.
+# 8 x (3 x 500 + 200 + 80 + 10) + 1000 characters, 6 bytes each once JSON-escaped in
+# the worst case, is about 91 KiB. The comment stays under COMMENT_LIMIT, below
+# GitHub's 65,536 characters, by dropping whole findings (render).
 MAX_FINDINGS = 8
 MAX_TEXT = 500
 MAX_SUMMARY = 1000
 MAX_PATH = 200
 MAX_CATEGORY = 80
+# source: operational bound, far above any source file's line count.
+MAX_LINE = 10_000_000
 COMMENT_LIMIT = 60_000
 SEVERITIES = ("HIGH", "MEDIUM")
 # A relative path of non-empty segments: no leading "/", "~" or drive letter, no
@@ -124,7 +126,7 @@ SCHEMA = {
                              "exploit_scenario", "recommendation", "confidence"],
                 "properties": {
                     "file": _string(MAX_PATH, PATH_PATTERN),
-                    "line": {"type": "integer", "minimum": 0},
+                    "line": {"type": "integer", "minimum": 0, "maximum": MAX_LINE},
                     "severity": {"type": "string", "enum": list(SEVERITIES)},
                     "category": _string(MAX_CATEGORY, CATEGORY_PATTERN),
                     "description": _string(MAX_TEXT),
@@ -390,6 +392,8 @@ def prose(text: str, limit: int) -> str:
     and a line break cannot start a heading or a forged finding."""
     # Bounded after neutralising: NFKC can expand one character into eighteen (U+FDFA).
     flat = " ".join(neutral(text.strip()[:limit]).split())[:limit].rstrip()
+    # The cut can separate a trailing "@" or "#" from the zero-width space after it.
+    flat = flat.rstrip("@#")
     return f"`{flat}`" if flat else "`(empty)`"
 
 
@@ -406,7 +410,7 @@ def _valid(item) -> bool:
         and re.fullmatch(PATH_PATTERN, path) is not None
         and path.isprintable()
         and type(line) is int
-        and line >= 0
+        and 0 <= line <= MAX_LINE
         and type(confidence) is int
         and 1 <= confidence <= 10
         and item["severity"] in SEVERITIES
@@ -462,7 +466,7 @@ def render(kept: list[Record], dropped: int, summary: str, env) -> str:
     blocks = [] if kept else [["No high-confidence security finding."]]
     for number, item in enumerate(kept, 1):
         blocks.append([
-            f"### Vuln {number}: {item['category']}: `{item['file'].replace('`', '')}:{item['line']}`",
+            f"### Vuln {number}: `{item['category']}` in `{item['file'].replace('`', '')}:{item['line']}`",
             f"* Severity: {item['severity'].title()}",
             f"* Confidence: {item['confidence']}/10",
             f"* Description: {item['description']}",

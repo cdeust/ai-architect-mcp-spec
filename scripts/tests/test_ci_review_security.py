@@ -756,7 +756,7 @@ class PublishTests(unittest.TestCase):
                                 "--input", "-"])
         self.assertEqual(json.loads(payload), {"body": body})
         self.assertTrue(body.startswith(f"## {security.MARKER}"))
-        self.assertIn("### Vuln 1: path_traversal: `src/a.ts:3`", body)
+        self.assertIn("### Vuln 1: `path_traversal` in `src/a.ts:3`", body)
         self.assertIn(f"[View job run]({self.ENV['RUN_URL']})", body)
         self.assertIn(SHA, body)
 
@@ -848,7 +848,8 @@ class PublishTests(unittest.TestCase):
             finding(file="a\nb"), finding(file="a\u0001b"), finding(file="a\u2028b"),
             finding(file="a" * (security.MAX_PATH + 1)),
             finding(category="a" * (security.MAX_CATEGORY + 1)),
-            finding(line=-1), finding(line=True), finding(line="3"), finding(confidence=11),
+            finding(line=-1), finding(line=True), finding(line="3"),
+            finding(line=security.MAX_LINE + 1), finding(confidence=11),
             finding(confidence=0), finding(confidence=9.5), finding(severity="LOW"),
             finding(category="Bad Category"), finding(category="command-injection"),
             finding(category="path_traversal\n"), finding(file="src/a.ts\n"),
@@ -925,6 +926,24 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("#1", text)
         self.assertNotIn("`", text)
 
+    def test_a_cut_never_leaves_a_bare_mention_or_reference(self):
+        for tail in ("@codex", "#12"):
+            with self.subTest(tail=tail):
+                body, _ = self.publish(output(finding(description="x" * (security.MAX_TEXT - 1) + tail)))
+                line = next(l for l in body.splitlines() if l.startswith("* Description: "))
+                self.assertTrue(line.endswith("x`"), line[-10:])
+
+    def test_the_drop_margin_holds_when_the_last_finding_fits_exactly(self):
+        for limit in range(1900, 2300, 7):
+            with self.subTest(limit=limit), unittest.mock.patch.object(
+                    security, "COMMENT_LIMIT", limit):
+                body, _ = self.publish(output(*[finding(description="y" * 400)] * 8))
+                self.assertLessEqual(len(body), limit)
+
+    def test_the_category_renders_inside_a_code_span(self):
+        body, _ = self.publish(output(finding(category="deadbeefcafe")))
+        self.assertIn("### Vuln 1: `deadbeefcafe` in `src/a.ts:3`", body)
+
     def test_a_lone_surrogate_in_prose_is_removed(self):
         body, _ = self.publish(output(finding(description="a\ud800b"), summary="\ud800"))
         self.assertIn("`ab`", body)
@@ -948,7 +967,8 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(props["severity"]["enum"], list(security.SEVERITIES))
         self.assertEqual((props["confidence"]["minimum"], props["confidence"]["maximum"]),
                          (1, 10))
-        self.assertEqual(props["line"]["minimum"], 0)
+        self.assertEqual((props["line"]["minimum"], props["line"]["maximum"]),
+                         (0, security.MAX_LINE))
         self.assertEqual(props["file"]["pattern"], security.PATH_PATTERN)
         self.assertEqual(props["category"]["pattern"], security.CATEGORY_PATTERN)
         for key, limit in (("file", security.MAX_PATH), ("category", security.MAX_CATEGORY),
