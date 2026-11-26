@@ -16,9 +16,9 @@ import zipfile
 import yaml
 
 if __package__:
-    from .release_shell_policy import check_privileged_script, execution_env
+    from .release_shell_policy import check_privileged_script
 else:
-    from release_shell_policy import check_privileged_script, execution_env
+    from release_shell_policy import check_privileged_script
 
 DEFAULT_WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/release.yml"
 WORKFLOW = Path(os.environ.get("RELEASE_WORKFLOW_PATH", DEFAULT_WORKFLOW))
@@ -43,9 +43,54 @@ TAGS = [
     ("v1.2.3-rc.1+", False, None), ("v1.2.3+sha..1", False, None),
     ("v1.2.3+sha_1", False, None), ("v1.2.3+a+b", False, None),
     ("v1.2.3$( )", False, None), ('v1.2.3"', False, None), ("v1.2.3;", False, None),
+    ("v1.02.3", False, None), ("v1.2.03", False, None), ("v1.2.3-rc.01", False, None),
     ("--flag=v1.2.3", False, None), ("prefix\nv1.2.3", False, None),
     ("v1.2.3\nother=value", False, None),
 ]
+
+
+# Each is a construct the previous policy accepted or a sibling of one: the review
+# of #399 (B1 to B3) ran the first nine under bash and saw the payload execute.
+HOSTILE_SCRIPTS = (
+    "node --version", "sh release-notes.md", "bash release-notes.md", "python3 local.py",
+    "curl --config release-notes.md", "./tool", "echo ok && other-tool",
+    "if [ -f input ]; then other-tool; fi", "value=$(other-tool)", 'echo "$(other-tool)"',
+    # A comment or a nested quote inside a substitution hides where it ends.
+    "echo $(echo ok # )'\nbash ./release-notes.md\n) # '\n",
+    'echo "$(echo ok # )"\nbash ./release-notes.md\n)"\n',
+    'echo "$(echo ")"; bash ./release-notes.md)"\n',
+    "echo $(assets=(a b); bash ./release-notes.md)\n", "assets=(a b\n",
+    # B1: text rewriting before splitting.
+    "echo ok\\\\\nbash ./release-notes.md\n",
+    'echo "ok\n# "; bash ./release-notes.md; echo "\ndone"',
+    "echo 'ok\n# '; bash ./release-notes.md; echo '\ndone'",
+    # B2: loop variables, aliases of a fixed destination.
+    'for GITHUB_OUTPUT in "$GITHUB_ENV"; do echo "NODE_OPTIONS=x" >> "$GITHUB_OUTPUT"; done',
+    'for PATH in /tmp/evil; do echo "PATH=$PATH"; done',
+    'archive="$GITHUB_ENV"\ngh api repos/o/r > "$archive"',
+    'file="mcp-publisher"\nunzip -p "$archive" "$file" > "./$file"',
+    # B3: the execution environment of the next command.
+    "NODE_OPTIONS=--require=./release-notes.md gh api repos/o/r",
+    "HTTPS_PROXY=http://attacker.invalid:8080 curl -fsSL https://registry.modelcontextprotocol.io/v0/servers?search=ai-architect-mcp-spec",
+    "export NODE_OPTIONS=x", "printf -v PATH x", "x=${PATH:=/tmp}", "echo ${!x}", "echo $'\\x41'",
+    # Commands bash would run from data, and writes through a read-only tool.
+    "{bash,./release-notes.md}", "./mcp-publishe? login github-oidc", "$CMD login",
+    "gh api -X DELETE repos/o/r/releases/1", "gh api -f a=b repos/o/r", "gh api --input f repos/o/r",
+    "jq -r -rf ./release-notes.md server.json", "jq --rawfile a f . server.json", "grep -qi -f pat x",
+    "echo hi &", "cat <<EOF\nx\nEOF", "diff <(cat a) b", "echo `id`", "echo x >| f", "echo x &> f",
+    "eval echo", ". ./release-notes.md", "( bash x )", "echo $((1+$(id)))", "echo x 3> \"$GITHUB_ENV\"",
+    # A "#" inside a word is not a comment; a here-document's body is data.
+    "echo ok#; bash ./release-notes.md", "cat <<echo\necho\necho\n",
+    'for file in "$GITHUB_ENV"; do unzip -p "$archive" "$file" > "./$file"; done',
+    # Fail closed on what the scripts never need: escapes, a quoted command word.
+    "echo a\\ b", 'echo "a\\$b"', '"echo" ok',
+)
+PRIVILEGED = ("release", "publish_registry")
+# The only variables the jobs with write or OIDC grants may receive (workflow,
+# job and step env). Anything else, NODE_OPTIONS or HTTPS_PROXY included, could
+# change what an action or a tool runs.
+PRIVILEGED_ENV = {"GH_TOKEN", "GH_REPO", "REPOSITORY", "TAG", "ARTIFACT_ID", "ARCHIVE_SHA256",
+                  "COMMIT", "DIGEST", "EVENT_NAME", "MCP_PUBLISHER_VERSION", "MCP_PUBLISHER_SHA256"}
 
 
 def named_step(name):
@@ -118,13 +163,18 @@ class ReleaseSecurity(unittest.TestCase):
                     self.assertIs(inputs.get("cache", False), False)
 
     def test_privileged_command_policy_fails_closed_on_unreviewed_executables(self):
-        # Policy inputs only. None of these snippets is passed to a shell.
-        for script in ("node --version", "sh release-notes.md", "bash release-notes.md",
-                       "python3 local.py", "curl --config release-notes.md", "./tool",
-                       "echo ok && other-tool", "if [ -f input ]; then other-tool; fi",
-                       "value=$(other-tool)", 'echo "$(other-tool)"'):
+        # Policy inputs only. None of these snippets is passed to a shell here; the
+        # reproduction of the review's bypasses under bash is recorded with the PR.
+        for script in HOSTILE_SCRIPTS:
             with self.subTest(script=script), self.assertRaises(AssertionError):
                 check_privileged_script(script)
+
+    def test_every_privileged_script_is_read_by_the_policy(self):
+        for job in PRIVILEGED:
+            for step in JOBS[job]["steps"]:
+                if "run" in step:
+                    with self.subTest(job=job, step=step["name"]):
+                        self.assertTrue(check_privileged_script(step["run"]))
 
     def test_permissions_and_release_dependencies(self):
         self.assertEqual(DOCUMENT["permissions"], {})
@@ -161,8 +211,8 @@ class ReleaseSecurity(unittest.TestCase):
                     for options in (DOCUMENT, job):
                         self.assertFalse(options.get("defaults", {}).get("run"))
                     for options in (DOCUMENT, job, *job["steps"]):
-                        for variable in options.get("env", {}):
-                            self.assertFalse(execution_env(variable), variable)
+                        self.assertLessEqual(set(options.get("env", {})), PRIVILEGED_ENV,
+                                             "a privileged job receives a variable outside its list")
                     for step in job["steps"]:
                         self.assertNotIn("if", step, "a privileged verification step could be skipped")
                         self.assertIs(step.get("continue-on-error", False), False)
@@ -348,6 +398,185 @@ class ReleaseSecurity(unittest.TestCase):
             result = run_step("Publish server.json to the MCP Registry", directory,
                               EVENT_NAME="workflow_dispatch", TAG="v1.2.3")
             self.assertEqual(result.returncode, 7)
+
+
+def expressions(value, path=()):
+    """Every ${{ }} expression of the document, with the path of the field holding it."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from expressions(child, (*path, key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from expressions(child, (*path, index))
+    elif isinstance(value, str):
+        for expr in re.findall(r"\$\{\{(.*?)\}\}", value, re.S):
+            yield path, expr.strip()
+
+
+OUTPUT_REFERENCE = re.compile(r"(?:steps|needs)\.[\w-]+\.outputs\.[\w-]+")
+
+
+def expression_allowed(path, expr):
+    """The one place each kind of expression may appear; anywhere else is refused."""
+    if path[0] != "jobs" or len(path) < 3:
+        return False
+    job, field = path[1], path[2]
+    if field == "if":
+        return True  # its own grammar: test_trigger_data_enters_through_environment_only
+    if field == "outputs":
+        return len(path) == 4 and re.fullmatch(r"steps\.[\w-]+\.outputs\.[\w-]+", expr) is not None
+    if field != "steps" or len(path) != 6:
+        return False  # runs-on, concurrency, environment, strategy, name, services...
+    step = JOBS[job]["steps"][path[3]]
+    if path[4] == "with":
+        return expr == "github.run_attempt"
+    if path[4] != "env":
+        return False
+    if job == "target" and step.get("name") == "Resolve target tag":
+        return expr in {"github.event_name", "github.ref_name", "inputs.tag"}
+    return expr in {"github.token", "github.repository", "github.event_name"} or bool(
+        OUTPUT_REFERENCE.fullmatch(expr))
+
+
+class TriggerDataHasOnePlace(unittest.TestCase):
+    def test_every_expression_has_its_one_place(self):
+        for path, expr in expressions(DOCUMENT):
+            with self.subTest(path=path, expr=expr):
+                self.assertTrue(expression_allowed(path, expr), f"{expr} is not allowed at {path}")
+
+    def test_the_validated_tag_is_the_only_tag_downstream(self):
+        self.assertEqual(JOBS["target"]["outputs"], {"tag": "${{ steps.resolve.outputs.tag }}"})
+        tags = [(job, step.get("name"), step["env"]["TAG"]) for job, spec in JOBS.items()
+                for step in spec.get("steps", []) if "TAG" in step.get("env", {})]
+        self.assertTrue(tags)
+        for job, name, value in tags:
+            with self.subTest(job=job, step=name):
+                self.assertEqual(value, "${{ needs.target.outputs.tag }}")
+        self.assertEqual(JOBS["release"]["needs"], ["target", "build"])
+
+
+def fake_gh(root, script):
+    gh = root / "gh"
+    gh.write_text("#!/bin/sh\n" + script)
+    gh.chmod(0o755)
+    return str(root) + os.pathsep + os.environ["PATH"]
+
+
+class RegistryChecks(unittest.TestCase):
+    """The registry job's verifications, run with GitHub replaced by fixtures."""
+
+    def manifest(self, root, version="1.2.3", package="1.2.3", identifier=None, commit="a" * 40):
+        identifier = identifier or ("https://github.com/owner/repo/releases/download/v1.2.3/" + BUNDLE)
+        (root / "fixture.json").write_text(
+            '{"version": "%s", "packages": [{"version": "%s", "identifier": "%s"}]}' % (version, package, identifier))
+        path = fake_gh(root, 'case "$*" in *commits/refs/tags/*) echo "$COMMIT_FIXTURE";;\n'
+                             '  *contents/server.json*) cat fixture.json;;\n  *) exit 99;;\nesac\n')
+        output = root / "output"
+        output.write_text("")
+        return run_step("Verify server.json version matches the tag being published", root, PATH=path,
+                        REPOSITORY="owner/repo", TAG="v1.2.3", COMMIT_FIXTURE=commit, GITHUB_OUTPUT=str(output))
+
+    def test_manifest_must_match_the_tag_and_the_public_asset(self):
+        for name, kwargs in [("version", {"version": "1.2.4"}), ("package", {"package": "1.2.4"}),
+                             ("identifier", {"identifier": "https://example.invalid/x.mcpb"}),
+                             ("commit", {"commit": "main"})]:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                self.assertNotEqual(self.manifest(Path(directory), **kwargs).returncode, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.manifest(Path(directory))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(directory, "output").read_text(), "commit=" + "a" * 40 + "\n")
+
+    def test_public_asset_companion_mismatch_exports_no_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / BUNDLE).write_bytes(b"public bundle\n")
+            (root / (BUNDLE + ".sha256")).write_text("0" * 64 + "\n")
+            output = root / "output"
+            output.write_text("")
+            path = fake_gh(root, "exit 0\n")
+            result = run_step("Download and verify the public .mcpb asset", root, PATH=path, REPOSITORY="o/r",
+                              TAG="v1.2.3", COMMIT="a" * 40, GITHUB_OUTPUT=str(output))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("checksum mismatch", result.stdout + result.stderr)
+            self.assertEqual(output.read_text(), "")
+
+
+# Accepted scripts where a text-rewriting reader and bash disagree: a "#" line
+# inside a string, a line continuation. Each runs a second command (sleep) that
+# a reader dropping the wrong text would miss.
+TRICKY = ('echo "ok\n# "; sleep 0; echo "\ndone"\n', "echo 'ok\n# '; sleep 0; echo '\ndone'\n",
+          "echo ok \\\n  more; sleep 0\n", "echo a # sleep is a comment here\nsleep 0\n",
+          "echo ok#; sleep 0\n", "echo $(echo ok # )'\nsleep 0\n) # '\n",
+          'echo "$(echo ok # )"\nsleep 0\n)"\n', 'echo "$(echo ")"; sleep 0)"\n')
+TRACE_ENV = {"ARTIFACT_ID": "23", "ARCHIVE_SHA256": "a" * 64, "GITHUB_RUN_ID": "42", "REPOSITORY": "o/r",
+             "GH_REPO": "o/r", "TAG": "v1.2.3", "COMMIT": "a" * 40, "DIGEST": "a" * 64, "EVENT_NAME": "push",
+             "MCP_PUBLISHER_VERSION": "v1.8.1", "MCP_PUBLISHER_SHA256": "a" * 64, "GH_TOKEN": "fixture"}
+
+
+class PolicyAgreesWithBash(unittest.TestCase):
+    """Differential check: every command bash runs is one the policy read."""
+
+    def executed(self, script, names):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stubs = root / "bin"
+            stubs.mkdir()
+            for name in set(names) | {"gh", "curl", "jq", "unzip", "tar", "chmod", "cmp", "cut", "cat",
+                                      "sha256sum", "shasum", "awk", "grep", "seq", "sleep"}:
+                if "/" not in name and name not in {"[", "[[", "echo", "printf", "set", "exit", "for"}:
+                    (stubs / name).write_text("#!/bin/sh\nexit 0\n")
+                    (stubs / name).chmod(0o755)
+            (root / "mcp-publisher").write_text("#!/bin/sh\nexit 0\n")
+            (root / "mcp-publisher").chmod(0o755)
+            output = root / "output"
+            output.touch()
+            env = {**TRACE_ENV, "PATH": str(stubs), "RUNNER_TEMP": directory, "GITHUB_OUTPUT": str(output)}
+            # The script sets PS4: bash does not always import it from the environment
+            # (the Codex review's run on bash 5.2.21 got an empty trace).
+            prelude = ("PS4='+TRACE '\n"
+                       "command_not_found_handle() { echo \"+TRACE $1\" >&2; return 0; }\n")
+            result = subprocess.run(["/bin/bash", "-x", "-c", prelude + script], cwd=root, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            ran = set()
+            for line in result.stderr.splitlines():
+                if line.lstrip("+").startswith("TRACE "):
+                    first = line.lstrip("+")[len("TRACE "):].split(" ", 1)[0].strip("'")
+                    if first and not re.fullmatch(r"[A-Za-z_]\w*(?:\[\d*\])?\+?=.*", first):
+                        ran.add(first)
+            return ran
+
+    def test_bash_runs_no_command_the_policy_did_not_read(self):
+        scripts = [(f"{job}: {step['name']}", step["run"]) for job in PRIVILEGED
+                   for step in JOBS[job]["steps"] if "run" in step]
+        scripts += [(f"tricky {i}", script) for i, script in enumerate(TRICKY)]
+        for label, script in scripts:
+            with self.subTest(script=label):
+                names = set(check_privileged_script(script))
+                ran = self.executed(script, names)
+                self.assertTrue(ran, "bash ran nothing: the comparison would be empty")
+                self.assertLessEqual(ran - {"command_not_found_handle"}, names | {"]]"},
+                                     "bash ran a command the policy never read")
+
+
+class ReleaseArtifactCompanions(unittest.TestCase):
+    def test_a_corrupted_sbom_companion_alone_stops_the_release(self):
+        verify = named_step("Verify and read release artifact")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "input.zip"
+            with zipfile.ZipFile(archive, "w") as z:
+                for file in [BUNDLE, SBOM]:
+                    z.writestr(file, file.encode())
+                    digest = hashlib.sha256(file.encode()).hexdigest() if file == BUNDLE else "0" * 64
+                    z.writestr(file + ".sha256", digest + "\n")
+                z.writestr("release-notes.md", b"notes")
+            path = fake_gh(root, 'case "$2" in */zip) cat "$FIXTURE";; *) echo 42;; esac\n')
+            result = run_step(verify["name"], root, PATH=path, FIXTURE=str(archive), ARTIFACT_ID="23",
+                              REPOSITORY="o/r", RUNNER_TEMP=directory, GITHUB_RUN_ID="42",
+                              ARCHIVE_SHA256=hashlib.sha256(archive.read_bytes()).hexdigest())
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Checksum mismatch for " + SBOM, result.stdout)
 
 
 if __name__ == "__main__":
